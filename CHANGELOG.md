@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Per-key clone of a sub-table that came from dotted-key form
+  (e.g. `dst["x"]["v"] = src["x"]["v"]` where the source was
+  `[x]\nv.w = 1`) now preserves the dotted form on the destination
+  instead of silently promoting it to an explicit `[x.v]` header.
 - Cross-document `dst["k"] = src["k"]` now preserves the source
   section header's indent even when no leading comment is attached.
 - Multi-component `install("a.b", value)` where the implicit parent

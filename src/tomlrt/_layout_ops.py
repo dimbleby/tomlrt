@@ -1027,12 +1027,129 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
     )
 
 
+def install_dotted_kv_slot(
+    host: Container,
+    leaf_keypath: tuple[str, ...],
+    value: Value,
+    *,
+    leaf_parent: Container,
+) -> None:
+    """Insert a single dotted-KV slot hosted by ``host``.
+
+    Files the new slot's refs on ``host`` + every implicit
+    intermediate in the chain ``[host, ..., leaf_parent]`` per the
+    dotted-KV ref-propagation rule, updates ``_body_tail`` along the
+    chain, and maintains ``AoTEntry.entry_slots`` order when host has
+    an owner. The caller is responsible for dict storage at
+    ``leaf_parent``.
+
+    Pre-conditions (checked by caller):
+      * ``host`` has a header, is the doc root, or is an AoT entry root.
+      * The implicit chain along ``leaf_keypath[:-1]`` already exists
+        under ``host`` (run ``ensure_implicit_chain`` first).
+      * ``leaf_parent`` is the existing container at
+        ``host._path + leaf_keypath[:-1]``.
+      * ``leaf_keypath[-1]`` is not yet bound at ``leaf_parent``.
+      * ``len(leaf_keypath) >= 2`` — a single-keypart leaf is not
+        dotted; use ``append_direct_kv`` for that.
+    """
+    assert len(leaf_keypath) >= 2
+    doc = host._attached_doc  # noqa: SLF001
+
+    # Build chain [host, ..., leaf_parent] via _parent walk + reverse.
+    chain: list[Container] = []
+    cur: Container | None = leaf_parent
+    while cur is not host:
+        assert cur is not None
+        chain.append(cur)
+        cur = cur._parent  # noqa: SLF001
+    chain.append(host)
+    chain.reverse()
+    assert len(chain) == len(leaf_keypath)
+
+    body_tail = leaf_parent._body_tail or host._body_tail  # noqa: SLF001
+    header_ref = host._header_ref  # noqa: SLF001
+    owner = host._owner_aot_entry  # noqa: SLF001
+    if body_tail is not None:
+        _ensure_terminator(body_tail, doc)
+
+    new_slot = _new_kv_slot(
+        host_path=host._path,  # noqa: SLF001
+        key=leaf_keypath,
+        value=value,
+        doc=doc,
+        owner=owner,
+        leading=_kv_leading_after(_last_kv(host, lambda s: _is_host_kv(host, s)), doc),
+    )
+
+    # Splice into the doc-stream linked list. Anchor preference:
+    # host's body_tail > host's header > head-of-doc seam > empty doc.
+    inserted_at_head = False
+    if body_tail is not None:
+        insert_after(body_tail, new_slot, doc)
+    elif header_ref is not None:
+        insert_after(header_ref.slot, new_slot, doc)
+    elif doc._head is not None:  # noqa: SLF001
+        old_head = doc._head  # noqa: SLF001
+        insert_before_head(new_slot, doc)
+        _ensure_leading_blank_line(old_head, doc)
+        inserted_at_head = True
+    else:
+        insert_before_head(new_slot, doc)
+
+    # File refs on every chain ancestor. ``_refs`` is the doc-stream
+    # subset; ``_index`` preserves "primary at index 0 + all
+    # contributors". The anchor for host is body_tail or its header;
+    # implicit intermediates we created are fresh with empty ``_refs``
+    # so any append is equivalent to insert-at-0.
+    anchor_slot: Slot | None = body_tail or (
+        header_ref.slot if header_ref is not None else None
+    )
+    for i, anc in enumerate(chain):
+        new_ref = SlotRef(slot=new_slot, container=anc)
+        if anchor_slot is not None and any(
+            r.slot is anchor_slot
+            for r in anc._refs  # noqa: SLF001
+        ):
+            anchor_idx = _find_ref_index_by_slot(anc, anchor_slot)
+            anc._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
+        elif inserted_at_head and anc._refs:  # noqa: SLF001
+            # New slot is the new doc head; its ref must precede any
+            # existing refs (e.g. section-header refs on the doc root)
+            # to keep ``_refs`` in doc-stream order.
+            anc._refs.insert(0, new_ref)  # noqa: SLF001
+        else:
+            anc._refs.append(new_ref)  # noqa: SLF001
+        # Rebuild ``_index[local_key]`` rather than blindly appending —
+        # appending is only correct when the new ref is also the last
+        # with its key in ``_refs``, which fails when the ancestor has
+        # later refs under the same key (e.g. ``a.x = 1`` then
+        # ``[a.b]`` — the new ``a.z`` slot sits before the ``[a.b]``
+        # header in ``_index['a']``, not at the end).
+        _rebuild_index_for_key(anc, leaf_keypath[i])
+        if anc._body_tail is body_tail or anc._body_tail is None:  # noqa: SLF001
+            # Propagate the body_tail bump up the chain. ``is body_tail``
+            # is the old-path case (every chain ancestor of an implicit
+            # ``c`` tracks the same body_tail as ``c``); ``is None`` is
+            # the fresh-intermediate case (``ensure_implicit_chain``
+            # may have minted new implicits below host whose own
+            # ``_body_tail`` is still empty).
+            anc._body_tail = new_slot  # noqa: SLF001
+
+    if owner is not None:
+        if body_tail is not None:
+            anchor_idx = owner.entry_slots.index(body_tail)
+            owner.entry_slots.insert(anchor_idx + 1, new_slot)
+        else:
+            owner.entry_slots.append(new_slot)
+
+
 def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> None:
     """Insert into an implicit-headerless container via dotted KV.
 
-    Routes through the nearest header-bearing ancestor (or the doc
-    root). Files refs on every implicit ancestor between that host
-    and ``c`` per the dotted-KV ref-propagation rule.
+    Thin wrapper over :func:`install_dotted_kv_slot` that derives the
+    host and leaf keypath from ``c``. Routes through the nearest
+    header-bearing ancestor (or the doc root).
 
     Pre-conditions (checked by caller):
       * ``c._path`` is non-empty (c is not the doc root)
@@ -1040,76 +1157,18 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
       * ``c._body_tail is not None`` (c has at least one dotted-KV
         contributor — anchors the new slot)
     """
-    body_tail = c._body_tail  # noqa: SLF001
-    assert body_tail is not None
-    doc = c._attached_doc  # noqa: SLF001
+    assert c._body_tail is not None  # noqa: SLF001
 
-    # Find host: nearest ancestor with a header, or the doc root.
     host: Container = c
     while host._parent is not None and host._header_ref is None:  # noqa: SLF001
         host = host._parent  # noqa: SLF001
 
-    # Build chain [host, ..., c] via _parent walk + reverse.
-    chain: list[Container] = []
-    cur: Container | None = c
-    while cur is not host:
-        assert cur is not None
-        chain.append(cur)
-        cur = cur._parent  # noqa: SLF001
-    chain.append(host)
-    chain.reverse()
-
-    # Per-step local keys: from host's path down to (key,).
-    local_keys = [*c._path[len(host._path) :], key]  # noqa: SLF001
-    assert len(local_keys) == len(chain)
-
-    # AoT consistency: every container in the chain shares the same
-    # owner. (The host is either the AoT entry root itself, or the
-    # doc root; either way owners match all the way down.)
-    owner = c._owner_aot_entry  # noqa: SLF001
-
-    _ensure_terminator(body_tail, doc)
-
-    # Build the dotted slot: keypath = host..key.
-    keypath = (*c._path[len(host._path) :], key)  # noqa: SLF001
-    new_slot = _new_kv_slot(
-        host_path=host._path,  # noqa: SLF001
-        key=keypath,
-        value=value,
-        doc=doc,
-        owner=owner,
-        leading=_kv_leading_after(_last_kv(host, lambda s: _is_host_kv(host, s)), doc),
+    install_dotted_kv_slot(
+        host,
+        (*c._path[len(host._path) :], key),  # noqa: SLF001
+        value,
+        leaf_parent=c,
     )
-
-    insert_after(body_tail, new_slot, doc)
-
-    # File refs on every chain ancestor. ``_refs`` is the doc-stream
-    # subset; ``_index`` preserves "primary at index 0 + all
-    # contributors". Appending to ``_index`` keeps any existing
-    # structural primary (e.g. a header-owning ref on the host) at
-    # index 0; a new dotted contributor is always secondary.
-    for i, anc in enumerate(chain):
-        new_ref = SlotRef(slot=new_slot, container=anc)
-        anchor_idx = _find_ref_index_by_slot(anc, body_tail)
-        anc._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
-        # ``_index[local_key]`` must equal the doc-stream-ordered
-        # subset of ``_refs`` for that key (an invariant). Rebuild it
-        # for the affected key rather than blindly appending —
-        # appending is only correct when the new ref is also the
-        # last with its key in ``_refs``, which fails when the
-        # ancestor has later structural-header refs under the same
-        # name (e.g. ``a.x = 1`` then ``[a.b]`` — the ``[a.b]``
-        # header sits after our new ``a.z`` slot, so the new ref
-        # belongs in the middle of ``doc._index['a']``, not the end).
-        _rebuild_index_for_key(anc, local_keys[i])
-        if anc._body_tail is body_tail:  # noqa: SLF001
-            anc._body_tail = new_slot  # noqa: SLF001
-
-    # Maintain AoTEntry.entry_slots in doc-stream order. body_tail is by
-    # invariant filed in entry_slots when owner is set.
-    if owner is not None:
-        anchor_idx = owner.entry_slots.index(body_tail)
-        owner.entry_slots.insert(anchor_idx + 1, new_slot)
 
 
 def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
