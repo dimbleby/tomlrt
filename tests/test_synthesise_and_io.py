@@ -389,10 +389,6 @@ def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
 
 
 def test_document_factory_with_explicit_array_keeps_inline_array() -> None:
-    # Regression: ``Document(data=...)`` coerced *any* non-empty list
-    # of mappings to an AoT, including a user-supplied ``Array``. The
-    # caller's explicit choice of ``Array`` (inline) was silently
-    # promoted to ``[[xs]]``.
     doc = Document({"xs": tomlrt.Array([{"a": 1}])})
     out = tomlrt.dumps(doc)
     assert "[[" not in out
@@ -563,10 +559,6 @@ def test_deepcopy_table_subview_is_independent_and_round_trips() -> None:
 
 
 def test_deepcopy_inline_table_preserves_inline_shape() -> None:
-    # Regression: ``Container.__deepcopy__`` always went through
-    # ``_deep_section_clone`` which returns a ``Table.section`` view —
-    # silently converting an inline source into a section table, so
-    # re-installation rendered as a ``[k]`` block instead of inline.
     src = "x = { a = 1, b = 2 }\n"
     doc = tomlrt.loads(src)
     t = doc.table("x")

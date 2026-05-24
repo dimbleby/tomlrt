@@ -708,11 +708,7 @@ def test_aot_imul_zero_clears() -> None:
 
 
 def test_aot_imul_detached_replicates_entries() -> None:
-    """Detached AoT must follow list ``*=`` semantics.
-
-    Regression: ``__imul__`` short-circuited on every detached AoT,
-    so ``aot *= n`` was a silent no-op for ``n > 1``.
-    """
+    """Detached AoT must follow list ``*=`` semantics."""
     aot = AoT([{"a": 1}, {"a": 2}])
     aot *= 3
     assert [dict(t) for t in aot] == [
@@ -745,11 +741,6 @@ def test_aot_imul_detached_deep_copies_entries() -> None:
 
 
 def test_aot_detached_accepts_generic_mapping() -> None:
-    # Regression: ``append`` / ``insert`` / ``__setitem__`` on a
-    # detached AoT used to ``assert isinstance(value, dict)``, rejecting
-    # any other ``Mapping`` (e.g. ``MappingProxyType``) even though the
-    # signatures declare ``Mapping[str, TomlInput]`` and the attached
-    # paths happily accept it.
     proxy = MappingProxyType({"x": 1})
 
     aot = AoT()
@@ -1138,12 +1129,7 @@ def test_array_imul_repeats_items() -> None:
 
 
 def test_array_imul_preserves_no_trailing_comma() -> None:
-    """Single-line array without trailing comma must not gain one.
-
-    Regression: ``__imul__`` used to redetect style from the
-    half-mutated array, which spuriously promoted no-trailing-comma
-    arrays to trailing-comma layouts.
-    """
+    """Single-line array without trailing comma must not gain one."""
     doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc.array("xs")
     xs *= 2
@@ -1169,11 +1155,6 @@ def test_array_imul_preserves_multiline_no_trailing_comma() -> None:
 
 
 def test_array_imul_inline_table_copies_render_mutations() -> None:
-    # Regression: ``__imul__`` cloned the per-item CST but reused a
-    # ``deepcopy`` of the decoded view, which for an inline ``Table``
-    # round-trips through ``_deep_section_clone`` into a detached
-    # section table. The copy in the array was therefore not wired to
-    # the cloned CST and mutations through ``arr.table(i)`` were lost.
     doc = tomlrt.loads("xs = [{a = 1}]\n")
     arr = doc.array("xs")
     arr *= 2
@@ -1182,8 +1163,6 @@ def test_array_imul_inline_table_copies_render_mutations() -> None:
 
 
 def test_array_imul_nested_array_copies_render_mutations() -> None:
-    # Same issue for a nested ``Array`` item: the copy's ``Array``
-    # view ended up detached from its cloned CST.
     doc = tomlrt.loads("xs = [[1]]\n")
     arr = doc.array("xs")
     arr *= 2
@@ -1292,10 +1271,6 @@ def test_ensure_table_accepts_list_path() -> None:
 
 
 def test_insert_into_implicit_parent_after_chained_ensure_table() -> None:
-    # Regression: chained ensure_table calls left the implicit parent's
-    # ancestor chain without a binding ref to the deepest header (the
-    # parent's own synthetic header was demoted), so a later mutation on
-    # the implicit parent tripped an internal anchor-not-found assertion.
     doc = tomlrt.Document()
     doc.ensure_table("t").ensure_table("u")["k"] = 1
     assert tomlrt.dumps(doc) == "[t.u]\nk = 1\n"
@@ -1304,7 +1279,6 @@ def test_insert_into_implicit_parent_after_chained_ensure_table() -> None:
 
 
 def test_insert_into_implicit_parent_after_multi_ensure_table() -> None:
-    # Same regression via attach_section_at (multi-component path).
     doc = tomlrt.Document()
     a = doc.ensure_table("a")
     a.ensure_table(["b", "c"])["k"] = 1
@@ -1314,9 +1288,6 @@ def test_insert_into_implicit_parent_after_multi_ensure_table() -> None:
 
 
 def test_insert_into_implicit_parent_after_aot_attach() -> None:
-    # Same regression via add_aot_entry: assigning an AoT under a
-    # synthetic-empty section demotes the section's header, leaving
-    # ancestors without a binding ref into the now-implicit subtree.
     doc = tomlrt.Document()
     doc["tool"] = Table.section({})
     doc["tool"]["list"] = AoT([{"name": "foo"}])
@@ -1804,12 +1775,6 @@ def test_non_string_keys_rejected() -> None:
 
 
 def test_setitem_tuple_key_rejected_for_section_value() -> None:
-    """Regression: ``doc["a", "b"] = Table.section(...)`` (Python sugar
-    for a tuple key) used to crash deep inside ``_new_section_header``
-    with ``TypeError: expected string or bytes-like object, got 'tuple'``
-    when the prefix existed (whether as section or inline). It now
-    fails up-front with a clear ``TOML keys must be str`` error.
-    """
     for src in ("", "[a]\nx = 1\n", 'owner = { name = "tom" }\n'):
         doc = tomlrt.loads(src)
         with pytest.raises(TypeError, match="TOML keys must be str"):
@@ -1822,10 +1787,6 @@ def test_setitem_tuple_key_rejected_for_section_value() -> None:
 
 
 def test_set_direct_key_on_headerless_parent_no_leading_blank() -> None:
-    """Regression: synthesising a ``[fruit]`` header in front of the
-    first ``[fruit.X]`` descendant must not inject a stray blank line
-    at the top of the document.
-    """
     src = td("""
         [fruit.apple]
         x = 1
@@ -1949,13 +1910,7 @@ def test_install_table_into_blank_line_doc_keeps_blank_line() -> None:
 
 
 def test_aot_replace_in_compact_doc_preserves_compact_style() -> None:
-    """Replacing an AoT entry in a compact doc must not inject a blank.
-
-    Regression: the del+insert path in ``__setitem__`` lost the
-    sibling-gap signal in 2-entry AoTs, so the re-sample in
-    ``_insert_at`` fell back to ``default=True`` and prepended a
-    blank between the new entry and the survivor -- mixing styles.
-    """
+    """Replacing an AoT entry in a compact doc must not inject a blank."""
     src = td("""
         [[xs]]
         a=1
@@ -2018,12 +1973,7 @@ def test_aot_replace_in_blank_styled_doc_keeps_blank() -> None:
 
 
 def test_aot_append_adopts_sibling_kv_indent() -> None:
-    """A new AoT entry should match the sibling entries' KV indent.
-
-    Regression: when sibling ``[[xs]]`` entries had indented KVs,
-    appending ``{"c": 3}`` synthesised a flush-left ``c = 3`` rather
-    than mirroring the user's chosen indent.
-    """
+    """A new AoT entry should match the sibling entries' KV indent."""
     src = td("""
         [[xs]]
             a = 1
