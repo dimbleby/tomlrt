@@ -1032,7 +1032,11 @@ class AoT(list["Table"]):
             raise TypeError(msg)
         for k in value:
             _validate_key(k)
-        return value
+        # ``isinstance(value, Mapping)`` plus the per-key check above
+        # establishes ``Mapping[str, Any]`` at runtime; ``ty`` doesn't
+        # narrow ``Mapping`` type parameters from a runtime loop, so the
+        # return is suppressed.
+        return value  # ty: ignore[invalid-return-type]
 
     def _replace_entry_attached(
         self, index: int, value: Mapping[str, Any] | None
