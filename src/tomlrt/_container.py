@@ -1398,12 +1398,17 @@ def _coerce_for_document_init(v: Any) -> Any:
     """Pick a sensible structural shape for ``Document(data=...)`` values.
 
     * Mapping → section ``Table.section`` (recursively coerced).
-    * List of mappings (non-empty) → ``AoT`` of section tables.
+    * Plain ``list`` of mappings (non-empty) → ``AoT`` of section tables.
     * Anything else passes through unchanged.
+
+    A user-supplied ``Array`` (even one carrying mappings) is *not*
+    coerced — the caller has explicitly chosen inline-array shape.
     """
     if isinstance(v, AoT):
         return v
     if isinstance(v, Container):
+        return v
+    if isinstance(v, Array):
         return v
     if isinstance(v, Mapping):
         return Table.section(
