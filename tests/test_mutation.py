@@ -1145,6 +1145,29 @@ def test_array_imul_preserves_multiline_no_trailing_comma() -> None:
     assert out == "xs = [\n  1,\n  2,\n  3,\n  1,\n  2,\n  3\n]\n"
 
 
+def test_array_imul_inline_table_copies_render_mutations() -> None:
+    # Regression: ``__imul__`` cloned the per-item CST but reused a
+    # ``deepcopy`` of the decoded view, which for an inline ``Table``
+    # round-trips through ``_deep_section_clone`` into a detached
+    # section table. The copy in the array was therefore not wired to
+    # the cloned CST and mutations through ``arr.table(i)`` were lost.
+    doc = tomlrt.loads("xs = [{a = 1}]\n")
+    arr = doc.array("xs")
+    arr *= 2
+    arr.table(1)["b"] = 2
+    assert tomlrt.dumps(doc) == "xs = [{a = 1}, {a = 1, b = 2}]\n"
+
+
+def test_array_imul_nested_array_copies_render_mutations() -> None:
+    # Same issue for a nested ``Array`` item: the copy's ``Array``
+    # view ended up detached from its cloned CST.
+    doc = tomlrt.loads("xs = [[1]]\n")
+    arr = doc.array("xs")
+    arr *= 2
+    arr.array(1).append(2)
+    assert tomlrt.dumps(doc) == "xs = [[1], [1, 2]]\n"
+
+
 def test_array_table_typed_accessor_raises_on_non_table_item() -> None:
     doc = tomlrt.loads("xs = [1, 2]\n")
     xs = doc.array("xs")

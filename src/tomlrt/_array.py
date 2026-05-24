@@ -661,19 +661,31 @@ class Array(list[Any]):
             return self
         if n == 1:
             return self
-        # Snapshot style + per-item CST + decoded values BEFORE any
-        # mutation. Re-detecting style on the half-mutated array
-        # would see the just-flipped previous-last `has_comma=True`
-        # and spuriously promote a no-trailing-comma array to one
-        # with a trailing comma; cloning the source CST nodes up
-        # front avoids re-cloning items whose own `has_comma` we
-        # just flipped via `_flip_to_internal`.
+        # Snapshot style and the source-item list before any append:
+        # ``_append_with_style`` flips the previous-last item's
+        # ``has_comma``, so re-detecting style on a half-mutated array
+        # would spuriously promote a no-trailing-comma array to one with
+        # a trailing comma. The items list is snapshot because we append
+        # to it inside the loop. Each iteration deepcopies the source
+        # ``Value`` and re-decodes so the appended logical view is wired
+        # to its own CST clone (``deepcopy`` of the decoded view for an
+        # inline ``Table`` / ``Array`` yields a detached object not wired
+        # to any CST).
+        from tomlrt._build import _decode_value  # noqa: PLC0415
+
         style = self._style()
-        src_csts = [deepcopy(it.value) for it in self._value.items]
-        src_decoded = [deepcopy(v) for v in self]
+        src_items = list(self._value.items)
         for _ in range(n - 1):
-            for cst, decoded in zip(src_csts, src_decoded, strict=True):
-                self._append_with_style(deepcopy(cst), deepcopy(decoded), style)
+            for src in src_items:
+                cst = deepcopy(src.value)
+                decoded = _decode_value(
+                    cst,
+                    layout_root=self._layout_root,
+                    parent=None,
+                    path=(),
+                    owner=None,
+                )
+                self._append_with_style(cst, decoded, style)
         return self
 
 

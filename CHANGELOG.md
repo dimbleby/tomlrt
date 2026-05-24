@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now rendered.
 - `Array.set_multiline` no longer inserts `\n` newlines into a CRLF
   document.
+- `Array.__imul__` (`arr *= n`) now keeps replicated inline tables and
+  arrays live: mutations through the copies render.
 
 ## [1.4.2] - 2026-05-10
 
