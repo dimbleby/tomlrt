@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Document.install` / `Document.ensure_table` now accept any
   `Sequence[str]` (e.g. `collections.deque`), matching the documented
   contract and the public type signature.
+- Detached `AoT.append` / `AoT.insert` / `AoT[idx] = ...` now accept
+  any `Mapping` (e.g. `MappingProxyType`), matching their declared
+  type signature and the attached paths.
 
 ## [1.4.2] - 2026-05-10
 

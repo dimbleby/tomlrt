@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from _helpers import reparses as _reparses
@@ -741,6 +742,27 @@ def test_aot_imul_detached_deep_copies_entries() -> None:
     aot *= 2
     aot[0]["a"] = 99
     assert aot[1]["a"] == 1
+
+
+def test_aot_detached_accepts_generic_mapping() -> None:
+    # Regression: ``append`` / ``insert`` / ``__setitem__`` on a
+    # detached AoT used to ``assert isinstance(value, dict)``, rejecting
+    # any other ``Mapping`` (e.g. ``MappingProxyType``) even though the
+    # signatures declare ``Mapping[str, TomlInput]`` and the attached
+    # paths happily accept it.
+    proxy = MappingProxyType({"x": 1})
+
+    aot = AoT()
+    aot.append(proxy)
+    assert list(aot) == [{"x": 1}]
+
+    aot = AoT([{"x": 1}])
+    aot.insert(0, MappingProxyType({"x": 0}))
+    assert [dict(t) for t in aot] == [{"x": 0}, {"x": 1}]
+
+    aot = AoT([{"x": 1}])
+    aot[0] = MappingProxyType({"x": 9})
+    assert list(aot) == [{"x": 9}]
 
 
 def test_aot_reverse_reorders_cst() -> None:
