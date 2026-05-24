@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 
 
 def _newline_text(arr: Array) -> str:
-    lr = arr._layout_root()  # noqa: SLF001
+    lr = arr._layout_root  # noqa: SLF001
     return lr._newline if lr is not None else "\n"  # noqa: SLF001
 
 

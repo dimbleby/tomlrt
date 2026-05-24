@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Overwriting an implicit table with a scalar or inline value now
   preserves the original position in the document instead of moving
   the binding to the end.
+- Mutations to inline tables and arrays nested inside an `Array` are
+  now rendered.
 
 ## [1.4.2] - 2026-05-10
 
