@@ -1772,6 +1772,7 @@ def _install_cloned_structural_block(
         target_prefix=target_path,
         doc=doc,
     )
+    _maybe_demote_synthetic_empty_header(parent)
 
 
 def _install_cloned_aot_entry(

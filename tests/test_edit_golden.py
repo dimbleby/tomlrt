@@ -2780,6 +2780,18 @@ def test_preamble_preserved_when_empty_section_promoted_to_implicit() -> None:
     assert tomlrt.loads(rendered).preamble == ("hi",)
 
 
+def test_cross_doc_section_assign_demotes_empty_parent_to_implicit() -> None:
+    """Cross-doc clone of a sub-section under an empty placeholder
+    parent used to skip the synthetic-header demotion, leaving a
+    spurious bare ``[a]`` line for what is now an implicit super-table.
+    """
+    src = tomlrt.loads("[a.b]\nx = 1\n")
+    dst = Document()
+    dst["a"] = Table.section()
+    dst["a"]["b"] = src["a"]["b"]
+    assert tomlrt.dumps(dst) == "[a.b]\nx = 1\n"
+
+
 def test_aot_insert_on_empty_doc_migrates_preamble() -> None:
     """``AoT.insert`` was bypassing the preamble-migration choke-point,
     so on an empty doc with a preamble the comment ended up after the
