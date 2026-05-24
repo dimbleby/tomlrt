@@ -1014,6 +1014,20 @@ class AoT(list["Table"]):
                 return _layout_ops.clone_table_as_aot_entry(self, value)
         return _layout_ops.add_aot_entry(self, value)
 
+    @staticmethod
+    def _typecheck_entry(value: object) -> Mapping[Any, Any]:
+        """Reject non-Mapping ``value``; otherwise return it typed.
+
+        ``isinstance(value, Mapping)`` doesn't constrain the key /
+        value type parameters, so the return is ``Mapping[Any, Any]``.
+        Non-string keys are caught downstream when the entry is
+        actually installed.
+        """
+        if not isinstance(value, Mapping):
+            msg = f"AoT entries must be Mapping/Table; got {type(value).__name__}"
+            raise TypeError(msg)
+        return value
+
     def _replace_entry_attached(
         self, index: int, value: Mapping[str, Any] | None
     ) -> None:
@@ -1101,12 +1115,7 @@ class AoT(list["Table"]):
                 raise ValueError(msg)
             # Validate every assigned value is a Mapping/Table BEFORE
             # mutating the AoT (atomicity preflight).
-            typed_values: list[Mapping[str, Any]] = []
-            for v in values:
-                if not isinstance(v, Mapping):
-                    msg = f"AoT entries must be Mapping/Table; got {type(v).__name__}"
-                    raise TypeError(msg)
-                typed_values.append(v)  # ty: ignore[invalid-argument-type]
+            typed_values = [self._typecheck_entry(v) for v in values]
             if self._layout_root is None:
                 list.__setitem__(
                     self, index, [_make_unattached_entry(v) for v in typed_values]
@@ -1133,21 +1142,20 @@ class AoT(list["Table"]):
             for i, v in zip(indices, typed_values, strict=True):
                 self._replace_entry_attached(i, v)
             return
-        assert isinstance(value, Mapping)
+        entry = self._typecheck_entry(value)
         if self._layout_root is None:
-            assert isinstance(value, dict)
-            list.__setitem__(self, index, _make_unattached_entry(value))  # ty: ignore[invalid-argument-type]
+            list.__setitem__(self, index, _make_unattached_entry(entry))
             return
-        self._replace_entry_attached(operator.index(index), value)  # ty: ignore[invalid-argument-type]
+        self._replace_entry_attached(operator.index(index), entry)
 
     @override
     def append(self, value: Table | Mapping[str, TomlInput]) -> None:
         # Same semantics as `add(body)` but with no return value (list API).
+        entry = self._typecheck_entry(value)
         if self._layout_root is None:
-            assert isinstance(value, dict)
-            list.append(self, _make_unattached_entry(value))
+            list.append(self, _make_unattached_entry(entry))
             return
-        self._add_entry_attached(value)
+        self._add_entry_attached(entry)
 
     @override
     def extend(self, values: Iterable[Table | Mapping[str, TomlInput]]) -> None:
@@ -1158,11 +1166,11 @@ class AoT(list["Table"]):
     def insert(
         self, index: SupportsIndex, value: Table | Mapping[str, TomlInput]
     ) -> None:
+        entry = self._typecheck_entry(value)
         if self._layout_root is None:
-            assert isinstance(value, dict)
-            list.insert(self, index, _make_unattached_entry(value))
+            list.insert(self, index, _make_unattached_entry(entry))
             return
-        new_entry = self._add_entry_attached(value)
+        new_entry = self._add_entry_attached(entry)
         idx = int(index)
         n = len(self)
         if idx < 0:
