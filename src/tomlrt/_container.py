@@ -353,6 +353,17 @@ class Container(dict[str, Any]):
         if isinstance(value, (bytes, bytearray)):
             msg = f"cannot assign bytes to TOML key {key!r}; use a string"
             raise TypeError(msg)
+        # Inline tables can't host sections / AoTs as values; check
+        # eagerly so the error fires at the actual point of mistake
+        # rather than deferring to the synth-path at attach time. Runs
+        # for both attached and detached inline factories.
+        if self._inline:
+            if isinstance(value, AoT):
+                msg = "Cannot store an array-of-tables inside an inline table"
+                raise TOMLError(msg)
+            if _is_section(value):
+                msg = "Cannot store a section-style table inside an inline-style table"
+                raise TOMLError(msg)
         # Unattached factory mode: dict-only storage, transplant on attach.
         if self._layout_root is None:
             dict.__setitem__(self, key, value)
@@ -695,12 +706,9 @@ class Container(dict[str, Any]):
     # ------------------------------------------------------------------
 
     def _inline_setitem(self, key: str, value: Any) -> None:
-        if isinstance(value, AoT):
-            msg = "Cannot store an array-of-tables inside an inline table"
-            raise TOMLError(msg)
-        if _is_section(value):
-            msg = "Cannot store a section-style table inside an inline-style table"
-            raise TOMLError(msg)
+        # ``__setitem__`` has already rejected ``AoT`` / section values
+        # for inline hosts. What remains is the live-attach gap for
+        # typed sub-containers.
         if not is_scalar(value) and not _is_synth_inline(value):
             msg = (
                 "live-attach of typed Container/Array/AoT into an inline table "
@@ -1523,20 +1531,19 @@ def _synth_value(
 
     Plain ``dict`` / ``Mapping`` → ``InlineTableValue`` + inline ``Table``.
     ``list`` / ``Array`` view → ``ArrayValue`` + ``Array``.
-    Section ``Container`` / ``AoT`` raise NIE.
+    Section ``Container`` / ``AoT`` raise ``TOMLError`` — those can't
+    live as inline values.
     Anything else raises ``TypeError`` (mentioning the type name and
     the prefix ``"Cannot convert"``).
     """
     if is_scalar(v):
         return coerce_scalar(v), v
     if isinstance(v, AoT):
-        msg = "live-attach of AoT through value synthesis is not supported"
-        raise NotImplementedError(msg)
+        msg = "Cannot store an array-of-tables inside an inline table"
+        raise TOMLError(msg)
     if _is_section(v):
-        msg = (
-            "live-attach of section Container through value synthesis is not supported"
-        )
-        raise NotImplementedError(msg)
+        msg = "Cannot store a section-style table inside an inline-style table"
+        raise TOMLError(msg)
     # Unattached inline Container or Array — live-attach: rehome the
     # existing object (so the user's reference stays the document's
     # view) instead of synthesising a fresh one. Inline tables that
