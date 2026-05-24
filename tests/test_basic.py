@@ -8,7 +8,7 @@ from textwrap import dedent
 import pytest
 
 import tomlrt
-from _toml_str import td
+from _helpers import td
 
 UTC = timezone.utc
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 import tomlrt
-from _toml_str import td
+from _helpers import td
 
 # ---------------------------------------------------------------------------
 # Reads

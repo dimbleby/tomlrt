@@ -12,7 +12,7 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 
 import tomlrt
-from _toml_str import td
+from _helpers import td
 
 UTC = timezone.utc
 

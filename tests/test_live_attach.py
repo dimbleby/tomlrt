@@ -11,23 +11,11 @@ and are unchanged.
 
 from __future__ import annotations
 
-import sys
-from typing import Any
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
-
 import pytest
 
 import tomlrt
+from _helpers import reparses as _reparses
 from tomlrt import AoT, Array, Table
-
-
-def _reparses(src: str) -> dict[str, Any]:
-    return tomllib.loads(src)
-
 
 # ---------------------------------------------------------------------------
 # Table.inline factory

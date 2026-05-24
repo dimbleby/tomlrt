@@ -2,29 +2,18 @@
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING, Any
 
-from _toml_str import td
+from _helpers import reparses as _reparses
+from _helpers import td
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 import pytest
 
 import tomlrt
 from tomlrt import AoT, Array, Table
-
-
-def _reparses(src: str) -> dict[str, Any]:
-    """Sanity check that a rendered document is still valid TOML."""
-    return tomllib.loads(src)
-
 
 # ---------------------------------------------------------------------------
 # Scalar set/get/del
