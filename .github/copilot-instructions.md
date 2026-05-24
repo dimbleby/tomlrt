@@ -66,6 +66,14 @@ must pass before any commit. CI runs the same set on Python 3.10–3.14.
   (enforced by ruff's isort `required-imports`).
 - Do not add comments that merely restate the code. Comment intent and
   invariants, not mechanics.
+- **Validate user input at user-facing boundaries; trust typed
+  signatures below them.** Public factories / mutators (`loads`,
+  `Document(data=…)`, `Table.section`, `Table.inline`, `AoT.__init__`
+  / `append` / `insert` / `__setitem__` / `add`,
+  `Container.__setitem__`) each call `_validate_key` /
+  `_validate_mapping` exactly once. Helpers below the API boundary
+  (`_make_unattached_entry`, `_populate_unattached`, …) trust their
+  signatures. Don't re-validate in the middle of a chain.
 
 ## Architecture (in `src/tomlrt/`)
 
@@ -79,6 +87,14 @@ them. Read roughly in this order:
 - **`_paths.py`** — key-path argument parsing and validation
   (the `t["a", "b"]` / `t[("a", "b")]` shapes used by the public
   API).
+- **`_typecheck.py`** — runtime type-checks for user-supplied keys
+  and mappings (`_validate_key`, `_validate_mapping`,
+  `_check_str_mapping`). Pure helpers with no dependency on the
+  container / array layers, so any module that accepts user-supplied
+  data at a public boundary can import them without participating
+  in the circular-import graph that `_container` / `_array` form
+  among themselves. Distinct from `_validator.py` (parse-time
+  semantic validator) — this module is API-boundary plumbing.
 - **`_trivia.py`** — `Trivia` / `TriviaPiece` types and pure helpers
   over them (whitespace, newlines, comments). Depends only on
   `_errors`.
@@ -128,6 +144,8 @@ them. Read roughly in this order:
   table, `[H]` cannot redefine an already-opened table, dotted
   keys cannot extend an explicitly defined table / AoT, inline-
   table local key rules). Owned and invoked by `_parser.py`.
+  Separate from `_typecheck.py`, which is the runtime
+  input-validation layer for the public mutation API.
 
 ### Logical view construction & mutation
 
