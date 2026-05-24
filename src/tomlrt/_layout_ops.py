@@ -32,6 +32,7 @@ import contextlib
 import copy
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from tomlrt._comments import _split_attached_block
 from tomlrt._kind import _Kind
 from tomlrt._scalar import is_scalar
 from tomlrt._slots import (
@@ -1535,48 +1536,42 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
 
 
 def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
-    """Split a leading-trivia stream into (structural-prefix, slot-remainder).
+    """Split a leading-trivia stream into (positional-prefix, slot-remainder).
 
-    The structural prefix is the run of whitespace and newline pieces
-    that precedes the first comment piece **and** the slot's own
-    column-offset indent (trailing whitespace-only piece on the slot's
-    own line, if any). The remainder starts at the first comment piece
-    if one exists, otherwise at that trailing indent. Both the comment
-    block and the slot's own indent travel with the slot — only the
-    blank-line / indentation separator between *peers* stays positional.
+    The positional prefix is the run of "above-blank" lines (preamble
+    or archived comment blocks separated from the slot by a blank
+    line) plus any pure-structural blanks; it stays at the slot's
+    current doc-stream position when the slot moves. The remainder
+    is the attached comment block (immediately above the slot, with
+    no blank line between) plus the slot's own column-offset indent;
+    it travels with the slot.
 
-    Used by AoT reorder and cross-doc clone: structural separators
-    stay positional; comments and the slot's own indent travel with
-    the slot.
+    Used by AoT reorder (rotates positional prefixes among entries
+    while remainders travel with their entry) and by cross-doc clone
+    (which drops the positional prefix entirely — preamble belongs
+    to the source document, not the section being copied).
     """
     pieces = leading.pieces
-    cut = len(pieces)
-    for i, p in enumerate(pieces):
-        if isinstance(p, CommentNode):
-            cut = i
-            break
-    # Rescue the slot's own column indent (trailing whitespace-only
-    # piece on the slot's own line, if any) into the remainder so it
-    # travels with the slot. When a comment was already found this is
-    # a no-op: the trailing whitespace is past the cut already.
-    if cut > 0 and cut == len(pieces) and isinstance(pieces[-1], WhitespaceNode):
-        cut -= 1
-    return Trivia(list(pieces[:cut])), Trivia(list(pieces[cut:]))
+    _above, attached, indent = _split_attached_block(leading)
+    remainder: list[TriviaPiece] = []
+    for line in attached:
+        remainder.extend(line)
+    remainder.extend(indent)
+    cut = len(pieces) - len(remainder)
+    return Trivia(list(pieces[:cut])), Trivia(remainder)
 
 
 def _retarget_header_separator(
     header: StructuralHeaderSlot,
     new_separator: Trivia,
 ) -> None:
-    """Replace ``header.leading``'s structural prefix while keeping comments.
+    """Replace ``header.leading``'s positional prefix with ``new_separator``.
 
-    A cloned header arrives carrying the source document's spacing
-    (blank-line gap, indentation) plus any header-leading comments.
-    The destination wants its own spacing convention to drive layout
-    but must not lose comments that semantically belong to the
-    section being copied.
+    See :func:`_split_leading_structural`: the slot's attached
+    comments and own indent are kept; the source's positional
+    prefix is dropped.
     """
-    _structural, remainder = _split_leading_structural(header.leading)
+    _positional, remainder = _split_leading_structural(header.leading)
     header.leading = Trivia([*new_separator.pieces, *remainder.pieces])
 
 
