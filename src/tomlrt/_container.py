@@ -1327,7 +1327,7 @@ def _reset_array_for_rehome(a: Array) -> None:
     Leaves ``_value`` (the displaced ``ArrayValue``) intact so the
     next attach can reuse it.
     """
-    a._attached = False  # noqa: SLF001
+    a._layout_root = None  # noqa: SLF001
 
 
 def _install_attached_subtree(
@@ -1520,7 +1520,7 @@ def _synth_value(
     if (_is_inline_table(v) or isinstance(v, Array)) and not v._attached:  # noqa: SLF001
         if isinstance(v, Array):
             _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
-            v._attached = True  # noqa: SLF001
+            _attach_array_view(v, layout_root, owner)
             return v._value, v  # noqa: SLF001
         if v._layout_root is not None:  # noqa: SLF001
             _reset_inline_for_rehome(v)
@@ -1578,6 +1578,27 @@ def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
 
     if layout_root is not None:
         retarget_value_newlines(val, layout_root._newline)  # noqa: SLF001
+
+
+def _attach_array_view(
+    arr: Array, layout_root: Document | None, owner: AoTEntry | None
+) -> None:
+    """Record the document attachment on an Array and its inline children."""
+    arr._layout_root = layout_root  # noqa: SLF001
+    for child in arr:
+        _attach_inline_child_view(child, layout_root, owner)
+
+
+def _attach_inline_child_view(
+    value: object, layout_root: Document | None, owner: AoTEntry | None
+) -> None:
+    if isinstance(value, Array):
+        _attach_array_view(value, layout_root, owner)
+    elif _is_inline_table(value):
+        value._layout_root = layout_root  # noqa: SLF001
+        value._owner_aot_entry = owner  # noqa: SLF001
+        for child in value.values():
+            _attach_inline_child_view(child, layout_root, owner)
 
 
 def _populate_inline_table(
@@ -1645,6 +1666,7 @@ def _synth_inline_array(
     val = ArrayValue()
     arr = Array()
     arr._value = val  # noqa: SLF001
+    arr._layout_root = layout_root  # noqa: SLF001
 
     for i, sub in enumerate(items):
         sub_cst, sub_dec = _synth_value(

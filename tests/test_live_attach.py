@@ -564,6 +564,20 @@ def test_array_inside_array_attaches_live() -> None:
     assert parsed == {"xs": [[1, 2, 99], [3, 4]]}
 
 
+def test_inline_table_inside_unattached_array_attaches_live() -> None:
+    # Regression: an unattached ``Array`` carrying inline-table
+    # children synthesises those children with ``_layout_root=None``.
+    # Live-attaching the outer array must propagate the destination
+    # ``_layout_root`` to the child tables so that later mutations
+    # through a held reference render.
+    doc = tomlrt.loads("")
+    inner = Table.inline({"a": 1})
+    doc["xs"] = Array([inner])
+    inner["b"] = 2
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"xs": [{"a": 1, "b": 2}]}
+
+
 def test_outer_plain_dict_remains_snapshot() -> None:
     # The plain-dict outer is still a snapshot: mutating it after
     # assignment does *not* show up in the document, even though a

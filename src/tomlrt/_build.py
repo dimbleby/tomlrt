@@ -275,7 +275,7 @@ def _decode_array(
 ) -> Array:
     arr = Array()
     arr._value = value  # noqa: SLF001
-    arr._attached = True  # noqa: SLF001
+    arr._layout_root = layout_root  # noqa: SLF001
     for item in value.items:
         list.append(
             arr,

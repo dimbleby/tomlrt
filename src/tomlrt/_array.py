@@ -77,7 +77,7 @@ class Array(list[Any]):
     and it can be passed wherever a `list` or `Sequence` is expected.
     """
 
-    __slots__ = ("_attached", "_multiline", "_value")
+    __slots__ = ("_layout_root", "_multiline", "_value")
 
     def __init__(
         self,
@@ -96,7 +96,7 @@ class Array(list[Any]):
 
         self._value: ArrayValue = ArrayValue()
         self._multiline: bool = multiline
-        self._attached: bool = False
+        self._layout_root: Document | None = None
         items_list = list(items)
         if not items_list:
             if multiline:
@@ -183,16 +183,14 @@ class Array(list[Any]):
 
     # ---- mutation -----------------------------------------------------
 
-    def _layout_root(self) -> Document | None:
-        """The owning document, by walking via `_value` ownership.
+    @property
+    def _attached(self) -> bool:
+        """True iff this array is wired to a user-visible document.
 
-        We don't directly track this — Arrays attached to a document
-        get it transitively via the KV slot. For synthesis we need it
-        so nested values can resolve dotted positions; passing ``None``
-        for orphan arrays is fine since we only synthesise scalars/
-        inline values that don't need a layout root.
+        Mirrors :attr:`Container._attached` — see that docstring.
         """
-        return None
+        lr = self._layout_root
+        return lr is not None and not lr._is_private  # noqa: SLF001
 
     def _style(self) -> _ArrayStyle:
         return _detect_style(self._value, multiline_flag=self._multiline)
@@ -290,7 +288,7 @@ class Array(list[Any]):
 
         return _synth_value(
             value,
-            layout_root=self._layout_root(),
+            layout_root=self._layout_root,
             parent=None,
             path=(),
             owner=None,
