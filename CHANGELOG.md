@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Container.sort(*, key=None, reverse=False)` reorders a section,
+  document, table, or inline table's direct child keys in place,
+  preserving per-key trivia. Mirrors `list.sort` / `AoT.sort`.
 - `Container.leading_block` and `Table.header_leading_block` expose the
   full leading-trivia region (including blank-line-separated "orphan"
   comments) as a tuple of `str | None`, where `None` is a blank line.

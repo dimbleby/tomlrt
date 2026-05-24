@@ -64,9 +64,9 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
-    from _typeshed import SupportsKeysAndGetItem
+    from _typeshed import SupportsKeysAndGetItem, SupportsRichComparison
     from typing_extensions import Self
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
@@ -734,6 +734,35 @@ class Container(dict[str, Any]):
         self[key] = default
         return dict.__getitem__(self, key)
 
+    def sort(
+        self,
+        *,
+        key: Callable[[str], SupportsRichComparison] | None = None,
+        reverse: bool = False,
+    ) -> None:
+        """Sort direct child keys in place, preserving per-key trivia.
+
+        Mirrors ``list.sort`` / :meth:`AoT.sort`: keyword-only ``key``
+        / ``reverse``, stable, in-place. Works for sections, the
+        document root, and inline tables.
+
+        Raises:
+            ValueError: the proposed order places a leaf KV after a
+                structural section/AoT key (would re-bind it as
+                nested under the preceding section).
+        """
+        current = list(dict.keys(self))
+        if len(current) <= 1:
+            return
+        new_order = sorted(current, key=key, reverse=reverse)
+        if new_order == current:
+            return
+        if self._inline:
+            _inline_ops.reorder_inline(self, new_order)
+        elif self._layout_root is not None:
+            _layout_ops.reorder_container(self, new_order)
+        _reorder_dict_storage(self, new_order)
+
     @override
     def __ior__(  # type: ignore[override]
         self,
@@ -1089,6 +1118,19 @@ class Container(dict[str, Any]):
                     if saved_eol.trailing_ws is not None:
                         last_slot.eol.trailing_ws = saved_eol.trailing_ws
         return result
+
+
+def _reorder_dict_storage(c: Container, new_key_order: list[str]) -> None:
+    """Reorder ``c``'s dict storage in place to match ``new_key_order``.
+
+    Bypasses ``Container.__setitem__`` so no validation, slot rebuild,
+    or attach paths fire. ``new_key_order`` is trusted to be a
+    permutation of ``dict.keys(c)``.
+    """
+    values = [(k, dict.__getitem__(c, k)) for k in new_key_order]
+    dict.clear(c)
+    for k, v in values:
+        dict.__setitem__(c, k, v)
 
 
 def _populate_unattached(t: Container, mapping: Mapping[str, Any]) -> None:

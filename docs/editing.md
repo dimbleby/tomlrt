@@ -88,6 +88,39 @@ entry = pkgs.add({"name": "foo"})
 entry["version"] = "1.0"
 ```
 
+## Sorting child keys
+
+`Container.sort(*, key=None, reverse=False)` reorders a `Document`'s
+or `Table`'s direct child keys in place, preserving per-key trivia.
+Mirrors `list.sort`. Inline tables (`{ ... }`) are also supported.
+
+```python
+doc = tomlrt.loads("""
+    # above b
+    b = 1
+    # above a
+    a = 2
+""")
+doc.sort()
+# a is now first, with its comment still attached.
+```
+
+For value-sorted orderings (e.g. leaves first, then sections), pass a
+custom `key`:
+
+```python
+def is_section(k: str) -> bool:
+    v = doc[k]
+    return isinstance(v, tomlrt.Table) and not v.is_inline
+
+doc.sort(key=lambda k: (is_section(k), k))
+```
+
+`sort` raises `ValueError` if the requested order would re-bind a leaf
+key under a structural section header.
+
+For sorting `AoT` entries, use `AoT.sort(key=...)`.
+
 ## Empty arrays-of-tables
 
 TOML has no syntax for an array-of-tables with zero entries, so an empty `AoT`

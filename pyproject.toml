@@ -38,7 +38,7 @@ dev = [
   "pytest-cov>=5",
   "hypothesis>=6",
   "mypy>=1.11",
-  "tomli>=2; python_version < '3.11'",
+  "tomli>=2.2",
 ]
 docs = [
   "mkdocstrings[python]>=0.27",

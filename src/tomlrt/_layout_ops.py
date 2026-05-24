@@ -3062,6 +3062,161 @@ def _move_slots_to_anchor(
             c._body_tail = _recompute_body_tail(c)  # noqa: SLF001
 
 
+def _direct_child_key(
+    slot: Slot, parent_path: tuple[str, ...], parent_plen: int
+) -> str | None:
+    """Return the direct child key of ``parent_path`` that ``slot`` binds, or None.
+
+    Determined by the slot's binding root: ``path`` for a structural
+    header, ``(*host_path, key_parts[0])`` for a KV. Returns the
+    first path component beyond ``parent_path`` if the binding root
+    starts with ``parent_path`` and is strictly deeper, else None.
+    """
+    if isinstance(slot, StructuralHeaderSlot):
+        root: tuple[str, ...] = tuple(slot.path)
+    elif isinstance(slot, KVSlot):
+        root = (*slot.host_path, slot.key_parts[0].value)
+    else:
+        return None
+    if len(root) > parent_plen and root[:parent_plen] == parent_path:
+        return root[parent_plen]
+    return None
+
+
+def reorder_container(c: Container, new_key_order: list[str]) -> None:
+    """Reorder ``c``'s direct children to ``new_key_order``.
+
+    ``new_key_order`` is trusted to be a permutation of
+    ``dict.keys(c)``. Each key's slots — KV slots filed under the
+    key, plus any header / body / entry slots of a child section or
+    AoT, gathered from anywhere in the doc-stream — are spliced
+    together as one contiguous block at the key's new position. All
+    slots' leadings are preserved as-is, except the head of each
+    key's block (which receives the *positional separator* recorded
+    at its new position, plus the head slot's own attached-comment
+    remainder).
+
+    Non-contiguous keys (e.g. ``[a]; [other]; [a.sub]`` where 'a'
+    has two runs at root) are handled by collecting both runs and
+    splicing them together. Foreign slots interleaved in the owned
+    span are pushed out of the way to wherever the splice leaves
+    them — typically just after the reordered region.
+
+    Only mutates the CST; dict storage is the caller's responsibility.
+
+    Raises:
+        ValueError: the proposed order places a leaf KV after a
+            structural section/AoT key (would re-bind it as nested).
+    """
+    doc = c._layout_root  # noqa: SLF001
+    assert doc is not None
+
+    c_path = c._path  # noqa: SLF001
+    c_plen = len(c_path)
+
+    # 1. Bucket slots by direct-child key, in doc-stream order. Also
+    # capture each key's first-appearance physical order — the basis
+    # for positional separator snapshots below.
+    blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
+    physical_order: list[str] = []
+    seen_in_physical: set[str] = set()
+    cur: Slot | None = doc._head  # noqa: SLF001
+    while cur is not None:
+        bind_key = _direct_child_key(cur, c_path, c_plen)
+        if bind_key is not None and bind_key in blocks:
+            blocks[bind_key].append(cur)
+            if bind_key not in seen_in_physical:
+                physical_order.append(bind_key)
+                seen_in_physical.add(bind_key)
+        cur = cur._next  # noqa: SLF001
+
+    # 2. Reject orders that would re-bind a leaf KV under a structural
+    # section header. Slotless keys (empty AoT bindings) don't
+    # participate in physical layout, so skip them in the check.
+    def _is_structural(slots: list[Slot]) -> bool:
+        return any(isinstance(s, StructuralHeaderSlot) for s in slots)
+
+    seen_structural = False
+    for k in new_key_order:
+        block = blocks[k]
+        if not block:
+            continue
+        if _is_structural(block):
+            seen_structural = True
+        elif seen_structural:
+            msg = (
+                f"reorder: leaf key {k!r} cannot follow a structural "
+                f"section/AoT key (would rebind it as nested)"
+            )
+            raise ValueError(msg)
+
+    owned_ids = {id(s) for slots in blocks.values() for s in slots}
+    if not owned_ids:
+        return
+
+    # 3. Find splice anchor: slot just before the earliest owned slot.
+    earliest: Slot | None = None
+    cur = doc._head  # noqa: SLF001
+    while cur is not None:
+        if id(cur) in owned_ids:
+            earliest = cur
+            break
+        cur = cur._next  # noqa: SLF001
+    assert earliest is not None
+    anchor_prev = earliest._prev  # noqa: SLF001
+
+    # 4. Snapshot positional separators (by *physical* position, not
+    # dict order) and remainders (travel with their key). Mirrors
+    # renormalise_aot_order, except AoT list order = physical order so
+    # it doesn't need this distinction.
+    structural_by_position: list[Trivia] = []
+    remainder_by_key: dict[str, Trivia] = {}
+    for k in physical_order:
+        head_slot = blocks[k][0]
+        structural, remainder = _split_leading_structural(head_slot.leading)
+        structural_by_position.append(structural)
+        remainder_by_key[k] = remainder
+
+    # 5. Splice: unlink owned slots, reinsert in new key order after
+    # the saved anchor. Foreign slots interleaved in the original span
+    # collapse together as a side effect — typically ending up just
+    # after the reordered region.
+    for slots in blocks.values():
+        for s in slots:
+            unlink_slot(s, doc, strip_new_head_leading=False)
+
+    insert_after_slot = anchor_prev
+    for k in new_key_order:
+        for slot in blocks[k]:
+            if insert_after_slot is None:
+                insert_before_head(slot, doc)
+            else:
+                insert_after(insert_after_slot, slot, doc)
+            insert_after_slot = slot
+
+    # 6. Re-stitch new head-slot leading: positional[new_pos] + remainder[k].
+    # Indexed across slotful keys only, since structural_by_position
+    # captured one entry per physically-present block.
+    slotful_new_order = [k for k in new_key_order if blocks[k]]
+    for new_pos, k in enumerate(slotful_new_order):
+        head_slot = blocks[k][0]
+        structural = structural_by_position[new_pos]
+        remainder = remainder_by_key[k]
+        head_slot.leading = Trivia(list(structural.pieces) + list(remainder.pieces))
+
+    # 7. Resort _refs / _index on c and ancestor chain; recompute
+    # cached body tails that the splice may have invalidated.
+    chain: list[Container] = [c]
+    anc: Container | None = c._parent  # noqa: SLF001
+    while anc is not None:
+        chain.append(anc)
+        anc = anc._parent  # noqa: SLF001
+    _resort_refs_by_doc_order(chain, doc)
+    for cn in chain:
+        if cn._body_tail is not None:  # noqa: SLF001
+            cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
+
+
 __all__ = [
     "add_aot_entry",
     "append_direct_kv",
@@ -3073,6 +3228,7 @@ __all__ = [
     "insert_before_head",
     "remove_aot_entry",
     "renormalise_aot_order",
+    "reorder_container",
     "replace_aot_entry",
     "reposition_install",
     "unlink_slot",
