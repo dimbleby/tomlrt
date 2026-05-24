@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepted, then `NotImplementedError` at attach time).
 - Comments on dotted-key entries are now reachable through the
   dotted-parent container (`project["urls"].comments["homepage"]`).
+- `Array.sort()` / `Array.reverse()` no longer leave the new item 0
+  carrying the old position-0 indent in multi-line arrays.
 
 ## [1.4.3] - 2026-05-24
 

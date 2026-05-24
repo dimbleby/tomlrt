@@ -22,6 +22,7 @@ from tomlrt import _layout_ops
 from tomlrt._array_comments import (
     ArrayEolView,
     ArrayLeadingView,
+    _slot_indent,
     apply_comments,
     clear_all_comments,
     snapshot_comments,
@@ -492,11 +493,14 @@ class Array(list[Any]):
         items = self._value.items
         if not items:
             return
-        # Capture style BEFORE swapping items so inter_sep reflects
-        # the original layout.
+        # Capture style and canonical indent BEFORE swapping items, so
+        # both reflect the original layout rather than mid-permutation
+        # neighbour leadings.
         style = self._style()
-        # Snapshot pad of header_trivia (everything bracket-side of the
-        # above-pos-0 block) so it stays put across the reorder.
+        canonical_indent = _slot_indent(self) if style.is_multiline else ""
+        # Snapshot pad of header_trivia: kept as the bracket pad for the
+        # flush (single-line) case where ``inter_separator`` is a bare
+        # space and would inject a stray leading WS.
         head_pad, _head_above = split_above_block(self._value.header_trivia)
         leadings, eols = snapshot_comments(self)
         new_items = [items[j] for j in order]
@@ -508,9 +512,19 @@ class Array(list[Any]):
         for v in new_decoded:
             list.append(self, v)
         # Re-stamp leadings and post_comma_trivia per canonical model.
-        # Above-blocks will be re-applied by ``apply_comments`` from
-        # the snapshot.
-        self._value.header_trivia = clone_trivia(head_pad)
+        # ``header_trivia`` is item 0's above-region, so for multi-line
+        # arrays its pad must be ``NL + canonical indent`` — otherwise
+        # after a reorder item 0 keeps the old position's indent while
+        # items[1..] inherit the canonical one.
+        if style.is_multiline:
+            self._value.header_trivia = Trivia(
+                [
+                    NewlineNode(text=self._doc_newline),
+                    WhitespaceNode(text=canonical_indent),
+                ]
+            )
+        else:
+            self._value.header_trivia = clone_trivia(head_pad)
         _restamp_canonical_leadings(items, style)
         for it in items:
             it.post_comma_trivia = Trivia()
