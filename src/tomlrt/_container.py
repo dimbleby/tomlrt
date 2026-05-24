@@ -1055,9 +1055,18 @@ class Table(Container):
     Every nested mapping in a document is a [`Table`][tomlrt.Table].
     `Table` is a `dict` subclass, so ``isinstance(t, dict)`` holds
     and it can be passed wherever a `dict` or `Mapping` is expected.
+
+    The same `Table` class backs both standard ``[section]`` blocks
+    and inline ``{x = 1}`` tables. Use [`is_inline`][tomlrt.Table.is_inline]
+    to tell them apart when walking a parsed document.
     """
 
     __slots__ = ()
+
+    @property
+    def is_inline(self) -> bool:
+        """True for inline ``{...}`` tables, False for ``[section]`` blocks."""
+        return self._inline
 
     @classmethod
     def section(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:

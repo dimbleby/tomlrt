@@ -168,6 +168,30 @@ def test_inline_table_access() -> None:
     assert dict(p) == {"x": 1, "y": 2}
 
 
+def test_table_is_inline_distinguishes_section_from_inline() -> None:
+    doc = tomlrt.loads(
+        td(
+            """
+            inline = { y = 2 }
+
+            [section]
+            x = 1
+            """,
+        ),
+    )
+    section = doc["section"]
+    inline = doc["inline"]
+    assert isinstance(section, tomlrt.Table)
+    assert isinstance(inline, tomlrt.Table)
+    assert section.is_inline is False
+    assert inline.is_inline is True
+
+
+def test_table_is_inline_for_factory_constructors() -> None:
+    assert tomlrt.Table.section().is_inline is False
+    assert tomlrt.Table.inline().is_inline is True
+
+
 def test_nested_tables_and_dotted_keys() -> None:
     src = dedent(
         """\

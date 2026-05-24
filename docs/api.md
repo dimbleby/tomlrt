@@ -58,6 +58,7 @@ code.
       members:
         - section
         - inline
+        - is_inline
         - table
         - array
         - aot
