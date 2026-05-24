@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header's leading comment block.
 - Adding a sub-section to an empty placeholder section no longer
   clears `Document.preamble`.
+- Cross-document `dst[k] = src_section` under an empty placeholder
+  parent now demotes the parent to an implicit super-table instead
+  of leaving a stray bare `[parent]` header line.
 
 ## [1.4.3] - 2026-05-24
 
