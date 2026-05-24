@@ -58,11 +58,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _newline_text(arr: Array) -> str:
-    lr = arr._layout_root  # noqa: SLF001
-    return lr._newline if lr is not None else "\n"  # noqa: SLF001
-
-
 def _check_index(arr: Array, key: object) -> int:
     if not isinstance(key, int) or isinstance(key, bool):
         msg = f"Array comment indices must be int, not {type(key).__name__}"
@@ -178,7 +173,7 @@ def _set_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
     """
     items = arr._value.items  # noqa: SLF001
     item = items[idx]
-    nl = _newline_text(arr)
+    nl = arr._doc_newline  # noqa: SLF001
     target = _eol_target(item)
     existing_eol, rest = split_eol_section(target)
     if (
@@ -241,7 +236,7 @@ class ArrayEolView(_ArrayIntKeyedView[str]):
         # closing layout still has its row break.
         value = self._arr._value  # noqa: SLF001
         nxt = items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
-        nl = _newline_text(self._arr)
+        nl = self._arr._doc_newline  # noqa: SLF001
         if not (nxt.pieces and isinstance(nxt.pieces[0], NewlineNode)):
             nxt.pieces = [NewlineNode(nl), *nxt.pieces]
 
@@ -341,7 +336,7 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
             self._arr._value,  # noqa: SLF001
             idx,
             encoded,
-            _newline_text(self._arr),
+            self._arr._doc_newline,  # noqa: SLF001
             _slot_indent(self._arr),
         )
 
@@ -353,7 +348,7 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
         _clear_above_pieces(
             self._arr._value,  # noqa: SLF001
             idx,
-            _newline_text(self._arr),
+            self._arr._doc_newline,  # noqa: SLF001
             _slot_indent(self._arr),
         )
 
@@ -417,7 +412,7 @@ def apply_comments(
     n = len(items)
     if any(eols) or any(leadings):
         _ensure_multiline(arr)
-    nl = _newline_text(arr)
+    nl = arr._doc_newline  # noqa: SLF001
     ind = _slot_indent(arr)
     for i in range(n):
         eol_i = eols[i]

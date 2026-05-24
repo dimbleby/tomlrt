@@ -1866,6 +1866,18 @@ def test_array_set_multiline_custom_indent() -> None:
         """)
 
 
+def test_array_set_multiline_preserves_crlf_newlines() -> None:
+    # Regression: ``set_multiline`` used to hard-code ``\n`` into the
+    # synthesised bracket-pad / inter-item separators, so calling it on
+    # an array inside a CRLF document produced mixed ``\n`` / ``\r\n``
+    # output.
+    doc = tomlrt.loads("a = [1, 2]\r\n")
+    doc.array("a").set_multiline(multiline=True, indent="  ")
+    out = tomlrt.dumps(doc)
+    assert "\n" not in out.replace("\r\n", "")
+    assert out == "a = [\r\n  1,\r\n  2,\r\n]\r\n"
+
+
 def test_array_multiline_property_setter() -> None:
     doc = tomlrt.loads("a = [1, 2]\n")
     arr = doc.array("a")
