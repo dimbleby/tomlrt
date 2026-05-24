@@ -50,12 +50,14 @@ from tomlrt._trivia import (
     WhitespaceNode,
     trivia_has_comment,
 )
+from tomlrt._typecheck import _validate_key, _validate_mapping
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
     make_keypart,
+    retarget_value_newlines,
 )
 
 if TYPE_CHECKING:
@@ -1036,54 +1038,14 @@ class Container(dict[str, Any]):
         return result
 
 
-def _validate_key(key: object) -> str:
-    """Reject a non-``str`` TOML key with a consistent ``TypeError``.
+def _populate_unattached(t: Container, mapping: Mapping[str, Any]) -> None:
+    """Bulk-populate an unattached ``Container`` from a validated mapping.
 
-    Returns the validated key (narrowed to ``str``) so call sites that
-    care about the type can do ``k = _validate_key(k)``.
-
-    Used by every entry point that installs a user-supplied key
-    (``Container.__setitem__``, the ``Table.section`` / ``Table.inline``
-    factories, ``AoT`` entry construction, inline-table synthesis).
+    Bypasses ``Container.__setitem__`` (and its key typecheck) so the
+    layout pipeline never re-pays validation work that the caller has
+    already done.
     """
-    if not isinstance(key, str):
-        msg = f"TOML keys must be str, got {type(key).__name__}"
-        raise TypeError(msg)
-    return key
-
-
-def _validate_mapping(value: object, *, label: str) -> Mapping[str, Any]:
-    """Reject a non-Mapping ``value`` or any Mapping with non-string keys.
-
-    Returns the validated mapping. Used by every factory / mutator that
-    accepts a user-supplied mapping at the boundary
-    (``Table.section`` / ``Table.inline``, ``Document(data=...)``,
-    ``AoT`` entry construction). Centralising this means each entry
-    point produces the same wording (``"<label> must be a Mapping"``
-    / ``"TOML keys must be str"``) instead of leaking
-    ``AttributeError: 'list' object has no attribute 'items'`` from
-    inside the layout pipeline.
-    """
-    if not isinstance(value, Mapping):
-        msg = f"{label} must be a Mapping, got {type(value).__name__}"
-        raise TypeError(msg)
-    for k in value:
-        _validate_key(k)
-    # ``isinstance(value, Mapping)`` plus the per-key check above
-    # establishes ``Mapping[str, Any]`` at runtime; ``ty`` doesn't
-    # narrow ``Mapping`` type parameters from a runtime loop.
-    return value  # ty: ignore[invalid-return-type]
-
-
-def _populate_unattached(t: Container, mapping: object, *, label: str) -> None:
-    """Bulk-populate an unattached ``Container`` from a user-supplied mapping.
-
-    Validates the outer type and every key via :func:`_validate_mapping`,
-    then stores entries directly through ``dict.__setitem__`` so the
-    layout pipeline never sees malformed input.
-    """
-    validated = _validate_mapping(mapping, label=label)
-    for k, v in validated.items():
+    for k, v in mapping.items():
         dict.__setitem__(t, k, v)
 
 
@@ -1107,7 +1069,8 @@ class Table(Container):
         """
         t = cls()
         if mapping is not None:
-            _populate_unattached(t, mapping, label="Table.section argument")
+            mapping = _validate_mapping(mapping, label="Table.section argument")
+            _populate_unattached(t, mapping)
         return t
 
     @classmethod
@@ -1121,7 +1084,8 @@ class Table(Container):
         t = cls()
         t._inline = True
         if mapping is not None:
-            _populate_unattached(t, mapping, label="Table.inline argument")
+            mapping = _validate_mapping(mapping, label="Table.inline argument")
+            _populate_unattached(t, mapping)
         return t
 
 
@@ -1627,8 +1591,6 @@ def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
     ``\n``. Without this the destination dump ends up with mixed
     ``\n`` / ``\r\n`` newlines.
     """
-    from tomlrt._values import retarget_value_newlines  # noqa: PLC0415
-
     if layout_root is not None:
         retarget_value_newlines(val, layout_root._newline)  # noqa: SLF001
 

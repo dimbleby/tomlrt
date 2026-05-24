@@ -39,6 +39,7 @@ from tomlrt._trivia import (
     trivia_has_comment,
     trivia_has_newline,
 )
+from tomlrt._typecheck import _validate_mapping
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -962,7 +963,8 @@ class AoT(list["Table"]):
         self._layout_root: Document | None = None
         self._path: tuple[str, ...] = ()
         self._parent: Container | None = None
-        for e in entries:
+        for entry in entries:
+            e = _validate_mapping(entry, label="AoT entry")
             list.append(self, _make_unattached_entry(e))
 
     @property
@@ -992,7 +994,7 @@ class AoT(list["Table"]):
         (empty entry). The AoT must be attached to a document.
         """
         if entry is not None:
-            entry = self._typecheck_entry(entry)
+            entry = _validate_mapping(entry, label="AoT entry")
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(entry))
             return self[-1]
@@ -1014,19 +1016,6 @@ class AoT(list["Table"]):
             if value._header_ref is not None and not value._inline:  # noqa: SLF001
                 return _layout_ops.clone_table_as_aot_entry(self, value)
         return _layout_ops.add_aot_entry(self, value)
-
-    @staticmethod
-    def _typecheck_entry(value: object) -> Mapping[str, Any]:
-        """Reject non-Mapping ``value`` or non-string-keyed Mapping.
-
-        Validates structure up front so the per-entry layout pipeline
-        sees only well-formed input — otherwise non-string keys propagate
-        deep into key-part synthesis before crashing with an opaque
-        ``expected string or bytes-like object``.
-        """
-        from tomlrt._container import _validate_mapping  # noqa: PLC0415
-
-        return _validate_mapping(value, label="AoT entry")
 
     def _replace_entry_attached(
         self, index: int, value: Mapping[str, Any] | None
@@ -1115,7 +1104,7 @@ class AoT(list["Table"]):
                 raise ValueError(msg)
             # Validate every assigned value is a Mapping/Table BEFORE
             # mutating the AoT (atomicity preflight).
-            typed_values = [self._typecheck_entry(v) for v in values]
+            typed_values = [_validate_mapping(v, label="AoT entry") for v in values]
             if self._layout_root is None:
                 list.__setitem__(
                     self, index, [_make_unattached_entry(v) for v in typed_values]
@@ -1142,7 +1131,7 @@ class AoT(list["Table"]):
             for i, v in zip(indices, typed_values, strict=True):
                 self._replace_entry_attached(i, v)
             return
-        entry = self._typecheck_entry(value)
+        entry = _validate_mapping(value, label="AoT entry")
         if self._layout_root is None:
             list.__setitem__(self, index, _make_unattached_entry(entry))
             return
@@ -1151,7 +1140,7 @@ class AoT(list["Table"]):
     @override
     def append(self, value: Table | Mapping[str, TomlInput]) -> None:
         # Same semantics as `add(body)` but with no return value (list API).
-        entry = self._typecheck_entry(value)
+        entry = _validate_mapping(value, label="AoT entry")
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(entry))
             return
@@ -1166,7 +1155,7 @@ class AoT(list["Table"]):
     def insert(
         self, index: SupportsIndex, value: Table | Mapping[str, TomlInput]
     ) -> None:
-        entry = self._typecheck_entry(value)
+        entry = _validate_mapping(value, label="AoT entry")
         if self._layout_root is None:
             list.insert(self, index, _make_unattached_entry(entry))
             return
@@ -1249,7 +1238,7 @@ def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
 
     t = Table()
     if body is not None:
-        _populate_unattached(t, body, label="AoT entry")
+        _populate_unattached(t, body)
     return t
 
 

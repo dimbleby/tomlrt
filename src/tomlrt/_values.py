@@ -17,7 +17,13 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from tomlrt._trivia import Trivia, WhitespaceNode, clone_trivia, split_above_block
+from tomlrt._trivia import (
+    Trivia,
+    WhitespaceNode,
+    clone_trivia,
+    retarget_trivia_newlines,
+    split_above_block,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -299,8 +305,6 @@ def retarget_value_newlines(v: Value, target: str) -> None:
     in ``NewlineNode``, so this walk preserves any literal CR/LF
     bytes inside string values.
     """
-    from tomlrt._trivia import retarget_trivia_newlines  # noqa: PLC0415
-
     items: list[ArrayItem] | list[InlineTableEntry]
     if isinstance(v, ArrayValue):
         items = v.items
