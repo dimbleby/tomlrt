@@ -3370,6 +3370,76 @@ def test_sort_super_table_with_aot_preserves_explicit_header() -> None:
     assert reparsed.table("a").aot("hello")[0]["x"] == 1
 
 
+def test_sort_moves_disjoint_above_blank_header_comment_with_section() -> None:
+    # Regression for #131: a comment block separated from its section
+    # header by a blank line is part of header_leading_block (per
+    # #126), so it must travel with the section under Container.sort
+    # rather than staying at the physical position.
+    src = td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+
+        # c comment
+
+        [c]
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort(key=lambda k: {"a": 0, "c": 1, "b": 2}[k])
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+
+        # c comment
+
+        [c]
+        z = 3
+
+        [b]
+        y = 2
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+    # header_leading_block ownership stable across the sort.
+    assert doc.table("c").header_leading_block == (None, "c comment", None)
+    assert doc.table("b").header_leading_block == (None,)
+
+
+def test_aot_sort_moves_disjoint_above_blank_header_comment_with_entry() -> None:
+    # Regression for #131 (AoT-parallel fix in renormalise_aot_order):
+    # a disjoint above-blank comment block on an AoT entry header must
+    # travel with that entry under AoT.sort/reverse, not stay put.
+    src = td("""
+        [[t]]
+        x = 2
+
+        # t3
+
+        [[t]]
+        x = 3
+
+        [[t]]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("t").sort(key=lambda e: e["x"])
+    assert tomlrt.dumps(doc) == td("""
+        [[t]]
+        x = 1
+
+        [[t]]
+        x = 2
+
+        # t3
+
+        [[t]]
+        x = 3
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
 def test_sort_round_trips_for_repeated_sorts() -> None:
     src = td("""
         # head

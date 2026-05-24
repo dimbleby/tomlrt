@@ -32,7 +32,7 @@ import contextlib
 import copy
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from tomlrt._comments import _split_attached_block
+from tomlrt._comments import _line_is_comment, _split_attached_block
 from tomlrt._kind import _Kind
 from tomlrt._scalar import is_scalar
 from tomlrt._slots import (
@@ -1594,30 +1594,73 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
             owner.entry_slots.remove(header)
 
 
+def _split_at_remainder(
+    leading: Trivia,
+    remainder_lines: Iterable[Iterable[TriviaPiece]],
+    indent: Iterable[TriviaPiece],
+) -> tuple[Trivia, Trivia]:
+    """Build ``(positional-prefix, remainder)`` from already-classified lines.
+
+    Concatenates ``remainder_lines`` and ``indent`` to form the
+    remainder; the positional prefix is whatever's left of
+    ``leading`` once ``len(remainder)`` pieces have been peeled off
+    the tail. Callers are responsible for choosing which lines
+    travel with the slot.
+    """
+    pieces = leading.pieces
+    remainder: list[TriviaPiece] = []
+    for line in remainder_lines:
+        remainder.extend(line)
+    remainder.extend(indent)
+    cut = len(pieces) - len(remainder)
+    return Trivia(list(pieces[:cut])), Trivia(remainder)
+
+
 def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
     """Split a leading-trivia stream into (positional-prefix, slot-remainder).
 
     The positional prefix is the run of "above-blank" lines (preamble
     or archived comment blocks separated from the slot by a blank
-    line) plus any pure-structural blanks; it stays at the slot's
-    current doc-stream position when the slot moves. The remainder
-    is the attached comment block (immediately above the slot, with
-    no blank line between) plus the slot's own column-offset indent;
-    it travels with the slot.
+    line) plus any pure-structural blanks; the remainder is the
+    attached comment block (immediately above the slot, with no
+    blank line between) plus the slot's own column-offset indent.
 
-    Used by AoT reorder (rotates positional prefixes among entries
-    while remainders travel with their entry) and by cross-doc clone
-    (which drops the positional prefix entirely — preamble belongs
-    to the source document, not the section being copied).
+    Used by cross-doc clone (which drops the positional prefix
+    entirely — preamble belongs to the source document, not the
+    section being copied). Reorder paths use
+    :func:`_split_leading_for_reorder` instead, which honours the
+    public ownership model.
     """
-    pieces = leading.pieces
     _above, attached, indent = _split_attached_block(leading)
-    remainder: list[TriviaPiece] = []
-    for line in attached:
-        remainder.extend(line)
-    remainder.extend(indent)
-    cut = len(pieces) - len(remainder)
-    return Trivia(list(pieces[:cut])), Trivia(remainder)
+    return _split_at_remainder(leading, attached, indent)
+
+
+def _split_leading_for_reorder(doc: Document, slot: Slot) -> tuple[Trivia, Trivia]:
+    """Reorder-aware leading split: disjoint comment blocks travel with the slot.
+
+    Per the public ownership model (``Table.header_leading_block``,
+    ``Container.leading_block``), an above-blank comment block that
+    immediately precedes a slot is part of that slot's leading and
+    must travel with it under reorder. Differs from
+    :func:`_split_leading_structural`, which is shaped for the
+    cross-doc clone path and treats every above-blank block as
+    positional (so the source's preamble / archived blocks are
+    dropped on clone).
+
+    For the document head slot the above-blank prefix is the doc
+    preamble; that stays at position 0 — same rule as
+    :func:`_split_leading_structural`. For every other slot the
+    positional prefix is just the run of pure-blank lines before
+    the first comment; the remainder is everything from the first
+    comment line onward.
+    """
+    if slot is doc._head:  # noqa: SLF001
+        return _split_leading_structural(slot.leading)
+    above, attached, indent = _split_attached_block(slot.leading)
+    i = 0
+    while i < len(above) and not _line_is_comment(above[i]):
+        i += 1
+    return _split_at_remainder(slot.leading, [*above[i:], *attached], indent)
 
 
 def _retarget_header_separator(
@@ -2849,7 +2892,7 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
             remainder_by_entry_id[id(entry_table)] = Trivia()
             continue
         head_slot = per_entry_slots[i][0]
-        structural, remainder = _split_leading_structural(head_slot.leading)
+        structural, remainder = _split_leading_for_reorder(doc, head_slot)
         structural_by_position.append(structural)
         remainder_by_entry_id[id(entry_table)] = remainder
 
@@ -3210,7 +3253,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     remainder_by_key: dict[str, Trivia] = {}
     for k in physical_order:
         head_slot = blocks[k][0]
-        structural, remainder = _split_leading_structural(head_slot.leading)
+        structural, remainder = _split_leading_for_reorder(doc, head_slot)
         structural_by_position.append(structural)
         remainder_by_key[k] = remainder
 
