@@ -243,11 +243,11 @@ def test_attached_aot_append_rejects_non_string_keys() -> None:
     doc = tomlrt.loads("")
     doc["pkg"] = AoT()
     with pytest.raises(TypeError, match="must be str"):
-        doc["pkg"].append({1: "no"})  # ty: ignore[invalid-argument-type]
+        doc["pkg"].append({1: "no"})
     with pytest.raises(TypeError, match="must be str"):
-        doc["pkg"].add({1: "no"})  # ty: ignore[invalid-argument-type]
+        doc["pkg"].add({1: "no"})
     with pytest.raises(TypeError, match="must be str"):
-        doc["pkg"].insert(0, {1: "no"})  # ty: ignore[invalid-argument-type]
+        doc["pkg"].insert(0, {1: "no"})
 
 
 def test_inline_synth_from_plain_dict_rejects_non_string_keys() -> None:
