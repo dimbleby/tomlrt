@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-05-24
+
 ### Fixed
 
 - Overwriting an implicit table with a scalar or inline value now
