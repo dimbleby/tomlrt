@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Table.is_inline` property to distinguish inline `{...}` tables from
+  `[section]` blocks when walking a parsed document.
+
 ## [1.4.3] - 2026-05-24
 
 ### Fixed
