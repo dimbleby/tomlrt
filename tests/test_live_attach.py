@@ -262,6 +262,21 @@ def test_inline_synth_from_plain_dict_rejects_non_string_keys() -> None:
         doc["t"]["sub"] = {1: "no"}
 
 
+def test_factories_reject_non_mapping_input() -> None:
+    # Regression: ``Table.section`` / ``Table.inline`` / ``Document(data)``
+    # / ``AoT`` accepted any object and crashed in ``.items()`` with a
+    # raw ``AttributeError``. Each factory now raises a clean
+    # ``TypeError`` up front.
+    with pytest.raises(TypeError, match="must be a Mapping"):
+        Table.section([("a", 1)])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="must be a Mapping"):
+        Table.inline([("a", 1)])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="must be a Mapping"):
+        tomlrt.Document([("a", 1)])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="must be a Mapping"):
+        AoT(["not a mapping"])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
+
+
 # ---------------------------------------------------------------------------
 # Array live attach
 # ---------------------------------------------------------------------------
