@@ -1691,8 +1691,9 @@ def clone_aot_entry(
     Returns the new ``Table`` view.
     """
     if isinstance(src, AoTEntry):
-        src_entry: AoTEntry = src
-        src_layout_root: Document | None = None
+        src_entry = src
+        src_layout_root = None
+        src_slots: list[Slot] = list(src_entry.entry_slots)
     else:
         owner = src._owner_aot_entry  # noqa: SLF001
         if owner is None:  # pragma: no cover
@@ -1700,11 +1701,15 @@ def clone_aot_entry(
             raise RuntimeError(msg)
         src_entry = owner
         src_layout_root = src._layout_root  # noqa: SLF001
+        # _gather_subtree_slots (not just entry.entry_slots) so nested
+        # ``[[a.x]]`` entries living physically inside this entry's
+        # body come along — entry_slots only holds the entry's *own*
+        # slots, not those owned by nested AoTEntries.
+        src_slots = _gather_subtree_slots(src)
 
     layout_root = aot._layout_root  # noqa: SLF001
     path = aot._path  # noqa: SLF001
     target_path = dst_path if dst_path is not None else path
-    src_slots = list(src_entry.entry_slots)
     same_aot_clone = target_path == src_entry.path and src_layout_root is layout_root
     return _install_cloned_aot_entry(
         aot,
@@ -1740,7 +1745,6 @@ def _install_cloned_structural_block(
         entry_table=table,
         cloned_slots=cloned_slots[1:],
         target_prefix=target_path,
-        body_owner=owner,
         doc=doc,
     )
 
@@ -1889,12 +1893,14 @@ def clone_aot_entry_as_table(
     return _install_cloned_section(parent, key, src_slots, src_entry.path)
 
 
-def _gather_section_slots(src_table: Container) -> list[Slot]:
-    """Collect a standard section's owned slots in doc-stream order.
+def _gather_subtree_slots(src_table: Container) -> list[Slot]:
+    """Collect a container subtree's owned slots in doc-stream order.
 
-    Includes the section's own header, every direct/dotted KV slot,
-    and every nested sub-section's header + KV slots — i.e. the
-    entire physical body of ``src_table``.
+    Includes the container's own header, every direct/dotted KV slot,
+    every nested sub-section's header + KV slots, and every nested
+    ``[[a.x]]`` aot-entry's header + KV slots — i.e. the entire
+    physical body of ``src_table``. Works on both standard sections
+    and AoT-entry tables (both expose a ``_header_ref``).
     """
     assert src_table._header_ref is not None  # noqa: SLF001
 
@@ -1930,7 +1936,7 @@ def clone_table_as_aot_entry(
     section path to ``aot._path``. Preserves per-slot leading / EOL
     / lexeme bytes (so per-section comments survive).
     """
-    src_slots = _gather_section_slots(src_table)
+    src_slots = _gather_subtree_slots(src_table)
     if not isinstance(src_slots[0], StructuralHeaderSlot):  # pragma: no cover
         msg = "Source section's first owned slot is not a header"
         raise AssertionError(msg)  # noqa: TRY004
@@ -1959,7 +1965,7 @@ def clone_section_as_section(
     by deep-cloning every owned slot and rebasing paths from
     ``src_table._path`` to ``parent._path + (key,)``.
     """
-    src_slots = _gather_section_slots(src_table)
+    src_slots = _gather_subtree_slots(src_table)
     if not isinstance(src_slots[0], StructuralHeaderSlot):  # pragma: no cover
         msg = "Source section's first owned slot is not a header"
         raise AssertionError(msg)  # noqa: TRY004
@@ -2021,43 +2027,63 @@ def _clone_entry_slots(
     keeps physical ownership coherent). ``new_entry`` is the
     AoTEntry the cloned slots are *logically* owned by — used for
     the head's ``entry`` back-pointer and for the ``entry_slots``
-    membership list, and propagated to any nested aot-entry header
-    in the body.
+    membership list.
+
+    Nested aot-entry headers inside the body keep their AoT shape:
+    a fresh `AoTEntry` is allocated per unique source entry found
+    in the body, cloned slots are repointed to it, and the
+    discriminator (`StructuralHeaderSlot.entry`) is preserved so
+    ``_populate_entry_views`` can rebuild the AoT view. Without
+    this, cross-doc whole-section copy would downgrade nested
+    ``[[a.x]]`` to a duplicated ``[a.x]`` (issue #108).
 
     ``dst_newline`` is the destination document's line ending; every
     cloned slot's structural-newline trivia is retargeted to it so a
     cross-document graft does not leave alien ``\r\n`` / ``\n``
     pieces behind in the destination's slot stream.
     """
+    body_start = 1 if has_header else 0
+    nested_entry_map: dict[int, AoTEntry] = {}
+    if has_header and new_entry is not None:
+        head_src = src_slots[0]
+        assert isinstance(head_src, StructuralHeaderSlot)
+        if head_src.entry is not None:
+            nested_entry_map[id(head_src.entry)] = new_entry
+    for s in src_slots[body_start:]:
+        if not isinstance(s, StructuralHeaderSlot) or s.entry is None:
+            continue
+        if id(s.entry) in nested_entry_map:
+            continue
+        nested_entry_map[id(s.entry)] = AoTEntry(
+            path=_rebase_path(s.entry.path, src_prefix, target_prefix),
+            ordinal=s.entry.ordinal,
+        )
+
     cloned: list[Slot] = []
     for s in src_slots:
         c: Slot = copy.deepcopy(s)
         c._prev = None  # noqa: SLF001
         c._next = None  # noqa: SLF001
         retarget_slot_newlines(c, dst_newline)
+        src_owner = s.owner_aot_entry
+        mapped = nested_entry_map.get(id(src_owner)) if src_owner else None
+        dst_owner = mapped if mapped is not None else body_owner
         if isinstance(c, KVSlot):
-            c.owner_aot_entry = body_owner
+            c.owner_aot_entry = dst_owner
             c.host_path = _rebase_path(c.host_path, src_prefix, target_prefix)
         elif isinstance(c, StructuralHeaderSlot):
-            c.owner_aot_entry = body_owner
+            assert isinstance(s, StructuralHeaderSlot)
+            c.owner_aot_entry = dst_owner
             c.path = _rebase_path(c.path, src_prefix, target_prefix)
             c.key_parts = make_keyparts(c.path)
             c.key_seps = ["."] * (len(c.key_parts) - 1)
-            # Nested aot-entry header in the body — repoint to new
-            # owning entry. Non-aot (table) headers stay as-is.
-            if c.entry is not None:
-                c.entry = new_entry
+            if s.entry is not None:
+                c.entry = nested_entry_map.get(id(s.entry))
         cloned.append(c)
-        if new_entry is not None:
-            new_entry.entry_slots.append(c)
+        filing_entry = mapped if mapped is not None else new_entry
+        if filing_entry is not None:
+            filing_entry.entry_slots.append(c)
 
-    if not has_header or not cloned:
-        return cloned
-    head = cloned[0]
-    assert isinstance(head, StructuralHeaderSlot)
-    head.entry = new_entry
-    if new_entry is not None:
-        head.owner_aot_entry = new_entry
     return cloned
 
 
@@ -2079,7 +2105,6 @@ def _populate_entry_views(
     entry_table: Container,
     cloned_slots: list[Slot],
     target_prefix: tuple[str, ...],
-    body_owner: AoTEntry | None,
     doc: Document,
 ) -> None:
     """Walk cloned non-header slots, building child Container views.
@@ -2087,17 +2112,29 @@ def _populate_entry_views(
     Mirrors the parser's slot-builder for an entry: KV slots file
     refs into their host container; sub-section headers create child
     Containers under the entry root and file own-header refs +
-    parent-binding refs.
+    parent-binding refs. Nested ``[[a.b]]`` aot-entry headers are
+    handled too: a fresh `AoT` view (and entry `Table`) is created
+    or extended at the rebased path so cross-doc graft preserves
+    AoT structure.
+
+    Owner inheritance: every newly created container inherits its
+    parent's ``_owner_aot_entry``, which matches how the parser
+    resolves implicit containers under an entry. The caller wires
+    the root ``entry_table`` with the correct owner.
 
     Decoded Python values are derived from each slot's (already
     deep-cloned) ``Value`` via ``_decode_value`` — never aliased
     from the source dict — so the destination view is fully
     independent of the source.
     """
+    from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._build import _decode_value  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
 
     # path -> Container for every container in the entry sub-tree.
+    # When a new AoT entry opens, its descendant entries are evicted
+    # so re-opened sub-paths (e.g. ``[a.x.sub]`` repeated under each
+    # ``[[a.x]]`` entry) resolve to a fresh container per entry.
     containers: dict[tuple[str, ...], Container] = {target_prefix: entry_table}
 
     def _ensure_container(path: tuple[str, ...]) -> Container:
@@ -2110,29 +2147,75 @@ def _populate_entry_views(
             if cur_path in containers:
                 cur = containers[cur_path]
                 continue
-            child = _init_implicit_table(doc, cur_path, cur, body_owner)
+            existing = cur.get(comp)
+            if isinstance(existing, AoT) and existing:
+                cur = existing[-1]
+                containers[cur_path] = cur
+                continue
+            child = _init_implicit_table(
+                doc,
+                cur_path,
+                cur,
+                cur._owner_aot_entry,  # noqa: SLF001
+            )
             containers[cur_path] = child
             dict.__setitem__(cur, comp, child)
             cur = child
         return cur
 
+    def _evict_subtree(prefix: tuple[str, ...]) -> None:
+        """Drop cached descendants of ``prefix`` (exclusive).
+
+        Called when a new AoT entry opens — the previous entry's
+        ``[a.x.sub]`` containers must not be reused by a later
+        ``[a.x.sub]`` belonging to the new entry.
+        """
+        n = len(prefix)
+        stale = [p for p in containers if len(p) > n and p[:n] == prefix]
+        for p in stale:
+            del containers[p]
+
     for s in cloned_slots:
         if isinstance(s, StructuralHeaderSlot):
+            if s.kind == "aot-entry":
+                assert s.entry is not None
+                aot_path = s.path
+                parent_view = _ensure_container(aot_path[:-1])
+                name = aot_path[-1]
+                aot = parent_view.get(name)
+                if aot is None:
+                    aot = AoT()
+                    aot._layout_root = doc  # noqa: SLF001
+                    aot._path = aot_path  # noqa: SLF001
+                    aot._parent = parent_view  # noqa: SLF001
+                    dict.__setitem__(parent_view, name, aot)
+                assert isinstance(aot, AoT)
+                ent_table = Table()
+                ent_table._wire(  # noqa: SLF001
+                    layout_root=doc,
+                    parent=parent_view,
+                    path=aot_path,
+                    owner=s.entry,
+                )
+                ent_table._header_ref = record_ref(ent_table, s)  # noqa: SLF001
+                ent_table._body_tail = s  # noqa: SLF001
+                record_ref(parent_view, s)
+                list.append(aot, ent_table)
+                _evict_subtree(aot_path)
+                containers[aot_path] = ent_table
+                continue
             assert s.kind == "table"
             container = _ensure_container(s.path)
-            own_ref = SlotRef(slot=s, container=container)
-            container._refs.append(own_ref)  # noqa: SLF001
-            container._header_ref = own_ref  # noqa: SLF001
+            container._header_ref = record_ref(container, s)  # noqa: SLF001
             if s.path == target_prefix:
                 continue
-            parent_path = s.path[:-1]
-            parent_view = _ensure_container(parent_path)
-            binding = SlotRef(slot=s, container=parent_view)
-            _file_ref_at_tail(parent_view, binding)
+            parent_view = _ensure_container(s.path[:-1])
+            record_ref(parent_view, s)
             continue
         assert isinstance(s, KVSlot)
         host = _ensure_container(s.host_path)
         slot_value = s.value
+        host_owner = host._owner_aot_entry  # noqa: SLF001
         if len(s.key_parts) == 1:
             key = s.key_parts[0].value
             kv_ref = SlotRef(slot=s, container=host)
@@ -2142,7 +2225,7 @@ def _populate_entry_views(
                 layout_root=doc,
                 parent=host,
                 path=(*host._path, key),  # noqa: SLF001
-                owner=body_owner,
+                owner=host_owner,
             )
             dict.__setitem__(host, key, decoded)
         else:
@@ -2152,7 +2235,12 @@ def _populate_entry_views(
                 ref = SlotRef(slot=s, container=cur)
                 _file_ref_at_tail(cur, ref)
                 if comp not in cur:
-                    sub = _init_implicit_table(doc, (*cur._path, comp), cur, body_owner)  # noqa: SLF001
+                    sub = _init_implicit_table(
+                        doc,
+                        (*cur._path, comp),  # noqa: SLF001
+                        cur,
+                        host_owner,
+                    )
                     containers[sub._path] = sub  # noqa: SLF001
                     dict.__setitem__(cur, comp, sub)
                 nxt = dict.__getitem__(cur, comp)
@@ -2168,7 +2256,7 @@ def _populate_entry_views(
                 layout_root=doc,
                 parent=cur,
                 path=(*cur._path, leaf_key),  # noqa: SLF001
-                owner=body_owner,
+                owner=host_owner,
             )
             dict.__setitem__(cur, leaf_key, decoded)
 
@@ -2589,7 +2677,6 @@ def replace_aot_entry_with_clone(
         entry_table=dst_entry_table,
         cloned_slots=cloned_body,
         target_prefix=path,
-        body_owner=dst_entry,
         doc=doc,
     )
 
