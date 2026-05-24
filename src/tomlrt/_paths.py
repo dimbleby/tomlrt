@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 from tomlrt._errors import TOMLError
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 def split_path(path: str | Sequence[str]) -> list[str]:
@@ -38,7 +35,7 @@ def validate_path(path: object) -> list[str]:
                 msg = f"key path {path!r} contains an empty segment"
                 raise TOMLError(msg)
         return parts
-    if isinstance(path, (list, tuple)):
+    if isinstance(path, Sequence):
         if len(path) == 0:
             msg = "key path must not be empty"
             raise TOMLError(msg)

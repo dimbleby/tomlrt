@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   document.
 - `Array.__imul__` (`arr *= n`) now keeps replicated inline tables and
   arrays live: mutations through the copies render.
+- `Document.install` / `Document.ensure_table` now accept any
+  `Sequence[str]` (e.g. `collections.deque`), matching the documented
+  contract and the public type signature.
 
 ## [1.4.2] - 2026-05-10
 
