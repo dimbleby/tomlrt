@@ -18,7 +18,7 @@ import pytest
 
 import tomlrt
 from _helpers import td
-from tomlrt import Document, Table
+from tomlrt import Document, Table, TOMLError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -311,7 +311,7 @@ def test_assign_inline_table_containing_aot_value_rejected() -> None:
     )
     dest = tomlrt.loads("dest = 0\n")
     aot = src.aot("products")
-    with pytest.raises(NotImplementedError, match="AoT"):
+    with pytest.raises(TOMLError, match="array-of-tables"):
         dest["dest"] = {"items": aot}
 
 
@@ -325,8 +325,27 @@ def test_assign_inline_table_containing_section_container_rejected() -> None:
     )
     dest = tomlrt.loads("dest = 0\n")
     section = src.table("sub")
-    with pytest.raises(NotImplementedError, match="section Container"):
+    with pytest.raises(TOMLError, match="section-style table"):
         dest["dest"] = {"nested": section}
+
+
+def test_detached_inline_rejects_section_value_eagerly() -> None:
+    """A detached ``Table.inline()`` used to silently accept a
+    section-typed value, with the error deferred to attach time. The
+    check is now eager: it fires at the actual point of mistake.
+    """
+    sub = Table.section({"y": 1})
+    parent = Table.inline()
+    with pytest.raises(TOMLError, match="section-style table"):
+        parent["x"] = sub
+
+
+def test_detached_inline_rejects_aot_value_eagerly() -> None:
+    """Sibling of the section case: detached inline rejects AoT eagerly."""
+    aot = tomlrt.AoT([{"name": "a"}])
+    parent = Table.inline()
+    with pytest.raises(TOMLError, match="array-of-tables"):
+        parent["x"] = aot
 
 
 def test_assign_aot_over_scalar() -> None:

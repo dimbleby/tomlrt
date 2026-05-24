@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-document `dst[k] = src_section` under an empty placeholder
   parent now demotes the parent to an implicit super-table instead
   of leaving a stray bare `[parent]` header line.
+- Assigning a section table or `AoT` as a value of an inline table
+  now consistently raises `TOMLError` with a clear message, including
+  for detached `Table.inline()` factories (previously: silently
+  accepted, then `NotImplementedError` at attach time).
 
 ## [1.4.3] - 2026-05-24
 
