@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Table.section(mapping)` and `AoT(entries)` now reject non-string
   keys at construction with a clear `TypeError`, matching `Table.inline`
   and `Document(data=...)`.
+- `copy.copy` / `copy.deepcopy` of an inline `Table` now returns an
+  inline `Table` instead of silently converting to a section table.
 
 ## [1.4.2] - 2026-05-10
 

@@ -683,10 +683,10 @@ class Container(dict[str, Any]):
         # Equivalent to deepcopy: returns an independent detached
         # container preserving nested typed views, so .table() etc.
         # continue to work on the copy.
-        return _deep_section_clone(self)
+        return _deep_clone(self)
 
     def __deepcopy__(self, memo: dict[int, object]) -> Container:
-        return _deep_section_clone(self)
+        return _deep_clone(self)
 
     # ------------------------------------------------------------------
     # Inline-table dispatch
@@ -1260,20 +1260,24 @@ def _comma_value_has_outer_comments(
     )
 
 
-def _deep_section_clone(c: Container) -> Container:
-    """Build a detached deep clone of ``c`` as a section-flavoured Table.
+def _deep_clone(c: Container) -> Container:
+    """Build a detached deep clone of ``c`` as a lossy snapshot.
 
-    Nested ``Container`` and ``AoT`` values are recursively cloned as
-    section / AoT typed views (preserving the user's ability to use
-    ``.table()`` / ``.aot()`` on the copy). Inline values and scalars
-    are passed through ``to_dict()``-equivalent normalisation.
+    The clone preserves the source's inline vs section shape (so a
+    deepcopy of an inline table returns an inline view), and recurses
+    into nested ``Container`` and ``AoT`` values so their shape is
+    preserved too. Render-level formatting (trivia, comments,
+    per-item layout) is not preserved — the result is a dict-style
+    snapshot, and a fresh CST is built on re-installation. For
+    byte-exact preservation of an entire document, use ``Document``'s
+    own ``__deepcopy__`` (which round-trips via ``loads(render())``).
     """
-    out = Table.section()
+    out = Table.inline() if c._inline else Table.section()  # noqa: SLF001
     for k, v in c.items():
-        if _is_section(v):
-            dict.__setitem__(out, k, _deep_section_clone(v))
+        if isinstance(v, Container):
+            dict.__setitem__(out, k, _deep_clone(v))
         elif isinstance(v, AoT):
-            dict.__setitem__(out, k, AoT([_deep_section_clone(e) for e in v]))
+            dict.__setitem__(out, k, AoT([_deep_clone(e) for e in v]))
         else:
             dict.__setitem__(out, k, _to_python(v))
     return out
