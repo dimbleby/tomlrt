@@ -835,25 +835,19 @@ class Container(dict[str, Any]):
             if i == len(parts) - 1:
                 cur[parts[-1]] = value
                 return cur[parts[-1]]
-            if is_aot:
-                # Multi-component AoT install: walk implicit
-                # intermediates, then let __setitem__ handle the
-                # final binding through add_aot_entry.
-                for p in parts[i : len(parts) - 1]:
-                    implicit = Table()
-                    implicit._wire(  # noqa: SLF001
-                        layout_root=cur._layout_root,  # noqa: SLF001
-                        parent=cur,
-                        path=(*cur._path, p),  # noqa: SLF001
-                        owner=cur._owner_aot_entry,  # noqa: SLF001
-                    )
-                    dict.__setitem__(cur, p, implicit)
-                    cur = implicit
-                cur[parts[-1]] = value
-                return cur[parts[-1]]
-            sub = parts[i:]
-            assert isinstance(value, (Table, Mapping)) or value is None
-            return _layout_ops.attach_section_at(cur, sub, value)
+            # Build the implicit-table intermediates, then dispatch the
+            # final binding via __setitem__ so it flows through the
+            # standard Container dispatchers (_install_section /
+            # _attach_aot). Those already pick the right path for
+            # every source state — attached header-bearing sections
+            # clone via clone_section_as_section, attached implicit
+            # sources recurse via _install_attached_subtree, attached
+            # AoTs clone via clone_aot, detached / private values
+            # synthesise — so we don't need to second-guess the
+            # source state here.
+            anchor = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
+            anchor[parts[-1]] = value
+            return anchor[parts[-1]]
         host = self if len(parts) == 1 else self.ensure_table(parts[:-1])
         host[parts[-1]] = value
         return host[parts[-1]]
