@@ -151,7 +151,7 @@ class Container(dict[str, Any]):
         Returns only the *attached* comment run immediately above each key
         (no blank line between).  For the full block — including any
         above-blank groups and the blank-line structure between them — see
-        :attr:`leading_block`.
+        [`leading_block`][tomlrt.Table.leading_block].
 
         Mutating the view requires the container to be attached to a
         `Document`.
@@ -168,12 +168,14 @@ class Container(dict[str, Any]):
         Each entry is a ``tuple[str | None, ...]`` of comment strings
         interleaved with ``None`` (one per blank line), in source order;
         the slot's own column indent is implicit and re-applied on write.
-        Full-fidelity peer of :attr:`leading_comments`, which exposes only
-        the trailing attached run.
+        Full-fidelity peer of
+        [`leading_comments`][tomlrt.Table.leading_comments], which exposes
+        only the trailing attached run.
 
-        At the document's head slot, :attr:`Document.preamble` is
-        disjoint from this view: reading omits the preamble lines,
-        and writing preserves them.
+        At the document's head slot,
+        [`Document.preamble`][tomlrt.Document.preamble] is disjoint from
+        this view: reading omits the preamble lines, and writing
+        preserves them.
 
         Mutating the view requires the container to be attached to a
         `Document`.
@@ -201,7 +203,7 @@ class Container(dict[str, Any]):
         """The attached comment block immediately above this container's header.
 
         Excludes any above-blank groups — those are visible via
-        :attr:`header_leading_block`.
+        [`header_leading_block`][tomlrt.Table.header_leading_block].
         """
         return _header_leading_get(self)
 
@@ -219,12 +221,14 @@ class Container(dict[str, Any]):
 
         A ``tuple[str | None, ...]`` of comment strings interleaved with
         ``None`` (one per blank line), in source order.  Full-fidelity
-        peer of :attr:`header_leading_comments`, which exposes only the
-        trailing attached run.
+        peer of
+        [`header_leading_comments`][tomlrt.Table.header_leading_comments],
+        which exposes only the trailing attached run.
 
-        For the first section in a document, :attr:`Document.preamble`
-        is disjoint from this view: reading omits the preamble lines,
-        and writing preserves them.
+        For the first section in a document,
+        [`Document.preamble`][tomlrt.Document.preamble] is disjoint from
+        this view: reading omits the preamble lines, and writing preserves
+        them.
         """
         return _header_leading_block_get(self)
 
@@ -757,9 +761,8 @@ class Container(dict[str, Any]):
     ) -> None:
         """Sort direct child keys in place, preserving per-key trivia.
 
-        Mirrors ``list.sort`` / :meth:`AoT.sort`: keyword-only ``key``
-        / ``reverse``, stable, in-place. Works for sections, the
-        document root, and inline tables.
+        Mirrors ``list.sort``: keyword-only ``key`` / ``reverse``, stable,
+        in-place.
 
         Raises:
             ValueError: the proposed order places a leaf KV after a
@@ -1286,9 +1289,10 @@ class Document(Container):
         On a document whose first slot is a section header or KV key, the
         preamble is stored as the above-blank prefix of that slot's
         leading trivia — the same storage that
-        :attr:`Table.header_leading_block` / :attr:`Container.leading_block`
-        expose for the first slot.  Writes through either path are
-        visible through the other.
+        [`Table.header_leading_block`][tomlrt.Table.header_leading_block] /
+        [`Document.leading_block`][tomlrt.Document.leading_block] expose
+        for the first slot.  Writes through either path are visible
+        through the other.
         """
         return _doc_preamble_get(self)
 
