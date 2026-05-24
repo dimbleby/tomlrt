@@ -3278,6 +3278,98 @@ def test_sort_preserves_lexeme_styles_and_whitespace() -> None:
         """)
 
 
+def test_sort_aot_element_does_not_merge_sibling_entries() -> None:
+    # Regression: Container.sort on an AoT element used to bucket
+    # slots from sibling entries (same path) into the sorted entry,
+    # merging their KVs and leaving the siblings empty.
+    src = td("""
+        [[hello]]
+        b = 2
+        a = 1
+
+        [[hello]]
+        b = 4
+        a = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("hello")[0].sort()
+    assert tomlrt.dumps(doc) == td("""
+        [[hello]]
+        a = 1
+        b = 2
+
+        [[hello]]
+        b = 4
+        a = 3
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_aot_element_with_nested_section_preserves_siblings() -> None:
+    # Sorting an AoT entry with its own nested [a.sub] keeps the
+    # sub-section attached to this entry and leaves the sibling
+    # entry intact.
+    src = td("""
+        [[a]]
+        x = 1
+
+        [a.sub]
+        n = 2
+
+        [[a]]
+        x = 3
+        """)
+    doc = tomlrt.loads(src)
+    e0 = doc.aot("a")[0]
+
+    def key(k: str) -> tuple[int, str]:
+        v = dict.__getitem__(e0, k)
+        return (1 if isinstance(v, (AoT, Table)) else 0, k)
+
+    e0.sort(key=key)
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [a.sub]
+        n = 2
+
+        [[a]]
+        x = 3
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_super_table_with_aot_preserves_explicit_header() -> None:
+    # Regression: Container.sort on a super-table that mixes a nested
+    # AoT with direct KVs used to drop the [a] header from the splice;
+    # the direct KVs then re-bound to the document root.
+    src = td("""
+        [[a.hello]]
+        x = 1
+
+        [a]
+        date = "2019"
+        name = "Bob"
+        """)
+    doc = tomlrt.loads(src)
+    # Structural-last key (mirrors toml-sort's section ordering): puts
+    # leaf KVs before structural sub-sections / AoTs.
+    a = doc.table("a")
+
+    def key(k: str) -> tuple[int, str]:
+        v = dict.__getitem__(a, k)
+        return (1 if isinstance(v, (AoT, Table)) else 0, k)
+
+    a.sort(key=key)
+    out = tomlrt.dumps(doc)
+    assert _reparses(out)
+    reparsed = tomlrt.loads(out)
+    assert reparsed.table("a")["date"] == "2019"
+    assert reparsed.table("a")["name"] == "Bob"
+    assert reparsed.table("a").aot("hello")[0]["x"] == 1
+
+
 def test_sort_round_trips_for_repeated_sorts() -> None:
     src = td("""
         # head

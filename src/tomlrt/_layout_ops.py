@@ -3104,6 +3104,20 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     span are pushed out of the way to wherever the splice leaves
     them — typically just after the reordered region.
 
+    If ``c`` owns an explicit (non-synthetic) ``[c]`` header, that
+    header is spliced in at the start of the reordered region — it
+    either precedes the first KV-only block (binding its direct KVs
+    to ``c``) or precedes the first structural block (vestigial but
+    valid). Without this, a structural-last reorder of a super-table
+    mixing nested AoTs with direct KVs would re-bind the KVs to the
+    document root.
+
+    When ``c`` is an AoT entry (``c._owner_aot_entry is not None``),
+    only slots owned by that entry participate: sibling entries with
+    the same path are excluded so their content is not merged in.
+    Nested AoT children of ``c`` (owned by their own entry) are
+    likewise excluded — they keep their physical position.
+
     Only mutates the CST; dict storage is the caller's responsibility.
 
     Raises:
@@ -3115,17 +3129,21 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     c_path = c._path  # noqa: SLF001
     c_plen = len(c_path)
+    c_owner = c._owner_aot_entry  # noqa: SLF001
 
     # 1. Bucket slots by direct-child key, in doc-stream order. Also
     # capture each key's first-appearance physical order — the basis
-    # for positional separator snapshots below.
+    # for positional separator snapshots below. When c is an AoT
+    # entry, restrict to slots owned by that entry (so sibling-entry
+    # slots and nested-AoT children are excluded).
     blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
     physical_order: list[str] = []
     seen_in_physical: set[str] = set()
     cur: Slot | None = doc._head  # noqa: SLF001
     while cur is not None:
         bind_key = _direct_child_key(cur, c_path, c_plen)
-        if bind_key is not None and bind_key in blocks:
+        in_scope = c_owner is None or cur.owner_aot_entry is c_owner
+        if bind_key is not None and bind_key in blocks and in_scope:
             blocks[bind_key].append(cur)
             if bind_key not in seen_in_physical:
                 physical_order.append(bind_key)
@@ -3152,11 +3170,28 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             )
             raise ValueError(msg)
 
-    owned_ids = {id(s) for slots in blocks.values() for s in slots}
-    if not owned_ids:
+    # c's own explicit header (if any) travels with the splice so
+    # that direct KVs of c keep their binding after re-parse. The
+    # leaf-before-structural check above guarantees KV blocks come
+    # first in new_key_order, so the header always belongs at the
+    # head of the splice.
+    header_slot: StructuralHeaderSlot | None = None
+    header_ref = c._header_ref  # noqa: SLF001
+    if header_ref is not None:
+        assert isinstance(header_ref.slot, StructuralHeaderSlot)
+        if not header_ref.slot.synthetic:
+            header_slot = header_ref.slot
+
+    ordered: list[Slot] = []
+    if header_slot is not None:
+        ordered.append(header_slot)
+    for k in new_key_order:
+        ordered.extend(blocks[k])
+    if not ordered:
         return
 
     # 3. Find splice anchor: slot just before the earliest owned slot.
+    owned_ids = {id(s) for s in ordered}
     earliest: Slot | None = None
     cur = doc._head  # noqa: SLF001
     while cur is not None:
@@ -3179,22 +3214,20 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         structural_by_position.append(structural)
         remainder_by_key[k] = remainder
 
-    # 5. Splice: unlink owned slots, reinsert in new key order after
+    # 5. Splice: unlink owned slots, reinsert in computed order after
     # the saved anchor. Foreign slots interleaved in the original span
     # collapse together as a side effect — typically ending up just
     # after the reordered region.
-    for slots in blocks.values():
-        for s in slots:
-            unlink_slot(s, doc, strip_new_head_leading=False)
+    for s in ordered:
+        unlink_slot(s, doc, strip_new_head_leading=False)
 
     insert_after_slot = anchor_prev
-    for k in new_key_order:
-        for slot in blocks[k]:
-            if insert_after_slot is None:
-                insert_before_head(slot, doc)
-            else:
-                insert_after(insert_after_slot, slot, doc)
-            insert_after_slot = slot
+    for slot in ordered:
+        if insert_after_slot is None:
+            insert_before_head(slot, doc)
+        else:
+            insert_after(insert_after_slot, slot, doc)
+        insert_after_slot = slot
 
     # 6. Re-stitch new head-slot leading: positional[new_pos] + remainder[k].
     # Indexed across slotful keys only, since structural_by_position
