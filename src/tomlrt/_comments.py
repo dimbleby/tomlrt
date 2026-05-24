@@ -12,10 +12,10 @@ Two primary views per `Container`:
 
 Implementation notes:
 
-- Only direct-KV slots are exposed.  Dotted-implicit shared slots
-  (e.g. ``b.c = 1`` under ``[a]`` viewed from ``a``) are not
-  addressable through the container's comment view; the slot's
-  trivia is instead reachable through the dotted parent's view.
+- A slot is exposed under its leaf key on whichever container is its
+  immediate parent. For a plain ``key = value``, that's the explicit
+  section it sits in; for a dotted KV like ``b.c = 1`` under ``[a]``,
+  that's ``a["b"]`` (not ``a``).
 - Inline-table containers do not expose a comment view (TOML
   forbids comments inside an inline table).
 """
@@ -99,14 +99,10 @@ def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
     refs = c._index.get(key)  # noqa: SLF001
     if not refs:
         return None
+    target = (*c._path, key)  # noqa: SLF001
     for ref in refs:
         slot = ref.slot
-        if (
-            isinstance(slot, KVSlot)
-            and slot.host_path == c._path  # noqa: SLF001
-            and len(slot.key_parts) == 1
-            and slot.key_parts[0].value == key
-        ):
+        if isinstance(slot, KVSlot) and slot.host_path + slot.key == target:
             return slot
     return None
 

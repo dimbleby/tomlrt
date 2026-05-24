@@ -1834,3 +1834,74 @@ def test_same_doc_aot_assigned_under_new_key_preserves_subsections() -> None:
     assert "y = 2" in out
     # Source is unchanged.
     assert "[a.sub]" in out
+
+
+# ---------------------------------------------------------------------------
+# Dotted-key comments are reached through the dotted-parent container.
+# ---------------------------------------------------------------------------
+
+
+def test_dotted_key_comments_exposed_via_dotted_parent() -> None:
+    src = td("""
+        [project]
+        # leading comment on urls.homepage
+        urls.homepage = "x"  # eol comment
+        """)
+    doc = tomlrt.loads(src)
+    project = doc.table("project")
+    # Not visible from the explicit ancestor — "urls" is implicit, not a leaf.
+    assert dict(project.comments) == {}
+    assert dict(project.leading_comments) == {}
+    urls = project.table("urls")
+    assert urls.comments["homepage"] == "eol comment"
+    assert urls.leading_comments["homepage"] == ("leading comment on urls.homepage",)
+
+
+def test_dotted_key_comments_write_round_trips() -> None:
+    src = td("""
+        [project]
+        # old leading
+        urls.homepage = "x"  # old eol
+        """)
+    doc = tomlrt.loads(src)
+    urls = doc.table("project").table("urls")
+    urls.comments["homepage"] = "new eol"
+    urls.leading_comments["homepage"] = ("new leading 1", "new leading 2")
+    assert tomlrt.dumps(doc) == td("""
+        [project]
+        # new leading 1
+        # new leading 2
+        urls.homepage = "x"  # new eol
+        """)
+
+
+def test_dotted_key_comments_delete_round_trips() -> None:
+    src = td("""
+        [project]
+        # leading
+        urls.homepage = "x"  # eol
+        """)
+    doc = tomlrt.loads(src)
+    urls = doc.table("project").table("urls")
+    del urls.comments["homepage"]
+    del urls.leading_comments["homepage"]
+    assert tomlrt.dumps(doc) == td("""
+        [project]
+        urls.homepage = "x"
+        """)
+
+
+def test_dotted_key_comments_only_exposed_at_immediate_parent() -> None:
+    src = td("""
+        [section]
+        # c-comment
+        a.b.c = 1  # eol-c
+        """)
+    doc = tomlrt.loads(src)
+    section = doc.table("section")
+    a = section.table("a")
+    b = a.table("b")
+    assert dict(section.comments) == {}
+    assert dict(a.comments) == {}
+    assert b.comments["c"] == "eol-c"
+    assert b.leading_comments["c"] == ("c-comment",)
