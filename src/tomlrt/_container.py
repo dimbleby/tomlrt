@@ -1052,15 +1052,38 @@ def _validate_key(key: object) -> str:
     return key
 
 
-def _populate_unattached(t: Container, mapping: Mapping[Any, Any]) -> None:
-    """Bulk-populate an unattached ``Container`` from a Mapping.
+def _validate_mapping(value: object, *, label: str) -> Mapping[str, Any]:
+    """Reject a non-Mapping ``value`` or any Mapping with non-string keys.
 
-    Validates every key — bypassing this in factory constructors via
-    ``dict.__setitem__`` produces opaque crashes much later in the
-    layout pipeline.
+    Returns the validated mapping. Used by every factory / mutator that
+    accepts a user-supplied mapping at the boundary
+    (``Table.section`` / ``Table.inline``, ``Document(data=...)``,
+    ``AoT`` entry construction). Centralising this means each entry
+    point produces the same wording (``"<label> must be a Mapping"``
+    / ``"TOML keys must be str"``) instead of leaking
+    ``AttributeError: 'list' object has no attribute 'items'`` from
+    inside the layout pipeline.
     """
-    for k, v in mapping.items():
+    if not isinstance(value, Mapping):
+        msg = f"{label} must be a Mapping, got {type(value).__name__}"
+        raise TypeError(msg)
+    for k in value:
         _validate_key(k)
+    # ``isinstance(value, Mapping)`` plus the per-key check above
+    # establishes ``Mapping[str, Any]`` at runtime; ``ty`` doesn't
+    # narrow ``Mapping`` type parameters from a runtime loop.
+    return value  # ty: ignore[invalid-return-type]
+
+
+def _populate_unattached(t: Container, mapping: object, *, label: str) -> None:
+    """Bulk-populate an unattached ``Container`` from a user-supplied mapping.
+
+    Validates the outer type and every key via :func:`_validate_mapping`,
+    then stores entries directly through ``dict.__setitem__`` so the
+    layout pipeline never sees malformed input.
+    """
+    validated = _validate_mapping(mapping, label=label)
+    for k, v in validated.items():
         dict.__setitem__(t, k, v)
 
 
@@ -1084,7 +1107,7 @@ class Table(Container):
         """
         t = cls()
         if mapping is not None:
-            _populate_unattached(t, mapping)
+            _populate_unattached(t, mapping, label="Table.section argument")
         return t
 
     @classmethod
@@ -1098,7 +1121,7 @@ class Table(Container):
         t = cls()
         t._inline = True
         if mapping is not None:
-            _populate_unattached(t, mapping)
+            _populate_unattached(t, mapping, label="Table.inline argument")
         return t
 
 
@@ -1145,7 +1168,8 @@ class Document(Container):
         self._install_recorder: list[Slot] | None = None
         self._layout_root = self
         if data is not None:
-            for k, v in data.items():
+            validated = _validate_mapping(data, label="Document data argument")
+            for k, v in validated.items():
                 self[k] = _coerce_for_document_init(v)
 
     @property

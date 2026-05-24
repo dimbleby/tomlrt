@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import operator
 import sys
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, SupportsIndex, TypeVar, overload
 
 if sys.version_info >= (3, 12):
@@ -48,7 +47,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
     from _typeshed import SupportsRichComparison
 
@@ -1025,18 +1024,9 @@ class AoT(list["Table"]):
         deep into key-part synthesis before crashing with an opaque
         ``expected string or bytes-like object``.
         """
-        from tomlrt._container import _validate_key  # noqa: PLC0415
+        from tomlrt._container import _validate_mapping  # noqa: PLC0415
 
-        if not isinstance(value, Mapping):
-            msg = f"AoT entries must be Mapping/Table; got {type(value).__name__}"
-            raise TypeError(msg)
-        for k in value:
-            _validate_key(k)
-        # ``isinstance(value, Mapping)`` plus the per-key check above
-        # establishes ``Mapping[str, Any]`` at runtime; ``ty`` doesn't
-        # narrow ``Mapping`` type parameters from a runtime loop, so the
-        # return is suppressed.
-        return value  # ty: ignore[invalid-return-type]
+        return _validate_mapping(value, label="AoT entry")
 
     def _replace_entry_attached(
         self, index: int, value: Mapping[str, Any] | None
@@ -1259,7 +1249,7 @@ def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
 
     t = Table()
     if body is not None:
-        _populate_unattached(t, body)
+        _populate_unattached(t, body, label="AoT entry")
     return t
 
 
