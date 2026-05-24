@@ -27,7 +27,8 @@ if sys.version_info >= (3, 12):
 else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
-from tomlrt._values import render_dotted
+from tomlrt._trivia import retarget_eol_newline, retarget_trivia_newlines
+from tomlrt._values import render_dotted, retarget_value_newlines
 
 # ---------------------------------------------------------------------------
 # AoT entry token (physical ownership marker)
@@ -250,12 +251,6 @@ def retarget_slot_newlines(slot: Slot, target: str) -> None:
     recurses into any nested ``ArrayValue`` / ``InlineTableValue``
     on a ``KVSlot``.
     """
-    from tomlrt._trivia import (  # noqa: PLC0415
-        retarget_eol_newline,
-        retarget_trivia_newlines,
-    )
-    from tomlrt._values import retarget_value_newlines  # noqa: PLC0415
-
     retarget_trivia_newlines(slot.leading, target)
     if isinstance(slot, KVSlot):
         retarget_eol_newline(slot.eol, target)
