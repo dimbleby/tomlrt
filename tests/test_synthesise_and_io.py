@@ -562,6 +562,20 @@ def test_deepcopy_table_subview_is_independent_and_round_trips() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+def test_deepcopy_inline_table_preserves_inline_shape() -> None:
+    # Regression: ``Container.__deepcopy__`` always went through
+    # ``_deep_section_clone`` which returns a ``Table.section`` view —
+    # silently converting an inline source into a section table, so
+    # re-installation rendered as a ``[k]`` block instead of inline.
+    src = "x = { a = 1, b = 2 }\n"
+    doc = tomlrt.loads(src)
+    t = doc.table("x")
+    t2 = deepcopy(t)
+    fresh = tomlrt.loads("")
+    fresh["y"] = t2
+    assert tomlrt.dumps(fresh) == "y = { a = 1, b = 2 }\n"
+
+
 def test_deepcopy_array_subview_does_not_double_cst() -> None:
 
     src = "xs = [1, 2, 3]\n"
