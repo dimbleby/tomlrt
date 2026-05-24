@@ -992,6 +992,8 @@ class AoT(list["Table"]):
         ``entry`` may be a Mapping (initial body content) or ``None``
         (empty entry). The AoT must be attached to a document.
         """
+        if entry is not None:
+            entry = self._typecheck_entry(entry)
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(entry))
             return self[-1]
@@ -1015,17 +1017,21 @@ class AoT(list["Table"]):
         return _layout_ops.add_aot_entry(self, value)
 
     @staticmethod
-    def _typecheck_entry(value: object) -> Mapping[Any, Any]:
-        """Reject non-Mapping ``value``; otherwise return it typed.
+    def _typecheck_entry(value: object) -> Mapping[str, Any]:
+        """Reject non-Mapping ``value`` or non-string-keyed Mapping.
 
-        ``isinstance(value, Mapping)`` doesn't constrain the key /
-        value type parameters, so the return is ``Mapping[Any, Any]``.
-        Non-string keys are caught downstream when the entry is
-        actually installed.
+        Validates structure up front so the per-entry layout pipeline
+        sees only well-formed input — otherwise non-string keys propagate
+        deep into key-part synthesis before crashing with an opaque
+        ``expected string or bytes-like object``.
         """
+        from tomlrt._container import _validate_key  # noqa: PLC0415
+
         if not isinstance(value, Mapping):
             msg = f"AoT entries must be Mapping/Table; got {type(value).__name__}"
             raise TypeError(msg)
+        for k in value:
+            _validate_key(k)
         return value
 
     def _replace_entry_attached(

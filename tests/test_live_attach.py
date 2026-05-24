@@ -234,6 +234,34 @@ def test_aot_factory_rejects_non_string_keys() -> None:
         AoT([{1: "no"}])  # type: ignore[dict-item]  # ty: ignore[invalid-argument-type]
 
 
+def test_attached_aot_append_rejects_non_string_keys() -> None:
+    # Regression: ``AoT.append`` / ``.add`` / ``.insert`` on an
+    # attached AoT only typechecked that the value was a Mapping, not
+    # that its keys were strings. A non-string key sailed past the
+    # entry-typecheck and then crashed deep inside the layout pipeline
+    # with an opaque ``expected string or bytes-like object``.
+    doc = tomlrt.loads("")
+    doc["pkg"] = AoT()
+    with pytest.raises(TypeError, match="must be str"):
+        doc["pkg"].append({1: "no"})  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="must be str"):
+        doc["pkg"].add({1: "no"})  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="must be str"):
+        doc["pkg"].insert(0, {1: "no"})  # ty: ignore[invalid-argument-type]
+
+
+def test_inline_synth_from_plain_dict_rejects_non_string_keys() -> None:
+    # Regression: assigning a plain ``dict`` containing a non-string
+    # key into a section table routed through ``_populate_inline_table``
+    # which raised with the historical ``inline-table key must be str``
+    # wording. Unified to ``TOML keys must be str`` so every entry
+    # point reports the same error.
+    doc = tomlrt.loads("")
+    doc["t"] = Table.section()
+    with pytest.raises(TypeError, match="TOML keys must be str"):
+        doc["t"]["sub"] = {1: "no"}
+
+
 # ---------------------------------------------------------------------------
 # Array live attach
 # ---------------------------------------------------------------------------
