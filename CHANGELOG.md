@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Container.leading_block` and `Table.header_leading_block` no longer
+  overlap with `Document.preamble` at the document head slot.
+  Round-tripping or reordering sections no longer migrates the
+  preamble into a section body.
 - Per-key clone of a sub-table that came from dotted-key form
   (e.g. `dst["x"]["v"] = src["x"]["v"]` where the source was
   `[x]\nv.w = 1`) now preserves the dotted form on the destination
