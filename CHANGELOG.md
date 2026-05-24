@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cross-document `dst["k"] = src["k"]` now preserves the source
+  section header's leading-whitespace indent even when no leading
+  comment is present (previously the indent travelled only when a
+  comment was attached, breaking idempotency for sorters that strip
+  comments).
 - Multi-component `install("a.b", value)` where the implicit parent
   must be synthesised now preserves source header trivia (leading
   comments) on the installed child, by routing through the standard
