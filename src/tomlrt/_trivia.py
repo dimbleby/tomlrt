@@ -151,6 +151,31 @@ def join_above_block(pad: Trivia, above: Trivia) -> Trivia:
     return Trivia([pieces[0], *above.pieces, *pieces[1:]])
 
 
+def split_item_above(t: Trivia) -> tuple[Trivia, Trivia, Trivia]:
+    """Split an item-leading region into ``(head_pad, above, tail_pad)``.
+
+    Distinct from :func:`split_above_block` — which is for the bracket
+    pad (``header_trivia`` / ``final_trivia``) and treats a pre-NL
+    comment as an EOL glued to the bracket. This splitter is for
+    ``items[i].leading`` (i >= 1) in an inline array or inline table,
+    where there is no bracket and the leading NL may be absent
+    because item ``i-1``'s EOL hoisted it onto its
+    ``post_comma_trivia``.
+
+    ``head_pad`` is the leading NL (or empty); ``tail_pad`` is the
+    trailing value-indent WS (or empty); ``above`` is the comment
+    block between them (typically ``[WS, Comment, NL] * n``).
+    """
+    rest = list(t.pieces)
+    head: list[TriviaPiece] = []
+    if rest and isinstance(rest[0], NewlineNode):
+        head = [rest.pop(0)]
+    tail: list[TriviaPiece] = []
+    if rest and isinstance(rest[-1], WhitespaceNode):
+        tail = [rest.pop()]
+    return Trivia(head), Trivia(rest), Trivia(tail)
+
+
 def split_eol_section(t: Trivia) -> tuple[Trivia, Trivia]:
     """Split ``t`` into the inline EOL section and the structural rest.
 
@@ -219,6 +244,7 @@ __all__ = [
     "retarget_trivia_newlines",
     "split_above_block",
     "split_eol_section",
+    "split_item_above",
     "trivia_has_comment",
     "trivia_has_newline",
 ]

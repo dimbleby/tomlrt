@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carrying the old position-0 indent in multi-line arrays.
 - Cross-document `dst[k] = src[k]` and `AoT.sort()` no longer drag the
   source document's preamble onto the destination or surviving entries.
+- `Array.leading_comments` del/pop/clear at non-zero indices, and
+  insert/append next to items carrying EOL comments, no longer
+  misattribute or duplicate adjacent comments on re-render.
 
 ## [1.4.3] - 2026-05-24
 
