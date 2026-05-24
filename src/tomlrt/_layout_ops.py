@@ -1469,7 +1469,16 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     assert isinstance(layout_root, Document)
     doc = layout_root
     # Remove the header from the doc stream and from all caches.
+    # Hand the demoted header's leading trivia (which carries the
+    # file preamble when it sits at doc head) off to the successor
+    # so comments aren't silently dropped on promotion to implicit.
+    successor = header._next  # noqa: SLF001
     unlink_slot(header, doc, strip_new_head_leading=True)
+    if successor is not None and header.leading.pieces:
+        successor.leading.pieces = [
+            *header.leading.pieces,
+            *successor.leading.pieces,
+        ]
     parent._header_ref = None  # noqa: SLF001
     parent._refs = [r for r in parent._refs if r is not hdr_ref]  # noqa: SLF001
     # Also clear it from any prefix container's _refs / _index.

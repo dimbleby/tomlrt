@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cloned subtree.
 - Cross-document `dst[k] = src[k]` now preserves the source table
   header's leading comment block.
+- Adding a sub-section to an empty placeholder section no longer
+  clears `Document.preamble`.
 
 ## [1.4.3] - 2026-05-24
 
