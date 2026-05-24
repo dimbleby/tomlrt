@@ -301,9 +301,6 @@ def test_array_multiline_layout_preserved_through_live_attach() -> None:
 
 
 def test_array_multiline_live_attach_into_crlf_document() -> None:
-    # Regression: an unattached ``Array(multiline=True)`` bakes ``\n``
-    # into its CST; live-attaching it into a CRLF-newlined document
-    # must retarget those newlines so the dump stays homogeneous.
     doc = tomlrt.loads('name = "x"\r\n')
     doc["xs"] = Array(["foo", "bar"], multiline=True)
     out = tomlrt.dumps(doc)
@@ -311,9 +308,6 @@ def test_array_multiline_live_attach_into_crlf_document() -> None:
 
 
 def test_array_detached_from_crlf_reattached_into_lf_document() -> None:
-    # Regression: an Array displaced from a CRLF doc keeps its ``\r\n``
-    # newlines in its CST; re-attaching it into an LF doc must retarget
-    # them down to ``\n`` so the dump stays homogeneous.
     doc1 = tomlrt.loads("xs = [\r\n    1,\r\n    2,\r\n]\r\n")
     arr = doc1["xs"]
     doc1["xs"] = []  # detach arr
@@ -471,13 +465,6 @@ def test_detached_aot_reattaches_live() -> None:
 def test_detached_table_writes_survive_reattach() -> None:
     """Writes to a detached ``_StdTable`` view must persist when the view
     is later re-assigned into a document.
-
-    Regression: while a ``Table`` is detached its ``_doc_node`` points at
-    a private orphan ``DocumentNode``. ``Table.__setitem__`` /
-    ``__delitem__`` used to short-circuit through ``dict.__setitem__`` /
-    ``super().__delitem__`` for detached views, leaving the orphan CST
-    untouched. Re-attaching the view (which deep-clones the orphan)
-    therefore silently dropped any post-detach writes.
     """
     doc = tomlrt.loads("[t]\na = 1\n")
     t = doc.table("t")
@@ -505,12 +492,6 @@ def test_aot_entry_view_identity_preserved_through_attach() -> None:
 def test_aot_held_nested_section_under_entry_survives_attach() -> None:
     """A nested live container assigned into an AoT entry *before* the AoT
     itself is installed must remain wired to the destination document.
-
-    Regression: the AoT detached-install path only updated entry
-    tables' ``_doc_node`` / ``_path`` via ``_resync()`` -- it did not
-    recurse into held nested children. A user holding the inner
-    ``Table.section`` would silently lose post-install mutations
-    through that reference.
     """
     nested = Table.section({"x": 1})
     aot = AoT([{"name": "first"}])
@@ -565,11 +546,6 @@ def test_array_inside_array_attaches_live() -> None:
 
 
 def test_inline_table_inside_unattached_array_attaches_live() -> None:
-    # Regression: an unattached ``Array`` carrying inline-table
-    # children synthesises those children with ``_layout_root=None``.
-    # Live-attaching the outer array must propagate the destination
-    # ``_layout_root`` to the child tables so that later mutations
-    # through a held reference render.
     doc = tomlrt.loads("")
     inner = Table.inline({"a": 1})
     doc["xs"] = Array([inner])
