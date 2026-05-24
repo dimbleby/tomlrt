@@ -38,9 +38,9 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
-    join_above_block,
     split_above_block,
     split_eol_section,
+    split_item_above,
 )
 
 if TYPE_CHECKING:
@@ -253,10 +253,9 @@ class ArrayEolView(_ArrayIntKeyedView[str]):
 def _render_above_block(
     raw_lines: tuple[str, ...], nl: str, ind: str
 ) -> list[TriviaPiece]:
-    """Render an above-block matching :func:`split_above_block` shape.
+    """Render a comment block as ``[WS(ind), Comment, NL] * n``.
 
-    Each comment line emits ``WS(ind), Comment(raw), NL``; no trailing
-    whitespace (the value indent lives in pad).
+    The value-indent WS lives in the surrounding pad, not here.
     """
     out: list[TriviaPiece] = []
     for raw in raw_lines:
@@ -266,16 +265,31 @@ def _render_above_block(
     return out
 
 
-def _ensure_pad(target: Trivia, nl: str, ind: str) -> Trivia:
-    """Return a usable pad.
+def _split_above_frame(value: ArrayValue, i: int) -> tuple[Trivia, Trivia]:
+    """Split item ``i``'s above-region into framing ``(head, tail)``.
 
-    Returns the existing pad from ``target`` when present, or a freshly
-    synthesised ``[NL, WS(ind)]`` when ``target`` has none.
+    Any current above-block is discarded; mutators that want to
+    preserve it must use the underlying splitter directly.
+
+    For ``i == 0`` the target is ``header_trivia`` (bracket-pad
+    context): a pre-NL comment is an EOL on ``[`` and stays in
+    ``head``. For ``i >= 1`` the target is ``items[i].leading``:
+    a pre-NL comment is the item's above-block, possibly hoisted
+    from item ``i-1``'s EOL onto its ``post_comma_trivia``.
     """
-    pad, _above = split_above_block(target)
-    if pad.pieces:
-        return pad
-    return Trivia([NewlineNode(nl), WhitespaceNode(ind)])
+    target = _above_target(value, i)
+    if i >= 1:
+        head, _drop, tail = split_item_above(target)
+        return head, tail
+    pad, _drop = split_above_block(target)
+    pieces = list(pad.pieces)
+    nl_idx = next(
+        (k for k, p in enumerate(pieces) if isinstance(p, NewlineNode)),
+        -1,
+    )
+    if nl_idx < 0:
+        return Trivia(pieces), Trivia()
+    return Trivia(pieces[: nl_idx + 1]), Trivia(pieces[nl_idx + 1 :])
 
 
 def _set_above_pieces(
@@ -287,20 +301,22 @@ def _set_above_pieces(
 ) -> None:
     """Replace the comment block in item ``i``'s above-region.
 
-    Preserves any structural pad already present (the opening newline
-    + value indent) and only rewrites the above-block portion.
+    Preserves any structural framing already present (leading NL,
+    trailing value-indent WS) and only rewrites the comment block
+    between.
     """
-    target = _above_target(value, i)
-    pad = _ensure_pad(target, nl, ind)
-    above = Trivia(_render_above_block(raw_lines, nl, ind))
-    target.pieces = list(join_above_block(pad, above).pieces)
+    head, tail = _split_above_frame(value, i)
+    if not head.pieces and not tail.pieces:
+        head = Trivia([NewlineNode(nl)])
+        tail = Trivia([WhitespaceNode(ind)])
+    above = _render_above_block(raw_lines, nl, ind)
+    _above_target(value, i).pieces = [*head.pieces, *above, *tail.pieces]
 
 
-def _clear_above_pieces(value: ArrayValue, i: int, nl: str, ind: str) -> None:
-    """Strip the comment block from item ``i``'s above-region; keep pad."""
-    target = _above_target(value, i)
-    pad = _ensure_pad(target, nl, ind)
-    target.pieces = list(pad.pieces)
+def _clear_above_pieces(value: ArrayValue, i: int) -> None:
+    """Strip the comment block from item ``i``'s above-region; keep framing."""
+    head, tail = _split_above_frame(value, i)
+    _above_target(value, i).pieces = [*head.pieces, *tail.pieces]
 
 
 class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
@@ -348,8 +364,6 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
         _clear_above_pieces(
             self._arr._value,  # noqa: SLF001
             idx,
-            self._arr._doc_newline,  # noqa: SLF001
-            _slot_indent(self._arr),
         )
 
     @override

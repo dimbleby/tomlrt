@@ -37,6 +37,7 @@ from tomlrt._trivia import (
     join_above_block,
     split_above_block,
     split_eol_section,
+    split_item_above,
     trivia_has_comment,
     trivia_has_newline,
 )
@@ -337,12 +338,11 @@ class Array(list[Any]):
             return
         # Non-empty: any above-`]` comment block in final_trivia
         # logically belongs ABOVE the new item we're about to add.
-        ft_pad, ft_above = split_above_block(self._value.final_trivia)
-        new_leading = join_above_block(style.inter_separator, ft_above)
+        self._value.final_trivia, new_leading = _migrate_bracket_above(
+            self._value.final_trivia, style.inter_separator
+        )
         _flip_to_internal(items[-1])
         new_item = _make_item(cst, leading=new_leading, has_comma=False)
-        if ft_above.pieces:
-            self._value.final_trivia = ft_pad
         items.append(new_item)
         _flip_to_terminal(new_item, style)
         # Under the canonical multiline model the row break + bracket
@@ -356,6 +356,7 @@ class Array(list[Any]):
             ft = self._value.final_trivia
             if not (ft.pieces and isinstance(ft.pieces[0], NewlineNode)):
                 ft.pieces = [NewlineNode(self._doc_newline), *ft.pieces]
+        _normalise_leading_nls(items, self._doc_newline, multiline=style.is_multiline)
         list.append(self, decoded)
 
     def _restamp_for_first_append(self) -> None:
@@ -451,11 +452,10 @@ class Array(list[Any]):
             # items[1]; the above-block migrates to its leading. The
             # new item gets bare leading; header_trivia retains only
             # its structural pad.
-            pad, above = split_above_block(self._value.header_trivia)
-            self._value.header_trivia = pad
             new_item = _make_item(cst, has_comma=True)
-            old_first = items[0]
-            old_first.leading = join_above_block(style.inter_separator, above)
+            self._value.header_trivia, items[0].leading = _migrate_bracket_above(
+                self._value.header_trivia, style.inter_separator
+            )
             items.insert(0, new_item)
         else:
             # Internal insert: new item with leading = inter_sep; the
@@ -466,6 +466,7 @@ class Array(list[Any]):
                 cst, leading=clone_trivia(style.inter_separator), has_comma=True
             )
             items.insert(i, new_item)
+        _normalise_leading_nls(items, self._doc_newline, multiline=style.is_multiline)
         list.insert(self, i, decoded)
 
     @override
@@ -609,7 +610,7 @@ class Array(list[Any]):
         new_first_above: Trivia = Trivia()
         if zero_removed and survivors_after_zero:
             k = survivors_after_zero[0]
-            _new_pad, new_first_above = split_above_block(items[k].leading)
+            _head, new_first_above, _tail = split_item_above(items[k].leading)
         # When the tail is removed, the surviving last item's
         # post_comma_trivia (if it had a comma) currently encodes a
         # post-comma bracket pad we need to recompute from style.
@@ -856,6 +857,59 @@ def _restamp_canonical_pads(
         sep = style.inter_separator
     for k, it in enumerate(value.items):
         it.leading = Trivia() if k == 0 else clone_trivia(sep)
+
+
+def _migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, Trivia]:
+    """Migrate any above-bracket comment block onto a new item's leading.
+
+    An above-block in ``header_trivia`` / ``final_trivia`` (the
+    structural row(s) between the bracket and the next/last item)
+    conceptually belongs to the item below it. When a new boundary
+    item is being inserted or appended, the block migrates from the
+    bracket pad onto that item's leading.
+
+    Returns ``(new_bracket, new_leading)``.
+    """
+    pad, above = split_above_block(bracket)
+    return pad, join_above_block(separator, above)
+
+
+def _item_has_eol(item: ArrayItem) -> bool:
+    """True if the item carries an inline EOL comment.
+
+    When the item has a comma, the EOL section lives in
+    ``post_comma_trivia``; otherwise it lives in ``trailing``.
+    """
+    target = item.post_comma_trivia if item.has_comma else item.trailing
+    eol, _rest = split_eol_section(target)
+    return bool(eol.pieces)
+
+
+def _normalise_leading_nls(items: list[ArrayItem], nl: str, *, multiline: bool) -> None:
+    """Enforce the leading-NL invariant across the item list.
+
+    In a multiline array, ``items[i].leading`` (i >= 1) must start
+    with a NL iff ``items[i-1]`` carries no EOL. When the predecessor
+    has an EOL the row-terminating NL lives in its EOL section, so
+    ``items[i].leading`` starts with WS (indent) instead. Mutations
+    that change predecessor relationships must restore the invariant
+    or the comment block at the front of ``items[i].leading`` would
+    misattach to the predecessor as an EOL on reparse.
+
+    Idempotent and applied to every item, so mutation sites only have
+    to call this once at the end rather than track which predecessor
+    relationships they touched.
+    """
+    if not multiline:
+        return
+    for i in range(1, len(items)):
+        pred = items[i - 1]
+        pieces = items[i].leading.pieces
+        has_nl = bool(pieces) and isinstance(pieces[0], NewlineNode)
+        if _item_has_eol(pred) and has_nl:
+            items[i].leading = Trivia(pieces[1:])
+        elif not _item_has_eol(pred) and not has_nl:
+            items[i].leading = Trivia([NewlineNode(text=nl), *pieces])
 
 
 def _migrate_eol_trailing_to_post_comma(item: ArrayItem) -> None:

@@ -1581,6 +1581,85 @@ def test_array_leading_comments_set_on_inline_array_synthesises_indent() -> None
     assert tomlrt.loads(out).array("xs").leading_comments[1] == ("about two",)
 
 
+def test_array_leading_comments_delitem_after_prior_eol() -> None:
+    """Regression for #122: ``del arr.leading_comments[i]`` for i > 0.
+
+    When the prior item carries an EOL comment, the structural newline
+    is hoisted into its ``post_comma_trivia``, so ``items[i].leading``
+    lacks a leading NL. The mutation path must handle that shape.
+    """
+    src = td("""
+        arr = [
+            # leading z
+            "z",
+            "a", # eol a
+            # leading m
+            "M",
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("arr")
+    del arr.leading_comments[2]
+    assert 2 not in arr.leading_comments
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            # leading z
+            "z",
+            "a", # eol a
+            "M",
+        ]
+        """)
+
+
+def test_array_leading_comments_setitem_after_prior_eol() -> None:
+    """Regression for #122: setting ``leading_comments[i]`` for i > 0
+    when item ``i-1`` has an EOL must not duplicate the indent or
+    corrupt the surrounding shape.
+    """
+    src = td("""
+        arr = [
+            "a", # eol a
+            "b",
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("arr")
+    arr.leading_comments[1] = ("about b",)
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            "a", # eol a
+            # about b
+            "b",
+        ]
+        """)
+
+
+def test_array_leading_comments_clear_after_prior_eol() -> None:
+    """Regression for #122: ``.clear()`` must terminate (no infinite
+    loop from a silently-failing ``__delitem__``).
+    """
+    src = td("""
+        arr = [
+            # leading z
+            "z",
+            "a", # eol a
+            # leading m
+            "M",
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("arr")
+    arr.leading_comments.clear()
+    assert dict(arr.leading_comments) == {}
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            "z",
+            "a", # eol a
+            "M",
+        ]
+        """)
+
+
 def test_array_eol_comment_del_on_last_no_comma_item() -> None:
     """Deleting an EOL on a trailing item without a comma needs no NL restore."""
     src = td("""

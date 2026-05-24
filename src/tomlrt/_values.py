@@ -20,9 +20,8 @@ from typing import TYPE_CHECKING, Literal
 from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
-    clone_trivia,
     retarget_trivia_newlines,
-    split_above_block,
+    split_item_above,
 )
 
 if TYPE_CHECKING:
@@ -287,10 +286,8 @@ def inter_item_separator(items: Sequence[CommaItem]) -> Trivia:
     leading rather than to the separator.
     """
     if len(items) >= 2:
-        pad, _above = split_above_block(items[1].leading)
-        if pad.pieces:
-            return pad
-        return clone_trivia(items[1].leading)
+        head, _above, tail = split_item_above(items[1].leading)
+        return Trivia([*head.pieces, *tail.pieces])
     return Trivia([WhitespaceNode(text=" ")])
 
 

@@ -432,6 +432,87 @@ def test_array_insert_at_zero_does_not_duplicate_leading_comment() -> None:
         """)
 
 
+def test_array_delete_zero_keeps_next_leading_comment_after_prior_eol() -> None:
+    """Regression for #122: ``del arr[0]`` when ``items[1].leading`` is in
+    post-EOL shape must migrate item 1's leading comment into ``header_trivia``
+    rather than dropping it.
+    """
+    doc = tomlrt.loads(
+        td("""
+        arr = [
+            # leading a
+            "a", # eol a
+            # leading b
+            "b",
+        ]
+        """)
+    )
+    arr = doc.array("arr")
+    del arr[0]
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            # leading b
+            "b",
+        ]
+        """)
+
+
+def test_array_insert_after_eol_item_does_not_duplicate_following_comment() -> None:
+    """Regression for #122: when inserting between an EOL-bearing item
+    and a follower whose ``leading`` carries an above-block in post-EOL
+    shape, the follower's leading comment must remain attached to the
+    follower (not be reassigned to the inserted item as an EOL).
+    """
+    doc = tomlrt.loads(
+        td("""
+        arr = [
+            # leading a
+            "a", # eol a
+            # leading b
+            "b",
+        ]
+        """)
+    )
+    arr = doc.array("arr")
+    arr.insert(1, "z")
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            # leading a
+            "a", # eol a
+            "z",
+            # leading b
+            "b",
+        ]
+        """)
+
+
+def test_array_append_after_eol_item_does_not_duplicate_prior_comment() -> None:
+    """Regression for #122: appending after an EOL-bearing item must not
+    leave the appended item sharing the EOL row of the previous item.
+    """
+    doc = tomlrt.loads(
+        td("""
+        arr = [
+            # leading a
+            "a", # eol a
+            # leading b
+            "b",
+        ]
+        """)
+    )
+    arr = doc.array("arr")
+    arr.append("z")
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            # leading a
+            "a", # eol a
+            # leading b
+            "b",
+            "z",
+        ]
+        """)
+
+
 # Every Array/AoT mutator must be wired through the CST so the
 # rendered output stays in sync with in-memory mutations.
 @pytest.mark.parametrize(
