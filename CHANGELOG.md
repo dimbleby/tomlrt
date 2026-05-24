@@ -15,10 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Cross-document `dst["k"] = src["k"]` now preserves the source
-  section header's leading-whitespace indent even when no leading
-  comment is present (previously the indent travelled only when a
-  comment was attached, breaking idempotency for sorters that strip
-  comments).
+  section header's indent even when no leading comment is attached.
 - Multi-component `install("a.b", value)` where the implicit parent
   must be synthesised now preserves source header trivia (leading
   comments) on the installed child, by routing through the standard
@@ -30,8 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cloned subtree.
 - Cross-document `dst[k] = src[k]` now preserves the source table
   header's leading comment block.
-- Adding a sub-section to an empty placeholder section no longer
-  clears `Document.preamble`.
+- Adding a sub-section to an empty placeholder section no longer clears
+  `Document.preamble`.
+- `Array.sort` / `Array.reverse` now keep per-item leading comments with
+  their items and stop the closing `]` from gluing to the new last item.
 - Cross-document `dst[k] = src_section` under an empty placeholder
   parent now demotes the parent to an implicit super-table instead
   of leaving a stray bare `[parent]` header line.
