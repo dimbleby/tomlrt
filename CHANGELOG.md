@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now consistently raises `TOMLError` with a clear message, including
   for detached `Table.inline()` factories (previously: silently
   accepted, then `NotImplementedError` at attach time).
+- Comments on dotted-key entries are now reachable through the
+  dotted-parent container (`project["urls"].comments["homepage"]`).
 
 ## [1.4.3] - 2026-05-24
 
