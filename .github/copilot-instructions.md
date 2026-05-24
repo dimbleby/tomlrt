@@ -273,9 +273,10 @@ wrong.
 - `tests/test_synthesise_and_io.py` — value synthesis and binary I/O.
 - `tests/test_scanner.py` — pins the cursor + diagnostics contract
   on `_Scanner` that the higher-level `scan_*` helpers build on.
-- `tests/_toml_str.py` — internal `td(""" … """)` helper for writing
-  TOML fixtures as indented triple-quoted literals; prefer it over
-  walls of `\n`-escaped strings in new tests.
+- `tests/_helpers.py` — shared test helpers: `td(""" … """)` for writing
+  TOML fixtures as indented triple-quoted literals (prefer it over walls
+  of `\n`-escaped strings in new tests), and `reparses(src)` for the
+  re-parse sanity check via stdlib `tomllib`.
 
 When adding behaviour, add a focused unit test in the relevant file
 **and** consider whether the property tests should grow.

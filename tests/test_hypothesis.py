@@ -12,7 +12,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 import tomlrt
-from _toml_str import td
+from _helpers import td
 from tomlrt import Document
 
 pytestmark = pytest.mark.slow

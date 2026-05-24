@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomlrt
-from _toml_str import td
+from _helpers import td
 from tomlrt import AoT, Table
 
 # ---------------------------------------------------------------------------

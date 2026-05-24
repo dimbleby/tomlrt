@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import tomlrt
-from _toml_str import td
+from _helpers import td
 from tomlrt import Document, Table
 
 if TYPE_CHECKING:
