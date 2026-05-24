@@ -49,8 +49,10 @@ code.
         - epilogue
         - header_comment
         - header_leading_comments
+        - header_leading_block
         - comments
         - leading_comments
+        - leading_block
         - to_dict
 
 ::: tomlrt.Table
@@ -73,8 +75,10 @@ code.
         - promote_array
         - header_comment
         - header_leading_comments
+        - header_leading_block
         - comments
         - leading_comments
+        - leading_block
         - to_dict
 
 ::: tomlrt.Array

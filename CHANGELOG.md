@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Container.leading_block` and `Table.header_leading_block` expose the
+  full leading-trivia region (including blank-line-separated "orphan"
+  comments) as a tuple of `str | None`, where `None` is a blank line.
 - `Table.is_inline` property to distinguish inline `{...}` tables from
   `[section]` blocks when walking a parsed document.
 

@@ -24,6 +24,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
 from tomlrt import _inline_ops, _layout_ops
 from tomlrt._comments import (
     EolCommentView,
+    LeadingBlockView,
     LeadingCommentView,
     _direct_kv_slot,
     _doc_epilogue_get,
@@ -32,6 +33,8 @@ from tomlrt._comments import (
     _doc_preamble_set,
     _header_comment_get,
     _header_comment_set,
+    _header_leading_block_get,
+    _header_leading_block_set,
     _header_leading_get,
     _header_leading_set,
 )
@@ -138,11 +141,32 @@ class Container(dict[str, Any]):
 
     @property
     def leading_comments(self) -> LeadingCommentView:
-        """Mapping view of leading-comment blocks on this container's direct keys."""
+        """Mapping view of leading-comment blocks on this container's direct keys.
+
+        Returns only the *attached* comment run immediately above each key
+        (no blank line between).  For the full block — including any
+        above-blank groups and the blank-line structure between them — see
+        :attr:`leading_block`.
+        """
         if self._inline:
             msg = "comment API is not available on inline tables"
             raise TOMLError(msg)
         return LeadingCommentView(self)
+
+    @property
+    def leading_block(self) -> LeadingBlockView:
+        """Mapping view of full leading-trivia blocks on direct keys.
+
+        Each entry is a ``tuple[str | None, ...]`` of comment strings
+        interleaved with ``None`` (one per blank line), in source order;
+        the slot's own column indent is implicit and re-applied on write.
+        Full-fidelity peer of :attr:`leading_comments`, which exposes only
+        the trailing attached run.
+        """
+        if self._inline:
+            msg = "comment API is not available on inline tables"
+            raise TOMLError(msg)
+        return LeadingBlockView(self)
 
     @property
     def header_comment(self) -> str | None:
@@ -159,7 +183,11 @@ class Container(dict[str, Any]):
 
     @property
     def header_leading_comments(self) -> tuple[str, ...]:
-        """The leading comment block immediately above this container's header."""
+        """The attached comment block immediately above this container's header.
+
+        Excludes any above-blank groups — those are visible via
+        :attr:`header_leading_block`.
+        """
         return _header_leading_get(self)
 
     @header_leading_comments.setter
@@ -169,6 +197,29 @@ class Container(dict[str, Any]):
     @header_leading_comments.deleter
     def header_leading_comments(self) -> None:
         _header_leading_set(self, ())
+
+    @property
+    def header_leading_block(self) -> tuple[str | None, ...]:
+        """The full leading-trivia block above this container's header.
+
+        A ``tuple[str | None, ...]`` of comment strings interleaved with
+        ``None`` (one per blank line), in source order.  Full-fidelity
+        peer of :attr:`header_leading_comments`, which exposes only the
+        trailing attached run.
+
+        On the first slot in a document this overlaps with
+        :attr:`Document.preamble` — they read and write the same
+        underlying storage.
+        """
+        return _header_leading_block_get(self)
+
+    @header_leading_block.setter
+    def header_leading_block(self, value: tuple[str | None, ...]) -> None:
+        _header_leading_block_set(self, value)
+
+    @header_leading_block.deleter
+    def header_leading_block(self) -> None:
+        _header_leading_block_set(self, ())
 
     @property
     def _doc_newline(self) -> str:
@@ -1174,6 +1225,13 @@ class Document(Container):
         Setter accepts a sequence of bare comment texts (without the
         leading ``#``) and replaces the current preamble; assign ``()``
         to remove. Newlines inside any line are rejected.
+
+        On a document whose first slot is a section header or KV key, the
+        preamble is stored as the above-blank prefix of that slot's
+        leading trivia — the same storage that
+        :attr:`Table.header_leading_block` / :attr:`Container.leading_block`
+        expose for the first slot.  Writes through either path are
+        visible through the other.
         """
         return _doc_preamble_get(self)
 

@@ -1984,3 +1984,205 @@ def test_dotted_key_comments_only_exposed_at_immediate_parent() -> None:
     assert dict(a.comments) == {}
     assert b.comments["c"] == "eol-c"
     assert b.leading_comments["c"] == ("c-comment",)
+
+
+# ---------------------------------------------------------------------------
+# leading_block / header_leading_block — full-fidelity above-blank access (#123)
+# ---------------------------------------------------------------------------
+
+
+def test_header_leading_block_exposes_orphan_between_sections() -> None:
+    src = td("""
+        [a]
+        x = 1
+
+        # orphan
+
+        [b]
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    assert doc["b"].header_leading_block == (None, "orphan", None)
+    assert doc["b"].header_leading_comments == ()
+
+
+def test_header_leading_block_round_trips_attached_and_above_blank() -> None:
+    src = td("""
+        # preamble line 1
+        # preamble line 2
+
+        # attached line 1
+        # attached line 2
+        [a]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    assert doc["a"].header_leading_block == (
+        "preamble line 1",
+        "preamble line 2",
+        None,
+        "attached line 1",
+        "attached line 2",
+    )
+    assert doc["a"].header_leading_comments == ("attached line 1", "attached line 2")
+
+
+def test_header_leading_block_set_writes_blank_lines_faithfully() -> None:
+    doc = tomlrt.loads("[a]\nx = 1\n[b]\ny = 2\n")
+    doc["b"].header_leading_block = ("orphan-1", None, "orphan-2", None, "attached")
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+        # orphan-1
+
+        # orphan-2
+
+        # attached
+        [b]
+        y = 2
+        """)
+
+
+def test_header_leading_block_first_slot_overlaps_with_document_preamble() -> None:
+    src = td("""
+        # preamble
+
+        [a]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    assert doc.preamble == ("preamble",)
+    assert doc["a"].header_leading_block == ("preamble", None)
+    # Writing through header_leading_block reflects in preamble.
+    doc["a"].header_leading_block = ("new", None, "attached")
+    assert doc.preamble == ("new",)
+    assert doc["a"].header_leading_comments == ("attached",)
+
+
+def test_header_leading_block_delete_clears_above_blank_and_attached() -> None:
+    src = td("""
+        [a]
+        x = 1
+
+        # orphan
+        # attached
+        [b]
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    assert doc["b"].header_leading_block == (None, "orphan", "attached")
+    del doc["b"].header_leading_block
+    assert doc["b"].header_leading_block == ()
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
+
+
+def test_leading_block_on_kv_round_trips_above_blank() -> None:
+    src = td("""
+        x = 1
+
+        # orphan
+
+        # attached
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    assert doc.leading_block["y"] == (None, "orphan", None, "attached")
+    assert doc.leading_comments["y"] == ("attached",)
+
+
+def test_leading_block_setitem_round_trips_orphan_and_attached() -> None:
+    doc = tomlrt.loads("x = 1\ny = 2\n")
+    doc.leading_block["y"] = ("orphan", None, "attached")
+    assert tomlrt.dumps(doc) == td("""
+        x = 1
+        # orphan
+
+        # attached
+        y = 2
+        """)
+
+
+def test_leading_block_preserves_indent_on_nested_key() -> None:
+    src = td("""
+        [section]
+            # original
+            nested = 1
+        """)
+    doc = tomlrt.loads(src)
+    section = doc.table("section")
+    section.leading_block["nested"] = ("first", None, "second")
+    assert tomlrt.dumps(doc) == td("""
+        [section]
+            # first
+
+            # second
+            nested = 1
+        """)
+
+
+def test_leading_block_absent_key_is_missing_from_view() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    assert "x" not in doc.leading_block
+    with pytest.raises(KeyError):
+        _ = doc.leading_block["x"]
+
+
+def test_leading_block_rejects_non_string_non_none_entries() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(TypeError):
+        doc.leading_block["x"] = ("ok", 5)  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+
+
+def test_leading_block_rejects_newline_inside_entry() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(tomlrt.TOMLError):
+        doc.leading_block["x"] = ("a\nb",)
+
+
+def test_header_leading_block_unavailable_on_inline_table() -> None:
+    doc = tomlrt.loads("x = { a = 1 }\n")
+    with pytest.raises(tomlrt.TOMLError):
+        _ = doc.table("x").header_leading_block
+
+
+def test_leading_block_unavailable_on_inline_table() -> None:
+    doc = tomlrt.loads("x = { a = 1 }\n")
+    with pytest.raises(tomlrt.TOMLError):
+        _ = doc.table("x").leading_block
+
+
+def test_reorder_via_block_preserves_orphan_between_sections() -> None:
+    src = td("""
+        [a]
+        x = 1
+
+        # orphan
+
+        [b]
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    a, b = doc["a"], doc["b"]
+    a_block = doc["a"].header_leading_block
+    b_block = doc["b"].header_leading_block
+    del doc["a"]
+    del doc["b"]
+    doc["b"] = b
+    doc["a"] = a
+    # User decides to anchor the orphan above the new [a] (was below it).
+    doc["b"].header_leading_block = a_block
+    doc["a"].header_leading_block = b_block
+    assert tomlrt.dumps(doc) == td("""
+        [b]
+        y = 2
+
+        # orphan
+
+        [a]
+        x = 1
+        """)
