@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the binding to the end.
 - Mutations to inline tables and arrays nested inside an `Array` are
   now rendered.
+- `Array.set_multiline` no longer inserts `\n` newlines into a CRLF
+  document.
 
 ## [1.4.2] - 2026-05-10
 

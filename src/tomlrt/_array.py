@@ -192,6 +192,15 @@ class Array(list[Any]):
         lr = self._layout_root
         return lr is not None and not lr._is_private  # noqa: SLF001
 
+    @property
+    def _doc_newline(self) -> str:
+        r"""The active newline of the owning document, or ``"\n"`` if detached.
+
+        Mirrors :attr:`Container._doc_newline`.
+        """
+        lr = self._layout_root
+        return lr._newline if lr is not None else "\n"  # noqa: SLF001
+
     def _style(self) -> _ArrayStyle:
         return _detect_style(self._value, multiline_flag=self._multiline)
 
@@ -259,17 +268,18 @@ class Array(list[Any]):
             _renormalise_commas(items, flush_style)
             return self
         self._multiline = True
+        nl = self._doc_newline
         if not items:
             value.final_trivia = Trivia(
-                [NewlineNode(text="\n"), WhitespaceNode(text=ind)]
+                [NewlineNode(text=nl), WhitespaceNode(text=ind)]
             )
             return self
         indent_pieces: list[TriviaPiece] = [
-            NewlineNode(text="\n"),
+            NewlineNode(text=nl),
             WhitespaceNode(text=ind),
         ]
         value.header_trivia = Trivia(list(indent_pieces))
-        value.final_trivia = Trivia([NewlineNode(text="\n")])
+        value.final_trivia = Trivia([NewlineNode(text=nl)])
         for k, it in enumerate(items):
             it.leading = Trivia() if k == 0 else Trivia(list(indent_pieces))
             it.post_comma_trivia = Trivia()
@@ -278,7 +288,7 @@ class Array(list[Any]):
             is_multiline=True,
             inter_separator=Trivia(list(indent_pieces)),
             trailing_comma=True,
-            trailing_post=Trivia([NewlineNode(text="\n")]),
+            trailing_post=Trivia([NewlineNode(text=nl)]),
         )
         _renormalise_commas(items, ml_style)
         return self
@@ -344,7 +354,7 @@ class Array(list[Any]):
         if style.is_multiline:
             ft = self._value.final_trivia
             if not (ft.pieces and isinstance(ft.pieces[0], NewlineNode)):
-                ft.pieces = [NewlineNode("\n"), *ft.pieces]
+                ft.pieces = [NewlineNode(self._doc_newline), *ft.pieces]
         list.append(self, decoded)
 
     def _restamp_for_first_append(self) -> None:
