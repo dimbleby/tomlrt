@@ -220,6 +220,20 @@ def test_inline_factory_rejects_non_string_keys() -> None:
         Table.inline({1: "no"})  # type: ignore[dict-item]  # ty: ignore[invalid-argument-type]
 
 
+def test_section_factory_rejects_non_string_keys() -> None:
+    # Regression: ``Table.section({1: "x"})`` used to accept the bad
+    # key silently and crash later with an opaque ``regex`` error.
+    with pytest.raises(TypeError, match="must be str"):
+        Table.section({1: "no"})  # type: ignore[dict-item]  # ty: ignore[invalid-argument-type]
+
+
+def test_aot_factory_rejects_non_string_keys() -> None:
+    # Regression: ``AoT([{1: "x"}])`` likewise accepted and crashed
+    # later with the same opaque error.
+    with pytest.raises(TypeError, match="must be str"):
+        AoT([{1: "no"}])  # type: ignore[dict-item]  # ty: ignore[invalid-argument-type]
+
+
 # ---------------------------------------------------------------------------
 # Array live attach
 # ---------------------------------------------------------------------------

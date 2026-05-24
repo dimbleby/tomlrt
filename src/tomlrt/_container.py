@@ -340,9 +340,7 @@ class Container(dict[str, Any]):
         # which is Python sugar for a tuple key) propagates deep into
         # the layout pipeline before crashing in ``make_keypart``
         # with an opaque TypeError.
-        if not isinstance(key, str):
-            msg = f"TOML keys must be str, got {type(key).__name__}"  # type: ignore[unreachable]
-            raise TypeError(msg)
+        _validate_key(key)
         if key in self and self[key] is value:
             return
         # Reject types we explicitly do not coerce (clear error rather
@@ -1038,6 +1036,30 @@ class Container(dict[str, Any]):
         return result
 
 
+def _validate_key(key: object) -> None:
+    """Reject a non-``str`` TOML key with a consistent ``TypeError``.
+
+    Used by every entry point that installs a user-supplied key
+    (``Container.__setitem__``, the ``Table.section`` / ``Table.inline``
+    factories, ``AoT`` entry construction).
+    """
+    if not isinstance(key, str):
+        msg = f"TOML keys must be str, got {type(key).__name__}"
+        raise TypeError(msg)
+
+
+def _populate_unattached(t: Container, mapping: Mapping[Any, Any]) -> None:
+    """Bulk-populate an unattached ``Container`` from a Mapping.
+
+    Validates every key — bypassing this in factory constructors via
+    ``dict.__setitem__`` produces opaque crashes much later in the
+    layout pipeline.
+    """
+    for k, v in mapping.items():
+        _validate_key(k)
+        dict.__setitem__(t, k, v)
+
+
 class Table(Container):
     """A logical TOML table.
 
@@ -1058,8 +1080,7 @@ class Table(Container):
         """
         t = cls()
         if mapping is not None:
-            for k, v in mapping.items():
-                dict.__setitem__(t, k, v)
+            _populate_unattached(t, mapping)
         return t
 
     @classmethod
@@ -1073,12 +1094,7 @@ class Table(Container):
         t = cls()
         t._inline = True
         if mapping is not None:
-            for k, v in mapping.items():
-                _k: object = k
-                if not isinstance(_k, str):
-                    msg = f"inline-table key must be str, got {type(_k).__name__}"
-                    raise TypeError(msg)
-                dict.__setitem__(t, _k, v)
+            _populate_unattached(t, mapping)
         return t
 
 

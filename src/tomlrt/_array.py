@@ -1245,12 +1245,11 @@ class AoT(list["Table"]):
 
 def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
     """Build a fresh unattached `Table` view as an AoT-entry placeholder."""
-    from tomlrt._container import Table  # noqa: PLC0415
+    from tomlrt._container import Table, _populate_unattached  # noqa: PLC0415
 
     t = Table()
     if body is not None:
-        for k, v in body.items():
-            dict.__setitem__(t, k, v)
+        _populate_unattached(t, body)
     return t
 
 

@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Document(data=...)` no longer coerces a user-supplied `Array` of
   mappings into an `AoT`; the caller's explicit inline-array choice
   is preserved.
+- `Table.section(mapping)` and `AoT(entries)` now reject non-string
+  keys at construction with a clear `TypeError`, matching `Table.inline`
+  and `Document(data=...)`.
 
 ## [1.4.2] - 2026-05-10
 
