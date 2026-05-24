@@ -3114,6 +3114,35 @@ def test_array_sort_normalises_mismatched_indents() -> None:
     assert tomlrt.dumps(doc) == expected_rev
 
 
+def test_array_sort_leading_comments_travel_with_items() -> None:
+    """Regression for tomlrt #120: per-item leading comments must move
+    with their item under :meth:`Array.sort`, and the closing ``]`` must
+    stay on its own line even when the new last item lacks an EOL.
+    """
+    src = td("""
+        arr = [
+            # leading z
+            "z",
+            "a", # eol a
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc["arr"].sort()
+    expected = td("""
+        arr = [
+            "a", # eol a
+            # leading z
+            "z",
+        ]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    # Sort is idempotent: a second sort on the already-sorted result
+    # must not perturb the layout.
+    doc2 = tomlrt.loads(tomlrt.dumps(doc))
+    doc2["arr"].sort()
+    assert tomlrt.dumps(doc2) == expected
+
+
 def test_array_insert_zero_pushes_existing_leading_comment_to_new_position() -> None:
     """``insert(0, x)`` must not duplicate the leading-of-(formerly) item-0
     onto both the new item and its old (now position-1) item."""

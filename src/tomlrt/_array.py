@@ -493,15 +493,10 @@ class Array(list[Any]):
         items = self._value.items
         if not items:
             return
-        # Capture style and canonical indent BEFORE swapping items, so
-        # both reflect the original layout rather than mid-permutation
-        # neighbour leadings.
+        # Sample style + indent before the permutation: _slot_indent
+        # reads items[1].leading, which is about to be overwritten.
         style = self._style()
         canonical_indent = _slot_indent(self) if style.is_multiline else ""
-        # Snapshot pad of header_trivia: kept as the bracket pad for the
-        # flush (single-line) case where ``inter_separator`` is a bare
-        # space and would inject a stray leading WS.
-        head_pad, _head_above = split_above_block(self._value.header_trivia)
         leadings, eols = snapshot_comments(self)
         new_items = [items[j] for j in order]
         new_decoded = [self[j] for j in order]
@@ -511,21 +506,16 @@ class Array(list[Any]):
         list.clear(self)
         for v in new_decoded:
             list.append(self, v)
-        # Re-stamp leadings and post_comma_trivia per canonical model.
-        # ``header_trivia`` is item 0's above-region, so for multi-line
-        # arrays its pad must be ``NL + canonical indent`` — otherwise
-        # after a reorder item 0 keeps the old position's indent while
-        # items[1..] inherit the canonical one.
+        # header_trivia is item 0's above-region; reset it to the
+        # canonical pad here. Any comment block it carried was captured
+        # in leadings[0] and will be re-applied by apply_comments.
+        # _restamp_canonical_pads handles items[1..] and final_trivia.
+        nl = self._doc_newline
         if style.is_multiline:
             self._value.header_trivia = Trivia(
-                [
-                    NewlineNode(text=self._doc_newline),
-                    WhitespaceNode(text=canonical_indent),
-                ]
+                [NewlineNode(text=nl), WhitespaceNode(text=canonical_indent)]
             )
-        else:
-            self._value.header_trivia = clone_trivia(head_pad)
-        _restamp_canonical_leadings(items, style)
+        _restamp_canonical_pads(self._value, style, nl, canonical_indent)
         for it in items:
             it.post_comma_trivia = Trivia()
             it.trailing = Trivia()
@@ -571,7 +561,8 @@ class Array(list[Any]):
             new_segment = [_make_item(cst, has_comma=False) for cst in new_csts]
             items[index] = new_segment
             list.__setitem__(self, index, new_decoded)
-            _restamp_canonical_leadings(items, style)
+            indent = _slot_indent(self) if style.is_multiline else ""
+            _restamp_canonical_pads(self._value, style, self._doc_newline, indent)
             _renormalise_commas(items, style)
             return
         # int index: just replace the value CST in place.
@@ -845,17 +836,26 @@ def _make_item(
     )
 
 
-def _restamp_canonical_leadings(items: list[ArrayItem], style: _ArrayStyle) -> None:
-    """Reset every item's ``leading`` to the canonical-model pad.
+def _restamp_canonical_pads(
+    value: ArrayValue, style: _ArrayStyle, nl: str, indent: str
+) -> None:
+    """Reset items[1..]'s leadings and ``final_trivia`` to canonical pads.
 
-    Under the canonical model ``items[0].leading`` is empty (its pad
-    lives in ``header_trivia``) and ``items[k>=1].leading`` carries
-    the inter-item separator. This helper is the structural reset
-    used after a reorder or whole-segment slice replacement; comments
-    are reapplied separately by the caller.
+    In source, an item's EOL absorbs the next item's opening NL — and
+    the last item's EOL absorbs ``final_trivia``'s NL. After a
+    permutation or whole-segment replacement the items that supplied
+    those EOLs may have moved or disappeared, so we cannot sample the
+    inter-item separator from ``items[1].leading``: we synthesise the
+    canonical multi-line pad here. Caller is responsible for
+    ``header_trivia`` and for reapplying comments.
     """
-    for k, it in enumerate(items):
-        it.leading = Trivia() if k == 0 else clone_trivia(style.inter_separator)
+    if style.is_multiline:
+        sep = Trivia([NewlineNode(text=nl), WhitespaceNode(text=indent)])
+        value.final_trivia = Trivia([NewlineNode(text=nl)])
+    else:
+        sep = style.inter_separator
+    for k, it in enumerate(value.items):
+        it.leading = Trivia() if k == 0 else clone_trivia(sep)
 
 
 def _migrate_eol_trailing_to_post_comma(item: ArrayItem) -> None:

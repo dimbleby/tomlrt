@@ -404,9 +404,10 @@ def apply_comments(
 ) -> None:
     """Re-apply per-item comments after a structural reorder.
 
-    Writes EOL comments first (so leading writes can split a known
-    canonical EOL section out of the prev item's post_comma_trivia),
-    then leading blocks. Skips empty entries.
+    Leadings are written before EOLs: setting an EOL strips the
+    structural NL from the next item's leading (or ``final_trivia``
+    for the last item), so writing leadings second would leave
+    above-blocks without an opening NL.
     """
     items = arr._value.items  # noqa: SLF001
     n = len(items)
@@ -415,9 +416,9 @@ def apply_comments(
     nl = arr._doc_newline  # noqa: SLF001
     ind = _slot_indent(arr)
     for i in range(n):
+        if leadings[i]:
+            _set_above_pieces(arr._value, i, leadings[i], nl, ind)  # noqa: SLF001
+    for i in range(n):
         eol_i = eols[i]
         if eol_i is not None:
             _set_eol_raw(arr, i, eol_i)
-    for i in range(n):
-        if leadings[i]:
-            _set_above_pieces(arr._value, i, leadings[i], nl, ind)  # noqa: SLF001
