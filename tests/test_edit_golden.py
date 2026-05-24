@@ -634,6 +634,30 @@ def test_aot_append_entry_preserves_nested_aot() -> None:
     }
 
 
+def test_aot_replace_entry_preserves_nested_aot() -> None:
+    """Replacing an AoT entry (``aot[i] = src_entry``) preserves nested AoTs.
+
+    ``replace_aot_entry_with_clone`` historically copied only
+    ``src_entry.entry_slots``, which excludes slots owned by nested
+    ``[[a.x]]`` entries living physically inside the source entry —
+    those entries were silently dropped. Same class as the
+    ``aot.append(...)`` bug fixed in #108.
+    """
+    src = tomlrt.loads(
+        "[[outer]]\nv = 1\n[outer.sub]\ns = 2\n"
+        "[[outer.aot]]\nq = 3\n[[outer.aot]]\nq = 4\n",
+    )
+    dst = tomlrt.loads("[[outer]]\nv = 99\n")
+    dst["outer"][0] = src["outer"][0]
+    out = dst.render()
+    reparsed = _reparses(out)
+    assert reparsed["outer"][0] == {
+        "v": 1,
+        "sub": {"s": 2},
+        "aot": [{"q": 3}, {"q": 4}],
+    }
+
+
 def test_cross_doc_assign_repeats_subsection_under_distinct_aot_entries() -> None:
     """Repeated ``[a.x.sub]`` under separate ``[[a.x]]`` entries must
     materialise as distinct view containers, not share one.
