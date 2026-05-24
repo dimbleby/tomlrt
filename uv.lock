@@ -858,7 +858,7 @@ wheels = [
 
 [[package]]
 name = "tomlrt"
-version = "1.4.2"
+version = "1.4.3"
 source = { editable = "." }
 dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },

@@ -29,7 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is preserved.
 - `Table.section(mapping)` and `AoT(entries)` now reject non-string
   keys at construction with a clear `TypeError`, matching `Table.inline`
-  and `Document(data=...)`.
+  and `Document(data=...)`. Attached `AoT.append` / `.add` / `.insert`
+  and inline-table synthesis from a plain `dict` now produce the same
+  unified `"TOML keys must be str"` error instead of crashing deep in
+  the layout pipeline.
 - `copy.copy` / `copy.deepcopy` of an inline `Table` now returns an
   inline `Table` instead of silently converting to a section table.
 

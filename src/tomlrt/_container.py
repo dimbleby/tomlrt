@@ -1036,16 +1036,20 @@ class Container(dict[str, Any]):
         return result
 
 
-def _validate_key(key: object) -> None:
+def _validate_key(key: object) -> str:
     """Reject a non-``str`` TOML key with a consistent ``TypeError``.
+
+    Returns the validated key (narrowed to ``str``) so call sites that
+    care about the type can do ``k = _validate_key(k)``.
 
     Used by every entry point that installs a user-supplied key
     (``Container.__setitem__``, the ``Table.section`` / ``Table.inline``
-    factories, ``AoT`` entry construction).
+    factories, ``AoT`` entry construction, inline-table synthesis).
     """
     if not isinstance(key, str):
         msg = f"TOML keys must be str, got {type(key).__name__}"
         raise TypeError(msg)
+    return key
 
 
 def _populate_unattached(t: Container, mapping: Mapping[Any, Any]) -> None:
@@ -1650,10 +1654,8 @@ def _populate_inline_table(
     table._inline = True  # noqa: SLF001
     table._value = val  # noqa: SLF001
 
-    for i, (k, sub) in enumerate(items):
-        if not isinstance(k, str):
-            msg = f"inline-table key must be str, got {type(k).__name__}"
-            raise TypeError(msg)
+    for i, (raw_k, sub) in enumerate(items):
+        k = _validate_key(raw_k)
         sub_cst, sub_dec = _synth_value(
             sub,
             layout_root=layout_root,
