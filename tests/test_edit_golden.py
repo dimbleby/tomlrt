@@ -715,6 +715,50 @@ def test_cross_doc_section_header_indent_preserved_without_comment() -> None:
     assert tomlrt.dumps(dst) == "   [POWER]\nplay = true\n"
 
 
+def test_cross_doc_section_assign_does_not_drag_source_preamble() -> None:
+    """Issue #121: ``dst[k] = src[k]`` must not append the source
+    document's preamble onto the destination's. The src section's
+    header carries the file preamble in its leading trivia (an
+    "above-blank" block); only the attached comment block (and the
+    slot's own indent) should travel with the cloned section.
+    """
+    src = tomlrt.loads("# pre\n\n[a]\nx = 1\n")
+    dst = Document()
+    dst.preamble = src.preamble
+    dst["a"] = src["a"]
+    assert dst.preamble == ("pre",)
+    assert tomlrt.dumps(dst) == "# pre\n\n[a]\nx = 1\n"
+
+
+def test_clone_section_drops_above_blank_block() -> None:
+    """Same-doc clone shares ``_install_cloned_section`` with cross-doc
+    assign and so must apply the same positional-vs-travelling-trivia
+    split: any above-blank block (preamble or "archived" comments
+    separated from the header by a blank line) belongs to the source
+    document position, not the section being copied.
+    """
+    doc = tomlrt.loads("# pre\n\n[a]\nx = 1\n")
+    doc["b"] = doc["a"]
+    assert tomlrt.dumps(doc) == "# pre\n\n[a]\nx = 1\n\n[b]\nx = 1\n"
+
+    doc = tomlrt.loads("[before]\nfoo = 1\n\n# archived\n\n[a]\nx = 1\n")
+    doc["b"] = doc["a"]
+    expected = "[before]\nfoo = 1\n\n# archived\n\n[a]\nx = 1\n\n[b]\nx = 1\n"
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_aot_sort_does_not_drag_source_preamble() -> None:
+    """Sister to #121 in the AoT renormalise path: sorting an AoT
+    whose first entry header carries the file preamble must leave
+    the preamble at doc position 0, not drag it along with the
+    originally-first entry.
+    """
+    doc = tomlrt.loads("# pre\n\n[[a]]\nv = 2\n\n[[a]]\nv = 1\n")
+    doc["a"].sort(key=lambda e: e["v"])
+    assert doc.preamble == ("pre",)
+    assert tomlrt.dumps(doc) == "# pre\n\n[[a]]\nv = 1\n\n[[a]]\nv = 2\n"
+
+
 def test_cross_doc_implicit_parent_preserves_child_header_comments() -> None:
     """Issue #117: when source parent is implicit, child sub-tables'
     ``header_leading_comments`` / ``header_comment`` must survive the move.
