@@ -133,7 +133,12 @@ class Container(dict[str, Any]):
 
     @property
     def comments(self) -> EolCommentView:
-        """Mapping view of EOL comments on this container's direct keys."""
+        """Mapping view of EOL comments on this container's direct keys.
+
+        Mutating the view requires the container to be attached to a
+        `Document`; mutate via the attached view, not on a detached
+        ``Table.section()`` / ``Table.inline()``.
+        """
         if self._inline:
             msg = "comment API is not available on inline tables"
             raise TOMLError(msg)
@@ -147,6 +152,9 @@ class Container(dict[str, Any]):
         (no blank line between).  For the full block — including any
         above-blank groups and the blank-line structure between them — see
         :attr:`leading_block`.
+
+        Mutating the view requires the container to be attached to a
+        `Document`.
         """
         if self._inline:
             msg = "comment API is not available on inline tables"
@@ -166,6 +174,9 @@ class Container(dict[str, Any]):
         At the document's head slot, :attr:`Document.preamble` is
         disjoint from this view: reading omits the preamble lines,
         and writing preserves them.
+
+        Mutating the view requires the container to be attached to a
+        `Document`.
         """
         if self._inline:
             msg = "comment API is not available on inline tables"

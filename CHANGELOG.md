@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Mutating `comments`, `leading_comments`, or `leading_block` on a
+  detached `Table.section()` / `Table.inline()` now raises a clear
+  `TOMLError` pointing at the attach-first workaround instead of a
+  misleading `KeyError("key '...' not in container")`.
 - `Container.leading_block` and `Table.header_leading_block` no longer
   overlap with `Document.preamble` at the document head slot.
   Round-tripping or reordering sections no longer migrates the

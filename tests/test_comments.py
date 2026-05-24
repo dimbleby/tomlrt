@@ -2262,3 +2262,56 @@ def test_reorder_via_block_preserves_orphan_between_sections() -> None:
         [a]
         x = 1
         """)
+
+
+# ---------------------------------------------------------------------------
+# Detached-container comment mutation: clear error message
+# ---------------------------------------------------------------------------
+
+
+def test_detached_table_comments_setitem_raises_clear_error() -> None:
+    """Setting a comment on a detached Table should raise TOMLError, not KeyError."""
+    elem = tomlrt.Table.section()
+    elem["x"] = 1
+    assert "x" in elem
+    with pytest.raises(tomlrt.TOMLError, match="detached container"):
+        elem.comments["x"] = "eol"
+    with pytest.raises(tomlrt.TOMLError, match="detached container"):
+        elem.leading_comments["x"] = ("above",)
+    with pytest.raises(tomlrt.TOMLError, match="detached container"):
+        elem.leading_block["x"] = (None, "above")
+
+
+def test_detached_table_comments_delitem_raises_clear_error() -> None:
+    elem = tomlrt.Table.section()
+    elem["x"] = 1
+    with pytest.raises(tomlrt.TOMLError, match="detached container"):
+        del elem.comments["x"]
+    with pytest.raises(tomlrt.TOMLError, match="detached container"):
+        del elem.leading_comments["x"]
+    with pytest.raises(tomlrt.TOMLError, match="detached container"):
+        del elem.leading_block["x"]
+
+
+def test_detached_table_comments_reads_are_forgiving() -> None:
+    """Reads still return empty / None on detached containers."""
+    elem = tomlrt.Table.section()
+    elem["x"] = 1
+    assert elem.comments.get("x") is None
+    assert list(elem.comments) == []
+    assert len(elem.comments) == 0
+    assert "x" not in elem.comments
+    assert list(elem.leading_comments) == []
+    assert list(elem.leading_block) == []
+
+
+def test_detached_aot_element_comments_documented_workaround() -> None:
+    """Attach-first workaround from #127: detached AoT element comments."""
+    aot = tomlrt.AoT()
+    src = tomlrt.Table.section()
+    src["x"] = 1
+    aot.append(src)
+    doc = tomlrt.loads("")
+    doc["items"] = aot
+    doc["items"][-1].comments["x"] = "eol"
+    assert tomlrt.dumps(doc) == "[[items]]\nx = 1 # eol\n"
