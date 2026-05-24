@@ -3067,15 +3067,17 @@ def _direct_child_key(
 ) -> str | None:
     """Return the direct child key of ``parent_path`` that ``slot`` binds, or None.
 
-    Determined by the slot's binding root: ``path`` for a structural
-    header, ``(*host_path, key_parts[0])`` for a KV. Returns the
-    first path component beyond ``parent_path`` if the binding root
-    starts with ``parent_path`` and is strictly deeper, else None.
+    Determined by the slot's full binding path: ``path`` for a
+    structural header, ``(*host_path, *key_parts)`` for a KV (so
+    dotted KVs like ``a.b.c = 1`` are recognised at every prefix
+    depth, not just their host). Returns the first path component
+    beyond ``parent_path`` if the binding path starts with
+    ``parent_path`` and is strictly deeper, else None.
     """
     if isinstance(slot, StructuralHeaderSlot):
         root: tuple[str, ...] = tuple(slot.path)
     elif isinstance(slot, KVSlot):
-        root = (*slot.host_path, slot.key_parts[0].value)
+        root = (*slot.host_path, *(p.value for p in slot.key_parts))
     else:
         return None
     if len(root) > parent_plen and root[:parent_plen] == parent_path:

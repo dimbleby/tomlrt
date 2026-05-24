@@ -3043,6 +3043,43 @@ def test_sort_dotted_kvs_treated_as_one_block() -> None:
     assert _reparses(tomlrt.dumps(doc))
 
 
+def test_sort_on_dotted_intermediate_reorders_kvs() -> None:
+    # Sorting the implicit container reached through a dotted key
+    # (here doc['parent']['a']) must reorder the underlying dotted
+    # KV slots, not just the dict storage.
+    src = td("""
+        [parent]
+        a.z = 1
+        a.x = 2
+        a.y = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.table(("parent", "a")).sort()
+    assert tomlrt.dumps(doc) == td("""
+        [parent]
+        a.x = 2
+        a.y = 3
+        a.z = 1
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_on_dotted_intermediate_at_root() -> None:
+    src = td("""
+        a.z = 1
+        a.x = 2
+        a.y = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("a").sort()
+    assert tomlrt.dumps(doc) == td("""
+        a.x = 2
+        a.y = 3
+        a.z = 1
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
 def test_sort_inside_section() -> None:
     src = td("""
         [s]
