@@ -593,6 +593,70 @@ def test_cross_doc_table_assign_with_nested_aot() -> None:
     assert "MUT" not in tomlrt.dumps(b)
 
 
+def test_cross_doc_table_assign_with_explicit_header_and_nested_aot() -> None:
+    """Issue #108: cross-doc whole-section assignment must preserve nested AoT.
+
+    The source has an explicit ``[a]`` header (so cross-doc copy of ``a``
+    goes through ``clone_section_as_section`` rather than the implicit
+    subtree-walk branch). The body contains an AoT (``[[a.x]]``). The
+    AoT must survive as ``[[a.x]]`` in the destination, not be downgraded
+    to two ``[a.x]`` headers (invalid TOML).
+    """
+    src = tomlrt.loads("[a]\n[[a.x]]\ny = 1\n\n[[a.x]]\ny = 2\n")
+    dst = Document()
+    dst["a"] = src["a"]
+    out = dst.render()
+    assert "[[a.x]]" in out
+    assert _reparses(out) == _reparses("[a]\n[[a.x]]\ny = 1\n\n[[a.x]]\ny = 2\n")
+
+
+def test_aot_append_entry_preserves_nested_aot() -> None:
+    """Appending a parent AoT entry must preserve its nested AoT children.
+
+    ``aot.append(some_entry)`` (``clone_aot_entry``) historically copied
+    only the entry's own ``entry_slots``, which excludes slots owned by
+    nested ``[[a.x]]`` entries living physically inside the parent
+    entry. The nested entries were silently dropped — output stayed
+    valid TOML but ``q`` values were lost. Same class as #108.
+    """
+    src = tomlrt.loads(
+        "[[outer]]\nv = 1\n[outer.sub]\ns = 2\n"
+        "[[outer.aot]]\nq = 3\n[[outer.aot]]\nq = 4\n",
+    )
+    dst = tomlrt.loads("[[outer]]\nv = 10\n")
+    dst["outer"].append(src["outer"][0])
+    out = dst.render()
+    reparsed = _reparses(out)
+    assert reparsed["outer"][1] == {
+        "v": 1,
+        "sub": {"s": 2},
+        "aot": [{"q": 3}, {"q": 4}],
+    }
+
+
+def test_cross_doc_assign_repeats_subsection_under_distinct_aot_entries() -> None:
+    """Repeated ``[a.x.sub]`` under separate ``[[a.x]]`` entries must
+    materialise as distinct view containers, not share one.
+
+    Each ``[[a.x]]`` opens a fresh entry, and the following ``[a.x.sub]``
+    belongs to that entry only. Without per-entry container scoping, a
+    cross-doc clone would conflate the two ``sub`` containers — the
+    first entry's ``sub`` would end up holding the second's value, and
+    the second entry would lose its ``sub`` key entirely.
+    """
+    src = tomlrt.loads(
+        "[a]\n[[a.x]]\ny = 1\n[a.x.sub]\nz = 1\n[[a.x]]\ny = 2\n[a.x.sub]\nz = 2\n",
+    )
+    dst = Document()
+    dst["a"] = src["a"]
+    entries = list(dst["a"]["x"])
+    assert dict(entries[0]) == {"y": 1, "sub": {"z": 1}}
+    assert dict(entries[1]) == {"y": 2, "sub": {"z": 2}}
+    dst["a"]["x"][0]["sub"]["z"] = 99
+    assert "z = 99" in dst.render()
+    assert "z = 2" in dst.render()
+
+
 def test_cross_doc_table_assign_preserves_comments() -> None:
     """Cross-doc copy of a section preserves its comments and layout."""
     src = td("""
