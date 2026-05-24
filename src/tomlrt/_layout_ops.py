@@ -1512,6 +1512,22 @@ def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
     return Trivia(list(pieces[:cut])), Trivia(list(pieces[cut:]))
 
 
+def _retarget_header_separator(
+    header: StructuralHeaderSlot,
+    new_separator: Trivia,
+) -> None:
+    """Replace ``header.leading``'s structural prefix while keeping comments.
+
+    A cloned header arrives carrying the source document's spacing
+    (blank-line gap, indentation) plus any header-leading comments.
+    The destination wants its own spacing convention to drive layout
+    but must not lose comments that semantically belong to the
+    section being copied.
+    """
+    _structural, remainder = _split_leading_structural(header.leading)
+    header.leading = Trivia([*new_separator.pieces, *remainder.pieces])
+
+
 def _build_section_leading(doc: Document) -> Trivia:
     """Trivia for a fresh section header.
 
@@ -1794,13 +1810,9 @@ def _install_cloned_aot_entry(
     assert isinstance(head, StructuralHeaderSlot)
     cloned_header: StructuralHeaderSlot = head
     if ordinal == 0:
-        _structural, remainder = _split_leading_structural(cloned_header.leading)
-        sep = _build_section_leading(doc)
-        cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
+        _retarget_header_separator(cloned_header, _build_section_leading(doc))
     elif rewrite_separator:
-        _structural, remainder = _split_leading_structural(cloned_header.leading)
-        sep = _aot_separator(aot, doc)
-        cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
+        _retarget_header_separator(cloned_header, _aot_separator(aot, doc))
     # else: keep source leading verbatim (cross-doc / cross-key).
 
     entry_table = Table()
@@ -1855,7 +1867,7 @@ def _install_cloned_section(
     head = cloned_slots[0]
     assert isinstance(head, StructuralHeaderSlot)
     cloned_header: StructuralHeaderSlot = head
-    cloned_header.leading = _build_section_leading(doc)
+    _retarget_header_separator(cloned_header, _build_section_leading(doc))
 
     section = Table.section()
     _install_cloned_structural_block(

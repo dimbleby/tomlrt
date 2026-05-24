@@ -657,6 +657,27 @@ def test_cross_doc_assign_repeats_subsection_under_distinct_aot_entries() -> Non
     assert "z = 2" in dst.render()
 
 
+def test_cross_doc_table_assign_preserves_header_leading_comments() -> None:
+    """Cross-doc ``dst[k] = src[k]`` preserves the source header's
+    leading comment block (and its EOL comment).
+
+    The clone path rewrites the structural prefix of the head's
+    leading trivia (so the destination doc's spacing convention wins)
+    but keeps any comment pieces — they belong to the section being
+    copied.
+    """
+    src = tomlrt.loads("# bee\n[b]  # eol\nval = 2\n")
+    dst = Document()
+    dst["b"] = src["b"]
+    table = dst.get_table("b")
+    assert table is not None
+    assert table.header_leading_comments == ("bee",)
+    assert table.header_comment == "eol"
+    out = dst.render()
+    assert "# bee" in out
+    assert "# eol" in out
+
+
 def test_cross_doc_table_assign_preserves_comments() -> None:
     """Cross-doc copy of a section preserves its comments and layout."""
     src = td("""
