@@ -21,7 +21,7 @@ def loads(text: str) -> Document:
 def load(fp: IO[bytes]) -> Document:
     """Parse a TOML document from a *binary* file-like object.
 
-    The file must be opened in binary mode (``open(path, "wb")``).
+    The file must be opened in binary mode (``open(path, "rb")``).
     """
     data = fp.read()
     if not isinstance(data, (bytes, bytearray)):
