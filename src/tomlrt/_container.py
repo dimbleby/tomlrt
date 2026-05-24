@@ -162,6 +162,10 @@ class Container(dict[str, Any]):
         the slot's own column indent is implicit and re-applied on write.
         Full-fidelity peer of :attr:`leading_comments`, which exposes only
         the trailing attached run.
+
+        At the document's head slot, :attr:`Document.preamble` is
+        disjoint from this view: reading omits the preamble lines,
+        and writing preserves them.
         """
         if self._inline:
             msg = "comment API is not available on inline tables"
@@ -207,9 +211,9 @@ class Container(dict[str, Any]):
         peer of :attr:`header_leading_comments`, which exposes only the
         trailing attached run.
 
-        On the first slot in a document this overlaps with
-        :attr:`Document.preamble` — they read and write the same
-        underlying storage.
+        For the first section in a document, :attr:`Document.preamble`
+        is disjoint from this view: reading omits the preamble lines,
+        and writing preserves them.
         """
         return _header_leading_block_get(self)
 

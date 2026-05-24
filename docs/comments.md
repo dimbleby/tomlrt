@@ -86,8 +86,8 @@ assert doc["b"].header_leading_block == (None, "orphan", None)
 doc["b"].header_leading_block = ("orphan", None, "attached")
 ```
 
-For the first slot in a document this region overlaps with
-`Document.preamble`: writes through either are visible through the other.
+For the first slot in a document, `Document.preamble` is disjoint from
+this view: it is read and written through `Document.preamble` only.
 
 ## Document preamble and epilogue
 

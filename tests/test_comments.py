@@ -2008,8 +2008,10 @@ def test_header_leading_block_exposes_orphan_between_sections() -> None:
 
 def test_header_leading_block_round_trips_attached_and_above_blank() -> None:
     src = td("""
-        # preamble line 1
-        # preamble line 2
+        [first]
+        x = 1
+        # above-blank line 1
+        # above-blank line 2
 
         # attached line 1
         # attached line 2
@@ -2018,8 +2020,8 @@ def test_header_leading_block_round_trips_attached_and_above_blank() -> None:
         """)
     doc = tomlrt.loads(src)
     assert doc["a"].header_leading_block == (
-        "preamble line 1",
-        "preamble line 2",
+        "above-blank line 1",
+        "above-blank line 2",
         None,
         "attached line 1",
         "attached line 2",
@@ -2043,7 +2045,7 @@ def test_header_leading_block_set_writes_blank_lines_faithfully() -> None:
         """)
 
 
-def test_header_leading_block_first_slot_overlaps_with_document_preamble() -> None:
+def test_header_leading_block_first_section_excludes_document_preamble() -> None:
     src = td("""
         # preamble
 
@@ -2052,11 +2054,85 @@ def test_header_leading_block_first_slot_overlaps_with_document_preamble() -> No
         """)
     doc = tomlrt.loads(src)
     assert doc.preamble == ("preamble",)
-    assert doc["a"].header_leading_block == ("preamble", None)
-    # Writing through header_leading_block reflects in preamble.
-    doc["a"].header_leading_block = ("new", None, "attached")
-    assert doc.preamble == ("new",)
+    assert doc["a"].header_leading_block == ()
+    # Writing through header_leading_block leaves preamble intact.
+    doc["a"].header_leading_block = ("attached",)
+    assert doc.preamble == ("preamble",)
     assert doc["a"].header_leading_comments == ("attached",)
+    assert tomlrt.dumps(doc) == td("""
+        # preamble
+
+        # attached
+        [a]
+        x = 1
+        """)
+
+
+def test_header_leading_block_round_trip_preserves_document_preamble() -> None:
+    src = td("""
+        # preamble line 1
+        # preamble line 2
+
+        # section a comment
+        [a]
+        x = 1
+
+        # section b comment
+        [b]
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    assert doc.preamble == ("preamble line 1", "preamble line 2")
+    assert doc["a"].header_leading_block == ("section a comment",)
+    assert doc["b"].header_leading_block == (None, "section b comment")
+    # In-place read+write of the first section's block must not migrate
+    # the document preamble into the section body.
+    doc["a"].header_leading_block = doc["a"].header_leading_block
+    assert tomlrt.dumps(doc) == src
+
+
+def test_header_leading_block_delete_first_section_preserves_preamble() -> None:
+    src = td("""
+        # preamble
+
+        # attached
+        [a]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    assert doc["a"].header_leading_block == ("attached",)
+    del doc["a"].header_leading_block
+    assert doc.preamble == ("preamble",)
+    assert tomlrt.dumps(doc) == td("""
+        # preamble
+
+        [a]
+        x = 1
+        """)
+
+
+def test_leading_block_first_kv_excludes_document_preamble() -> None:
+    src = td("""
+        # preamble
+
+        # attached to x
+        x = 1
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    assert doc.preamble == ("preamble",)
+    assert doc.leading_block["x"] == ("attached to x",)
+    # Round-trip leaves preamble intact.
+    doc.leading_block["x"] = doc.leading_block["x"]
+    assert tomlrt.dumps(doc) == src
+    del doc.leading_block["x"]
+    assert doc.preamble == ("preamble",)
+    assert tomlrt.dumps(doc) == td("""
+        # preamble
+
+        x = 1
+        y = 2
+        """)
 
 
 def test_header_leading_block_delete_clears_above_blank_and_attached() -> None:
