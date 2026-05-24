@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Cross-document `dst[k] = src[k]` and `aot.append(entry)` now
-  preserve nested arrays-of-tables inside the cloned subtree.
+- Cross-document `dst[k] = src[k]`, `aot.append(entry)` and
+  `aot[i] = entry` now preserve nested arrays-of-tables inside the
+  cloned subtree.
 - Cross-document `dst[k] = src[k]` now preserves the source table
   header's leading comment block.
 

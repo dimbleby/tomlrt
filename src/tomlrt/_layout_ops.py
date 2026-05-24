@@ -2641,7 +2641,7 @@ def replace_aot_entry_with_clone(
     assert dst_entry is not None
     assert src_entry is not None
 
-    src_slots = list(src_entry.entry_slots)
+    src_slots = _gather_subtree_slots(src_entry_table)
     src_prefix = src_entry.path
 
     # Save the destination header (we keep it in place, only its body
@@ -2653,6 +2653,7 @@ def replace_aot_entry_with_clone(
     # Pre-clone source body before any destructive cleanup, so a clone
     # failure can't leave the destination half-emptied. Also covers
     # the source-inside-destination case (e.g. self-nested clone).
+    prev_count = len(dst_entry.entry_slots)
     cloned_body = (
         _clone_entry_slots(
             src_slots[1:],
@@ -2666,11 +2667,11 @@ def replace_aot_entry_with_clone(
         if len(src_slots) > 1
         else []
     )
-    # _clone_entry_slots appended the cloned slots to dst_entry's
-    # entry_slots prematurely; we splice them in below, so back them
-    # out to keep ownership state consistent during clear().
-    if cloned_body:
-        dst_entry.entry_slots = dst_entry.entry_slots[: -len(cloned_body)]
+    # ``_clone_entry_slots`` files dst-owned slots onto
+    # ``dst_entry.entry_slots`` straight away. Defer them until after
+    # ``clear()`` so it sees the pre-clone state of the entry.
+    new_dst_slots = dst_entry.entry_slots[prev_count:]
+    del dst_entry.entry_slots[prev_count:]
 
     # Reuse the structural-delete path to tear down the destination's
     # body: orphans held sub-sections / AoTs into a PrivateRoot,
@@ -2682,7 +2683,7 @@ def replace_aot_entry_with_clone(
     assert dst_entry.entry_slots == [dst_header]
 
     _splice_block_after(cloned_body, dst_header, doc)
-    dst_entry.entry_slots.extend(cloned_body)
+    dst_entry.entry_slots.extend(new_dst_slots)
 
     # Rebuild views / dict storage from the cloned body.
     _populate_entry_views(
