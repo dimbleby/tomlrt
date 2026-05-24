@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detached `AoT.append` / `AoT.insert` / `AoT[idx] = ...` now accept
   any `Mapping` (e.g. `MappingProxyType`), matching their declared
   type signature and the attached paths.
+- `Document(data=...)` no longer coerces a user-supplied `Array` of
+  mappings into an `AoT`; the caller's explicit inline-array choice
+  is preserved.
 
 ## [1.4.2] - 2026-05-10
 

@@ -388,6 +388,18 @@ def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
     assert tomlrt.loads(out) == {"package": [{"name": "foo"}, {"name": "bar"}]}
 
 
+def test_document_factory_with_explicit_array_keeps_inline_array() -> None:
+    # Regression: ``Document(data=...)`` coerced *any* non-empty list
+    # of mappings to an AoT, including a user-supplied ``Array``. The
+    # caller's explicit choice of ``Array`` (inline) was silently
+    # promoted to ``[[xs]]``.
+    doc = Document({"xs": tomlrt.Array([{"a": 1}])})
+    out = tomlrt.dumps(doc)
+    assert "[[" not in out
+    assert "{" in out  # inline-table rendering
+    assert tomlrt.loads(out) == {"xs": [{"a": 1}]}
+
+
 def test_document_factory_with_data_keeps_leaf_arrays_inline() -> None:
     doc = Document({"xs": [1, 2, 3]})
     out = tomlrt.dumps(doc)
