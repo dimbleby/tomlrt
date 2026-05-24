@@ -1535,16 +1535,19 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
 
 
 def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
-    """Split a leading-trivia stream into (structural-prefix, comment-remainder).
+    """Split a leading-trivia stream into (structural-prefix, slot-remainder).
 
     The structural prefix is the run of whitespace and newline pieces
-    before the first comment piece (if any). The remainder starts at
-    the first comment piece and includes everything after it. If
-    there is no comment piece, the whole leading is structural and
-    the remainder is empty.
+    that precedes the first comment piece **and** the slot's own
+    column-offset indent (trailing whitespace-only piece on the slot's
+    own line, if any). The remainder starts at the first comment piece
+    if one exists, otherwise at that trailing indent. Both the comment
+    block and the slot's own indent travel with the slot — only the
+    blank-line / indentation separator between *peers* stays positional.
 
-    Used by AoT reorder: structural separators stay positional;
-    comment remainders travel with their entry.
+    Used by AoT reorder and cross-doc clone: structural separators
+    stay positional; comments and the slot's own indent travel with
+    the slot.
     """
     pieces = leading.pieces
     cut = len(pieces)
@@ -1552,6 +1555,12 @@ def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
         if isinstance(p, CommentNode):
             cut = i
             break
+    # Rescue the slot's own column indent (trailing whitespace-only
+    # piece on the slot's own line, if any) into the remainder so it
+    # travels with the slot. When a comment was already found this is
+    # a no-op: the trailing whitespace is past the cut already.
+    if cut > 0 and cut == len(pieces) and isinstance(pieces[-1], WhitespaceNode):
+        cut -= 1
     return Trivia(list(pieces[:cut])), Trivia(list(pieces[cut:]))
 
 

@@ -702,6 +702,19 @@ def test_cross_doc_table_assign_preserves_header_leading_comments() -> None:
     assert "# eol" in out
 
 
+def test_cross_doc_section_header_indent_preserved_without_comment() -> None:
+    """Issue #118: a section header's leading-whitespace indent travels
+    with the section across a cross-doc move, even when no leading
+    comment is present. Previously only the with-comment case preserved
+    indent, breaking idempotency for downstream sorters that strip
+    comments.
+    """
+    src = tomlrt.loads("   [POWER]\nplay = true\n")
+    dst = Document()
+    dst["POWER"] = src["POWER"]
+    assert tomlrt.dumps(dst) == "   [POWER]\nplay = true\n"
+
+
 def test_cross_doc_implicit_parent_preserves_child_header_comments() -> None:
     """Issue #117: when source parent is implicit, child sub-tables'
     ``header_leading_comments`` / ``header_comment`` must survive the move.
