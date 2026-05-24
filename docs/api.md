@@ -53,6 +53,7 @@ code.
         - comments
         - leading_comments
         - leading_block
+        - sort
         - to_dict
 
 ::: tomlrt.Table
@@ -79,6 +80,7 @@ code.
         - comments
         - leading_comments
         - leading_block
+        - sort
         - to_dict
 
 ::: tomlrt.Array

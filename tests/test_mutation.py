@@ -2898,3 +2898,364 @@ def test_collapse_multiline_with_nested_inline_table_comment_raises() -> None:
     arr = doc.array("xs")
     with pytest.raises(tomlrt.TOMLError):
         arr.set_multiline(multiline=False)
+
+
+# ---------------------------------------------------------------------------
+# Container.sort
+# ---------------------------------------------------------------------------
+
+
+def test_sort_leaf_kvs_preserves_leading_and_eol_comments() -> None:
+    src = td("""
+        # preamble
+
+        # above b
+        b = 1  # eol b
+        # above a
+        a = 2  # eol a
+
+        # above c
+        c = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    assert tomlrt.dumps(doc) == td("""
+        # preamble
+
+        # above a
+        a = 2  # eol a
+        # above b
+        b = 1  # eol b
+
+        # above c
+        c = 3
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_reverse_leaf_kvs() -> None:
+    src = td("""
+        a = 1
+        b = 2
+        c = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort(reverse=True)
+    assert tomlrt.dumps(doc) == td("""
+        c = 3
+        b = 2
+        a = 1
+        """)
+
+
+def test_sort_with_custom_key() -> None:
+    src = td("""
+        short = 1
+        longer = 2
+        longest_name = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort(key=len)
+    assert tomlrt.dumps(doc) == td("""
+        short = 1
+        longer = 2
+        longest_name = 3
+        """)
+    doc.sort(key=len, reverse=True)
+    assert tomlrt.dumps(doc) == td("""
+        longest_name = 3
+        longer = 2
+        short = 1
+        """)
+
+
+def test_sort_sections_preserves_above_header_comments() -> None:
+    src = td("""
+        # preamble
+
+        # above b
+        [b]
+        x = 1
+
+        # above a
+        [a]
+        y = 2
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    assert tomlrt.dumps(doc) == td("""
+        # preamble
+
+        # above a
+        [a]
+        y = 2
+        z = 3
+
+        # above b
+        [b]
+        x = 1
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_aot_at_root_moves_all_entries() -> None:
+    src = td("""
+        # header for b
+        [[b]]
+        x = 1
+        [[b]]
+        x = 2
+
+        # header for a
+        [[a]]
+        y = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    assert tomlrt.dumps(doc) == td("""
+        # header for a
+        [[a]]
+        y = 1
+
+        # header for b
+        [[b]]
+        x = 1
+        [[b]]
+        x = 2
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_dotted_kvs_treated_as_one_block() -> None:
+    src = td("""
+        b = 1
+        a.x = 2
+        a.y = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    assert tomlrt.dumps(doc) == td("""
+        a.x = 2
+        a.y = 3
+        b = 1
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_inside_section() -> None:
+    src = td("""
+        [s]
+        c = 3
+        # above a
+        a = 1
+        b = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("s").sort()
+    assert tomlrt.dumps(doc) == td("""
+        [s]
+        # above a
+        a = 1
+        b = 2
+        c = 3
+        """)
+
+
+def test_sort_rejects_leaf_after_structural() -> None:
+    # Two sections + a leaf. Force an order that interleaves the leaf
+    # between the two structurals: 'leaf' would render after '[a]'
+    # and re-bind as nested under '[a]'.
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
+    )
+    doc["leaf"] = "z"
+    order_idx = {"a": 0, "leaf": 1, "b": 2}
+    with pytest.raises(ValueError, match="leaf"):
+        doc.sort(key=order_idx.__getitem__)
+
+
+def test_sort_smart_key_leaves_before_sections() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
+    )
+    doc["leaf"] = "z"
+
+    def _is_section(k: str) -> bool:
+        v = doc[k]
+        if isinstance(v, AoT):
+            return True
+        return isinstance(v, Table) and not v._inline  # noqa: SLF001
+
+    doc.sort(key=lambda k: (_is_section(k), k))
+    assert tomlrt.dumps(doc) == td("""
+        leaf = "z"
+
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
+
+
+def test_sort_handles_non_contiguous_key_blocks() -> None:
+    # Key 'outer' has two runs ([outer.a] and [outer.b]) at root,
+    # with 'other' in between. sort() should collect both runs and
+    # splice them as one contiguous block at 'outer's new position.
+    src = td("""
+        [outer.a]
+        x = 1
+
+        [other]
+        z = 0
+
+        [outer.b]
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    assert tomlrt.dumps(doc) == td("""
+        [other]
+        z = 0
+
+        [outer.a]
+        x = 1
+
+        [outer.b]
+        y = 2
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_empty_and_single_are_noops() -> None:
+    empty = tomlrt.loads("")
+    empty.sort()
+    assert tomlrt.dumps(empty) == ""
+
+    single = tomlrt.loads("a = 1\n")
+    single.sort()
+    assert tomlrt.dumps(single) == "a = 1\n"
+
+
+def test_sort_already_ordered_is_noop() -> None:
+    src = td("""
+        a = 1
+        b = 2
+        c = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_sort_detached_table_reorders_dict_storage() -> None:
+    t = Table()
+    t["c"] = 1
+    t["a"] = 2
+    t["b"] = 3
+    t.sort()
+    assert list(t.keys()) == ["a", "b", "c"]
+
+
+def test_sort_inline_table_simple() -> None:
+    doc = tomlrt.loads("t = {b = 1, a = 2}\n")
+    doc.table("t").sort()
+    assert tomlrt.dumps(doc) == "t = {a = 2, b = 1}\n"
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_inline_table_preserves_no_trailing_comma() -> None:
+    # Sorting must keep the original "no trailing comma" style: the
+    # entry that moves to the last position drops its comma.
+    doc = tomlrt.loads("t = { c = 3, a = 1, b = 2 }\n")
+    doc.table("t").sort()
+    assert tomlrt.dumps(doc) == "t = { a = 1, b = 2, c = 3 }\n"
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_inline_table_with_dotted_keys() -> None:
+    # 'a' is a dotted-key prefix at the inline root: a.x and a.y are
+    # two separate entries grouped under the same direct child.
+    doc = tomlrt.loads("t = {b = 1, a.x = 2, a.y = 3}\n")
+    doc.table("t").sort()
+    # Direct children of t are 'a' and 'b' → sorted: 'a' first.
+    # Both a.x and a.y belong to 'a' and travel together.
+    assert tomlrt.dumps(doc) == "t = {a.x = 2, a.y = 3, b = 1}\n"
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_inline_table_multiline_with_above_comments() -> None:
+    src = td("""
+        t = {
+          # above b
+          b = 2,
+          # above a
+          a = 1,
+        }
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("t").sort()
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          # above a
+          a = 1,
+          # above b
+          b = 2,
+        }
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_inline_dotted_inner_navigator() -> None:
+    # Sort the navigator view for 'a' in {a.p, a.q}; entries outside
+    # 'a' (x, y) keep their absolute positions.
+    doc = tomlrt.loads("t = {x = 0, a.q = 2, a.p = 1, y = 3}\n")
+    doc.table("t").table("a").sort()
+    # Owned positions are 1 and 2 (the a.q and a.p entries). After
+    # sort by ('p','q'): pos 1 ← a.p, pos 2 ← a.q. x and y unchanged.
+    assert tomlrt.dumps(doc) == "t = {x = 0, a.p = 1, a.q = 2, y = 3}\n"
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_preserves_lexeme_styles_and_whitespace() -> None:
+    src = td("""
+        b = 'lit'
+        a = "basic"
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    # Each KV keeps its original lexeme style; sort only reorders blocks.
+    assert tomlrt.dumps(doc) == td("""
+        a = "basic"
+        b = 'lit'
+        """)
+
+
+def test_sort_round_trips_for_repeated_sorts() -> None:
+    src = td("""
+        # head
+
+        # above c
+        c = 3
+        # above a
+        a = 1
+
+        # above b
+        b = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    once = tomlrt.dumps(doc)
+    doc.sort()  # idempotent: already sorted
+    twice = tomlrt.dumps(doc)
+    assert once == twice

@@ -2,21 +2,20 @@
 
 * :func:`td` — write TOML fixtures as indented triple-quoted literals
   so tests don't degenerate into walls of ``\\n``-escaped strings.
-* :func:`reparses` — re-parse a rendered document with stdlib ``tomllib``
-  to sanity-check that the output is still valid TOML carrying the
-  expected logical values.
+* :func:`reparses` — re-parse a rendered document with ``tomli`` to
+  sanity-check that the output is still valid TOML carrying the
+  expected logical values. ``tomli`` is preferred over the stdlib
+  ``tomllib`` because as of writing (Python 3.14) ``tomllib`` is TOML
+  1.0 only, whereas ``tomli`` 2.4+ accepts TOML 1.1 syntax (multi-line
+  inline tables, etc.).
 """
 
 from __future__ import annotations
 
-import sys
 from textwrap import dedent
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover -- backport for Python < 3.11
-    import tomli as tomllib
+import tomli
 
 
 def td(src: str) -> str:
@@ -42,5 +41,5 @@ def td(src: str) -> str:
 
 
 def reparses(src: str) -> dict[str, Any]:
-    """Parse ``src`` with stdlib ``tomllib`` and return the result."""
-    return tomllib.loads(src)
+    """Parse ``src`` with ``tomli`` and return the result."""
+    return tomli.loads(src)

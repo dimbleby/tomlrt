@@ -870,7 +870,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "tomli" },
 ]
 docs = [
     { name = "mkdocstrings", extra = ["python"] },
@@ -886,7 +886,7 @@ dev = [
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=9" },
     { name = "pytest-cov", specifier = ">=5" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
+    { name = "tomli", specifier = ">=2.2" },
 ]
 docs = [
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.27" },

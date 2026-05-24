@@ -34,6 +34,8 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
     clone_trivia,
+    join_above_block,
+    split_above_block,
     trivia_has_comment,
 )
 from tomlrt._values import InlineTableEntry, inter_item_separator, make_keyparts
@@ -265,4 +267,77 @@ def _fix_head_after_delete(iv: InlineTableValue, removed_idx: int) -> None:
     iv.entries[0].leading = Trivia()
 
 
-__all__ = ["append_entry", "delete_entry", "replace_entry_value"]
+def reorder_inline(c: Container, new_key_order: list[str]) -> None:
+    """Reorder direct children of an inline-table container.
+
+    Permutes ``InlineTableValue.entries`` so that the c-direct-child
+    keys appear in ``new_key_order``. Each entry's above-block (the
+    comment block visually attached to it; lives in ``header_trivia``
+    for entries[0]) travels with the entry. Positional state — the
+    inter-entry pad, ``has_comma``, ``post_comma_trivia``, ``trailing``
+    — stays at its position, so e.g. the entry that ends up at the
+    last position correctly drops its trailing comma.
+
+    Foreign entries (whose key path doesn't start with c's prefix —
+    only possible when c is a dotted-inner navigator) keep their
+    absolute positions; only owned positions are reordered.
+
+    ``new_key_order`` is trusted to be a permutation of
+    ``dict.keys(c)``. Only mutates the CST; dict storage is the
+    caller's responsibility.
+    """
+    root = _outermost_inline(c)
+    iv = root._value  # noqa: SLF001
+    assert iv is not None
+
+    prefix = c._path[len(root._path) :]  # noqa: SLF001
+    plen = len(prefix)
+
+    blocks: dict[str, list[InlineTableEntry]] = {k: [] for k in new_key_order}
+    owned_positions: list[int] = []
+    for i, e in enumerate(iv.entries):
+        kp = tuple(p.value for p in e.key_parts)
+        if len(kp) > plen and kp[:plen] == prefix and kp[plen] in blocks:
+            blocks[kp[plen]].append(e)
+            owned_positions.append(i)
+
+    if len(owned_positions) <= 1:
+        return
+
+    # Snapshot positional state (stays at position) and above-block
+    # (travels with entry) for each owned position. entries[0]'s
+    # above-block lives in iv.header_trivia under the canonical model.
+    pos_state: dict[int, tuple[Trivia, bool, Trivia, Trivia]] = {}
+    above_by_entry: dict[int, Trivia] = {}
+    for i in owned_positions:
+        e = iv.entries[i]
+        src = iv.header_trivia if i == 0 else e.leading
+        pad, above = split_above_block(src)
+        pos_state[i] = (pad, e.has_comma, e.post_comma_trivia, e.trailing)
+        above_by_entry[id(e)] = above
+
+    new_owned = [e for k in new_key_order for e in blocks[k]]
+    new_entries = list(iv.entries)
+    for pos, e in zip(owned_positions, new_owned, strict=True):
+        new_entries[pos] = e
+    iv.entries = new_entries
+
+    # Restore positional state, re-stitch each entry's leading to
+    # positional_pad + its travelling above-block. The head entry's
+    # above-block goes into iv.header_trivia; its leading stays empty
+    # under the canonical model.
+    for pos in owned_positions:
+        e = iv.entries[pos]
+        pad, has_comma, post_comma, trailing = pos_state[pos]
+        e.has_comma = has_comma
+        e.post_comma_trivia = post_comma
+        e.trailing = trailing
+        above = above_by_entry[id(e)]
+        if pos == 0:
+            iv.header_trivia = join_above_block(pad, above)
+            e.leading = Trivia()
+        else:
+            e.leading = join_above_block(pad, above)
+
+
+__all__ = ["append_entry", "delete_entry", "reorder_inline", "replace_entry_value"]
