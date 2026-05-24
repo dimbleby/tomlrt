@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from _helpers import reparses as _reparses
@@ -1243,6 +1244,22 @@ def test_install_accepts_list_path() -> None:
     doc = tomlrt.loads("")
     doc.install(["tool", "ruff", "line-length"], 88)
     assert tomlrt.dumps(doc) == "[tool.ruff]\nline-length = 88\n"
+
+
+def test_install_accepts_arbitrary_sequence_path() -> None:
+    # The public type signature is ``str | Sequence[str]`` and the docs
+    # say "any sequence of literal segments". A ``collections.deque``
+    # is a ``Sequence`` and should be accepted.
+    doc = tomlrt.loads("")
+    doc.install(deque(["a", "b"]), 1)
+    assert tomlrt.dumps(doc) == "[a]\nb = 1\n"
+
+
+def test_ensure_table_accepts_arbitrary_sequence_path() -> None:
+    doc = tomlrt.loads("")
+    t = doc.ensure_table(deque(["a", "b"]))
+    t["x"] = 1
+    assert tomlrt.dumps(doc) == "[a.b]\nx = 1\n"
 
 
 def test_ensure_table_accepts_list_path() -> None:
