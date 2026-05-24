@@ -369,19 +369,15 @@ def insert_before(anchor: Slot, new_slot: Slot, doc: Document) -> None:
 
 
 def insert_before_head(new_slot: Slot, doc: Document) -> None:
-    """Splice ``new_slot`` at the start of ``doc``'s linked list."""
-    # Preamble migration: if the doc was previously slotless and any
-    # preamble lives in `_trailing` (e.g. set via `Document.preamble`
-    # on an empty doc, or a comment-only source), prepend that trivia
-    # to the new head's leading and clear the trailing.
+    """Splice ``new_slot`` at the start of ``doc``'s linked list.
+
+    Purely mechanical; does not touch ``doc._trailing``. Callers
+    inserting the very first slot into an empty doc that may carry
+    preamble trivia in ``_trailing`` (e.g. set via
+    :attr:`Document.preamble` or parsed from a comment-only source)
+    should follow up with :func:`_promote_trailing_to_preamble`.
+    """
     head = doc._head  # noqa: SLF001
-    if head is None and doc._trailing.pieces:  # noqa: SLF001
-        nl = doc._newline  # noqa: SLF001
-        migrated = list(doc._trailing.pieces)  # noqa: SLF001
-        # Add a blank-line separator between preamble and content.
-        migrated.append(NewlineNode(nl))
-        new_slot.leading.pieces = [*migrated, *new_slot.leading.pieces]
-        doc._trailing.pieces = []  # noqa: SLF001
     new_slot._prev = None  # noqa: SLF001
     new_slot._next = head  # noqa: SLF001
     if head is not None:
@@ -389,6 +385,25 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
     else:
         doc._tail = new_slot  # noqa: SLF001
     doc._head = new_slot  # noqa: SLF001
+
+
+def _promote_trailing_to_preamble(new_head: Slot, doc: Document) -> None:
+    """Hoist ``doc._trailing`` onto ``new_head.leading``, then clear it.
+
+    Used when the very first slot is inserted into an empty doc that
+    already carries preamble trivia in ``_trailing`` (set via
+    :attr:`Document.preamble` or parsed from a comment-only source).
+    A blank-line separator is inserted between the migrated preamble
+    and any pre-existing leading on ``new_head``.
+
+    No-op when ``_trailing`` is empty.
+    """
+    if not doc._trailing.pieces:  # noqa: SLF001
+        return
+    migrated = list(doc._trailing.pieces)  # noqa: SLF001
+    migrated.append(NewlineNode(doc._newline))  # noqa: SLF001
+    new_head.leading.pieces = [*migrated, *new_head.leading.pieces]
+    doc._trailing.pieces = []  # noqa: SLF001
 
 
 def unlink_slot(
@@ -501,10 +516,12 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         insert_before_head(new_slot, doc)
         _ensure_leading_blank_line(old_head, doc)
     else:
-        # Empty doc (slotless), possibly with preamble trivia in
-        # _trailing — insert_before_head migrates that onto the new
-        # slot's leading.
+        # Empty doc (slotless): splice the new KV in as the head and
+        # hoist any pre-existing preamble trivia (from
+        # `Document.preamble`, or a parsed comment-only source) onto
+        # its leading.
         insert_before_head(new_slot, doc)
+        _promote_trailing_to_preamble(new_slot, doc)
 
     new_ref = SlotRef(slot=new_slot, container=c)
     # The new ref's correct position in ``c._refs`` is immediately
@@ -1096,6 +1113,7 @@ def install_dotted_kv_slot(
         inserted_at_head = True
     else:
         insert_before_head(new_slot, doc)
+        _promote_trailing_to_preamble(new_slot, doc)
 
     # File refs on every chain ancestor. ``_refs`` is the doc-stream
     # subset; ``_index`` preserves "primary at index 0 + all
@@ -1509,8 +1527,10 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
     """Insert ``slot`` at the end of the doc-stream."""
     anchor = doc._tail  # noqa: SLF001
     if anchor is None:
-        # Empty doc.
+        # Empty doc: this is also the first slot, so any preamble
+        # parked in `_trailing` migrates onto its leading.
         insert_before_head(slot, doc)
+        _promote_trailing_to_preamble(slot, doc)
     else:
         _ensure_terminator(anchor, doc)
         insert_after(anchor, slot, doc)

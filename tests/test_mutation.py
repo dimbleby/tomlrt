@@ -3440,6 +3440,64 @@ def test_aot_sort_moves_disjoint_above_blank_header_comment_with_entry() -> None
     assert _reparses(tomlrt.dumps(doc))
 
 
+def test_sort_preserves_document_epilogue() -> None:
+    # Regression: reorder_container that unlinks every owned slot
+    # (region starts at doc head) used to trigger the empty-doc
+    # preamble-migration branch of insert_before_head, draining
+    # doc._trailing into the new head's leading. The re-stitch step
+    # then overwrote that leading and the epilogue silently vanished.
+    src = td("""
+        [b]
+        y = 2
+
+        [a]
+        x = 1
+
+        # trailing comment
+        """)
+    doc = tomlrt.loads(src)
+    doc.sort()
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+
+        # trailing comment
+        """)
+    assert doc.epilogue == ("trailing comment",)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_aot_sort_preserves_document_epilogue() -> None:
+    # Regression: same bug in renormalise_aot_order — when the AoT
+    # starts at doc head, the transient empty-doc state during splice
+    # used to drain doc._trailing into the new head's leading.
+    src = td("""
+        [[t]]
+        x = 2
+
+        [[t]]
+        x = 1
+
+        # trailing comment
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("t").sort(key=lambda e: e["x"])
+    assert tomlrt.dumps(doc) == td("""
+        [[t]]
+        x = 1
+
+        [[t]]
+        x = 2
+
+        # trailing comment
+        """)
+    assert doc.epilogue == ("trailing comment",)
+    assert _reparses(tomlrt.dumps(doc))
+
+
 def test_sort_round_trips_for_repeated_sorts() -> None:
     src = td("""
         # head
