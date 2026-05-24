@@ -1417,13 +1417,18 @@ def _install_attached_subtree(
     """Recursively install an attached implicit / Document source.
 
     Walks ``src_table.items()`` and re-installs each entry under
-    ``dst_parent`` using tuple-path :meth:`Container.install` so that
-    attached sections clone via ``clone_section_as_section`` and
-    AoTs clone via ``clone_aot``. Implicit chains stay implicit
-    (no ``[k]`` header is synthesised unless there are direct KVs to
-    host); when there *are* direct scalar / inline KVs at this level,
-    a ``Table.section`` snapshot is installed at ``dst_path`` to
-    carry them.
+    ``dst_parent``. Section / AoT children clone via tuple-path
+    :meth:`Container.install` (so attached sections preserve their
+    headers and AoTs clone slot-for-slot). Direct (non-structural)
+    entries at this implicit level are written as dotted KVs hosted
+    by ``dst_parent``'s nearest header-bearing ancestor, so the
+    source's dotted form is preserved on per-key clone.
+
+    Note: bucketing into directs vs structurals can reorder relative
+    to ``src_table.items()`` — at a given implicit level all dotted
+    leaves emit before any subsection. TOML is structurally
+    insensitive to that order; the dotted-form preservation is the
+    win.
     """
     direct_kvs: list[tuple[str, object]] = []
     structural: list[tuple[str, object]] = []
@@ -1434,10 +1439,7 @@ def _install_attached_subtree(
             direct_kvs.append((k, v))
 
     if direct_kvs:
-        snapshot = Table.section()
-        for k, v in direct_kvs:
-            snapshot[k] = _to_python(v)
-        dst_parent.install(dst_path, snapshot)
+        _install_dotted_direct_kvs(dst_parent, dst_path, direct_kvs)
 
     for k, v in structural:
         sub_path = (*dst_path, k)
@@ -1447,6 +1449,42 @@ def _install_attached_subtree(
             dst_parent.install(sub_path, v)
         elif isinstance(v, Container):
             _install_attached_subtree(dst_parent, sub_path, v)
+
+
+def _install_dotted_direct_kvs(
+    dst_parent: Container,
+    dst_path: tuple[str, ...],
+    direct_kvs: list[tuple[str, object]],
+) -> None:
+    """Emit each ``(k, v)`` in ``direct_kvs`` as a dotted KV under host.
+
+    ``host`` is the nearest header-bearing ancestor at-or-above
+    ``dst_parent`` (or the doc / AoT-entry root). Creates implicit
+    intermediates between host and the leaf as needed. Each value is
+    deep-cloned via ``_to_python`` + ``_synth_value`` so the source's
+    CST is not disturbed.
+    """
+    host: Container = dst_parent
+    while host._header_ref is None and host._parent is not None:  # noqa: SLF001
+        host = host._parent  # noqa: SLF001
+    parent_to_host = dst_parent._path[len(host._path) :]  # noqa: SLF001
+    layout_root = dst_parent._layout_root  # noqa: SLF001
+    owner = host._owner_aot_entry  # noqa: SLF001
+    for k, v in direct_kvs:
+        leaf_keypath = (*parent_to_host, *dst_path, k)
+        leaf_parent = _layout_ops.ensure_implicit_chain(host, leaf_keypath[:-1])
+        py = _to_python(v)
+        cst, decoded = _synth_value(
+            py,
+            layout_root=layout_root,
+            parent=leaf_parent,
+            path=(*host._path, *leaf_keypath),  # noqa: SLF001
+            owner=owner,
+        )
+        _layout_ops.install_dotted_kv_slot(
+            host, leaf_keypath, cst, leaf_parent=leaf_parent
+        )
+        dict.__setitem__(leaf_parent, k, decoded)
 
 
 def _to_python(v: Any) -> Any:

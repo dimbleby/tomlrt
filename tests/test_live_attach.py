@@ -15,6 +15,7 @@ import pytest
 
 import tomlrt
 from _helpers import reparses as _reparses
+from _helpers import td
 from tomlrt import AoT, Array, Table
 
 # ---------------------------------------------------------------------------
@@ -796,3 +797,159 @@ def test_held_view_after_delete_does_not_corrupt_doc() -> None:
     held["new"] = 99
     assert tomlrt.dumps(doc) == "[b]\ny = 2\n"
     assert held["new"] == 99
+
+
+# ---------------------------------------------------------------------------
+# Per-key clone of dotted-form sub-tables preserves dotted form.
+# ---------------------------------------------------------------------------
+
+
+def test_per_key_clone_of_dotted_preserves_dotted_form() -> None:
+    src = tomlrt.loads(
+        td("""
+        [x]
+        v.w = "hi"
+        """)
+    )
+    dst = tomlrt.loads(
+        td("""
+        [x]
+        """)
+    )
+    dst["x"]["v"] = src["x"]["v"]
+    assert tomlrt.dumps(dst) == td("""
+        [x]
+        v.w = "hi"
+        """)
+
+
+def test_cross_document_clone_of_dotted_preserves_dotted_form() -> None:
+    src = tomlrt.loads(
+        td("""
+        [x]
+        v.w = 1
+        """)
+    )
+    dst = tomlrt.loads(
+        td("""
+        [x]
+        """)
+    )
+    dst["x"]["v"] = src["x"]["v"]
+    # Source unchanged after clone.
+    assert tomlrt.dumps(src) == td("""
+        [x]
+        v.w = 1
+        """)
+    assert tomlrt.dumps(dst) == td("""
+        [x]
+        v.w = 1
+        """)
+
+
+def test_per_key_clone_of_implicit_super_table_still_synthesises_header() -> None:
+    src = tomlrt.loads(
+        td("""
+        [x.v.w]
+        a = 1
+        """)
+    )
+    dst = tomlrt.loads(
+        td("""
+        [x]
+        """)
+    )
+    dst["x"]["v"] = src["x"]["v"]
+    assert tomlrt.dumps(dst) == td("""
+        [x]
+
+        [x.v.w]
+        a = 1
+        """)
+
+
+def test_per_key_clone_of_mixed_emits_dotted_kvs_and_subsection() -> None:
+    src = tomlrt.loads(
+        td("""
+        [x]
+        v.w = 1
+
+        [x.v.q]
+        a = 2
+        """)
+    )
+    dst = tomlrt.loads(
+        td("""
+        [x]
+        """)
+    )
+    dst["x"]["v"] = src["x"]["v"]
+    assert tomlrt.dumps(dst) == td("""
+        [x]
+        v.w = 1
+
+        [x.v.q]
+        a = 2
+        """)
+
+
+def test_top_level_clone_of_dotted_preserves_dotted_form() -> None:
+    src = tomlrt.loads("v.w = 1\n")
+    dst = tomlrt.loads("")
+    dst["v"] = src["v"]
+    assert tomlrt.dumps(dst) == "v.w = 1\n"
+
+
+def test_clone_of_nested_dotted_preserves_full_dotted_path() -> None:
+    src = tomlrt.loads(
+        td("""
+        [x]
+        v.w.z = 1
+        """)
+    )
+    dst = tomlrt.loads(
+        td("""
+        [x]
+        """)
+    )
+    dst["x"]["v"] = src["x"]["v"]
+    assert tomlrt.dumps(dst) == td("""
+        [x]
+        v.w.z = 1
+        """)
+
+
+def test_clone_of_dotted_with_inline_value_preserves_dotted_form() -> None:
+    src = tomlrt.loads(
+        td("""
+        [x]
+        v.w = { a = 1 }
+        """)
+    )
+    dst = tomlrt.loads(
+        td("""
+        [x]
+        """)
+    )
+    dst["x"]["v"] = src["x"]["v"]
+    assert tomlrt.dumps(dst) == td("""
+        [x]
+        v.w = { a = 1 }
+        """)
+
+
+def test_clone_dotted_to_top_level_before_existing_section() -> None:
+    src = tomlrt.loads("v.w = 1\n")
+    dst = tomlrt.loads(
+        td("""
+        [a]
+        y = 2
+        """)
+    )
+    dst["v"] = src["v"]
+    assert tomlrt.dumps(dst) == td("""
+        v.w = 1
+
+        [a]
+        y = 2
+        """)

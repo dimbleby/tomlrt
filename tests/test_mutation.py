@@ -2163,6 +2163,48 @@ def test_dotted_add_respects_blank_line_policy() -> None:
         """)
 
 
+def test_dotted_add_anchors_at_implicit_tail_not_host_tail() -> None:
+    """A new dotted sibling must group with its implicit-region peers,
+    not be appended after unrelated host-level KVs that follow them in
+    doc-stream order.
+    """
+    src = td("""
+        [x]
+        v.w = 1
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["x"]["v"]["z"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [x]
+        v.w = 1
+        v.z = 3
+        y = 2
+        """)
+
+
+def test_dotted_add_anchors_at_implicit_tail_with_unrelated_dotted_trailer() -> None:
+    """Even when the trailing host slot is another dotted KV (under a
+    different implicit prefix), the new sibling must anchor at its
+    own implicit region's tail, not host's.
+    """
+    src = td("""
+        [s]
+        a.b = 1
+        q.r = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"]["a"]["c"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        a.b = 1
+        a.c = 3
+        q.r = 2
+        """)
+
+
 def test_clear_doc_with_sections_drops_all_and_keeps_doc_empty() -> None:
     src = td("""
         [a]
