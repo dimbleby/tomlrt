@@ -107,6 +107,24 @@ def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
     return None
 
 
+def _require_attached(c: Container) -> None:
+    """Reject comment-view mutation on a container with no slot stream.
+
+    Detached containers (e.g. ``Table.section()`` before assignment into
+    a `Document`) have no slot stream, so the comment views have nowhere
+    to store the mutation. Raise a clear `TOMLError` pointing at the
+    fix instead of a misleading ``KeyError`` from the internal slot
+    lookup.
+    """
+    if c._layout_root is None:  # noqa: SLF001
+        msg = (
+            "comments view is unavailable on a detached container; "
+            "attach the container to a Document first (e.g. doc[k] = table) "
+            "and then mutate doc[k].comments"
+        )
+        raise TOMLError(msg)
+
+
 _T = TypeVar("_T")
 
 
@@ -173,6 +191,7 @@ class EolCommentView(_SlotKeyedView[str]):
 
     @override
     def __setitem__(self, key: str, value: str) -> None:
+        _require_attached(self._c)
         slot = self._slot(key)
         if slot is None:
             msg = f"key {key!r} not in container"
@@ -182,6 +201,7 @@ class EolCommentView(_SlotKeyedView[str]):
 
     @override
     def __delitem__(self, key: str) -> None:
+        _require_attached(self._c)
         slot = self._slot(key)
         if slot is None or slot.eol.comment is None:
             raise KeyError(key)
@@ -361,6 +381,7 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
 
     @override
     def __setitem__(self, key: str, value: tuple[str, ...]) -> None:
+        _require_attached(self._c)
         slot = self._slot(key)
         if slot is None:
             msg = f"key {key!r} not in container"
@@ -370,6 +391,7 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
 
     @override
     def __delitem__(self, key: str) -> None:
+        _require_attached(self._c)
         slot = self._slot(key)
         if slot is None:
             raise KeyError(key)
@@ -416,6 +438,7 @@ class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
 
     @override
     def __setitem__(self, key: str, value: tuple[str | None, ...]) -> None:
+        _require_attached(self._c)
         slot = self._slot(key)
         if slot is None:
             msg = f"key {key!r} not in container"
@@ -425,6 +448,7 @@ class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
 
     @override
     def __delitem__(self, key: str) -> None:
+        _require_attached(self._c)
         slot = self._slot(key)
         if slot is None:
             raise KeyError(key)
