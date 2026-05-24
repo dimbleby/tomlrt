@@ -358,8 +358,6 @@ def test_aot_entry_sub_section_modify_value() -> None:
 
 
 def test_aot_entry_install_subsection_does_not_overwrite_sibling() -> None:
-    """Regression: installing [pkg.dependencies] on a 2nd AoT entry used to
-    silently delete the 1st entry's same-named sub-section."""
     doc = tomlrt.loads("")
     doc["package"] = tomlrt.AoT()
     e1 = doc["package"].add({"name": "foo"})
@@ -377,9 +375,6 @@ def test_aot_entry_install_subsection_does_not_overwrite_sibling() -> None:
 
 
 def test_root_section_after_aot_does_not_split_entry_body() -> None:
-    """Regression: adding a root [metadata] section after an AoT used to
-    splice the new header *between* the [[package]] header and its body
-    KVs, because _parent_subtree_tail bailed at the AoT-entry-owned body."""
     doc = tomlrt.loads("")
     doc["package"] = tomlrt.AoT()
     doc["package"].add({"name": "poetry-core", "version": "2.2.1"})
@@ -434,9 +429,6 @@ def test_subsection_into_aot_entry_with_nested_sub_aot() -> None:
 
 
 def test_ensure_table_multi_component_anchors_under_parent() -> None:
-    """Regression: ensure_table with a multi-component path used to splice
-    the new [tool.a.b] header at end-of-doc (after unrelated [other])
-    instead of within [tool]'s subtree."""
     doc = tomlrt.loads("[tool]\nx = 1\n\n[other]\ny = 1\n")
     doc.ensure_table(("tool", "a", "b"))
     out = tomlrt.dumps(doc)
@@ -445,10 +437,6 @@ def test_ensure_table_multi_component_anchors_under_parent() -> None:
 
 
 def test_cross_doc_update_preserves_dotted_super_table() -> None:
-    """Regression: copying a dotted-header table (e.g. [tool.poetry]) from
-    one Document into another via Document.update or per-key assignment
-    used to insert a spurious empty [tool] super-table header before the
-    [tool.poetry] header."""
     src = tomlrt.loads("[tool.poetry]\npackages = []\n")
 
     dst1 = tomlrt.loads("")
@@ -466,11 +454,6 @@ def test_cross_doc_update_preserves_dotted_super_table() -> None:
 
 
 def test_cross_doc_array_assignment_preserves_multiline_layout() -> None:
-    """Regression: assigning an attached Array from one Document to a key
-    in another used to re-synthesise it as a single-line ``[a, b]`` blob,
-    losing the source's multi-line layout. The CST is now deep-cloned so
-    the destination keeps the source's whitespace, trailing-comma style,
-    and any embedded comments."""
     src = tomlrt.loads(
         '[project]\ndependencies = [\n    "foo>=2.0",\n    "bar>=1.0",\n]\n'
     )
@@ -486,8 +469,6 @@ def test_cross_doc_array_assignment_preserves_multiline_layout() -> None:
 
 
 def test_cross_doc_inline_table_assignment_preserves_spacing() -> None:
-    """Regression: cross-doc inline-table assignment lost embedded
-    spacing (e.g. double-space between entries)."""
     src = tomlrt.loads('owner = { name = "tom",  dob = 1979 }\n')
     dst = tomlrt.loads("owner = { x = 1 }\n")
     dst["owner"] = src["owner"]
@@ -1867,10 +1848,6 @@ def test_array_set_multiline_custom_indent() -> None:
 
 
 def test_array_set_multiline_preserves_crlf_newlines() -> None:
-    # Regression: ``set_multiline`` used to hard-code ``\n`` into the
-    # synthesised bracket-pad / inter-item separators, so calling it on
-    # an array inside a CRLF document produced mixed ``\n`` / ``\r\n``
-    # output.
     doc = tomlrt.loads("a = [1, 2]\r\n")
     doc.array("a").set_multiline(multiline=True, indent="  ")
     out = tomlrt.dumps(doc)
@@ -2529,7 +2506,6 @@ def test_install_array_round_trips() -> None:
 
 
 def test_detached_aot_preserves_entry_array_multiline_layout() -> None:
-    """Regression: detached AoT used to lose multiline layout on install."""
     doc = tomlrt.loads("")
     aot = tomlrt.AoT()
     pkg = aot.add({"name": "foo"})
@@ -2567,7 +2543,6 @@ def test_install_detached_aot_preserves_entry_array_multiline_layout() -> None:
 
 
 def test_assign_over_aot_keeps_dict_view_in_sync() -> None:
-    """Regression: the dict view used to keep a stale AoT after an assign."""
     src = td("""
         [tool]
 
@@ -2582,7 +2557,6 @@ def test_assign_over_aot_keeps_dict_view_in_sync() -> None:
 
 
 def test_del_then_assign_keeps_dict_view_in_sync() -> None:
-    """Regression: re-assigning a key after del used to revive the old AoT."""
     src = td("""
         [tool]
 
@@ -2598,7 +2572,6 @@ def test_del_then_assign_keeps_dict_view_in_sync() -> None:
 
 
 def test_pop_then_assign_keeps_dict_view_in_sync() -> None:
-    """Regression: dict view returned the old sub-table's keys after re-assign."""
     src = td("""
             [tool.poetry]
             name = "x"
@@ -2616,10 +2589,6 @@ def test_pop_then_assign_keeps_dict_view_in_sync() -> None:
 
 
 def test_pop_inherited_dotted_key_from_ancestor_section() -> None:
-    """Regression: ``poetry.name = "x"`` in [tool] reads via doc['tool']['poetry']
-    but ``pop('name')`` used to KeyError because the mutation paths ignored
-    inherited (extras) entries.
-    """
     src = td("""
         [tool]
         poetry.name = "x"
@@ -2649,11 +2618,6 @@ def test_set_inherited_dotted_key_mutates_in_place() -> None:
 
 
 def test_preamble_set_on_empty_doc_renders_before_added_content() -> None:
-    """Regression: setting preamble on an empty document parks the
-    comment in trailing trivia. When the first content is added the
-    comment must migrate to the top of the file rather than render
-    after the new structural element.
-    """
     doc = Document()
     doc.preamble = ("This is a comment",)
     doc["x"] = 1
@@ -3130,16 +3094,7 @@ def test_setting_eol_comment_on_consecutive_items_keeps_indent() -> None:
 
 
 def test_aot_pop_preserves_owned_sub_sections_in_orphan() -> None:
-    """``AoT.pop`` returns a view that still carries its [a.sub] children.
-
-    Regression: ``_resync``'s detach pass runs after
-    ``remove_sections`` strips the entry's block from the live doc,
-    so by the time the popped entry's ``_detach`` searched
-    ``aot_owned_range`` for its sub-sections they were already gone
-    and the orphan captured only the bare ``[[a]]`` anchor. Re-
-    installing the popped entry elsewhere therefore silently lost
-    every nested ``[a.sub]`` section.
-    """
+    """``AoT.pop`` returns a view that still carries its [a.sub] children."""
     src = td("""
         [[a]]
         x = 1
@@ -3327,14 +3282,7 @@ def test_displaced_inline_view_detaches_on_overwrite() -> None:
 
 
 def test_scalar_overwrite_of_implicit_table_preserves_position() -> None:
-    """Replacing an implicit-parent's table-shaped child with a scalar.
-
-    Regression: assigning a scalar to a key that previously bound a
-    table (which only existed implicitly via a nested header) used to
-    materialise a fresh ``[parent]`` block at the end of the document.
-    Now the synthesised ``[parent]`` + ``key = value`` block is moved
-    back to the position formerly occupied by the deleted child header.
-    """
+    """Replacing an implicit-parent's table-shaped child with a scalar."""
     src = td("""
         [foo.bar.baz]
         quux = 1
