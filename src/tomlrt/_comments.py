@@ -245,6 +245,70 @@ def _split_attached_block(
     return above, attached, indent
 
 
+def _extract_leading_block(leading: Trivia) -> tuple[str | None, ...]:
+    """Return the leading as a tuple of comment strings and ``None`` blanks.
+
+    Comment-bearing lines decode to their text; blank or whitespace-only
+    lines become ``None``.  The slot's own trailing indent line (if any)
+    is excluded.  Includes both the above-blank groups and the attached
+    block in source order, separated by their original blank lines.
+    """
+    above, attached, _indent = _split_attached_block(leading)
+    out: list[str | None] = []
+    for line in (*above, *attached):
+        text: str | None = None
+        for p in line:
+            if isinstance(p, CommentNode):
+                text = _decode_comment(p.text)
+                break
+        out.append(text)
+    return tuple(out)
+
+
+def _set_leading_block(leading: Trivia, block: tuple[str | None, ...], nl: str) -> None:
+    """Replace ``leading`` with ``block`` (comment strings and ``None`` blanks).
+
+    The slot's own trailing indent (column offset) is preserved.  Comment
+    lines re-use that indent as their prefix; blank lines are emitted as
+    a bare newline with no trailing whitespace.
+    """
+    _above, _attached, indent = _split_attached_block(leading)
+    new_pieces: list[TriviaPiece] = []
+    for entry in block:
+        if entry is None:
+            new_pieces.append(NewlineNode(nl))
+        else:
+            new_pieces.extend(indent)
+            new_pieces.append(CommentNode(_encode_comment(entry)))
+            new_pieces.append(NewlineNode(nl))
+    new_pieces.extend(indent)
+    leading.pieces = new_pieces
+
+
+def _validate_block_seq(value: object, name: str) -> tuple[str | None, ...]:
+    """Type-check a leading-block tuple; entries are ``str`` or ``None``."""
+    if isinstance(value, str):
+        msg = f"{name} must be an iterable of comment strings or None"
+        raise TypeError(msg)
+    if not isinstance(value, Iterable):
+        msg = f"{name} must be an iterable of comment strings or None"
+        raise TypeError(msg)
+    out: list[str | None] = []
+    for c in value:
+        if c is None:
+            out.append(None)
+            continue
+        if not isinstance(c, str):
+            msg = f"{name} entries must be str or None"
+            raise TypeError(msg)
+        if "\n" in c or "\r" in c:
+            msg = f"{name} entries must not contain a line terminator"
+            raise TOMLError(msg)
+        _validate_comment_text(c)
+        out.append(c)
+    return tuple(out)
+
+
 def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
     """Return only the *attached* run of comment-bearing lines.
 
@@ -298,6 +362,53 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
             kept.extend(line)
         kept.extend(indent)
         slot.leading.pieces = kept
+
+
+class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
+    """Mapping view over the full leading-trivia block of each direct key.
+
+    Entries are tuples of comment strings and ``None`` (one ``None`` per
+    blank line), in source order; the slot's own column indent is not
+    included.  This is the full-fidelity peer of
+    :class:`LeadingCommentView`, which only exposes the trailing attached
+    block.  Writing replaces the entire leading; the slot's indent is
+    re-applied to each comment line and to the slot itself.
+    """
+
+    __slots__ = ()
+
+    @override
+    def _present(self, slot: KVSlot) -> bool:
+        return bool(_extract_leading_block(slot.leading))
+
+    @override
+    def __getitem__(self, key: str) -> tuple[str | None, ...]:
+        slot = self._slot(key)
+        if slot is None:
+            raise KeyError(key)
+        block = _extract_leading_block(slot.leading)
+        if not block:
+            raise KeyError(key)
+        return block
+
+    @override
+    def __setitem__(self, key: str, value: tuple[str | None, ...]) -> None:
+        slot = self._slot(key)
+        if slot is None:
+            msg = f"key {key!r} not in container"
+            raise KeyError(msg)
+        block = _validate_block_seq(value, "leading_block")
+        _set_leading_block(slot.leading, block, self._c._doc_newline)  # noqa: SLF001
+
+    @override
+    def __delitem__(self, key: str) -> None:
+        slot = self._slot(key)
+        if slot is None:
+            raise KeyError(key)
+        block = _extract_leading_block(slot.leading)
+        if not block:
+            raise KeyError(key)
+        _set_leading_block(slot.leading, (), self._c._doc_newline)  # noqa: SLF001
 
 
 def _header_slot(c: Container) -> StructuralHeaderSlot | None:
@@ -361,6 +472,23 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
         raise TOMLError(msg)
     comments = _validate_comment_seq(value, "header_leading_comments")
     _set_attached_block(h.leading, comments, c._doc_newline)  # noqa: SLF001
+
+
+def _header_leading_block_get(c: Container) -> tuple[str | None, ...]:
+    h = _header_slot(c)
+    if h is None:
+        msg = "container has no header to attach a leading block to"
+        raise TOMLError(msg)
+    return _extract_leading_block(h.leading)
+
+
+def _header_leading_block_set(c: Container, value: tuple[str | None, ...]) -> None:
+    h = _header_slot(c)
+    if h is None:
+        msg = "container has no header to attach a leading block to"
+        raise TOMLError(msg)
+    block = _validate_block_seq(value, "header_leading_block")
+    _set_leading_block(h.leading, block, c._doc_newline)  # noqa: SLF001
 
 
 def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
@@ -496,4 +624,4 @@ def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
     doc._trailing.pieces = new_pieces  # noqa: SLF001
 
 
-__all__ = ["EolCommentView", "LeadingCommentView"]
+__all__ = ["EolCommentView", "LeadingBlockView", "LeadingCommentView"]

@@ -56,6 +56,39 @@ tags.comments[0] = "primary"
 tags.leading_comments[1] = ("alternate",)
 ```
 
+## Orphan comments between sections
+
+`leading_comments` and `header_leading_comments` cover only the run of `# …`
+lines that sit *directly* above an entry or section header.
+A comment group separated from the entry by a blank line — for example a
+free-standing `# …` block between `[a]` and `[b]` — is not part of either
+view, and is silently dropped if the entry is removed and reinserted.
+
+`Table.leading_block` and `Table.header_leading_block` are the lossless
+counterparts: they expose the *whole* leading region — both the blank-
+separated groups above and the attached run immediately above the entry —
+as a tuple in which each `str` is a bare comment line and each `None` is
+a blank line. Round-tripping a value through them therefore preserves
+exact line structure.
+
+```toml
+[a]
+x = 1
+
+# orphan
+
+[b]
+y = 2
+```
+
+```python
+assert doc["b"].header_leading_block == (None, "orphan", None)
+doc["b"].header_leading_block = ("orphan", None, "attached")
+```
+
+For the first slot in a document this region overlaps with
+`Document.preamble`: writes through either are visible through the other.
+
 ## Document preamble and epilogue
 
 The top-of-file and bottom-of-file comment blocks are reachable via
