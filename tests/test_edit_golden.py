@@ -3038,6 +3038,34 @@ def test_array_sort_with_leading_comments_follows_items() -> None:
     assert tomlrt.dumps(doc) == expected
 
 
+def test_array_sort_normalises_mismatched_indents() -> None:
+    """``sort`` / ``reverse`` must not leave item 0 carrying the old
+    position-0 indent while items[1..] inherit the canonical one."""
+    src = "x = [\n    'z',\n  # comment\n      'a',\n   'm',\n]\n"
+    doc = tomlrt.loads(src)
+    doc.array("x").sort()
+    expected = td("""
+        x = [
+              # comment
+              'a',
+              'm',
+              'z',
+        ]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    doc = tomlrt.loads(src)
+    doc.array("x").reverse()
+    expected_rev = td("""
+        x = [
+              'm',
+              # comment
+              'a',
+              'z',
+        ]
+        """)
+    assert tomlrt.dumps(doc) == expected_rev
+
+
 def test_array_insert_zero_pushes_existing_leading_comment_to_new_position() -> None:
     """``insert(0, x)`` must not duplicate the leading-of-(formerly) item-0
     onto both the new item and its old (now position-1) item."""
