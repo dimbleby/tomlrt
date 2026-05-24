@@ -2757,6 +2757,29 @@ def test_preamble_migration_for_install_section_and_aot() -> None:
         assert tomlrt.loads(rendered).preamble == ("Top",), op_name
 
 
+def test_preamble_preserved_when_empty_section_promoted_to_implicit() -> None:
+    """Setting a sub-section on an empty placeholder section promotes
+    the parent to an implicit super-table; the demoted parent header
+    used to carry the file preamble in its leading trivia, and the
+    promotion silently dropped it.
+    """
+    doc = Document()
+    doc.preamble = ("hi",)
+    doc["project"] = Table.section()
+    assert doc.preamble == ("hi",)
+    project = doc.get_table("project")
+    assert project is not None
+    project["urls"] = Table.section()
+    assert doc.preamble == ("hi",)
+    rendered = tomlrt.dumps(doc)
+    assert rendered == td("""
+        # hi
+
+        [project.urls]
+        """)
+    assert tomlrt.loads(rendered).preamble == ("hi",)
+
+
 def test_aot_insert_on_empty_doc_migrates_preamble() -> None:
     """``AoT.insert`` was bypassing the preamble-migration choke-point,
     so on an empty doc with a preamble the comment ended up after the
