@@ -284,6 +284,40 @@ def _init_implicit_table(
     return child
 
 
+def ensure_implicit_chain(
+    parent: Container,
+    sub_path: tuple[str, ...],
+) -> Container:
+    """Navigate or create implicit Tables along ``sub_path`` under ``parent``.
+
+    Returns the deepest container. Missing components become new
+    implicit (header-less) tables wired into ``parent._attached_doc``;
+    existing components must already be ``Container`` instances.
+    """
+    from tomlrt._container import Container  # noqa: PLC0415
+
+    doc = parent._attached_doc  # noqa: SLF001
+    owner = parent._owner_aot_entry  # noqa: SLF001
+    cur: Container = parent
+    for j, comp in enumerate(sub_path):
+        if comp in cur:
+            nxt = dict.__getitem__(cur, comp)
+            if not isinstance(nxt, Container):
+                msg = f"intermediate {comp!r} is not a table"
+                raise TypeError(msg)
+            cur = nxt
+            continue
+        implicit = _init_implicit_table(
+            doc,
+            (*parent._path, *sub_path[: j + 1]),  # noqa: SLF001
+            cur,
+            owner,
+        )
+        dict.__setitem__(cur, comp, implicit)
+        cur = implicit
+    return cur
+
+
 def _rebuild_index_for_key(c: Container, local_key: str) -> None:
     """Restore ``c._index[local_key]`` as the doc-stream subset of ``c._refs``.
 
@@ -2295,7 +2329,6 @@ def attach_section_at(
     a `Table` (rehomed) or a Mapping (snapshotted) or ``None``.
     """
     from tomlrt._container import (  # noqa: PLC0415
-        Container,
         Table,
         _is_synth_inline,
         _synth_value,
@@ -2316,26 +2349,10 @@ def attach_section_at(
         owner_aot_entry=owner,
     )
 
-    # Build implicit chain: each intermediate is a Table view living
-    # in dict storage but with no own header ref.
-    chain: list[Container] = [parent]
-    for j, comp in enumerate(sub[:-1]):
-        cur = chain[-1]
-        if comp in cur:
-            nxt = dict.__getitem__(cur, comp)
-            if not isinstance(nxt, Container):
-                msg = f"intermediate {comp!r} is not a table"
-                raise TypeError(msg)
-            chain.append(nxt)
-            continue
-        implicit = _init_implicit_table(
-            doc,
-            (*parent._path, *sub[: j + 1]),  # noqa: SLF001
-            cur,
-            owner,
-        )
-        dict.__setitem__(cur, comp, implicit)
-        chain.append(implicit)
+    # Build implicit chain: intermediates become header-less Tables
+    # living in dict storage; the deepest is where the new explicit
+    # header is filed.
+    deepest_parent = ensure_implicit_chain(parent, sub[:-1])
 
     if isinstance(source, Table) and source._layout_root is None:  # noqa: SLF001
         section = source
@@ -2349,7 +2366,7 @@ def attach_section_at(
         section,
         doc=doc,
         path=full_path,
-        parent=chain[-1],
+        parent=deepest_parent,
         owner=None,
         header=header,
     )
@@ -2363,7 +2380,6 @@ def attach_section_at(
 
     # File the binding ref under the deepest implicit parent and
     # propagate ancestor-prefix bindings up to the doc root.
-    deepest_parent = chain[-1]
     _file_header_binding_chain(deepest_parent, header)
     dict.__setitem__(deepest_parent, sub[-1], section)
 

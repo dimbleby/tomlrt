@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Multi-component `install("a.b", value)` where the implicit parent
+  must be synthesised now preserves source header trivia (leading
+  comments) on the installed child, by routing through the standard
+  `__setitem__` clone dispatch rather than the synthesis fallback.
+  Same fix applies to cross-document `dst["a"] = src["a"]` when the
+  source has only implicit parents.
 - Cross-document `dst[k] = src[k]`, `aot.append(entry)` and
   `aot[i] = entry` now preserve nested arrays-of-tables inside the
   cloned subtree.

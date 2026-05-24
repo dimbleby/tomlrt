@@ -702,6 +702,41 @@ def test_cross_doc_table_assign_preserves_header_leading_comments() -> None:
     assert "# eol" in out
 
 
+def test_cross_doc_implicit_parent_preserves_child_header_comments() -> None:
+    """Issue #117: when source parent is implicit, child sub-tables'
+    ``header_leading_comments`` / ``header_comment`` must survive the move.
+    """
+    src = tomlrt.loads("# alpha header\n[servers.alpha]  # eol\nx = 1\n")
+    dst = Document()
+    dst["servers"] = src["servers"]
+    servers = dst.get_table("servers")
+    assert servers is not None
+    alpha = servers.get_table("alpha")
+    assert alpha is not None
+    assert alpha.header_leading_comments == ("alpha header",)
+    assert alpha.header_comment == "eol"
+
+
+def test_install_multi_component_attached_section_preserves_comments() -> None:
+    """``install("a.b", attached_section)`` must clone the source's CST
+    trivia rather than synthesise a fresh ``[a.b]`` header.
+
+    Same root cause as #117: the multi-component install path was routing
+    attached header-bearing sections through the synthesis path
+    (``attach_section_at``) instead of the clone path
+    (``clone_section_as_section``).
+    """
+    src = tomlrt.loads("# c\n[x]  # eol\ny = 1\n")
+    dst = Document()
+    dst.install("a.b", src["x"])
+    a = dst.get_table("a")
+    assert a is not None
+    b = a.get_table("b")
+    assert b is not None
+    assert b.header_leading_comments == ("c",)
+    assert b.header_comment == "eol"
+
+
 def test_cross_doc_table_assign_preserves_comments() -> None:
     """Cross-doc copy of a section preserves its comments and layout."""
     src = td("""
