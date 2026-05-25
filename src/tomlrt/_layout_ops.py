@@ -2165,10 +2165,6 @@ def clone_aot(
     new_aot._path = target_path  # noqa: SLF001
     new_aot._parent = parent  # noqa: SLF001
 
-    parent_index_present = key in parent._index  # noqa: SLF001
-    if not parent_index_present:
-        # No physical primary yet (empty AoT placeholder).
-        pass
     dict.__setitem__(parent, key, new_aot)
     for src_entry_table in list(src_aot):
         clone_aot_entry(new_aot, src_entry_table, dst_path=target_path)
