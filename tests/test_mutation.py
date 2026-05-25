@@ -2982,6 +2982,31 @@ def test_set_multiline_true_preserves_embedded_comments() -> None:
         """)
 
 
+def test_multiline_setter_is_noop_when_already_multiline() -> None:
+    # Assigning the same value to the property must not silently reflow
+    # the array (e.g., re-indent from 2-space to the default 4-space).
+    src = td("""
+        xs = [
+          1,
+          2,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("xs")
+    assert arr.multiline is True
+    arr.multiline = True
+    assert tomlrt.dumps(doc) == src
+
+
+def test_multiline_setter_is_noop_when_already_singleline() -> None:
+    src = "xs = [1, 2, 3]\n"
+    doc = tomlrt.loads(src)
+    arr = doc.array("xs")
+    assert arr.multiline is False
+    arr.multiline = False
+    assert tomlrt.dumps(doc) == src
+
+
 def test_collapse_multiline_with_nested_array_comment_raises() -> None:
     src = td(
         """

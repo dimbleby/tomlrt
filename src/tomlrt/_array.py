@@ -220,6 +220,8 @@ class Array(list[Any]):
 
     @multiline.setter
     def multiline(self, value: bool) -> None:
+        if self.multiline == value:
+            return
         self.set_multiline(multiline=value)
 
     @property
