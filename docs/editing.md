@@ -90,36 +90,42 @@ entry["version"] = "1.0"
 
 ## Sorting child keys
 
-`Container.sort(*, key=None, reverse=False)` reorders a `Document`'s
-or `Table`'s direct child keys in place, preserving per-key trivia.
-Mirrors `list.sort`. Inline tables (`{ ... }`) are also supported.
+`Document.sort()` and `Table.sort()` reorder direct child keys in
+place. The signature mirrors `list.sort`: keyword-only `key` and
+`reverse`. Comments and blank lines travel with their keys.
 
 ```python
 doc = tomlrt.loads("""
-    # above b
-    b = 1
-    # above a
-    a = 2
+    # the name
+    name = "tomlrt"
+    # the version
+    version = "0.1"
+    # the author
+    author = "me"
 """)
 doc.sort()
-# a is now first, with its comment still attached.
 ```
 
-For value-sorted orderings (e.g. leaves first, then sections), pass a
-custom `key`:
+When a document mixes bare keys and `[section]` / `[[aot]]` headers,
+`.sort()` keeps the headers after the bare keys — any bare key
+emitted after a section header would otherwise be re-parsed as a
+member of that section.
 
 ```python
-def is_section(k: str) -> bool:
-    v = doc[k]
-    return isinstance(v, tomlrt.Table) and not v.is_inline
-
-doc.sort(key=lambda k: (is_section(k), k))
+doc = tomlrt.loads("""
+    [a]
+    x = 1
+    [b]
+    y = 2
+""")
+doc["nickname"] = "hi"
+doc.sort()
+# nickname, [a], [b]
 ```
 
-`sort` raises `ValueError` if the requested order would re-bind a leaf
-key under a structural section header.
-
-For sorting `AoT` entries, use `AoT.sort(key=...)`.
+- `key` and `reverse` apply within each partition (bare keys, then
+  sections); they do not interleave the two.
+- Dotted keys (`a.x = 1`) are bare keys for sorting purposes.
 
 ## Empty arrays-of-tables
 
