@@ -28,7 +28,13 @@ from tomlrt._array_comments import (
     snapshot_comments,
 )
 from tomlrt._errors import TOMLError
-from tomlrt._format import _canon_inline_value
+from tomlrt._format import (
+    _canon_inline_value,
+    _canon_multi_line_items,
+    _canon_value,
+    _finalise_inline_trivia,
+    _replace_pad,
+)
 from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
@@ -291,23 +297,15 @@ class Array(list[Any]):
                 [NewlineNode(text=nl), WhitespaceNode(text=ind)]
             )
             return self
-        indent_pieces: list[TriviaPiece] = [
-            NewlineNode(text=nl),
-            WhitespaceNode(text=ind),
-        ]
-        value.header_trivia = Trivia(list(indent_pieces))
-        value.final_trivia = Trivia([NewlineNode(text=nl)])
-        for k, it in enumerate(items):
-            it.leading = Trivia() if k == 0 else Trivia(list(indent_pieces))
-            it.post_comma_trivia = Trivia()
-            it.trailing = Trivia()
-        ml_style = _ArrayStyle(
-            is_multiline=True,
-            inter_separator=Trivia(list(indent_pieces)),
-            trailing_comma=True,
-            trailing_post=Trivia([NewlineNode(text=nl)]),
+        for it in items:
+            _canon_value(it.value, nl=nl, comments=True, parent_indent=ind)
+        _canon_multi_line_items(items, nl=nl, indent=ind)
+        head_pad = Trivia([NewlineNode(text=nl), WhitespaceNode(text=ind)])
+        value.header_trivia = _replace_pad(value.header_trivia, head_pad)
+        value.final_trivia = _replace_pad(
+            value.final_trivia, Trivia([NewlineNode(text=nl)])
         )
-        _renormalise_commas(items, ml_style)
+        _finalise_inline_trivia(value, nl=nl, comments=True)
         return self
 
     def _synth_cst(self, value: object) -> tuple[Value, object]:
