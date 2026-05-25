@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Array.set_multiline(multiline=True, ...)` now preserves embedded
+  comments instead of silently deleting them.
 - `Document.format()` now canonicalises the document epilogue as well
   as the body.
 

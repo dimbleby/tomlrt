@@ -2867,6 +2867,32 @@ def test_standalone_array_set_multiline_then_attach() -> None:
     assert _reparses(out) == {"xs": [1, 2]}
 
 
+def test_set_multiline_true_preserves_embedded_comments() -> None:
+    src = td("""
+        alist = [
+        # Orphan comment
+        # Multiline
+          'a',
+          'g',
+        # Comment attached
+          'w',
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("alist")
+    arr.set_multiline(multiline=True, indent="    ")
+    assert tomlrt.dumps(doc) == td("""
+        alist = [
+        # Orphan comment
+        # Multiline
+            'a',
+            'g',
+        # Comment attached
+            'w',
+        ]
+        """)
+
+
 def test_collapse_multiline_with_nested_array_comment_raises() -> None:
     src = td(
         """
