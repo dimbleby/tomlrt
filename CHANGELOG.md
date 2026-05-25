@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries of the same array.
 - `format()` on a multi-line inline value no longer inserts a
   spurious blank line after an item that carries an EOL comment.
+- Deleting the first KV, section, or AoT entry no longer drops
+  the document preamble.
 
 ## [1.7.0] - 2026-05-25
 

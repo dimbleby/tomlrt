@@ -449,6 +449,37 @@ def _strip_leading_blank_lines(slot: Slot) -> None:
         del pieces[:i]
 
 
+def _snapshot_doc_head_preamble(doc: Document, owned_ids: set[int]) -> Trivia:
+    """Snapshot the doc head's positional prefix iff the head is being unlinked.
+
+    Used by deletion paths so the file preamble (or any above-blank
+    archived block on the doc head) can be re-grafted onto the
+    surviving new head — or onto ``doc._trailing`` if the doc empties
+    — after the unlinks.
+    """
+    head = doc._head  # noqa: SLF001
+    if head is None or id(head) not in owned_ids:
+        return Trivia()
+    positional, _ = _split_leading_structural(head.leading)
+    return Trivia(list(positional.pieces))
+
+
+def _restore_doc_head_preamble(doc: Document, positional: Trivia) -> None:
+    """Inverse of :func:`_snapshot_doc_head_preamble`.
+
+    Re-grafts a previously-snapshotted positional prefix onto the
+    current doc head. If the doc has emptied there's nothing left
+    to attach to and the trivia is dropped — matching the prior
+    behaviour of consecutive deletes that drain the doc.
+    """
+    if not positional.pieces:
+        return
+    new_head = doc._head  # noqa: SLF001
+    if new_head is None:
+        return
+    new_head.leading.pieces = [*positional.pieces, *new_head.leading.pieces]
+
+
 # ---------------------------------------------------------------------------
 # Higher-level ops
 # ---------------------------------------------------------------------------
@@ -667,6 +698,7 @@ def delete_key(c: Container, key: str) -> None:
     surviving_aot_entries = (
         _surviving_aot_entries(doc, candidate_owners) if candidate_owners else set()
     )
+    head_preamble = _snapshot_doc_head_preamble(doc, owned_ids)
     for slot in owned_slots:
         owner = slot.owner_aot_entry
         if (
@@ -677,6 +709,7 @@ def delete_key(c: Container, key: str) -> None:
             with contextlib.suppress(ValueError):
                 owner.entry_slots.remove(slot)
         unlink_slot(slot, doc)
+    _restore_doc_head_preamble(doc, head_preamble)
 
     if subtree_containers or subtree_aots:
         from tomlrt._container import Document  # noqa: PLC0415
@@ -2730,12 +2763,14 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     union_owned_ids = {id(s) for s in union_owned}
     _invalidate_body_tail_chain(parent, union_owned_ids, recompute=True)
 
+    head_preamble = _snapshot_doc_head_preamble(doc, union_owned_ids)
     for owned in owned_per_entry:
         # Unlink in reverse order so the entry's leftmost slot (the
         # ``[[a]]`` header) goes last — see remove_aot_entry's
         # original comment for the trivia-promotion hazard.
         for slot in reversed(owned):
             unlink_slot(slot, doc)
+    _restore_doc_head_preamble(doc, head_preamble)
 
     # Drop entries from the logical list in reverse so earlier
     # indices stay valid as we go.
