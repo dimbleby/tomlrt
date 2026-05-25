@@ -531,3 +531,37 @@ def test_format_first_aot_entry_does_not_touch_siblings() -> None:
         [[a]]
         z=3
     """)
+
+
+def test_format_multiline_inline_table_keeps_eol_comment_no_blank() -> None:
+    src = td("""
+        a = {
+          x = 1, # eol
+          y = 2
+        }
+    """)
+    doc = tomlrt.loads(src)
+    doc.table("a").format()
+    assert tomlrt.dumps(doc) == td("""
+        a = {
+          x = 1, # eol
+          y = 2,
+        }
+    """)
+
+
+def test_format_multiline_array_keeps_eol_comment_no_blank() -> None:
+    src = td("""
+        a = [
+          1, # eol
+          2,
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("a").format()
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1, # eol
+          2,
+        ]
+    """)

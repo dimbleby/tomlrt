@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indent.
 - `Table.format()` on an AoT entry no longer reformats sibling
   entries of the same array.
+- `format()` on a multi-line inline value no longer inserts a
+  spurious blank line after an item that carries an EOL comment.
 
 ## [1.7.0] - 2026-05-25
 

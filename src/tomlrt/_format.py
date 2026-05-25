@@ -41,7 +41,6 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
-    join_above_block,
     retarget_eol_newline,
     retarget_trivia_newlines,
     split_above_block,
@@ -379,7 +378,7 @@ def _canon_multiline_shape(
     comments), so the finalise pass would be a no-op there.
     """
     items = _entries_of(v)
-    _canon_multi_line_items(items, nl=nl, indent=item_indent)
+    last_line_open = _canon_multi_line_items(items, nl=nl, indent=item_indent)
     if items:
         head_eol, _ = split_eol_section(v.header_trivia)
         _, head_above = split_above_block(v.header_trivia)
@@ -389,17 +388,13 @@ def _canon_multiline_shape(
             nl=nl,
             trailing_indent=item_indent,
         )
-        last_post = items[-1].post_comma_trivia
-        prev_ends_in_nl = bool(last_post.pieces) and isinstance(
-            last_post.pieces[-1], NewlineNode
-        )
         _, final_above = split_above_block(v.final_trivia)
         v.final_trivia = _compose_pad(
             head_eol=Trivia(),
             above=final_above,
             nl=nl,
             trailing_indent=outer_indent,
-            line_already_open=prev_ends_in_nl,
+            line_already_open=last_line_open,
         )
         final_eol_first = False
     else:
@@ -565,8 +560,13 @@ def _canon_multi_line_items(
     *,
     nl: str,
     indent: str,
-) -> None:
+) -> bool:
     r"""Shape-preserving multi-line canonicalisation of per-item trivia.
+
+    Returns whether the last item's ``post_comma_trivia`` closed its
+    line (a row-attached EOL comment was preserved): the caller uses
+    this to decide whether ``final_trivia`` should start with a fresh
+    newline.
 
     For each item k:
       - k == 0: ``leading`` stays empty (item 0's structural pad
@@ -574,7 +574,9 @@ def _canon_multi_line_items(
       - k >= 1: split into (head_pad, above, tail_pad) via
         :func:`split_item_above`; replace head/tail with canonical
         ``\n`` + indent; preserve ``above`` (an above-item comment
-        block, possibly empty).
+        block, possibly empty).  The leading ``\n`` is suppressed
+        when item ``k-1``'s ``post_comma_trivia`` already closed
+        the line (typically because it carries an EOL comment).
 
     All items get ``has_comma=True`` (trailing-comma idiom). When an
     item had no comma in source, its EOL comment may live in
@@ -584,13 +586,19 @@ def _canon_multi_line_items(
     shrinks to just an EOL section (`" # comment\n"`) when a comment
     is attached, otherwise empty.
     """
+    prev_line_open = False
     for k, it in enumerate(items):
         if k == 0:
             it.leading = Trivia()
         else:
             _, above, _ = split_item_above(it.leading)
-            canon_pad = Trivia([NewlineNode(nl), WhitespaceNode(indent)])
-            it.leading = join_above_block(canon_pad, above)
+            it.leading = _compose_pad(
+                head_eol=Trivia(),
+                above=above,
+                nl=nl,
+                trailing_indent=indent,
+                line_already_open=prev_line_open,
+            )
         # Synthesising a comma may shift the EOL row from ``trailing``
         # to ``post_comma_trivia``; the take/put pair preserves the
         # comment across any has_comma flip.
@@ -598,19 +606,27 @@ def _canon_multi_line_items(
         it.has_comma = True
         it.trailing = Trivia()
         _put_eol(it, eol)
-        _canon_post_comma_trivia(it, nl=nl)
+        prev_line_open = _canon_post_comma_trivia(it, nl=nl)
+    return prev_line_open
 
 
-def _canon_post_comma_trivia(item: ArrayItem | InlineTableEntry, *, nl: str) -> None:
-    # Look at the first non-WS piece: if it's a comment, keep it as an EOL.
+def _canon_post_comma_trivia(item: ArrayItem | InlineTableEntry, *, nl: str) -> bool:
+    r"""Canonicalise ``post_comma_trivia``; return True if the line was closed.
+
+    If the first non-whitespace piece is a comment it is preserved as
+    an EOL row (``" # comment\\n"``) and we report the line as
+    closed; otherwise the channel is cleared and the line stays open
+    for the next item's leading pad to terminate.
+    """
     first = next(
         (p for p in item.post_comma_trivia.pieces if not isinstance(p, WhitespaceNode)),
         None,
     )
     if isinstance(first, CommentNode):
         item.post_comma_trivia = Trivia([WhitespaceNode(" "), first, NewlineNode(nl)])
-    else:
-        item.post_comma_trivia = Trivia()
+        return True
+    item.post_comma_trivia = Trivia()
+    return False
 
 
 # ---------------------------------------------------------------------------
