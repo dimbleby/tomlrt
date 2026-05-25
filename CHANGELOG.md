@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Document.format()` now canonicalises the document epilogue as well
+  as the body.
+
 ## [1.6.1] - 2026-05-25
 
 ### Changed

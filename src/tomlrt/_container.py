@@ -44,6 +44,7 @@ from tomlrt._format import (
     _canon_inline_value,
     _canon_kv_slot,
     _canon_leading,
+    format_document_trailing,
     format_subtree,
 )
 from tomlrt._kind import _Kind
@@ -300,6 +301,7 @@ class Container(dict[str, Any]):
                 nl=nl,
                 comments=comments,
             )
+            format_document_trailing(self._trailing, nl=nl, comments=comments)
             return
 
         if kind is _Kind.SECTION:
