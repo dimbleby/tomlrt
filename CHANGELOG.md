@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spurious blank line after an item that carries an EOL comment.
 - Deleting the first KV, section, or AoT entry no longer drops
   the document preamble.
+- Deleting all items from a multi-line inline array or inline
+  table no longer leaves a stray indent line.
 
 ## [1.7.0] - 2026-05-25
 

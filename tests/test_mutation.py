@@ -4033,3 +4033,29 @@ def test_delete_first_aot_entry_preserves_doc_preamble() -> None:
         [[a]]
         x = 2
     """)
+
+
+def test_pop_all_items_clears_multiline_array_indent() -> None:
+    src = td("""
+        arr = [
+            1,
+            2,
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("arr").pop()
+    doc.array("arr").pop()
+    assert tomlrt.dumps(doc) == "arr = [\n]\n"
+
+
+def test_delete_all_entries_clears_multiline_inline_table_indent() -> None:
+    src = td("""
+        x = {
+            a = 1,
+            b = 2,
+        }
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("x")["a"]
+    del doc.table("x")["b"]
+    assert tomlrt.dumps(doc) == "x = {\n}\n"
