@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the document preamble.
 - Deleting all items from a multi-line inline array or inline
   table no longer leaves a stray indent line.
+- Adding an entry to an empty multi-line inline table now restores
+  the canonical indent and trailing comma.
 
 ## [1.7.0] - 2026-05-25
 
