@@ -742,14 +742,19 @@ def test_header_comment_on_aot_entry() -> None:
     )
 
 
-def test_header_comment_on_document_raises() -> None:
+def test_header_comment_on_document_returns_empty() -> None:
+    # The document root has no header line; mirror the implicit-section
+    # behaviour: getters yield the empty state, setters still raise.
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(tomlrt.TOMLError):
-        _ = doc.header_comment
+    assert doc.header_comment is None
+    assert doc.header_leading_comments == ()
+    assert doc.header_leading_block == ()
     with pytest.raises(tomlrt.TOMLError):
         doc.header_comment = "x"
     with pytest.raises(tomlrt.TOMLError):
-        _ = doc.header_leading_comments
+        doc.header_leading_comments = ("x",)
+    with pytest.raises(tomlrt.TOMLError):
+        doc.header_leading_block = ("x",)
 
 
 def test_header_comment_on_inline_table_raises() -> None:
@@ -761,14 +766,21 @@ def test_header_comment_on_inline_table_raises() -> None:
         _ = a.header_leading_comments
 
 
-def test_header_comment_on_implicit_parent_raises() -> None:
+def test_header_comment_on_implicit_parent_returns_empty() -> None:
     # `parent` exists logically but has no `[parent]` section in source.
+    # Getters return the empty state (None / ()); setters still raise,
+    # because silently dropping a write would be a footgun.
     doc = tomlrt.loads("[parent.child]\nx = 1\n")
     parent = doc.table("parent")
+    assert parent.header_comment is None
+    assert parent.header_leading_comments == ()
+    assert parent.header_leading_block == ()
     with pytest.raises(tomlrt.TOMLError):
-        _ = parent.header_comment
+        parent.header_comment = "x"
     with pytest.raises(tomlrt.TOMLError):
-        _ = parent.header_leading_comments
+        parent.header_leading_comments = ("x",)
+    with pytest.raises(tomlrt.TOMLError):
+        parent.header_leading_block = ("x",)
 
 
 # ---------------------------------------------------------------------------

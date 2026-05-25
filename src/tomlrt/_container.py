@@ -195,7 +195,14 @@ class Container(dict[str, Any]):
 
     @property
     def header_comment(self) -> str | None:
-        """The EOL comment on this container's section header, or None."""
+        """The EOL comment on this container's section header, or None.
+
+        Returns ``None`` for containers that have no header line
+        (the document root, implicit sections opened only by a
+        nested ``[a.b]`` header).  Setting on such a container
+        raises [`TOMLError`][tomlrt.TOMLError]; raises on inline
+        tables.
+        """
         return _header_comment_get(self)
 
     @header_comment.setter
@@ -209,6 +216,12 @@ class Container(dict[str, Any]):
     @property
     def header_leading_comments(self) -> tuple[str, ...]:
         """The attached comment block immediately above this container's header.
+
+        Returns ``()`` for containers that have no header line
+        (the document root, implicit sections opened only by a
+        nested ``[a.b]`` header).  Setting on such a container
+        raises [`TOMLError`][tomlrt.TOMLError]; raises on inline
+        tables.
 
         Excludes any above-blank groups — those are visible via
         [`header_leading_block`][tomlrt.Table.header_leading_block].
@@ -232,6 +245,12 @@ class Container(dict[str, Any]):
         peer of
         [`header_leading_comments`][tomlrt.Table.header_leading_comments],
         which exposes only the trailing attached run.
+
+        Returns ``()`` for containers that have no header line
+        (the document root, implicit sections opened only by a
+        nested ``[a.b]`` header).  Setting on such a container
+        raises [`TOMLError`][tomlrt.TOMLError]; raises on inline
+        tables.
 
         For the first section in a document,
         [`Document.preamble`][tomlrt.Document.preamble] is disjoint from

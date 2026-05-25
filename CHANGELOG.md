@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `Table.header_comment` and `Table.header_leading_comments` getters
+  return `None` / `()` on headerless containers (implicit sections,
+  document root) instead of raising.
+
 ### Fixed
 
 - `Document.format()` now canonicalises the document epilogue as well

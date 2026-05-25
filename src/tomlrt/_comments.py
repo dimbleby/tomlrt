@@ -479,8 +479,11 @@ def _header_slot(c: Container) -> StructuralHeaderSlot | None:
 def _header_comment_get(c: Container) -> str | None:
     h = _header_slot(c)
     if h is None:
-        msg = "container has no header to attach a comment to"
-        raise TOMLError(msg)
+        # No header line means no header comment; mirror the empty
+        # state of an explicit section that simply has no comment.
+        # Setters still raise — silently dropping a write would be a
+        # footgun.
+        return None
     eol = h.eol
     if eol.comment is None:
         return None
@@ -506,8 +509,8 @@ def _header_comment_set(c: Container, value: str | None) -> None:
 def _header_leading_get(c: Container) -> tuple[str, ...]:
     h = _header_slot(c)
     if h is None:
-        msg = "container has no header to attach leading comments to"
-        raise TOMLError(msg)
+        # See _header_comment_get: no header line, no comments above it.
+        return ()
     return _extract_leading_comments(h.leading)
 
 
@@ -523,8 +526,8 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
 def _header_leading_block_get(c: Container) -> tuple[str | None, ...]:
     h = _header_slot(c)
     if h is None:
-        msg = "container has no header to attach a leading block to"
-        raise TOMLError(msg)
+        # See _header_comment_get: no header line, no block above it.
+        return ()
     return _read_leading_block(c, h)
 
 
