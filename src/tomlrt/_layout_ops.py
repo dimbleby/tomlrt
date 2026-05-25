@@ -388,22 +388,27 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
 
 
 def _promote_trailing_to_preamble(new_head: Slot, doc: Document) -> None:
-    """Hoist ``doc._trailing`` onto ``new_head.leading``, then clear it.
+    """Ensure the doc preamble carries a blank-line separator before the head.
 
-    Used when the very first slot is inserted into an empty doc that
-    already carries preamble trivia in ``_trailing`` (set via
-    :attr:`Document.preamble` or parsed from a comment-only source).
-    A blank-line separator is inserted between the migrated preamble
-    and any pre-existing leading on ``new_head``.
-
-    No-op when ``_trailing`` is empty.
+    Called on the empty-to-non-empty transition (first slot insert).
+    The preamble itself lives on ``doc._preamble`` and is unchanged;
+    we only need to ensure it ends with a blank-line gap (two NLs in a
+    row) before the new first slot. Idempotent and no-op when preamble
+    is empty.
     """
-    if not doc._trailing.pieces:  # noqa: SLF001
+    del new_head
+    pieces = doc._preamble.pieces  # noqa: SLF001
+    if not pieces:
         return
-    migrated = list(doc._trailing.pieces)  # noqa: SLF001
-    migrated.append(NewlineNode(doc._newline))  # noqa: SLF001
-    new_head.leading.pieces = [*migrated, *new_head.leading.pieces]
-    doc._trailing.pieces = []  # noqa: SLF001
+    nl_count = 0
+    for p in reversed(pieces):
+        if isinstance(p, NewlineNode):
+            nl_count += 1
+        else:
+            break
+    while nl_count < 2:
+        pieces.append(NewlineNode(doc._newline))  # noqa: SLF001
+        nl_count += 1
 
 
 def unlink_slot(
@@ -447,37 +452,6 @@ def _strip_leading_blank_lines(slot: Slot) -> None:
         i += 1
     if i:
         del pieces[:i]
-
-
-def _snapshot_doc_head_preamble(doc: Document, owned_ids: set[int]) -> Trivia:
-    """Snapshot the doc head's positional prefix iff the head is being unlinked.
-
-    Used by deletion paths so the file preamble (or any above-blank
-    archived block on the doc head) can be re-grafted onto the
-    surviving new head — or onto ``doc._trailing`` if the doc empties
-    — after the unlinks.
-    """
-    head = doc._head  # noqa: SLF001
-    if head is None or id(head) not in owned_ids:
-        return Trivia()
-    positional, _ = _split_leading_structural(head.leading)
-    return Trivia(list(positional.pieces))
-
-
-def _restore_doc_head_preamble(doc: Document, positional: Trivia) -> None:
-    """Inverse of :func:`_snapshot_doc_head_preamble`.
-
-    Re-grafts a previously-snapshotted positional prefix onto the
-    current doc head. If the doc has emptied there's nothing left
-    to attach to and the trivia is dropped — matching the prior
-    behaviour of consecutive deletes that drain the doc.
-    """
-    if not positional.pieces:
-        return
-    new_head = doc._head  # noqa: SLF001
-    if new_head is None:
-        return
-    new_head.leading.pieces = [*positional.pieces, *new_head.leading.pieces]
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +672,6 @@ def delete_key(c: Container, key: str) -> None:
     surviving_aot_entries = (
         _surviving_aot_entries(doc, candidate_owners) if candidate_owners else set()
     )
-    head_preamble = _snapshot_doc_head_preamble(doc, owned_ids)
     for slot in owned_slots:
         owner = slot.owner_aot_entry
         if (
@@ -709,7 +682,6 @@ def delete_key(c: Container, key: str) -> None:
             with contextlib.suppress(ValueError):
                 owner.entry_slots.remove(slot)
         unlink_slot(slot, doc)
-    _restore_doc_head_preamble(doc, head_preamble)
 
     if subtree_containers or subtree_aots:
         from tomlrt._container import Document  # noqa: PLC0415
@@ -1670,19 +1642,15 @@ def _split_at_remainder(
 
 
 def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
-    """Split a leading-trivia stream into (positional-prefix, slot-remainder).
+    """Split a leading-trivia stream into (above-blank prefix, slot-remainder).
 
-    The positional prefix is the run of "above-blank" lines (preamble
-    or archived comment blocks separated from the slot by a blank
-    line) plus any pure-structural blanks; the remainder is the
-    attached comment block (immediately above the slot, with no
-    blank line between) plus the slot's own column-offset indent.
+    The slot-remainder is the attached comment block (immediately above
+    the slot, with no blank line between) plus the slot's own column-
+    offset indent. The positional prefix is everything that came before
+    it in the leading.
 
-    Used by cross-doc clone (which drops the positional prefix
-    entirely — preamble belongs to the source document, not the
-    section being copied). Reorder paths use
-    :func:`_split_leading_for_reorder` instead, which honours the
-    public ownership model.
+    Used by reorder paths to decide which prefix travels with the slot
+    under move and which is positional (separator) trivia at the seam.
     """
     _above, attached, indent = _split_attached_block(leading)
     return _split_at_remainder(leading, attached, indent)
@@ -1694,21 +1662,11 @@ def _split_leading_for_reorder(doc: Document, slot: Slot) -> tuple[Trivia, Trivi
     Per the public ownership model (``Table.header_leading_block``,
     ``Container.leading_block``), an above-blank comment block that
     immediately precedes a slot is part of that slot's leading and
-    must travel with it under reorder. Differs from
-    :func:`_split_leading_structural`, which is shaped for the
-    cross-doc clone path and treats every above-blank block as
-    positional (so the source's preamble / archived blocks are
-    dropped on clone).
-
-    For the document head slot the above-blank prefix is the doc
-    preamble; that stays at position 0 — same rule as
-    :func:`_split_leading_structural`. For every other slot the
-    positional prefix is just the run of pure-blank lines before
-    the first comment; the remainder is everything from the first
-    comment line onward.
+    must travel with it under reorder. For every slot the positional
+    prefix is the run of pure-blank lines before the first comment;
+    the remainder is everything from the first comment line onward.
     """
-    if slot is doc._head:  # noqa: SLF001
-        return _split_leading_structural(slot.leading)
+    del doc
     above, attached, indent = _split_attached_block(slot.leading)
     i = 0
     while i < len(above) and not _line_is_comment(above[i]):
@@ -2763,14 +2721,12 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     union_owned_ids = {id(s) for s in union_owned}
     _invalidate_body_tail_chain(parent, union_owned_ids, recompute=True)
 
-    head_preamble = _snapshot_doc_head_preamble(doc, union_owned_ids)
     for owned in owned_per_entry:
         # Unlink in reverse order so the entry's leftmost slot (the
         # ``[[a]]`` header) goes last — see remove_aot_entry's
         # original comment for the trivia-promotion hazard.
         for slot in reversed(owned):
             unlink_slot(slot, doc)
-    _restore_doc_head_preamble(doc, head_preamble)
 
     # Drop entries from the logical list in reverse so earlier
     # indices stay valid as we go.

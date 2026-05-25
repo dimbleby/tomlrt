@@ -321,6 +321,7 @@ class Container(dict[str, Any]):
                 nl=nl,
                 comments=comments,
             )
+            format_document_trailing(self._preamble, nl=nl, comments=comments)
             format_document_trailing(self._trailing, nl=nl, comments=comments)
             return
 
@@ -1366,6 +1367,7 @@ class Document(Container):
         "_install_recorder",
         "_is_private",
         "_newline",
+        "_preamble",
         "_prelude",
         "_tail",
         "_trailing",
@@ -1389,6 +1391,7 @@ class Document(Container):
         self._head: Slot | None = None
         self._tail: Slot | None = None
         self._trailing: Trivia = Trivia()
+        self._preamble: Trivia = Trivia()
         self._newline: str = "\n"
         self._prelude: str = ""
         self._is_private: bool = False

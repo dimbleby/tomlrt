@@ -265,53 +265,30 @@ def _split_attached_block(
     return above, attached, indent
 
 
-def _slot_is_doc_head(c: Container, slot: Slot) -> bool:
-    """True if ``slot`` is the document's head slot.
-
-    The head slot's above-blank region doubles as
-    :attr:`Document.preamble`.  Read/write APIs that expose the slot's
-    full leading must omit (resp. preserve) that region for the head
-    slot so that round-tripping a section's trivia doesn't migrate
-    the preamble into the section body.
-    """
-    doc = c._layout_root  # noqa: SLF001
-    return doc is not None and slot is doc._head  # noqa: SLF001
-
-
 def _read_leading_block(c: Container, slot: Slot) -> tuple[str | None, ...]:
-    """Decoded leading block of ``slot``, omitting any document preamble.
+    """Decoded leading block of ``slot``.
 
     Comment-bearing lines decode to their text; blank or whitespace-only
     lines become ``None``.  The slot's own trailing indent line (if any)
     is excluded.
-
-    For the document head slot the above-blank prefix is omitted: it is
-    exposed separately via :attr:`Document.preamble`.  For every other
-    slot the full leading region is returned, in source order.
     """
+    del c
     above, attached, _indent = _split_attached_block(slot.leading)
-    lines = attached if _slot_is_doc_head(c, slot) else (*above, *attached)
+    lines = (*above, *attached)
     return tuple(_line_to_comment(line) for line in lines)
 
 
 def _write_leading_block(
     c: Container, slot: Slot, block: tuple[str | None, ...]
 ) -> None:
-    """Replace ``slot``'s leading with ``block``, preserving any preamble.
+    """Replace ``slot``'s leading with ``block``.
 
     The slot's own trailing indent (column offset) is preserved.  Comment
     lines re-use that indent as their prefix; blank lines are emitted as
     a bare newline with no trailing whitespace.
-
-    For the document head slot the above-blank prefix is left in place
-    so that :attr:`Document.preamble` survives a round-trip of
-    :func:`_read_leading_block`.
     """
-    above, _attached, indent = _split_attached_block(slot.leading)
+    _above, _attached, indent = _split_attached_block(slot.leading)
     new_pieces: list[TriviaPiece] = []
-    if _slot_is_doc_head(c, slot):
-        for line in above:
-            new_pieces.extend(line)
     nl = c._doc_newline  # noqa: SLF001
     for entry in block:
         if entry is None:
@@ -605,66 +582,36 @@ def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
 
 
 def _doc_preamble_get(doc: Document) -> tuple[str, ...]:
-    head = doc._head  # noqa: SLF001
-    if head is None:
-        # Empty doc: read from _trailing.
-        return _lines_to_comments(_split_leading_into_lines(doc._trailing))  # noqa: SLF001
-    above, _attached, _indent = _split_attached_block(head.leading)
-    return _lines_to_comments(above)
+    lines = _split_leading_into_lines(doc._preamble)  # noqa: SLF001
+    # Drop the trailing blank-line separator before the first slot.
+    while lines and not _line_has_comment_or_text(lines[-1]):
+        lines.pop()
+    return _lines_to_comments(lines)
 
 
 def _doc_preamble_set(doc: Document, value: tuple[str, ...]) -> None:
     comments = _validate_comment_seq(value, "preamble")
     nl = doc._newline  # noqa: SLF001
-    head = doc._head  # noqa: SLF001
-    if head is None:
-        # Empty doc: write into _trailing.
-        if not comments:
-            doc._trailing.pieces = []  # noqa: SLF001
-            return
-        new_pieces: list[TriviaPiece] = []
-        for c in comments:
-            new_pieces.append(CommentNode(_encode_comment(c)))
-            new_pieces.append(NewlineNode(nl))
-        doc._trailing.pieces = new_pieces  # noqa: SLF001
-        return
-    leading = head.leading
-    _above, attached, indent = _split_attached_block(leading)
     if not comments:
-        # Drop preamble; keep only the attached block (and indent).
-        kept: list[TriviaPiece] = []
-        for line in attached:
-            kept.extend(line)
-        kept.extend(indent)
-        leading.pieces = kept
+        doc._preamble.pieces = []  # noqa: SLF001
         return
-    new_pieces = []
+    pieces: list[TriviaPiece] = []
     for c in comments:
-        new_pieces.append(CommentNode(_encode_comment(c)))
-        new_pieces.append(NewlineNode(nl))
-    # Add a blank-line separator between preamble and attached/key.
-    new_pieces.append(NewlineNode(nl))
-    kept = []
-    for line in attached:
-        kept.extend(line)
-    kept.extend(indent)
-    leading.pieces = [*new_pieces, *kept]
+        pieces.append(CommentNode(_encode_comment(c)))
+        pieces.append(NewlineNode(nl))
+    # Append a blank-line separator before the first slot.
+    if doc._head is not None:  # noqa: SLF001
+        pieces.append(NewlineNode(nl))
+    doc._preamble.pieces = pieces  # noqa: SLF001
 
 
 def _doc_epilogue_get(doc: Document) -> tuple[str, ...]:
-    head = doc._head  # noqa: SLF001
-    if head is None:
-        # Empty doc: there is no epilogue separate from preamble; both
-        # routes read _trailing, but tests expect epilogue == () on an
-        # empty doc.
-        return ()
     return _lines_to_comments(_split_leading_into_lines(doc._trailing))  # noqa: SLF001
 
 
 def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
     comments = _validate_comment_seq(value, "epilogue")
-    head = doc._head  # noqa: SLF001
-    if head is None and comments:
+    if doc._head is None and comments:  # noqa: SLF001
         msg = "cannot set epilogue: document has no structural content"
         raise TOMLError(msg)
     nl = doc._newline  # noqa: SLF001
@@ -673,6 +620,10 @@ def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
         new_pieces.append(CommentNode(_encode_comment(c)))
         new_pieces.append(NewlineNode(nl))
     doc._trailing.pieces = new_pieces  # noqa: SLF001
+
+
+def _line_has_comment_or_text(line: list[TriviaPiece]) -> bool:
+    return any(isinstance(p, CommentNode) for p in line)
 
 
 __all__ = ["EolCommentView", "LeadingBlockView", "LeadingCommentView"]
