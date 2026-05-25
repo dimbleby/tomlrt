@@ -849,17 +849,30 @@ class Container(dict[str, Any]):
         """Sort direct child keys in place, preserving per-key trivia.
 
         Mirrors ``list.sort``: keyword-only ``key`` / ``reverse``, stable,
-        in-place.
+        in-place. The sort is **TOML-aware**: structural keys (children
+        bound to an ``AoT`` or to a section ``Table``, i.e. one rendered
+        with a ``[header]``) are always placed after bare keys, since a
+        bare key that followed a section header would re-bind as nested
+        under it. ``key`` and ``reverse`` apply *within* the bare-key and
+        section partitions; they never interleave the two. Implicit
+        sections built from dotted keys (e.g. ``a.x = 1``) are physically
+        bare-key slots and sort as bare keys.
 
-        Raises:
-            ValueError: the proposed order places a leaf KV after a
-                structural section/AoT key (would re-bind it as
-                nested under the preceding section).
+        Inline containers have no structural children, so the partition
+        is a no-op there and ``key`` / ``reverse`` behave as on a plain
+        dict.
         """
         current = list(dict.keys(self))
         if len(current) <= 1:
             return
-        new_order = sorted(current, key=key, reverse=reverse)
+        if self._inline:
+            new_order = sorted(current, key=key, reverse=reverse)
+        else:
+            leaves = [k for k in current if not self._is_structural_child(k)]
+            sections = [k for k in current if self._is_structural_child(k)]
+            leaves.sort(key=key, reverse=reverse)
+            sections.sort(key=key, reverse=reverse)
+            new_order = leaves + sections
         if new_order == current:
             return
         if self._inline:
@@ -867,6 +880,16 @@ class Container(dict[str, Any]):
         elif self._layout_root is not None:
             _layout_ops.reorder_container(self, new_order)
         _reorder_dict_storage(self, new_order)
+
+    def _is_structural_child(self, key: str) -> bool:
+        # A child whose physical block at this container contains a
+        # structural header slot (`[header]` / `[[header]]`) — i.e. a
+        # leaf KV placed after it would re-bind as nested. Mirrors
+        # the safety check in ``_layout_ops.reorder_container``.
+        # Implicit sections built entirely from dotted KVs have no
+        # header slot and so count as leaves for sort-ordering.
+        refs = self._index.get(key, ())
+        return any(isinstance(r.slot, StructuralHeaderSlot) for r in refs)
 
     @override
     def __ior__(  # type: ignore[override]
@@ -1095,7 +1118,7 @@ class Container(dict[str, Any]):
         return attached
 
     def promote_inline(self, key: str) -> Table:
-        """Convert an inline-table KV at ``key`` into a section header.
+        """Convert an inline-table entry at ``key`` into a section header.
 
         Returns the live view at ``key`` after promotion. Raises
         ``TOMLError`` if the key is missing or doesn't refer to an
@@ -1373,7 +1396,7 @@ class Document(Container):
         leading ``#``) and replaces the current preamble; assign ``()``
         to remove. Newlines inside any line are rejected.
 
-        On a document whose first slot is a section header or KV key, the
+        On a document whose first slot is a section header or bare key, the
         preamble is stored as the above-blank prefix of that slot's
         leading trivia — the same storage that
         [`Table.header_leading_block`][tomlrt.Table.header_leading_block] /

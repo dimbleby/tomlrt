@@ -3099,10 +3099,33 @@ def test_sort_inside_section() -> None:
         """)
 
 
-def test_sort_rejects_leaf_after_structural() -> None:
-    # Two sections + a leaf. Force an order that interleaves the leaf
-    # between the two structurals: 'leaf' would render after '[a]'
-    # and re-bind as nested under '[a]'.
+def test_sort_default_partitions_sections_last() -> None:
+    # Default sort (no key) is TOML-aware: leaf keys come before
+    # structural section/AoT keys regardless of name ordering.
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
+    )
+    doc["leaf"] = "z"
+    doc.sort()
+    assert tomlrt.dumps(doc) == td("""
+        leaf = "z"
+
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_partition_overrides_user_key() -> None:
+    # Even with an explicit `key=` that would interleave a leaf
+    # between two sections, the partition keeps all sections last.
     doc = tomlrt.loads(
         td("""
         [a]
@@ -3113,8 +3136,41 @@ def test_sort_rejects_leaf_after_structural() -> None:
     )
     doc["leaf"] = "z"
     order_idx = {"a": 0, "leaf": 1, "b": 2}
-    with pytest.raises(ValueError, match="leaf"):
-        doc.sort(key=order_idx.__getitem__)
+    doc.sort(key=order_idx.__getitem__)
+    assert tomlrt.dumps(doc) == td("""
+        leaf = "z"
+
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_reverse_keeps_sections_last() -> None:
+    # `reverse=True` reverses order *within* each partition but does
+    # not flip the leaves-then-sections structural ordering.
+    doc = tomlrt.loads(
+        td("""
+        a_leaf = 1
+        b_leaf = 2
+        [a_sec]
+        x = 1
+        [b_sec]
+        y = 2
+        """)
+    )
+    doc.sort(reverse=True)
+    assert tomlrt.dumps(doc) == td("""
+        b_leaf = 2
+        a_leaf = 1
+        [b_sec]
+        y = 2
+        [a_sec]
+        x = 1
+        """)
+    assert _reparses(tomlrt.dumps(doc))
 
 
 def test_sort_smart_key_leaves_before_sections() -> None:
