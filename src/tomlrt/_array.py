@@ -32,8 +32,8 @@ from tomlrt._format import (
     _canon_inline_value,
     _canon_multiline_shape,
     _canon_value,
-    _migrate_eol_post_comma_to_trailing,
-    _migrate_eol_trailing_to_post_comma,
+    _put_eol,
+    _take_eol,
 )
 from tomlrt._trivia import (
     CommentNode,
@@ -926,28 +926,32 @@ def _flip_to_internal(item: ArrayItem) -> None:
 
     Under the canonical model the inter-item separator lives in the
     NEXT item's leading; this function only ensures the comma is set
-    and migrates any EOL comment from `trailing` into `post_comma_trivia`.
+    and carries any EOL comment across the channel flip.
     """
-    if not item.has_comma:
-        _migrate_eol_trailing_to_post_comma(item)
-        item.has_comma = True
+    if item.has_comma:
+        return
+    eol = _take_eol(item)
+    item.has_comma = True
+    _put_eol(item, eol)
 
 
 def _flip_to_terminal(item: ArrayItem, style: _ArrayStyle) -> None:
     """Make ``item`` look like the terminal (last) item per style."""
     if style.trailing_comma:
         if not item.has_comma:
-            _migrate_eol_trailing_to_post_comma(item)
+            eol = _take_eol(item)
             item.has_comma = True
+            _put_eol(item, eol)
         # When has_comma==True, post_comma_trivia carries any EOL the
         # parser/mutation already filed there; keep it intact.
         return
-    # No trailing comma policy: drop the comma; migrate any EOL back
+    # No trailing comma policy: drop the comma; carry any EOL back
     # to trailing.
     if item.has_comma:
-        _migrate_eol_post_comma_to_trailing(item)
+        eol = _take_eol(item)
         item.has_comma = False
         item.post_comma_trivia = Trivia()
+        _put_eol(item, eol)
 
 
 def _structural_trailing_post(tp: Trivia, *, multiline: bool) -> Trivia:

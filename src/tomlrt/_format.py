@@ -413,25 +413,35 @@ def _compute_final_pad(
     return Trivia(pieces)
 
 
-def _migrate_eol_trailing_to_post_comma(item: ArrayItem | InlineTableEntry) -> None:
-    """If ``item.trailing`` carries an EOL section, move it to post_comma_trivia.
+def _take_eol(item: ArrayItem | InlineTableEntry) -> Trivia:
+    """Split out and return the item's row-attached EOL section.
 
-    Used when flipping from terminal (no comma) to internal (comma added):
-    the EOL row that previously sat between the value and the closing ``]``
-    / ``}`` now logically follows the new comma.
+    The EOL section lives in ``post_comma_trivia`` when the item has
+    a comma, and in ``trailing`` otherwise. On return the item holds
+    only the structural rest in that channel.
     """
-    eol, rest = split_eol_section(item.trailing)
-    if eol.pieces:
-        item.post_comma_trivia = eol
-        item.trailing = rest
-
-
-def _migrate_eol_post_comma_to_trailing(item: ArrayItem | InlineTableEntry) -> None:
-    """Inverse of :func:`_migrate_eol_trailing_to_post_comma`."""
-    eol, rest = split_eol_section(item.post_comma_trivia)
-    if eol.pieces:
-        item.trailing = Trivia(list(item.trailing.pieces) + list(eol.pieces))
+    if item.has_comma:
+        eol, rest = split_eol_section(item.post_comma_trivia)
         item.post_comma_trivia = rest
+    else:
+        eol, rest = split_eol_section(item.trailing)
+        item.trailing = rest
+    return eol
+
+
+def _put_eol(item: ArrayItem | InlineTableEntry, eol: Trivia) -> None:
+    """Append a previously-taken EOL section onto the item.
+
+    Routes to ``post_comma_trivia`` or ``trailing`` according to the
+    item's *current* ``has_comma``, which may differ from the value
+    at extraction time.
+    """
+    if not eol.pieces:
+        return
+    if item.has_comma:
+        item.post_comma_trivia = Trivia([*item.post_comma_trivia.pieces, *eol.pieces])
+    else:
+        item.trailing = Trivia([*item.trailing.pieces, *eol.pieces])
 
 
 def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
@@ -523,14 +533,13 @@ def _canon_multi_line_items(
             _, above, _ = split_item_above(it.leading)
             canon_pad = Trivia([NewlineNode(nl), WhitespaceNode(indent)])
             it.leading = join_above_block(canon_pad, above)
-        # When ``has_comma`` is False, ``trailing`` may carry the
-        # item's EOL comment (between value and the bracket).
-        # Synthesising a comma moves that comment past the comma, so
-        # migrate it before clearing ``trailing``.
-        if not it.has_comma:
-            _migrate_eol_trailing_to_post_comma(it)
-        it.trailing = Trivia()
+        # Synthesising a comma may shift the EOL row from ``trailing``
+        # to ``post_comma_trivia``; the take/put pair preserves the
+        # comment across any has_comma flip.
+        eol = _take_eol(it)
         it.has_comma = True
+        it.trailing = Trivia()
+        _put_eol(it, eol)
         _canon_post_comma_trivia(it, nl=nl)
 
 
