@@ -28,6 +28,7 @@ from tomlrt._array_comments import (
     snapshot_comments,
 )
 from tomlrt._errors import TOMLError
+from tomlrt._format import _canon_inline_value
 from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
@@ -224,6 +225,20 @@ class Array(list[Any]):
     def leading_comments(self) -> ArrayLeadingView:
         """Leading-comment view, indexed by item position."""
         return ArrayLeadingView(self)
+
+    def format(self, *, comments: bool = True) -> None:
+        """Canonicalise this array's formatting in place.
+
+        Rewrites whitespace, indentation, separators, and newlines to a
+        canonical layout, while preserving the array's overall shape
+        (single-line stays single-line, multi-line stays multi-line)
+        and the *content* of any orphan comment blocks above items.
+
+        When ``comments`` is true (the default), comment text is also
+        normalised: ``#foo`` and ``#   foo`` both become ``# foo``, and
+        trailing whitespace inside comments is stripped.
+        """
+        _canon_inline_value(self._value, nl=self._doc_newline, comments=comments)
 
     def set_multiline(self, *, multiline: bool, indent: str = "    ") -> Array:
         """Switch this array between flush single-line and multi-line form.
