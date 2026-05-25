@@ -219,31 +219,50 @@ def restamp_bracket_pad_for_first(
     return new_header, new_final
 
 
-def strip_trailing_indent(t: Trivia) -> None:
-    r"""Drop the bracket-pad indent that anchored the now-removed first item.
+def strip_trailing_indent(header_trivia: Trivia, final_trivia: Trivia) -> None:
+    r"""Normalise an emptied bracket pad to canonical empty form.
 
     Used after deleting the last item / entry of a multi-line inline
-    array or inline table from ``header_trivia``: the per-item indent
-    has no item left to anchor and would otherwise render as
-    ``[<indent>\\n]`` / ``{<indent>\\n}``.
+    array or inline table. On entry, ``header_trivia`` may still hold
+    the per-item indent (and possibly an above-item comment block /
+    bracket-EOL comment glued to the opening bracket) that anchored
+    the now-removed first item.
 
-    * If the trivia contains a ``CommentNode`` (a bracket-EOL comment
-      glued to the opening bracket) only the trailing
-      ``WhitespaceNode`` run is dropped — the comment and its
-      terminator newline stay so the comment doesn't swallow the
-      closing bracket.
-    * Otherwise the entire trailing ``WhitespaceNode`` / ``NewlineNode``
-      run is dropped, restoring the canonical empty form (``[\\n]``
-      with ``header_trivia`` empty and ``final_trivia`` holding the
-      single newline).
+    * If ``header_trivia`` contains no ``CommentNode``, drop the
+      entire trailing ``WhitespaceNode`` / ``NewlineNode`` run,
+      restoring the canonical empty form ``[\\n]`` / ``{\\n}`` —
+      ``header_trivia`` empty, ``final_trivia`` holds the single
+      newline.
+    * If ``header_trivia`` contains a ``CommentNode`` (a bracket-EOL
+      comment glued to the opening bracket), drop the trailing indent
+      ``WhitespaceNode`` run, then migrate the surviving comment
+      block from ``header_trivia`` into ``final_trivia``. The
+      parse-empty canonical form is ``[ # tail\\n]`` / ``{ # tail\\n}``
+      with everything between the brackets owned by ``final_trivia``;
+      this migration makes the strip-empty state structurally
+      identical so a subsequent append correctly re-stamps the pad
+      via :func:`restamp_bracket_pad_for_first`.
     """
-    has_comment = any(isinstance(p, CommentNode) for p in t.pieces)
-    if has_comment:
-        while t.pieces and isinstance(t.pieces[-1], WhitespaceNode):
-            t.pieces.pop()
-    else:
-        while t.pieces and isinstance(t.pieces[-1], (WhitespaceNode, NewlineNode)):
-            t.pieces.pop()
+    has_comment = any(isinstance(p, CommentNode) for p in header_trivia.pieces)
+    if not has_comment:
+        while header_trivia.pieces and isinstance(
+            header_trivia.pieces[-1], (WhitespaceNode, NewlineNode)
+        ):
+            header_trivia.pieces.pop()
+        return
+    while header_trivia.pieces and isinstance(header_trivia.pieces[-1], WhitespaceNode):
+        header_trivia.pieces.pop()
+    # Drop final_trivia's leading newline if the comment's terminator
+    # newline already produces a line break before `]` / `}`.
+    if (
+        header_trivia.pieces
+        and isinstance(header_trivia.pieces[-1], NewlineNode)
+        and final_trivia.pieces
+        and isinstance(final_trivia.pieces[0], NewlineNode)
+    ):
+        final_trivia.pieces.pop(0)
+    final_trivia.pieces[:0] = header_trivia.pieces
+    header_trivia.pieces.clear()
 
 
 def split_item_above(t: Trivia) -> tuple[Trivia, Trivia, Trivia]:

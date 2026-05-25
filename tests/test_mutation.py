@@ -4092,3 +4092,65 @@ def test_add_after_emptying_multiline_inline_table_indents() -> None:
     del doc.table("x")["b"]
     doc.table("x")["z"] = 99
     assert tomlrt.dumps(doc) == "x = {\n    z = 99,\n}\n"
+
+
+def test_pop_all_array_keeps_bracket_eol_comment_without_blank_line() -> None:
+    src = td("""
+        arr = [ # tail
+            1,
+            2,
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("arr").pop()
+    doc.array("arr").pop()
+    assert tomlrt.dumps(doc) == td("""
+        arr = [ # tail
+        ]
+    """)
+
+
+def test_append_after_empty_array_keeps_bracket_eol_comment() -> None:
+    src = td("""
+        arr = [ # tail
+            1,
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("arr").pop()
+    doc.array("arr").append(99)
+    assert tomlrt.dumps(doc) == td("""
+        arr = [ # tail
+            99,
+        ]
+    """)
+
+
+def test_delete_all_inline_keeps_bracket_eol_comment_without_blank_line() -> None:
+    src = td("""
+        x = { # tail
+            a = 1,
+        }
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("x")["a"]
+    assert tomlrt.dumps(doc) == td("""
+        x = { # tail
+        }
+    """)
+
+
+def test_add_after_empty_inline_keeps_bracket_eol_comment() -> None:
+    src = td("""
+        x = { # tail
+            a = 1,
+        }
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("x")["a"]
+    doc.table("x")["z"] = 99
+    assert tomlrt.dumps(doc) == td("""
+        x = { # tail
+            z = 99,
+        }
+    """)

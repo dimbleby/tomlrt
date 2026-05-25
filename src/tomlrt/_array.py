@@ -397,7 +397,7 @@ class Array(list[Any]):
         self._value.items.clear()
         # Drop any inter-item trivia clutter; preserve the bracket
         # leading captured in final_trivia.
-        strip_trailing_indent(self._value.header_trivia)
+        strip_trailing_indent(self._value.header_trivia, self._value.final_trivia)
         list.clear(self)
 
     @override
@@ -632,7 +632,7 @@ class Array(list[Any]):
             # from header_trivia — it has no item left to indent and
             # would otherwise render as ``[<indent>\n]``. Any bracket-
             # pad / bracket-EOL block before it is preserved.
-            strip_trailing_indent(self._value.header_trivia)
+            strip_trailing_indent(self._value.header_trivia, self._value.final_trivia)
             return
         if zero_removed:
             # The new items[0] absorbs nothing into its leading
