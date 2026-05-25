@@ -411,6 +411,27 @@ def test_format_canonicalises_empty_doc_preamble() -> None:
     assert _roundtrip(src) == "# hello\n# world\n"
 
 
+def test_format_restores_newline_after_sort_of_last_section() -> None:
+    # The original last section lacks a trailing newline; sort moves it
+    # into the middle. format() must restore the eol newline so the
+    # canonical inter-section blank line materialises.
+    src = '# Header\n\ntitle = "X"\n\n[a]\nx = 1\n\n[b]\ny = 2'
+    doc = tomlrt.loads(src)
+    doc.sort(reverse=True)
+    doc.format()
+    assert tomlrt.dumps(doc) == td("""
+        # Header
+
+        title = "X"
+
+        [b]
+        y = 2
+
+        [a]
+        x = 1
+    """)
+
+
 def test_format_returns_none() -> None:
     doc = tomlrt.loads("a = 1\n")
     assert doc.format() is None  # type: ignore[func-returns-value]
