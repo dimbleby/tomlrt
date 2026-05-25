@@ -32,6 +32,7 @@ from tomlrt._format import (
     _canon_inline_value,
     _canon_multiline_shape,
     _canon_value,
+    _normalise_row_breaks,
     _put_eol,
     _take_eol,
 )
@@ -44,7 +45,6 @@ from tomlrt._trivia import (
     join_above_block,
     restamp_bracket_pad_for_first,
     split_above_block,
-    split_eol_section,
     split_item_above,
     strip_trailing_indent,
     trivia_has_comment,
@@ -353,18 +353,11 @@ class Array(list[Any]):
         new_item = _make_item(cst, leading=new_leading, has_comma=False)
         items.append(new_item)
         _flip_to_terminal(new_item, style)
-        # Under the canonical multiline model the row break + bracket
-        # pad before ``]`` lives in ``final_trivia``. The previous last
-        # item's "before ]" gap was already in ``final_trivia`` (or
-        # was empty when its post_comma carried an EOL whose NL
-        # absorbed the gap). After append, the new last item still
-        # needs that row break before ``]`` — synthesise one when
-        # final_trivia opens without a newline.
-        if style.is_multiline:
-            ft = self._value.final_trivia
-            if not (ft.pieces and isinstance(ft.pieces[0], NewlineNode)):
-                ft.pieces = [NewlineNode(self._doc_newline), *ft.pieces]
-        _normalise_leading_nls(items, self._doc_newline, multiline=style.is_multiline)
+        # The unified normaliser enforces both the inter-item NL
+        # invariant and the gap-before-`]` invariant.
+        _normalise_row_breaks(
+            items, self._value, self._doc_newline, multiline=style.is_multiline
+        )
         list.append(self, decoded)
 
     def _restamp_for_first_append(self) -> None:
@@ -456,7 +449,9 @@ class Array(list[Any]):
                 cst, leading=clone_trivia(style.inter_separator), has_comma=True
             )
             items.insert(i, new_item)
-        _normalise_leading_nls(items, self._doc_newline, multiline=style.is_multiline)
+        _normalise_row_breaks(
+            items, self._value, self._doc_newline, multiline=style.is_multiline
+        )
         list.insert(self, i, decoded)
 
     @override
@@ -601,30 +596,17 @@ class Array(list[Any]):
         if zero_removed and survivors_after_zero:
             k = survivors_after_zero[0]
             _head, new_first_above, _tail = split_item_above(items[k].leading)
-        # When the tail is removed, the surviving last item's
-        # post_comma_trivia (if it had a comma) currently encodes a
-        # post-comma bracket pad we need to recompute from style.
         is_multiline = (
             self._multiline
             or trivia_has_newline(self._value.header_trivia)
             or trivia_has_newline(self._value.final_trivia)
         )
-        new_terminal_has_comma = False
-        new_terminal_post: Trivia = Trivia()
-        new_terminal_trailing: Trivia | None = None
-        if tail_removed:
-            new_last_idx = max(
-                (j for j in range(len(items)) if j not in removed), default=-1
-            )
-            if new_last_idx >= 0:
-                orig_terminal = items[last_idx]
-                new_terminal_has_comma = orig_terminal.has_comma
-                if orig_terminal.has_comma:
-                    new_terminal_post = _structural_trailing_post(
-                        orig_terminal.post_comma_trivia, multiline=is_multiline
-                    )
-                else:
-                    new_terminal_trailing = clone_trivia(orig_terminal.trailing)
+        # On tail removal the new last item inherits the comma policy
+        # from the original terminal. The row-break invariant is
+        # restored below by `_normalise_row_breaks`; we just need to
+        # propagate the comma state and clear any post_comma_trivia
+        # left over from internal-row state.
+        new_terminal_has_comma = items[last_idx].has_comma if tail_removed else False
         del items[index]
         list.__delitem__(self, index)
         if not items:
@@ -642,12 +624,14 @@ class Array(list[Any]):
             self._value.header_trivia = join_above_block(head_pad, new_first_above)
             items[0].leading = Trivia()
         if tail_removed:
-            items[-1].has_comma = new_terminal_has_comma
-            items[-1].post_comma_trivia = (
-                clone_trivia(new_terminal_post) if new_terminal_has_comma else Trivia()
-            )
-            if new_terminal_trailing is not None:
-                items[-1].trailing = new_terminal_trailing
+            new_last = items[-1]
+            new_last_eol = _take_eol(new_last)
+            new_last.has_comma = new_terminal_has_comma
+            new_last.post_comma_trivia = Trivia()
+            _put_eol(new_last, new_last_eol)
+        _normalise_row_breaks(
+            items, self._value, self._doc_newline, multiline=is_multiline
+        )
 
     @override
     def __iadd__(self, values: Iterable[Any]) -> Self:
@@ -840,44 +824,6 @@ def _migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, 
     return pad, join_above_block(separator, above)
 
 
-def _item_has_eol(item: ArrayItem) -> bool:
-    """True if the item carries an inline EOL comment.
-
-    When the item has a comma, the EOL section lives in
-    ``post_comma_trivia``; otherwise it lives in ``trailing``.
-    """
-    target = item.post_comma_trivia if item.has_comma else item.trailing
-    eol, _rest = split_eol_section(target)
-    return bool(eol.pieces)
-
-
-def _normalise_leading_nls(items: list[ArrayItem], nl: str, *, multiline: bool) -> None:
-    """Enforce the leading-NL invariant across the item list.
-
-    In a multiline array, ``items[i].leading`` (i >= 1) must start
-    with a NL iff ``items[i-1]`` carries no EOL. When the predecessor
-    has an EOL the row-terminating NL lives in its EOL section, so
-    ``items[i].leading`` starts with WS (indent) instead. Mutations
-    that change predecessor relationships must restore the invariant
-    or the comment block at the front of ``items[i].leading`` would
-    misattach to the predecessor as an EOL on reparse.
-
-    Idempotent and applied to every item, so mutation sites only have
-    to call this once at the end rather than track which predecessor
-    relationships they touched.
-    """
-    if not multiline:
-        return
-    for i in range(1, len(items)):
-        pred = items[i - 1]
-        pieces = items[i].leading.pieces
-        has_nl = bool(pieces) and isinstance(pieces[0], NewlineNode)
-        if _item_has_eol(pred) and has_nl:
-            items[i].leading = Trivia(pieces[1:])
-        elif not _item_has_eol(pred) and not has_nl:
-            items[i].leading = Trivia([NewlineNode(text=nl), *pieces])
-
-
 def _flip_to_internal(item: ArrayItem) -> None:
     """Make ``item`` look like an internal (non-last) item.
 
@@ -909,27 +855,6 @@ def _flip_to_terminal(item: ArrayItem, style: _ArrayStyle) -> None:
         item.has_comma = False
         item.post_comma_trivia = Trivia()
         _put_eol(item, eol)
-
-
-def _structural_trailing_post(tp: Trivia, *, multiline: bool) -> Trivia:
-    """Extract the structural trailing-post from a comma-terminated item.
-
-    Mirrors `_detect_style`'s trailing_post computation but operates on
-    a single ``post_comma_trivia`` so callers don't have to scan the
-    whole array. In a multiline layout, drops any pre-newline comment
-    block (which conceptually belonged to the popped item's row) and
-    keeps the structural newline + bracket-pad indent.
-    """
-    if not multiline:
-        return clone_trivia(tp)
-    pieces_list = list(tp.pieces)
-    last_nl = -1
-    for j, p in enumerate(pieces_list):
-        if isinstance(p, NewlineNode):
-            last_nl = j
-    if last_nl >= 0:
-        return Trivia(list(pieces_list[last_nl:]))
-    return clone_trivia(tp)
 
 
 def _value_has_any_comment(val: Value) -> bool:

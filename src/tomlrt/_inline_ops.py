@@ -29,7 +29,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tomlrt._format import _put_eol, _take_eol
+from tomlrt._format import (
+    _normalise_row_breaks,
+    _put_eol,
+    _take_eol,
+)
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
@@ -174,6 +178,9 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     # leading would replicate any above-entry comment block onto the
     # new entry.
     inter_sep = inter_item_separator(iv.entries)
+    is_multiline = trivia_has_newline(iv.header_trivia) or any(
+        trivia_has_newline(e.leading) for e in iv.entries
+    )
 
     last = iv.entries[-1]
     keep_trailing_comma = last.has_comma
@@ -193,6 +200,12 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         new_entry.has_comma = True
         new_entry.post_comma_trivia = Trivia()
     iv.entries.append(new_entry)
+    _normalise_row_breaks(
+        iv.entries,
+        iv,
+        root._doc_newline,  # noqa: SLF001
+        multiline=is_multiline,
+    )
 
 
 def delete_entry(t: Container, key: str) -> bool:
@@ -213,7 +226,7 @@ def delete_entry(t: Container, key: str) -> bool:
     if found is not None:
         idx, removed = found
         iv.entries.pop(idx)
-        _fix_tail_after_delete(iv, idx, removed)
+        _fix_tail_after_delete(iv, idx, removed, root._doc_newline)  # noqa: SLF001
         _fix_head_after_delete(iv, idx)
         if not iv.entries:
             strip_trailing_indent(iv.header_trivia, iv.final_trivia)
@@ -231,7 +244,12 @@ def delete_entry(t: Container, key: str) -> bool:
         iv.entries.pop(i)
     # Tail fixup: only if the original tail was actually removed.
     if last_removed_idx == original_len - 1:
-        _fix_tail_after_delete(iv, len(iv.entries), last_removed_entry)
+        _fix_tail_after_delete(
+            iv,
+            len(iv.entries),
+            last_removed_entry,
+            root._doc_newline,  # noqa: SLF001
+        )
     if first_removed_was_head:
         _fix_head_after_delete(iv, 0)
     if not iv.entries:
@@ -240,7 +258,10 @@ def delete_entry(t: Container, key: str) -> bool:
 
 
 def _fix_tail_after_delete(
-    iv: InlineTableValue, removed_idx: int, removed: InlineTableEntry
+    iv: InlineTableValue,
+    removed_idx: int,
+    removed: InlineTableEntry,
+    nl: str,
 ) -> None:
     """Promote a new tail after deleting the trailing entry.
 
@@ -252,19 +273,21 @@ def _fix_tail_after_delete(
         return
     new_last = iv.entries[-1]
     new_last_eol = _take_eol(new_last)
-    if removed.has_comma:
-        # Trailing-comma style preserved; new_last keeps its comma.
-        new_last.has_comma = True
-        _, removed_post_rest = split_eol_section(removed.post_comma_trivia)
-        new_last.post_comma_trivia = removed_post_rest
-    else:
-        # Removed had no trailing comma → drop the new tail's comma.
-        new_last.has_comma = False
-        new_last.post_comma_trivia = Trivia()
-        if not new_last.trailing.pieces:
-            _, removed_trail_rest = split_eol_section(removed.trailing)
-            new_last.trailing = removed_trail_rest
+    is_multiline = trivia_has_newline(iv.header_trivia) or any(
+        trivia_has_newline(e.leading) for e in iv.entries
+    )
+    new_last.has_comma = removed.has_comma
+    new_last.post_comma_trivia = Trivia()
+    if not removed.has_comma and not new_last.trailing.pieces:
+        _, removed_trail_rest = split_eol_section(removed.trailing)
+        new_last.trailing = removed_trail_rest
     _put_eol(new_last, new_last_eol)
+    _normalise_row_breaks(
+        iv.entries,
+        iv,
+        nl,
+        multiline=is_multiline,
+    )
 
 
 def _fix_head_after_delete(iv: InlineTableValue, removed_idx: int) -> None:

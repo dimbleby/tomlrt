@@ -4154,3 +4154,59 @@ def test_add_after_empty_inline_keeps_bracket_eol_comment() -> None:
             z = 99,
         }
     """)
+
+
+def test_append_to_multiline_inline_table_with_eol_on_last_entry() -> None:
+    src = td("""
+        t = {
+            a = 1,
+            b = 2,
+            c = 3, # last
+        }
+    """)
+    doc = tomlrt.loads(src)
+    doc.table("t")["d"] = 4
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+            a = 1,
+            b = 2,
+            c = 3, # last
+            d = 4,
+        }
+    """)
+
+
+def test_delete_last_entry_of_multiline_inline_table_with_eol() -> None:
+    src = td("""
+        t = {
+            a = 1,
+            b = 2,
+            c = 3, # last
+        }
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("t")["c"]
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+            a = 1,
+            b = 2,
+        }
+    """)
+
+
+def test_array_del_tail_preserves_survivor_eol_comment() -> None:
+    src = td("""
+        arr = [
+            1, # one
+            2, # two
+            3, # last
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    del doc.array("arr")[-1]
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            1, # one
+            2, # two
+        ]
+    """)
