@@ -59,6 +59,10 @@ class Trivia:
             return pieces[0].render()
         return "".join([p.render() for p in pieces])
 
+    def copy(self) -> Trivia:
+        """Return a shallow copy (same pieces, fresh list)."""
+        return Trivia(list(self.pieces))
+
 
 def trivia_has_comment(t: Trivia) -> bool:
     """True iff ``t`` contains any ``CommentNode`` piece."""
@@ -87,11 +91,6 @@ def retarget_eol_newline(eol: EolTrivia, target: str) -> None:
     """Rewrite ``eol.newline.text`` to ``target`` (if present)."""
     if eol.newline is not None and eol.newline.text != target:
         eol.newline.text = target
-
-
-def clone_trivia(t: Trivia) -> Trivia:
-    """Return a shallow copy of ``t`` (same pieces, fresh list)."""
-    return Trivia(list(t.pieces))
 
 
 def split_above_block(t: Trivia) -> tuple[Trivia, Trivia]:
@@ -205,7 +204,7 @@ def restamp_bracket_pad_for_first(
     if not ft.pieces:
         return Trivia(), Trivia()
     if not trivia_has_newline(ft):
-        return clone_trivia(ft), ft
+        return ft.copy(), ft
     pieces = list(ft.pieces)
     last_nl = max(i for i, p in enumerate(pieces) if isinstance(p, NewlineNode))
     head_pieces = pieces[: last_nl + 1]
@@ -352,7 +351,6 @@ __all__ = [
     "Trivia",
     "TriviaPiece",
     "WhitespaceNode",
-    "clone_trivia",
     "indent_from_final_trivia",
     "join_above_block",
     "restamp_bracket_pad_for_first",

@@ -40,7 +40,6 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
-    clone_trivia,
     indent_from_final_trivia,
     join_above_block,
     restamp_bracket_pad_for_first,
@@ -446,7 +445,7 @@ class Array(list[Any]):
             # leading (which already carries inter_sep + its own
             # above-block).
             new_item = _make_item(
-                cst, leading=clone_trivia(style.inter_separator), has_comma=True
+                cst, leading=style.inter_separator.copy(), has_comma=True
             )
             items.insert(i, new_item)
         _normalise_row_breaks(
@@ -733,7 +732,7 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
     # above-`]` comment block; that's an above-block belonging to a
     # would-be next item, not bracket pad).
     pad_ft, _above_ft = split_above_block(value.final_trivia)
-    trailing_post = pad_ft if pad_ft.pieces else clone_trivia(value.final_trivia)
+    trailing_post = pad_ft if pad_ft.pieces else value.final_trivia.copy()
     if not items and is_multiline and not trailing_post.pieces:
         nl_text = "\n"
         trailing_post = Trivia([NewlineNode(text=nl_text)])
@@ -800,12 +799,12 @@ def _restamp_canonical_pads(
     """
     if style.is_multiline:
         sep = Trivia([NewlineNode(text=nl), WhitespaceNode(text=indent)])
-        value.header_trivia = clone_trivia(sep)
+        value.header_trivia = sep.copy()
         value.final_trivia = Trivia([NewlineNode(text=nl)])
     else:
         sep = style.inter_separator
     for k, it in enumerate(value.items):
-        it.leading = Trivia() if k == 0 else clone_trivia(sep)
+        it.leading = Trivia() if k == 0 else sep.copy()
 
 
 def _migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, Trivia]:
