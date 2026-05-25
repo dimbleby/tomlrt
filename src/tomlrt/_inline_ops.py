@@ -216,7 +216,7 @@ def delete_entry(t: Container, key: str) -> bool:
         _fix_tail_after_delete(iv, idx, removed)
         _fix_head_after_delete(iv, idx)
         if not iv.entries:
-            strip_trailing_indent(iv.header_trivia)
+            strip_trailing_indent(iv.header_trivia, iv.final_trivia)
         return True
 
     # Prefix delete: dotted-prefix container.
@@ -235,7 +235,7 @@ def delete_entry(t: Container, key: str) -> bool:
     if first_removed_was_head:
         _fix_head_after_delete(iv, 0)
     if not iv.entries:
-        strip_trailing_indent(iv.header_trivia)
+        strip_trailing_indent(iv.header_trivia, iv.final_trivia)
     return True
 
 
