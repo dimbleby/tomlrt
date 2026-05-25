@@ -379,12 +379,99 @@ def test_array_setitem_slice_matches_list_semantics() -> None:
         xs[0:1] = 5  # type: ignore[call-overload]  # ty: ignore[invalid-assignment]
 
 
+def test_array_setitem_slice_empties_multiline() -> None:
+    # Slice-assigning an empty iterable to a multi-line array should
+    # leave the canonical empty form, the same as ``arr.clear()`` or
+    # ``del arr[:]``.
+    src = td(
+        """
+        arr = [
+            1,
+            2,
+        ]
+        """
+    )
+    doc = tomlrt.loads(src)
+    doc.array("arr")[:] = []
+    assert tomlrt.dumps(doc) == "arr = [\n]\n"
+
+
 def test_array_delitem_slice() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3, 4]\n")
     xs = doc.array("xs")
     del xs[1:3]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"xs": [1, 4]}
+
+
+def test_array_setitem_slice_preserves_eol_comments() -> None:
+    src = td(
+        """
+        arr = [
+            1, # one
+            2, # two
+            3, # three
+        ]
+        """
+    )
+    doc = tomlrt.loads(src)
+    doc.array("arr")[1:2] = []
+    assert tomlrt.dumps(doc) == td(
+        """
+        arr = [
+            1, # one
+            3, # three
+        ]
+        """
+    )
+
+
+def test_array_setitem_slice_preserves_leading_comments() -> None:
+    src = td(
+        """
+        arr = [
+            1,
+            2,
+            3,
+        ]
+        """
+    )
+    doc = tomlrt.loads(src)
+    arr = doc.array("arr")
+    arr.leading_comments[2] = ["above three"]
+    arr[1:2] = []
+    assert tomlrt.dumps(doc) == td(
+        """
+        arr = [
+            1,
+            # above three
+            3,
+        ]
+        """
+    )
+
+
+def test_array_setitem_slice_preserves_bracket_eol_comment() -> None:
+    src = td(
+        """
+        arr = [ # tail
+            1,
+            2,
+            3,
+        ]
+        """
+    )
+    doc = tomlrt.loads(src)
+    doc.array("arr")[1:2] = [99]
+    assert tomlrt.dumps(doc) == td(
+        """
+        arr = [ # tail
+            1,
+            99,
+            3,
+        ]
+        """
+    )
 
 
 def test_array_clear_and_append() -> None:

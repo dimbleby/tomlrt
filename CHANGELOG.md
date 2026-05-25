@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the document preamble.
 - Deleting all items from a multi-line inline array or inline
   table no longer leaves a stray indent line.
+- Slice-assigning to a multi-line inline array no longer leaves a
+  stray indent inside the brackets when emptied, drops bracket-EOL
+  comments, or wipes above-block comments on surviving items.
 - Adding an entry to an empty multi-line inline table now restores
   the canonical indent and trailing comma.
 - Emptying then re-adding to a bracketed value with a bracket-EOL

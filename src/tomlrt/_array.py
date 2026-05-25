@@ -492,15 +492,7 @@ class Array(list[Any]):
         list.clear(self)
         for v in new_decoded:
             list.append(self, v)
-        # header_trivia is item 0's above-region; reset it to the
-        # canonical pad here. Any comment block it carried was captured
-        # in leadings[0] and will be re-applied by apply_comments.
-        # _restamp_canonical_pads handles items[1..] and final_trivia.
         nl = self._doc_newline
-        if style.is_multiline:
-            self._value.header_trivia = Trivia(
-                [NewlineNode(text=nl), WhitespaceNode(text=canonical_indent)]
-            )
         _restamp_canonical_pads(self._value, style, nl, canonical_indent)
         for it in items:
             it.post_comma_trivia = Trivia()
@@ -525,31 +517,26 @@ class Array(list[Any]):
             except TypeError as exc:
                 msg = "can only assign an iterable"
                 raise TypeError(msg) from exc
-            indices = list(range(*index.indices(len(self))))
-            if (
-                index.step is not None
-                and index.step != 1
-                and len(values) != len(indices)
-            ):
-                msg = (
-                    f"attempt to assign sequence of size {len(values)} "
-                    f"to extended slice of size {len(indices)}"
-                )
-                raise ValueError(msg)
-            new_csts = []
-            new_decoded = []
-            for v in values:
-                cst, dec = self._synth_cst(v)
-                new_csts.append(cst)
-                new_decoded.append(dec)
-            items = self._value.items
-            style = self._style()
-            new_segment = [_make_item(cst, has_comma=False) for cst in new_csts]
-            items[index] = new_segment
-            list.__setitem__(self, index, new_decoded)
-            indent = _slot_indent(self) if style.is_multiline else ""
-            _restamp_canonical_pads(self._value, style, self._doc_newline, indent)
-            _renormalise_commas(items, style)
+            if index.step is not None and index.step != 1:
+                indices = list(range(*index.indices(len(self))))
+                if len(values) != len(indices):
+                    msg = (
+                        f"attempt to assign sequence of size {len(values)} "
+                        f"to extended slice of size {len(indices)}"
+                    )
+                    raise ValueError(msg)
+                # Extended slice: positions are unchanged, only values
+                # change. Delegate to the int-index path per slot.
+                for k, v in zip(indices, values, strict=True):
+                    self[k] = v
+                return
+            # Contiguous slice: realise as delete + insert so the
+            # boundary-handling that ``__delitem__`` and ``insert``
+            # already encode is reused, rather than duplicated here.
+            start, stop, _ = index.indices(len(self))
+            del self[start:stop]
+            for offset, v in enumerate(values):
+                self.insert(start + offset, v)
             return
         # int index: just replace the value CST in place.
         i = int(index)
@@ -790,18 +777,30 @@ def _make_item(
 def _restamp_canonical_pads(
     value: ArrayValue, style: _ArrayStyle, nl: str, indent: str
 ) -> None:
-    """Reset items[1..]'s leadings and ``final_trivia`` to canonical pads.
+    r"""Reset the bracket pad and inter-item separators to canonical form.
 
-    In source, an item's EOL absorbs the next item's opening NL — and
-    the last item's EOL absorbs ``final_trivia``'s NL. After a
-    permutation or whole-segment replacement the items that supplied
-    those EOLs may have moved or disappeared, so we cannot sample the
-    inter-item separator from ``items[1].leading``: we synthesise the
-    canonical multi-line pad here. Caller is responsible for
-    ``header_trivia`` and for reapplying comments.
+    Canonical multi-line shape:
+      * ``header_trivia`` = leading ``\\n`` + per-item indent (item 0's
+        above-region)
+      * ``items[k].leading`` (k >= 1) = ``\\n`` + indent
+      * ``items[0].leading`` = empty
+      * ``final_trivia`` = closing ``\\n``
+
+    Canonical single-line shape:
+      * ``header_trivia`` / ``final_trivia`` left untouched (caller
+        owns the bracket-inner padding rules — see
+        ``_canon_single_line_inline``)
+      * ``items[0].leading`` = empty; ``items[k].leading`` (k >= 1) =
+        ``style.inter_separator``
+
+    Caller must guarantee ``value.items`` is non-empty (the empty
+    canonical form is the responsibility of ``__delitem__`` /
+    ``strip_trailing_indent``). Caller is responsible for reapplying
+    per-item comments.
     """
     if style.is_multiline:
         sep = Trivia([NewlineNode(text=nl), WhitespaceNode(text=indent)])
+        value.header_trivia = clone_trivia(sep)
         value.final_trivia = Trivia([NewlineNode(text=nl)])
     else:
         sep = style.inter_separator
