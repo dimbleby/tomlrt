@@ -38,6 +38,7 @@ from tomlrt._trivia import (
     join_above_block,
     split_above_block,
     split_eol_section,
+    strip_trailing_indent,
     trivia_has_comment,
 )
 from tomlrt._values import InlineTableEntry, inter_item_separator, make_keyparts
@@ -209,6 +210,8 @@ def delete_entry(t: Container, key: str) -> bool:
         iv.entries.pop(idx)
         _fix_tail_after_delete(iv, idx, removed)
         _fix_head_after_delete(iv, idx)
+        if not iv.entries:
+            strip_trailing_indent(iv.header_trivia)
         return True
 
     # Prefix delete: dotted-prefix container.
@@ -226,6 +229,8 @@ def delete_entry(t: Container, key: str) -> bool:
         _fix_tail_after_delete(iv, len(iv.entries), last_removed_entry)
     if first_removed_was_head:
         _fix_head_after_delete(iv, 0)
+    if not iv.entries:
+        strip_trailing_indent(iv.header_trivia)
     return True
 
 

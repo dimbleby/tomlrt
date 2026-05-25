@@ -45,6 +45,7 @@ from tomlrt._trivia import (
     split_above_block,
     split_eol_section,
     split_item_above,
+    strip_trailing_indent,
     trivia_has_comment,
     trivia_has_newline,
 )
@@ -644,6 +645,11 @@ class Array(list[Any]):
         del items[index]
         list.__delitem__(self, index)
         if not items:
+            # Strip the per-item indent that used to anchor items[0]
+            # from header_trivia — it has no item left to indent and
+            # would otherwise render as ``[<indent>\n]``. Any bracket-
+            # pad / bracket-EOL block before it is preserved.
+            strip_trailing_indent(self._value.header_trivia)
             return
         if zero_removed:
             # The new items[0] absorbs nothing into its leading
