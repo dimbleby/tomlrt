@@ -489,3 +489,45 @@ def test_roundtrip_through_tomli() -> None:
     out = _roundtrip(src)
 
     assert tomli.loads(out) == tomli.loads(src)
+
+
+def test_format_aot_entry_does_not_leak_to_siblings() -> None:
+    src = td("""
+        [[a]]
+        x=1
+        [[a]]
+        y    =    2
+        [[a]]
+        z=3
+    """)
+    doc = tomlrt.loads(src)
+    doc["a"][1].format()
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x=1
+        [[a]]
+        y = 2
+        [[a]]
+        z=3
+    """)
+
+
+def test_format_first_aot_entry_does_not_touch_siblings() -> None:
+    src = td("""
+        [[a]]
+        x   =   1
+        [[a]]
+        y=2
+        [[a]]
+        z=3
+    """)
+    doc = tomlrt.loads(src)
+    doc["a"][0].format()
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+        [[a]]
+        y=2
+        [[a]]
+        z=3
+    """)

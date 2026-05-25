@@ -317,6 +317,7 @@ class Container(dict[str, Any]):
             format_subtree(
                 start=self._head,
                 path=(),
+                owner=None,
                 nl=nl,
                 comments=comments,
             )
@@ -328,6 +329,7 @@ class Container(dict[str, Any]):
             format_subtree(
                 start=self._header_ref.slot,
                 path=self._path,
+                owner=self._owner_aot_entry,
                 nl=nl,
                 comments=comments,
             )
