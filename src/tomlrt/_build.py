@@ -13,9 +13,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
+from tomlrt._comments import _split_attached_block
 from tomlrt._container import Container, Document, Table
 from tomlrt._layout_ops import maybe_advance_body_tail, record_ref
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._trivia import Trivia
 from tomlrt._values import (
     ArrayValue,
     InlineTableValue,
@@ -351,11 +353,28 @@ def build_from_parse(result: ParseResult) -> Document:
     doc._head = result.slots[0] if result.slots else None  # noqa: SLF001
     doc._tail = result.slots[-1] if result.slots else None  # noqa: SLF001
     doc._trailing = result.trailing  # noqa: SLF001
+    doc._preamble = Trivia()  # noqa: SLF001
     doc._newline = result.newline  # noqa: SLF001
     doc._prelude = result.prelude  # noqa: SLF001
     doc._is_private = False  # noqa: SLF001
     doc._install_recorder = None  # noqa: SLF001
     doc._layout_root = doc  # noqa: SLF001
+    if result.slots:
+        # Migrate the head slot's positional-prefix (preamble +
+        # archived above-blocks) onto the document. The head slot's
+        # leading retains only its own attached comments + indent.
+        head = result.slots[0]
+        above, attached, indent = _split_attached_block(head.leading)
+        if above:
+            doc._preamble = Trivia([p for line in above for p in line])  # noqa: SLF001
+            head.leading = Trivia(
+                [*(p for line in attached for p in line), *indent],
+            )
+    else:
+        # Comment-only source: the parser put everything onto
+        # ``trailing``; that's the preamble, not the epilogue.
+        doc._preamble = result.trailing  # noqa: SLF001
+        doc._trailing = Trivia()  # noqa: SLF001
     build_initial_containers(doc, result.slots)
     return doc
 
