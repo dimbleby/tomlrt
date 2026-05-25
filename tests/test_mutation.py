@@ -3513,6 +3513,67 @@ def test_sort_super_table_with_aot_preserves_explicit_header() -> None:
     assert reparsed.table("a").aot("hello")[0]["x"] == 1
 
 
+def test_sort_when_aot_child_precedes_parent_in_source() -> None:
+    # Regression: when an explicit [c] header was preceded in source by
+    # one of its structural children (i.e. c-header was not the doc-
+    # stream-earliest owned slot of c's region), Container.sort used
+    # to drag c-header's own positional leading into its new top-of-
+    # region position — producing a spurious leading blank line at the
+    # head of the reordered region. The region-marker model now sets
+    # c-header's new leading from the region's external structural
+    # prefix (the doc preamble / above-region gap) plus c-header's own
+    # attached-comment remainder.
+    src = td("""
+        [[a-section.hello]]
+        ports = [80]
+
+        [a-section]
+        date = "2019"
+        """)
+    doc = tomlrt.loads(src)
+    doc["a-section"].sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a-section]
+        date = "2019"
+        [[a-section.hello]]
+        ports = [80]
+        """)
+    assert _reparses(out)
+
+
+def test_sort_preserves_doc_preamble_when_aot_child_precedes_parent() -> None:
+    # Companion to the test above: the doc preamble lived on the AoT
+    # child header (because it was the doc-stream-earliest owned
+    # slot); after sort, it must end up on [a-section] (the new
+    # region head), not stay attached to where the child ended up.
+    src = td("""
+        # preamble
+
+        [[a-section.hello]]
+        x = 1
+        [a-section]
+        y = 1
+        """)
+    doc = tomlrt.loads(src)
+    a = doc["a-section"]
+
+    def key(k: str) -> tuple[int, str]:
+        v = dict.__getitem__(a, k)
+        return (1 if isinstance(v, (AoT, Table)) else 0, k)
+
+    a.sort(key=key)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        # preamble
+
+        [a-section]
+        y = 1
+        [[a-section.hello]]
+        x = 1
+        """)
+
+
 def test_sort_moves_disjoint_above_blank_header_comment_with_section() -> None:
     # Regression for #131: a comment block separated from its section
     # header by a blank line is part of header_leading_block (per
