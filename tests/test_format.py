@@ -432,6 +432,37 @@ def test_format_restores_newline_after_sort_of_last_section() -> None:
     """)
 
 
+def test_format_preserves_above_item_comment_indent_in_multiline_array() -> None:
+    src = td("""
+        arr = [
+          # block comment
+          'a',
+        ]
+        """)
+    assert _roundtrip(src) == src
+
+
+def test_format_preserves_above_item_comment_indent_in_multiline_inline_table() -> None:
+    src = td("""
+        t = {
+          # block comment
+          a = 1,
+        }
+        """)
+    assert _roundtrip(src) == src
+
+
+def test_format_preserves_orphan_comment_indent_in_multiline_array() -> None:
+    src = td("""
+        arr = [
+          # orphan
+
+          'a',
+        ]
+        """)
+    assert _roundtrip(src) == src
+
+
 def test_format_returns_none() -> None:
     doc = tomlrt.loads("a = 1\n")
     assert doc.format() is None  # type: ignore[func-returns-value]
