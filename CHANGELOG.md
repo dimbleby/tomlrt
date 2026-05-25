@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Assigning `Array.multiline` to its current value is now a no-op.
 - `Array.format` / `Container.format` and `Array.set_multiline(True)` no
   longer drop a row-attached comment on the opening `[` / `{` line.
+- `Array.set_multiline(True)` on an empty array no longer drops a
+  bracket-line comment and now aligns the closing `]` to the outer
+  indent.
 
 ## [1.7.0] - 2026-05-25
 

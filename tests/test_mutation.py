@@ -3071,6 +3071,29 @@ def test_array_format_preserves_bracket_eol_on_empty_array() -> None:
         """)
 
 
+def test_set_multiline_true_preserves_bracket_eol_on_empty_array() -> None:
+    src = td("""
+        xs = [ # opening
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("xs").set_multiline(multiline=True, indent="  ")
+    assert tomlrt.dumps(doc) == td("""
+        xs = [ # opening
+        ]
+        """)
+
+
+def test_set_multiline_true_empty_array_aligns_close_to_outer_indent() -> None:
+    src = "xs = []\n"
+    doc = tomlrt.loads(src)
+    doc.array("xs").set_multiline(multiline=True, indent="    ")
+    assert tomlrt.dumps(doc) == td("""
+        xs = [
+        ]
+        """)
+
+
 def test_collapse_multiline_with_nested_array_comment_raises() -> None:
     src = td(
         """

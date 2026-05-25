@@ -294,11 +294,6 @@ class Array(list[Any]):
             return self
         self._multiline = True
         nl = self._doc_newline
-        if not items:
-            value.final_trivia = Trivia(
-                [NewlineNode(text=nl), WhitespaceNode(text=ind)]
-            )
-            return self
         for it in items:
             _canon_value(it.value, nl=nl, comments=True, parent_indent=ind)
         _canon_multiline_shape(
