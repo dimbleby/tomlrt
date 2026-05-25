@@ -2883,11 +2883,11 @@ def test_set_multiline_true_preserves_embedded_comments() -> None:
     arr.set_multiline(multiline=True, indent="    ")
     assert tomlrt.dumps(doc) == td("""
         alist = [
-        # Orphan comment
-        # Multiline
+            # Orphan comment
+            # Multiline
             'a',
             'g',
-        # Comment attached
+            # Comment attached
             'w',
         ]
         """)

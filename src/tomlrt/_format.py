@@ -86,17 +86,24 @@ def _canon_comment_text(text: str) -> str:
 
 
 def _canon_trivia_text(
-    t: Trivia, *, comments: bool, strip_pre_comment_ws: bool = True
+    t: Trivia,
+    *,
+    comments: bool,
+    strip_pre_comment_ws: bool = True,
+    comment_indent: str = "",
 ) -> None:
     r"""Normalise trivia content in place.
 
     Always strips trailing whitespace on blank lines (``  \n`` →
     ``\n``).  When ``strip_pre_comment_ws`` is true (the default),
     also strips any whitespace that precedes a CommentNode within
-    a trivia line (column indent of orphan / attached comments —
-    canonical column 0).  Pass ``strip_pre_comment_ws=False`` for
-    EOL-style trivia where the space between the previous token and
-    the ``#`` is the structural separator, set by the caller.
+    a trivia line. If ``comment_indent`` is non-empty, restamps the
+    pre-comment whitespace to that indent string instead of stripping
+    to column 0 — used inside multi-line inline arrays / tables where
+    full-line comments sit at the array's element indent. Pass
+    ``strip_pre_comment_ws=False`` for EOL-style trivia where the
+    space between the previous token and the ``#`` is the structural
+    separator, set by the caller.
 
     When ``comments`` is true also rewrites each CommentNode's text
     via :func:`_canon_comment_text`.
@@ -119,6 +126,8 @@ def _canon_trivia_text(
             if strip_pre_comment_ws:
                 while line and isinstance(line[-1], WhitespaceNode):
                     line.pop()
+                if comment_indent:
+                    line.append(WhitespaceNode(comment_indent))
             if comments:
                 p.text = _canon_comment_text(p.text)
             new.extend(line)
@@ -349,7 +358,7 @@ def _canon_inline_value(
     # Single-line shaping produces only empty / single-space trivia
     # (no newlines, no comments), so the finalise pass would be a
     # no-op there.
-    _finalise_inline_trivia(v, nl=nl, comments=comments)
+    _finalise_inline_trivia(v, nl=nl, comments=comments, item_indent=item_indent)
 
 
 def _replace_pad(t: Trivia, new_pad: Trivia) -> Trivia:
@@ -384,22 +393,29 @@ def _canon_single_line_inline(v: ArrayValue | InlineTableValue) -> None:
 
 
 def _finalise_inline_trivia(
-    v: ArrayValue | InlineTableValue, *, nl: str, comments: bool
+    v: ArrayValue | InlineTableValue,
+    *,
+    nl: str,
+    comments: bool,
+    item_indent: str = "",
 ) -> None:
     """Retarget newlines + canonicalise comment / blank-WS text across ``v``.
 
     Run after shape canonicalisation; touches the bracket-pad trivia
-    and every per-item trivia channel.
+    and every per-item trivia channel. ``item_indent`` is the column
+    at which full-line comments inside ``v`` should sit; passed by
+    multi-line callers so above-item comment blocks are indented to
+    align with the items, not stripped to column 0.
     """
     retarget_trivia_newlines(v.header_trivia, nl)
     retarget_trivia_newlines(v.final_trivia, nl)
-    _canon_trivia_text(v.header_trivia, comments=comments)
-    _canon_trivia_text(v.final_trivia, comments=comments)
+    _canon_trivia_text(v.header_trivia, comments=comments, comment_indent=item_indent)
+    _canon_trivia_text(v.final_trivia, comments=comments, comment_indent=item_indent)
     for it in _entries_of(v):
         retarget_trivia_newlines(it.leading, nl)
         retarget_trivia_newlines(it.trailing, nl)
         retarget_trivia_newlines(it.post_comma_trivia, nl)
-        _canon_trivia_text(it.leading, comments=comments)
+        _canon_trivia_text(it.leading, comments=comments, comment_indent=item_indent)
         # ``trailing`` and ``post_comma_trivia`` are EOL contexts:
         # the space before ``#`` is the structural separator the
         # callers have already canonicalised to one space.

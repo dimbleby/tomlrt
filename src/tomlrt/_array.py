@@ -305,7 +305,7 @@ class Array(list[Any]):
         value.final_trivia = _replace_pad(
             value.final_trivia, Trivia([NewlineNode(text=nl)])
         )
-        _finalise_inline_trivia(value, nl=nl, comments=True)
+        _finalise_inline_trivia(value, nl=nl, comments=True, item_indent=ind)
         return self
 
     def _synth_cst(self, value: object) -> tuple[Value, object]:

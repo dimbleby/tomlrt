@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `format()` no longer strips the indent of full-line comments inside
+  multi-line inline arrays / inline tables.
 - `Array.set_multiline(multiline=True, ...)` now preserves embedded
   comments instead of silently deleting them.
 - `Document.format()` now canonicalises the document epilogue as well
