@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Container.sort()` no longer fabricates a leading blank line when a
+  nested AoT child appeared before its explicit parent header in source.
 - `format()` no longer strips the indent of full-line comments inside
   multi-line inline arrays / inline tables.
 - `Array.set_multiline(multiline=True, ...)` now preserves embedded

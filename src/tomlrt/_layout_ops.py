@@ -2892,81 +2892,51 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         return
     doc = aot._attached_doc  # noqa: SLF001
 
-    # Collect every entry's owned slots, in current logical order.
+    # Collect every entry's owned slots, in current logical order
+    # (which equals physical doc-stream order for AoT entries).
+    current_entries = list(aot)
     per_entry_slots: list[list[Slot]] = []
-    for entry_table in list(aot):
+    for entry_table in current_entries:
         e = entry_table._owner_aot_entry  # noqa: SLF001
         assert e is not None
         per_entry_slots.append(list(e.entry_slots))
 
-    # Snapshot the structural-separator part of each entry header's
-    # leading, by position. The structural separator (leading blank
-    # lines / whitespace before any comment) belongs to the position
-    # in the doc; the remainder (comment block + interior whitespace)
-    # belongs to the entry and travels with it on reorder.
-    structural_by_position: list[Trivia] = []
-    remainder_by_entry_id: dict[int, Trivia] = {}
-    for i, entry_table in enumerate(list(aot)):
-        if not per_entry_slots[i]:
-            structural_by_position.append(Trivia())
-            remainder_by_entry_id[id(entry_table)] = Trivia()
+    # Filter empties: slotless entries have no CST representation and
+    # don't participate in physical layout. Build the parallel index
+    # from each surviving Table identity back to its physical block.
+    physical_blocks: list[list[Slot]] = []
+    phys_idx_by_id: dict[int, int] = {}
+    for i, slots in enumerate(per_entry_slots):
+        if not slots:
             continue
-        head_slot = per_entry_slots[i][0]
-        structural, remainder = _split_leading_for_reorder(doc, head_slot)
-        structural_by_position.append(structural)
-        remainder_by_entry_id[id(entry_table)] = remainder
+        phys_idx_by_id[id(current_entries[i])] = len(physical_blocks)
+        physical_blocks.append(slots)
 
-    # Earliest owned slot in doc-stream gives us the splice anchor.
-    # Walk the doc once, first hit wins. O(N_doc) but predictable
-    # and faster than the pairwise back-walk for typical cases.
-    owned_ids = {id(s) for slots in per_entry_slots for s in slots}
-    earliest_slot: Slot | None = None
-    cur = doc._head  # noqa: SLF001
-    while cur is not None:
-        if id(cur) in owned_ids:
-            earliest_slot = cur
-            break
-        cur = cur._next  # noqa: SLF001
-    assert earliest_slot is not None
-    anchor_prev = earliest_slot._prev  # noqa: SLF001
+    if physical_blocks:
+        # Peer-block model: every entry header is a comparable block.
+        # The structural separator at each physical position is
+        # positional (stays at that index); the comment-remainder
+        # travels with the block.
+        structural_by_position: list[Trivia] = []
+        remainder_by_block: list[Trivia] = []
+        for block in physical_blocks:
+            structural, remainder = _split_leading_for_reorder(doc, block[0])
+            structural_by_position.append(structural)
+            remainder_by_block.append(remainder)
 
-    # Unlink every owned slot from the doc-stream linked list. We
-    # don't touch refs / index / dict storage — only the linked-list
-    # pointers — since the logical mapping doesn't change.
-    for slots in per_entry_slots:
-        for s in slots:
-            unlink_slot(s, doc, strip_new_head_leading=False)
-
-    # Build a per-entry-Table -> entry_slots map (the user-facing
-    # `Table`s in new_logical_order may be re-arrangements of the
-    # current ones; we need to re-attach via owner_aot_entry).
-    slot_blocks: dict[int, list[Slot]] = {
-        id(t): per_entry_slots[i] for i, t in enumerate(list(aot))
-    }
-
-    # Re-insert entries in new order, each as a contiguous block
-    # after `anchor_prev` (or at doc head if anchor_prev is None).
-    insert_after_slot = anchor_prev
-    for entry_table in new_logical_order:
-        block = slot_blocks[id(entry_table)]
-        for slot in block:
-            if insert_after_slot is None:
-                insert_before_head(slot, doc)
-            else:
-                insert_after(insert_after_slot, slot, doc)
-            insert_after_slot = slot
-
-    # Re-apply the structural-separator portion of each new-position
-    # entry's header leading from the snapshot (position-keyed),
-    # stitched onto that entry's own comment-remainder (entry-keyed).
-    for new_pos, entry_table in enumerate(new_logical_order):
-        block = slot_blocks[id(entry_table)]
-        if not block:
-            continue
-        head_slot = block[0]
-        structural = structural_by_position[new_pos]
-        remainder = remainder_by_entry_id[id(entry_table)]
-        head_slot.leading = Trivia(list(structural.pieces) + list(remainder.pieces))
+        new_order_indices = [
+            phys_idx_by_id[id(t)] for t in new_logical_order if id(t) in phys_idx_by_id
+        ]
+        new_head_leadings = [
+            Trivia(
+                list(structural_by_position[new_pos].pieces)
+                + list(remainder_by_block[phys_idx].pieces)
+            )
+            for new_pos, phys_idx in enumerate(new_order_indices)
+        ]
+        _splice_blocks_in_order(
+            doc, physical_blocks, new_order_indices, new_head_leadings
+        )
 
     # Reflect the new order in the AoT's own list view.
     list.clear(aot)
@@ -2998,6 +2968,51 @@ def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> Non
         c._refs.sort(key=lambda r: position.get(id(r.slot), 0))  # noqa: SLF001
         for refs in c._index.values():  # noqa: SLF001
             refs.sort(key=lambda r: position.get(id(r.slot), 0))
+
+
+def _splice_blocks_in_order(
+    doc: Document,
+    physical_blocks: list[list[Slot]],
+    new_order_indices: list[int],
+    new_head_leadings: list[Trivia],
+) -> None:
+    """Reorder movable layout blocks within the doc-stream.
+
+    ``physical_blocks`` is the list of non-empty slot blocks in
+    physical doc-stream order (``physical_blocks[0][0]`` is the
+    earliest owned slot). ``new_order_indices`` is a permutation of
+    ``range(len(physical_blocks))``: new position ``i`` is filled by
+    ``physical_blocks[new_order_indices[i]]``. ``new_head_leadings``
+    is the precomputed leading to stamp on each block's head at its
+    new position; indexed by new position.
+
+    The helper is purely permutational on the doc-stream linked
+    list. Trivia policy (positional vs slot-attached) is the
+    caller's responsibility — see ``renormalise_aot_order``
+    (peer-block model) and ``reorder_container`` (region-marker
+    model) for the two existing flavours.
+    """
+    if not physical_blocks:
+        return
+
+    anchor_prev = physical_blocks[0][0]._prev  # noqa: SLF001
+
+    for block in physical_blocks:
+        for s in block:
+            unlink_slot(s, doc, strip_new_head_leading=False)
+
+    insert_after_slot = anchor_prev
+    for phys_idx in new_order_indices:
+        for slot in physical_blocks[phys_idx]:
+            if insert_after_slot is None:
+                insert_before_head(slot, doc)
+            else:
+                insert_after(insert_after_slot, slot, doc)
+            insert_after_slot = slot
+
+    for new_pos, phys_idx in enumerate(new_order_indices):
+        head_slot = physical_blocks[phys_idx][0]
+        head_slot.leading = Trivia(list(new_head_leadings[new_pos].pieces))
 
 
 def _find_binding_successor(parent: Container, key: str) -> Slot | None:
@@ -3194,23 +3209,44 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     c_plen = len(c_path)
     c_owner = c._owner_aot_entry  # noqa: SLF001
 
-    # 1. Bucket slots by direct-child key, in doc-stream order. Also
-    # capture each key's first-appearance physical order — the basis
-    # for positional separator snapshots below. When c is an AoT
-    # entry, restrict to slots owned by that entry (so sibling-entry
-    # slots and nested-AoT children are excluded).
-    blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
-    physical_order: list[str] = []
-    seen_in_physical: set[str] = set()
+    # c's own explicit header (if any) travels with the splice so
+    # that direct KVs of c keep their binding after re-parse. The
+    # leaf-before-structural check below guarantees KV blocks come
+    # first in new_key_order, so the header always belongs at the
+    # head of the splice. Unlike child blocks, the header is the
+    # region marker, not a sortable peer: it always sits at the new
+    # top of the region.
+    header_slot: StructuralHeaderSlot | None = None
+    header_ref = c._header_ref  # noqa: SLF001
+    if header_ref is not None:
+        assert isinstance(header_ref.slot, StructuralHeaderSlot)
+        if not header_ref.slot.synthetic:
+            header_slot = header_ref.slot
+
+    # 1. Walk the doc once, building blocks in physical doc-stream
+    # order. The c-header (if any) appears as a one-slot block at its
+    # own physical position; child keys appear as blocks at the
+    # position where they're first seen. When c is an AoT entry,
+    # restrict to slots owned by that entry (sibling entries and
+    # nested-AoT children are excluded).
+    key_blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
+    physical_blocks: list[list[Slot]] = []
+    phys_idx_of_header: int | None = None
+    phys_idx_of_key: dict[str, int] = {}
+
     cur: Slot | None = doc._head  # noqa: SLF001
     while cur is not None:
-        bind_key = _direct_child_key(cur, c_path, c_plen)
+        is_header = cur is header_slot
+        bind_key = None if is_header else _direct_child_key(cur, c_path, c_plen)
         in_scope = c_owner is None or cur.owner_aot_entry is c_owner
-        if bind_key is not None and bind_key in blocks and in_scope:
-            blocks[bind_key].append(cur)
-            if bind_key not in seen_in_physical:
-                physical_order.append(bind_key)
-                seen_in_physical.add(bind_key)
+        if is_header:
+            phys_idx_of_header = len(physical_blocks)
+            physical_blocks.append([cur])
+        elif bind_key is not None and bind_key in key_blocks and in_scope:
+            if bind_key not in phys_idx_of_key:
+                phys_idx_of_key[bind_key] = len(physical_blocks)
+                physical_blocks.append(key_blocks[bind_key])
+            key_blocks[bind_key].append(cur)
         cur = cur._next  # noqa: SLF001
 
     # 2. Reject orders that would re-bind a leaf KV under a structural
@@ -3221,7 +3257,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     seen_structural = False
     for k in new_key_order:
-        block = blocks[k]
+        block = key_blocks[k]
         if not block:
             continue
         if _is_structural(block):
@@ -3233,74 +3269,91 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             )
             raise ValueError(msg)
 
-    # c's own explicit header (if any) travels with the splice so
-    # that direct KVs of c keep their binding after re-parse. The
-    # leaf-before-structural check above guarantees KV blocks come
-    # first in new_key_order, so the header always belongs at the
-    # head of the splice.
-    header_slot: StructuralHeaderSlot | None = None
-    header_ref = c._header_ref  # noqa: SLF001
-    if header_ref is not None:
-        assert isinstance(header_ref.slot, StructuralHeaderSlot)
-        if not header_ref.slot.synthetic:
-            header_slot = header_ref.slot
-
-    ordered: list[Slot] = []
-    if header_slot is not None:
-        ordered.append(header_slot)
-    for k in new_key_order:
-        ordered.extend(blocks[k])
-    if not ordered:
+    if not physical_blocks:
         return
 
-    # 3. Find splice anchor: slot just before the earliest owned slot.
-    owned_ids = {id(s) for s in ordered}
-    earliest: Slot | None = None
-    cur = doc._head  # noqa: SLF001
-    while cur is not None:
-        if id(cur) in owned_ids:
-            earliest = cur
-            break
-        cur = cur._next  # noqa: SLF001
-    assert earliest is not None
-    anchor_prev = earliest._prev  # noqa: SLF001
+    earliest_owned = physical_blocks[0][0]
 
-    # 4. Snapshot positional separators (by *physical* position, not
-    # dict order) and remainders (travel with their key). Mirrors
-    # renormalise_aot_order, except AoT list order = physical order so
-    # it doesn't need this distinction.
-    structural_by_position: list[Trivia] = []
-    remainder_by_key: dict[str, Trivia] = {}
-    for k in physical_order:
-        head_slot = blocks[k][0]
-        structural, remainder = _split_leading_for_reorder(doc, head_slot)
-        structural_by_position.append(structural)
-        remainder_by_key[k] = remainder
+    # 3. Snapshot region-external structural from the doc-stream-
+    # earliest owned slot. After reorder this becomes c-header's
+    # leading prefix (so doc preambles / above-region separators
+    # survive even when c-header was not physically first in source).
+    region_head_structural, region_head_remainder = _split_leading_for_reorder(
+        doc, earliest_owned
+    )
 
-    # 5. Splice: unlink owned slots, reinsert in computed order after
-    # the saved anchor. Foreign slots interleaved in the original span
-    # collapse together as a side effect — typically ending up just
-    # after the reordered region.
-    for s in ordered:
-        unlink_slot(s, doc, strip_new_head_leading=False)
-
-    insert_after_slot = anchor_prev
-    for slot in ordered:
-        if insert_after_slot is None:
-            insert_before_head(slot, doc)
+    # c-header's own remainder (attached comments) always travels
+    # with it. The structural part is replaced by the region-
+    # external prefix above.
+    if header_slot is not None:
+        if header_slot is earliest_owned:
+            c_header_remainder = region_head_remainder
         else:
-            insert_after(insert_after_slot, slot, doc)
-        insert_after_slot = slot
+            _, c_header_remainder = _split_leading_for_reorder(doc, header_slot)
+    else:
+        c_header_remainder = Trivia()
 
-    # 6. Re-stitch new head-slot leading: positional[new_pos] + remainder[k].
-    # Indexed across slotful keys only, since structural_by_position
-    # captured one entry per physically-present block.
-    slotful_new_order = [k for k in new_key_order if blocks[k]]
-    for new_pos, k in enumerate(slotful_new_order):
-        head_slot = blocks[k][0]
-        structural = structural_by_position[new_pos]
-        remainder = remainder_by_key[k]
-        head_slot.leading = Trivia(list(structural.pieces) + list(remainder.pieces))
+    # 4. Snapshot child positional structurals + remainders. The gap
+    # above child-position-0 is meaningful only when c-header sat
+    # above the first child in source; otherwise the structural we'd
+    # capture there is region-external prefix (already consumed by
+    # c-header's new leading) and the in-source header→child gap
+    # didn't exist.
+    child_keys_in_phys_order = sorted(phys_idx_of_key, key=phys_idx_of_key.__getitem__)
+    child_physical_blocks = [key_blocks[k] for k in child_keys_in_phys_order]
+    child_phys_pos_of_key: dict[str, int] = {
+        k: i for i, k in enumerate(child_keys_in_phys_order)
+    }
+
+    header_above_first_child = (
+        header_slot is not None
+        and child_physical_blocks
+        and earliest_owned is not child_physical_blocks[0][0]
+    )
+
+    child_structural_at_new_pos: list[Trivia] = []
+    child_remainder_of: list[Trivia] = []
+    for i, block in enumerate(child_physical_blocks):
+        structural, remainder = _split_leading_for_reorder(doc, block[0])
+        if i == 0 and header_slot is not None and not header_above_first_child:
+            structural = Trivia()
+        child_structural_at_new_pos.append(structural)
+        child_remainder_of.append(remainder)
+
+    # 5. Build new_order_indices (permutation of physical_blocks
+    # indices) and new_head_leadings (indexed by new position).
+    #
+    # When c-header is present, it occupies new position 0; children
+    # follow at new positions 1..n. Each new child position k gets
+    # child_structural_by_position[k - (1 if header else 0)] +
+    # remainder of the block now placed there.
+    new_order_indices: list[int] = []
+    new_head_leadings: list[Trivia] = []
+
+    if header_slot is not None:
+        assert phys_idx_of_header is not None
+        new_order_indices.append(phys_idx_of_header)
+        new_head_leadings.append(
+            Trivia(
+                list(region_head_structural.pieces) + list(c_header_remainder.pieces)
+            )
+        )
+
+    new_child_pos = 0
+    for k in new_key_order:
+        if k not in child_phys_pos_of_key:
+            continue
+        phys_child_idx = child_phys_pos_of_key[k]
+        new_order_indices.append(phys_idx_of_key[k])
+        structural = child_structural_at_new_pos[new_child_pos]
+        remainder = child_remainder_of[phys_child_idx]
+        new_head_leadings.append(
+            Trivia(list(structural.pieces) + list(remainder.pieces))
+        )
+        new_child_pos += 1
+
+    # 6. Splice.
+    _splice_blocks_in_order(doc, physical_blocks, new_order_indices, new_head_leadings)
 
     # 7. Resort _refs / _index on c and ancestor chain; recompute
     # cached body tails that the splice may have invalidated.
