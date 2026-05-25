@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Appending to, or deleting the tail of, a multi-line inline value
+  whose last item carries an EOL comment no longer mangles the
+  closing bracket layout.
 - Reordering or deleting the last entry of a multi-line inline table no
   longer swaps EOL comments between entries.
 - Assigning `Array.multiline` to its current value is now a no-op.

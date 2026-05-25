@@ -449,6 +449,62 @@ def _compose_pad(
     return Trivia(pieces)
 
 
+def _item_has_eol(item: ArrayItem | InlineTableEntry) -> bool:
+    """True if the item carries an inline EOL comment.
+
+    When the item has a comma, the EOL section lives in
+    ``post_comma_trivia``; otherwise it lives in ``trailing``.
+    """
+    target = item.post_comma_trivia if item.has_comma else item.trailing
+    eol, _rest = split_eol_section(target)
+    return bool(eol.pieces)
+
+
+def _normalise_row_breaks(
+    items: list[ArrayItem] | list[InlineTableEntry],
+    value: ArrayValue | InlineTableValue,
+    nl: str,
+    *,
+    multiline: bool,
+) -> None:
+    """Enforce the one-row-break-per-row invariant.
+
+    In a multi-line inline value each item occupies one physical row;
+    each row needs exactly one terminating newline. That newline lives
+    either in the row's EOL section (``items[i].post_comma_trivia`` or
+    ``items[i].trailing``) — or in the next row's leading region
+    (``items[i+1].leading`` for inter-item gaps, ``value.final_trivia``
+    for the gap before the closing bracket).
+
+    This helper restores the invariant after a mutation has touched
+    item count, comma state, or EOL state — call it once at the end.
+    Idempotent.
+    """
+    if not multiline:
+        return
+    # Inter-item: items[i].leading must start with NL iff items[i-1]
+    # carries no EOL.
+    for i in range(1, len(items)):
+        pred = items[i - 1]
+        pieces = items[i].leading.pieces
+        has_nl = bool(pieces) and isinstance(pieces[0], NewlineNode)
+        if _item_has_eol(pred) and has_nl:
+            items[i].leading = Trivia(pieces[1:])
+        elif not _item_has_eol(pred) and not has_nl:
+            items[i].leading = Trivia([NewlineNode(text=nl), *pieces])
+    # Closing-bracket gap: final_trivia must start with NL iff the
+    # last item carries no EOL.
+    if not items:
+        return
+    ft = value.final_trivia
+    has_nl = bool(ft.pieces) and isinstance(ft.pieces[0], NewlineNode)
+    last_has_eol = _item_has_eol(items[-1])
+    if last_has_eol and has_nl:
+        ft.pieces = list(ft.pieces[1:])
+    elif not last_has_eol and not has_nl:
+        ft.pieces = [NewlineNode(text=nl), *ft.pieces]
+
+
 def _take_eol(item: ArrayItem | InlineTableEntry) -> Trivia:
     """Split out and return the item's row-attached EOL section.
 
