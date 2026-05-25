@@ -151,6 +151,74 @@ def join_above_block(pad: Trivia, above: Trivia) -> Trivia:
     return Trivia([pieces[0], *above.pieces, *pieces[1:]])
 
 
+def indent_from_final_trivia(ft: Trivia) -> str:
+    """Extract a logical indent from a bracket-pad's pieces.
+
+    Prefers the indent of the last comment line (so a varied-indent
+    or blank-line-prefixed comment block aligns the new item with
+    the *most recent* commented line). Falls back to the indent of
+    the last whitespace-after-newline block, then to "".
+    """
+    pieces = ft.pieces
+    last_comment_indent: str | None = None
+    last_ws_after_nl: str | None = None
+    j = 0
+    while j < len(pieces):
+        if isinstance(pieces[j], NewlineNode) and j + 1 < len(pieces):
+            ws = ""
+            if isinstance(pieces[j + 1], WhitespaceNode):
+                ws = str(pieces[j + 1].text)
+                last_ws_after_nl = ws
+                k = j + 2
+            else:
+                k = j + 1
+            if k < len(pieces) and isinstance(pieces[k], CommentNode):
+                last_comment_indent = ws
+        j += 1
+    if last_comment_indent is not None:
+        return last_comment_indent
+    if last_ws_after_nl is not None:
+        return last_ws_after_nl
+    return ""
+
+
+def restamp_bracket_pad_for_first(
+    ft: Trivia, *, default_indent: str = "    "
+) -> tuple[Trivia, Trivia]:
+    r"""Reframe an empty bracket pad ahead of inserting the first item.
+
+    Given an empty bracketed value's ``final_trivia`` (which owns
+    everything between ``[`` / ``{`` and ``]`` / ``}``), returns the
+    ``(header_trivia, final_trivia)`` pair appropriate for an
+    about-to-be-inserted first item:
+
+    * Empty pad → returns two empty trivia (no-op).
+    * Single-line pad (no newline, e.g. ``[ ]``) → mirrors the pad on
+      both sides so both bracket faces stay padded.
+    * Multi-line pad (newline present, e.g. ``[\n]``) → splits at the
+      last newline. Everything up to and including that newline (plus
+      a value-indent) becomes the new ``header_trivia``; just the
+      newline becomes the new ``final_trivia``.
+
+    Shared between :class:`Array` and inline-table append paths.
+    """
+    if not ft.pieces:
+        return Trivia(), Trivia()
+    if not trivia_has_newline(ft):
+        return clone_trivia(ft), ft
+    pieces = list(ft.pieces)
+    last_nl = max(i for i, p in enumerate(pieces) if isinstance(p, NewlineNode))
+    head_pieces = pieces[: last_nl + 1]
+    tail_pieces = pieces[last_nl + 1 :]
+    if tail_pieces and isinstance(tail_pieces[0], WhitespaceNode):
+        value_indent = str(tail_pieces[0].text)
+    else:
+        value_indent = indent_from_final_trivia(ft) or default_indent
+    new_header = Trivia([*head_pieces, WhitespaceNode(text=value_indent)])
+    new_final = Trivia([NewlineNode(text=pieces[last_nl].text)])
+    return new_header, new_final
+
+
 def strip_trailing_indent(t: Trivia) -> None:
     r"""Drop the bracket-pad indent that anchored the now-removed first item.
 
@@ -266,12 +334,15 @@ __all__ = [
     "TriviaPiece",
     "WhitespaceNode",
     "clone_trivia",
+    "indent_from_final_trivia",
     "join_above_block",
+    "restamp_bracket_pad_for_first",
     "retarget_eol_newline",
     "retarget_trivia_newlines",
     "split_above_block",
     "split_eol_section",
     "split_item_above",
+    "strip_trailing_indent",
     "trivia_has_comment",
     "trivia_has_newline",
 ]

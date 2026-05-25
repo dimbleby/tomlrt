@@ -36,12 +36,13 @@ from tomlrt._format import (
     _take_eol,
 )
 from tomlrt._trivia import (
-    CommentNode,
     NewlineNode,
     Trivia,
     WhitespaceNode,
     clone_trivia,
+    indent_from_final_trivia,
     join_above_block,
+    restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
     split_item_above,
@@ -382,28 +383,9 @@ class Array(list[Any]):
         ft = self._value.final_trivia
         if not ft.pieces:
             return
-        if not trivia_has_newline(ft):
-            self._value.header_trivia = clone_trivia(ft)
-            return
-        pieces = list(ft.pieces)
-        last_nl = -1
-        for i, p in enumerate(pieces):
-            if isinstance(p, NewlineNode):
-                last_nl = i
-        # Pieces up to and including the last NL form the "above the
-        # new value" region. The indent for the value itself is either
-        # the WS that already follows last_nl in the existing trivia,
-        # or the indent of the most recent comment line, or four spaces.
-        head_pieces = pieces[: last_nl + 1]
-        tail_pieces = pieces[last_nl + 1 :]
-        if tail_pieces and isinstance(tail_pieces[0], WhitespaceNode):
-            value_indent = str(tail_pieces[0].text)
-        else:
-            value_indent = _indent_from_final_trivia(ft) or "    "
-        self._value.header_trivia = Trivia(
-            [*head_pieces, WhitespaceNode(text=value_indent)]
+        self._value.header_trivia, self._value.final_trivia = (
+            restamp_bracket_pad_for_first(ft)
         )
-        self._value.final_trivia = Trivia([NewlineNode(text=pieces[last_nl].text)])
 
     @override
     def extend(self, values: Iterable[Any]) -> None:
@@ -415,6 +397,7 @@ class Array(list[Any]):
         self._value.items.clear()
         # Drop any inter-item trivia clutter; preserve the bracket
         # leading captured in final_trivia.
+        strip_trailing_indent(self._value.header_trivia)
         list.clear(self)
 
     @override
@@ -769,7 +752,7 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
                     break
         indent = _first_indent_after_newline(value.header_trivia)
         if not indent:
-            indent = _indent_from_final_trivia(value.final_trivia) or "    "
+            indent = indent_from_final_trivia(value.final_trivia) or "    "
         inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text=indent)])
     else:
         inter_sep = inter_item_separator(items)
@@ -801,35 +784,6 @@ def _first_indent_after_newline(trivia: Trivia) -> str:
         ):
             return str(pieces[i + 1].text)
     return ""
-
-
-def _indent_from_final_trivia(ft: Trivia) -> str:
-    """Extract a logical indent from `final_trivia` pieces.
-
-    Prefers the indent of the last comment line (so a varied-indent
-    or blank-line-prefixed comment block aligns the new item with
-    the *most recent* commented line). Falls back to the indent of
-    the last whitespace-after-newline block, then to "".
-    """
-    pieces = ft.pieces
-    last_comment_indent: str | None = None
-    last_ws_after_nl: str | None = None
-    j = 0
-    while j < len(pieces):
-        if isinstance(pieces[j], NewlineNode) and j + 1 < len(pieces):
-            ws = ""
-            if isinstance(pieces[j + 1], WhitespaceNode):
-                ws = str(pieces[j + 1].text)
-                last_ws_after_nl = ws
-                k = j + 2
-            else:
-                k = j + 1
-            if k < len(pieces) and isinstance(pieces[k], CommentNode):
-                last_comment_indent = ws
-        j += 1
-    if last_comment_indent is not None:
-        return last_comment_indent
-    return last_ws_after_nl or ""
 
 
 def _make_item(

@@ -34,12 +34,13 @@ from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
-    clone_trivia,
     join_above_block,
+    restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
     strip_trailing_indent,
     trivia_has_comment,
+    trivia_has_newline,
 )
 from tomlrt._values import InlineTableEntry, inter_item_separator, make_keyparts
 
@@ -152,15 +153,19 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     )
 
     if not iv.entries:
-        # Empty {} → mirror the original inner padding (parser puts
-        # the inner pad in `final_trivia`: "" for `{}`, " " for `{ }`).
-        # Under the canonical model the pad before entries[0] lives on
-        # `header_trivia`; promote final_trivia → header_trivia so the
-        # new tail can keep the original bracket pad in `final_trivia`.
-        bracket_pad = clone_trivia(iv.final_trivia) if iv.final_trivia.pieces else None
-        if bracket_pad is not None:
-            iv.header_trivia = bracket_pad
-            # final_trivia stays as-is (the same bracket pad before `}`).
+        # Empty {}: reframe the bracket pad. For a single-line empty
+        # (``{}`` or ``{ }``) `final_trivia` is empty or one WS; the
+        # helper mirrors it on both sides. For a multi-line empty
+        # (``{\n}``) the helper splits at the trailing newline so the
+        # new entry gets an indented row of its own. In the multi-line
+        # case the entry also needs a trailing comma to match the
+        # canonical ``{\n    k = v,\n}`` shape.
+        is_multiline = trivia_has_newline(iv.final_trivia)
+        iv.header_trivia, iv.final_trivia = restamp_bracket_pad_for_first(
+            iv.final_trivia
+        )
+        if is_multiline:
+            new_entry.has_comma = True
         iv.entries.append(new_entry)
         return
 

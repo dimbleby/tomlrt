@@ -4059,3 +4059,36 @@ def test_delete_all_entries_clears_multiline_inline_table_indent() -> None:
     del doc.table("x")["a"]
     del doc.table("x")["b"]
     assert tomlrt.dumps(doc) == "x = {\n}\n"
+
+
+def test_array_clear_clears_multiline_indent() -> None:
+    src = td("""
+        arr = [
+            1,
+            2,
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("arr").clear()
+    assert tomlrt.dumps(doc) == "arr = [\n]\n"
+
+
+def test_add_to_empty_multiline_inline_table_indents() -> None:
+    src = "x = {\n}\n"
+    doc = tomlrt.loads(src)
+    doc.table("x")["z"] = 99
+    assert tomlrt.dumps(doc) == "x = {\n    z = 99,\n}\n"
+
+
+def test_add_after_emptying_multiline_inline_table_indents() -> None:
+    src = td("""
+        x = {
+            a = 1,
+            b = 2,
+        }
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("x")["a"]
+    del doc.table("x")["b"]
+    doc.table("x")["z"] = 99
+    assert tomlrt.dumps(doc) == "x = {\n    z = 99,\n}\n"
