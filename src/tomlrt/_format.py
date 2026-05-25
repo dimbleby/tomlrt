@@ -92,6 +92,7 @@ def _canon_trivia_text(
     comments: bool,
     strip_pre_comment_ws: bool = True,
     comment_indent: str = "",
+    first_line_is_eol: bool = False,
 ) -> None:
     r"""Normalise trivia content in place.
 
@@ -106,6 +107,12 @@ def _canon_trivia_text(
     space between the previous token and the ``#`` is the structural
     separator, set by the caller.
 
+    When ``first_line_is_eol`` is true, the pre-first-NL run is
+    treated as an EOL context (``strip_pre_comment_ws=False``, no
+    ``comment_indent``), and only subsequent lines use the full-line
+    rules. Used for ``header_trivia`` of multi-line inline values,
+    where the opening bracket may carry a row-attached EOL comment.
+
     When ``comments`` is true also rewrites each CommentNode's text
     via :func:`_canon_comment_text`.
 
@@ -115,6 +122,7 @@ def _canon_trivia_text(
     pieces = t.pieces
     new: list[TriviaPiece] = []
     line: list[TriviaPiece] = []
+    in_eol = first_line_is_eol
     for p in pieces:
         if isinstance(p, NewlineNode):
             while line and isinstance(line[-1], WhitespaceNode):
@@ -122,9 +130,10 @@ def _canon_trivia_text(
             new.extend(line)
             new.append(p)
             line = []
+            in_eol = False
             continue
         if isinstance(p, CommentNode):
-            if strip_pre_comment_ws:
+            if strip_pre_comment_ws and not in_eol:
                 while line and isinstance(line[-1], WhitespaceNode):
                     line.pop()
                 if comment_indent:
@@ -371,45 +380,77 @@ def _canon_multiline_shape(
     """
     items = _entries_of(v)
     _canon_multi_line_items(items, nl=nl, indent=item_indent)
-    head_pad = (
-        Trivia([NewlineNode(nl), WhitespaceNode(item_indent)]) if items else Trivia()
+    if items:
+        head_eol, _ = split_eol_section(v.header_trivia)
+        _, head_above = split_above_block(v.header_trivia)
+        v.header_trivia = _compose_pad(
+            head_eol=head_eol,
+            above=head_above,
+            nl=nl,
+            trailing_indent=item_indent,
+        )
+        last_post = items[-1].post_comma_trivia
+        prev_ends_in_nl = bool(last_post.pieces) and isinstance(
+            last_post.pieces[-1], NewlineNode
+        )
+        _, final_above = split_above_block(v.final_trivia)
+        v.final_trivia = _compose_pad(
+            head_eol=Trivia(),
+            above=final_above,
+            nl=nl,
+            trailing_indent=outer_indent,
+            line_already_open=prev_ends_in_nl,
+        )
+        final_eol_first = False
+    else:
+        # An empty multi-line value carries all of its trivia
+        # (bracket-EOL + above-block + closing pad) in final_trivia;
+        # header_trivia is empty by construction.
+        final_eol, _ = split_eol_section(v.final_trivia)
+        _, final_above = split_above_block(v.final_trivia)
+        v.header_trivia = Trivia()
+        v.final_trivia = _compose_pad(
+            head_eol=final_eol,
+            above=final_above,
+            nl=nl,
+            trailing_indent=outer_indent,
+        )
+        final_eol_first = bool(final_eol.pieces)
+    _finalise_inline_trivia(
+        v,
+        nl=nl,
+        comments=comments,
+        item_indent=item_indent,
+        final_first_line_is_eol=final_eol_first,
     )
-    final_pad = _compute_final_pad(items, nl=nl, outer_indent=outer_indent)
-    v.header_trivia = _replace_pad(v.header_trivia, head_pad)
-    v.final_trivia = _replace_pad(v.final_trivia, final_pad)
-    _finalise_inline_trivia(v, nl=nl, comments=comments, item_indent=item_indent)
 
 
-def _replace_pad(t: Trivia, new_pad: Trivia) -> Trivia:
-    """Substitute the bracket-pad of ``t`` while preserving its above-block."""
-    _, above = split_above_block(t)
-    return join_above_block(new_pad, above)
-
-
-def _compute_final_pad(
-    items: Sequence[ArrayItem | InlineTableEntry],
+def _compose_pad(
     *,
+    head_eol: Trivia,
+    above: Trivia,
     nl: str,
-    outer_indent: str,
+    trailing_indent: str,
+    line_already_open: bool = False,
 ) -> Trivia:
-    r"""Pad before the closing bracket of a multi-line inline value.
+    r"""Compose a bracket-pad from (row-attached EOL, above-block, indent).
 
-    Normally ``\n`` (plus ``outer_indent`` if any) — moves to the
-    next line and indents the bracket. If the last item's
-    ``post_comma_trivia`` already ends in a newline (e.g. because it
-    carries an EOL comment), the bracket-pad's own newline would
-    produce a spurious blank line before ``]`` / ``}``.
+    Layout: ``head_eol`` (already terminated by ``\n`` when
+    non-empty), an optional structural ``\n`` to start the fresh
+    line, the above-block, then a trailing indent (column of the
+    first item, or of the closing bracket).
+
+    Skip the structural ``\n`` when ``head_eol`` supplies one, or
+    when ``line_already_open`` says the upstream context (the
+    previous item's ``post_comma_trivia``) already terminated the
+    line.
     """
-    last_post_ends_in_nl = (
-        bool(items)
-        and bool(items[-1].post_comma_trivia.pieces)
-        and isinstance(items[-1].post_comma_trivia.pieces[-1], NewlineNode)
-    )
-    if last_post_ends_in_nl:
-        return Trivia([WhitespaceNode(outer_indent)]) if outer_indent else Trivia()
-    pieces: list[TriviaPiece] = [NewlineNode(nl)]
-    if outer_indent:
-        pieces.append(WhitespaceNode(outer_indent))
+    pieces: list[TriviaPiece] = list(head_eol.pieces)
+    if not head_eol.pieces and not line_already_open:
+        pieces.append(NewlineNode(nl))
+    pieces.extend(above.pieces)
+    if trailing_indent:
+        pieces.append(WhitespaceNode(trailing_indent))
     return Trivia(pieces)
 
 
@@ -475,6 +516,7 @@ def _finalise_inline_trivia(
     nl: str,
     comments: bool,
     item_indent: str = "",
+    final_first_line_is_eol: bool = False,
 ) -> None:
     """Retarget newlines + canonicalise comment / blank-WS text across ``v``.
 
@@ -483,11 +525,27 @@ def _finalise_inline_trivia(
     at which full-line comments inside ``v`` should sit; passed by
     multi-line callers so above-item comment blocks are indented to
     align with the items, not stripped to column 0.
+
+    ``final_first_line_is_eol`` flags the empty-value case where the
+    row-attached EOL on the opening bracket is stored in
+    ``final_trivia`` (because there is no item to delimit it from
+    the closing bracket), so its first line must be canonicalised as
+    an EOL context, not a full-line one.
     """
     retarget_trivia_newlines(v.header_trivia, nl)
     retarget_trivia_newlines(v.final_trivia, nl)
-    _canon_trivia_text(v.header_trivia, comments=comments, comment_indent=item_indent)
-    _canon_trivia_text(v.final_trivia, comments=comments, comment_indent=item_indent)
+    _canon_trivia_text(
+        v.header_trivia,
+        comments=comments,
+        comment_indent=item_indent,
+        first_line_is_eol=True,
+    )
+    _canon_trivia_text(
+        v.final_trivia,
+        comments=comments,
+        comment_indent=item_indent,
+        first_line_is_eol=final_first_line_is_eol,
+    )
     for it in _entries_of(v):
         retarget_trivia_newlines(it.leading, nl)
         retarget_trivia_newlines(it.trailing, nl)
