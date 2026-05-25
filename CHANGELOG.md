@@ -24,8 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nested AoT child appeared before its explicit parent header in source.
 - `format()` no longer strips the indent of full-line comments inside
   multi-line inline arrays / inline tables.
-- `Array.set_multiline(multiline=True, ...)` now preserves embedded
-  comments instead of silently deleting them.
+- `Array.set_multiline(multiline=True, ...)` no longer drops the last
+  element's EOL comment when synthesising a trailing comma, and no
+  longer inserts a blank line before the closing bracket when the
+  last item carries an EOL comment.
 - `Document.format()` now canonicalises the document epilogue as well
   as the body.
 

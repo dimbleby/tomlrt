@@ -2867,6 +2867,43 @@ def test_standalone_array_set_multiline_then_attach() -> None:
     assert _reparses(out) == {"xs": [1, 2]}
 
 
+def test_set_multiline_true_preserves_eol_comment_when_synthesising_comma() -> None:
+    # Regression: a last element without a trailing comma carries its
+    # EOL comment in ``trailing``; set_multiline synthesises a comma
+    # and used to clobber that channel, dropping the comment.
+    src = td("""
+        alist = [
+          'w' # Comment
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("alist").set_multiline(multiline=True, indent="  ")
+    assert tomlrt.dumps(doc) == td("""
+        alist = [
+          'w', # Comment
+        ]
+        """)
+
+
+def test_set_multiline_true_no_blank_line_before_bracket_with_eol_comment() -> None:
+    # Companion regression: when the last item ends with an EOL
+    # comment (whether already-comma'd in source or not), the
+    # bracket-pad must not add its own newline — that would insert a
+    # spurious blank line between the comment and ``]``.
+    src = td("""
+        alist = [
+          'w', # Comment
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("alist").set_multiline(multiline=True, indent="  ")
+    assert tomlrt.dumps(doc) == td("""
+        alist = [
+          'w', # Comment
+        ]
+        """)
+
+
 def test_set_multiline_true_preserves_embedded_comments() -> None:
     src = td("""
         alist = [
