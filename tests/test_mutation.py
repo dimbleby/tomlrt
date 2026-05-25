@@ -194,6 +194,58 @@ def test_inline_table_delete_last_clears_trailing_comma() -> None:
     assert _reparses(out) == {"obj": {"a": 1}}
 
 
+def test_inline_table_delete_last_preserves_surviving_eol_comment() -> None:
+    src = td("""
+        t = {
+          a = 1, # aye
+          b = 2, # bee
+        }
+        """)
+    doc = tomlrt.loads(src)
+    del doc.table("t")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          a = 1, # aye
+        }
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_inline_table_delete_last_no_trailing_comma_preserves_eol() -> None:
+    src = td("""
+        t = {
+          a = 1, # aye
+          b = 2 # bee
+        }
+        """)
+    doc = tomlrt.loads(src)
+    del doc.table("t")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          a = 1 # aye
+        }
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_inline_table_delete_dotted_prefix_preserves_surviving_eol() -> None:
+    src = td("""
+        t = {
+          a = 1, # aye
+          b.x = 1, # bx
+          b.y = 2, # by
+        }
+        """)
+    doc = tomlrt.loads(src)
+    del doc.table("t")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          a = 1, # aye
+        }
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
 def test_inline_table_accepts_standalone_array_with_live_attach() -> None:
     # Standalone Array assigned into an inline table attaches live:
     # the user's reference is the value at the assignment site, and
@@ -3428,6 +3480,64 @@ def test_sort_inline_table_multiline_with_above_comments() -> None:
           a = 1,
           # above b
           b = 2,
+        }
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_inline_table_eol_comments_travel_with_entries() -> None:
+    src = td("""
+        t = {
+          b = 2, # bee
+          a = 1, # aye
+        }
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("t").sort()
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          a = 1, # aye
+          b = 2, # bee
+        }
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_inline_table_eol_on_last_no_comma_travels() -> None:
+    # EOL comment on a comma-less last entry must travel with that
+    # entry when reordered.
+    src = td("""
+        t = {
+          b = 2, # bee
+          a = 1 # aye
+        }
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("t").sort()
+    # 'a' moves to position 0 (and gains a comma); 'b' moves to last
+    # (and loses its comma). Each entry's EOL comment travels with it.
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          a = 1, # aye
+          b = 2 # bee
+        }
+        """)
+    assert _reparses(tomlrt.dumps(doc))
+
+
+def test_sort_reverse_inline_table_eol_comments_travel() -> None:
+    src = td("""
+        t = {
+          a = 1, # aye
+          b = 2, # bee
+        }
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("t").sort(reverse=True)
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          b = 2, # bee
+          a = 1, # aye
         }
         """)
     assert _reparses(tomlrt.dumps(doc))

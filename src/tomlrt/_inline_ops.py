@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tomlrt._format import _put_eol, _take_eol
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
@@ -36,6 +37,7 @@ from tomlrt._trivia import (
     clone_trivia,
     join_above_block,
     split_above_block,
+    split_eol_section,
     trivia_has_comment,
 )
 from tomlrt._values import InlineTableEntry, inter_item_separator, make_keyparts
@@ -232,26 +234,27 @@ def _fix_tail_after_delete(
 ) -> None:
     """Promote a new tail after deleting the trailing entry.
 
-    Under the canonical model, the bracket pad before ``}`` lives in
-    ``final_trivia``, so the new tail keeps its ``has_comma`` /
-    ``post_comma_trivia`` exactly as the previous-to-last entry had
-    them — except when the *removed* entry had no trailing comma, in
-    which case the new tail also drops its comma to avoid emitting a
-    stray trailing one.
+    The structural pad and comma-style come from the removed entry's
+    position; the EOL section already on the new tail is entry-attached
+    and must be preserved across any ``has_comma`` flip.
     """
     if not iv.entries or removed_idx != len(iv.entries):
         return
     new_last = iv.entries[-1]
+    new_last_eol = _take_eol(new_last)
     if removed.has_comma:
         # Trailing-comma style preserved; new_last keeps its comma.
         new_last.has_comma = True
-        new_last.post_comma_trivia = removed.post_comma_trivia
+        _, removed_post_rest = split_eol_section(removed.post_comma_trivia)
+        new_last.post_comma_trivia = removed_post_rest
     else:
         # Removed had no trailing comma → drop the new tail's comma.
         new_last.has_comma = False
         new_last.post_comma_trivia = Trivia()
-        if removed.trailing.pieces and not new_last.trailing.pieces:
-            new_last.trailing = removed.trailing
+        if not new_last.trailing.pieces:
+            _, removed_trail_rest = split_eol_section(removed.trailing)
+            new_last.trailing = removed_trail_rest
+    _put_eol(new_last, new_last_eol)
 
 
 def _fix_head_after_delete(iv: InlineTableValue, removed_idx: int) -> None:
@@ -271,12 +274,12 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     """Reorder direct children of an inline-table container.
 
     Permutes ``InlineTableValue.entries`` so that the c-direct-child
-    keys appear in ``new_key_order``. Each entry's above-block (the
-    comment block visually attached to it; lives in ``header_trivia``
-    for entries[0]) travels with the entry. Positional state — the
-    inter-entry pad, ``has_comma``, ``post_comma_trivia``, ``trailing``
-    — stays at its position, so e.g. the entry that ends up at the
-    last position correctly drops its trailing comma.
+    keys appear in ``new_key_order``. The above-block and the EOL
+    section (the row-attached ``# comment`` line) both travel with the
+    entry. Purely positional state — the inter-entry pad, ``has_comma``,
+    and any structural ws in ``trailing`` / ``post_comma_trivia`` —
+    stays at its position, so e.g. the entry that ends up at the last
+    position correctly drops its trailing comma.
 
     Foreign entries (whose key path doesn't start with c's prefix —
     only possible when c is a dotted-inner navigator) keep their
@@ -304,15 +307,18 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     if len(owned_positions) <= 1:
         return
 
-    # Snapshot positional state (stays at position) and above-block
-    # (travels with entry) for each owned position. entries[0]'s
-    # above-block lives in iv.header_trivia under the canonical model.
+    # Snapshot positional state (stays at position) and entry-attached
+    # state (travels with the entry) for each owned position.
+    # entries[0]'s above-block lives in iv.header_trivia under the
+    # canonical model.
     pos_state: dict[int, tuple[Trivia, bool, Trivia, Trivia]] = {}
     above_by_entry: dict[int, Trivia] = {}
+    eol_by_entry: dict[int, Trivia] = {}
     for i in owned_positions:
         e = iv.entries[i]
         src = iv.header_trivia if i == 0 else e.leading
         pad, above = split_above_block(src)
+        eol_by_entry[id(e)] = _take_eol(e)
         pos_state[i] = (pad, e.has_comma, e.post_comma_trivia, e.trailing)
         above_by_entry[id(e)] = above
 
@@ -322,16 +328,16 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
         new_entries[pos] = e
     iv.entries = new_entries
 
-    # Restore positional state, re-stitch each entry's leading to
-    # positional_pad + its travelling above-block. The head entry's
-    # above-block goes into iv.header_trivia; its leading stays empty
-    # under the canonical model.
+    # Restore positional state and re-stitch each entry's travelling
+    # pieces. The EOL section is routed to whichever channel matches
+    # the new position's ``has_comma``.
     for pos in owned_positions:
         e = iv.entries[pos]
-        pad, has_comma, post_comma, trailing = pos_state[pos]
+        pad, has_comma, post_rest, trail_rest = pos_state[pos]
         e.has_comma = has_comma
-        e.post_comma_trivia = post_comma
-        e.trailing = trailing
+        e.post_comma_trivia = post_rest
+        e.trailing = trail_rest
+        _put_eol(e, eol_by_entry[id(e)])
         above = above_by_entry[id(e)]
         if pos == 0:
             iv.header_trivia = join_above_block(pad, above)
