@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Array.set_multiline(True)` on an empty array no longer drops a
   bracket-line comment and now aligns the closing `]` to the outer
   indent.
+- `Table.format()` on an AoT entry no longer reformats sibling
+  entries of the same array.
 
 ## [1.7.0] - 2026-05-25
 

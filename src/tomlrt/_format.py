@@ -58,7 +58,7 @@ from tomlrt._values import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tomlrt._slots import Slot
+    from tomlrt._slots import AoTEntry, Slot
     from tomlrt._trivia import (
         EolTrivia,
         TriviaPiece,
@@ -629,18 +629,43 @@ def _canon_value(v: Value, *, nl: str, comments: bool, parent_indent: str = "") 
 # ---------------------------------------------------------------------------
 
 
-def _in_subtree(slot: Slot, path: tuple[str, ...]) -> bool:
-    """True iff ``slot`` belongs to the subtree rooted at ``path``."""
+def _in_subtree(
+    slot: Slot,
+    path: tuple[str, ...],
+    owner: AoTEntry | None,
+) -> bool:
+    """True iff ``slot`` belongs to the subtree rooted at ``path`` / ``owner``.
+
+    When ``owner`` is set the caller is an AoT-entry view (or a section
+    nested inside one): the path-prefix check is not enough because
+    sibling entries of the same AoT share the caller's path. Restrict
+    the walk to slots whose nearest AoT-entry ancestor is ``owner``
+    itself or a descendant entry (strictly longer path prefix-matching
+    ``owner.path``).
+    """
     if isinstance(slot, KVSlot):
-        return slot.host_path[: len(path)] == path
-    assert isinstance(slot, StructuralHeaderSlot)
-    return slot.path[: len(path)] == path
+        if slot.host_path[: len(path)] != path:
+            return False
+    else:
+        assert isinstance(slot, StructuralHeaderSlot)
+        if slot.path[: len(path)] != path:
+            return False
+    if owner is None:
+        return True
+    slot_owner = slot.owner_aot_entry
+    if slot_owner is owner:
+        return True
+    if slot_owner is None:
+        return False
+    op = owner.path
+    return len(slot_owner.path) > len(op) and slot_owner.path[: len(op)] == op
 
 
 def format_subtree(
     *,
     start: Slot | None,
     path: tuple[str, ...],
+    owner: AoTEntry | None,
     nl: str,
     comments: bool,
 ) -> None:
@@ -648,6 +673,10 @@ def format_subtree(
 
     Walks the doc-stream linked list starting at ``start`` forward,
     stopping at the first slot outside the subtree.
+
+    ``owner`` is the AoT entry that anchors the subtree, when the
+    caller is an AoT-entry view or a non-AoT section nested inside
+    one. It disambiguates sibling AoT entries that share ``path``.
 
     The first slot's leading head-blanks are preserved verbatim
     (they belong to the document preamble or to the parent of the
@@ -657,7 +686,7 @@ def format_subtree(
     """
     prev: Slot | None = None
     slot = start
-    while slot is not None and _in_subtree(slot, path):
+    while slot is not None and _in_subtree(slot, path, owner):
         # A slot parsed as the file's final line carries
         # ``eol.newline=None``.  If a later mutation (sort, splice)
         # moved it off the tail, restore the terminator so the
