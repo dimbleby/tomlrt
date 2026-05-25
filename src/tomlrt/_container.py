@@ -39,6 +39,13 @@ from tomlrt._comments import (
     _header_leading_set,
 )
 from tomlrt._errors import TOMLError
+from tomlrt._format import (
+    _canon_header_slot,
+    _canon_inline_value,
+    _canon_kv_slot,
+    _canon_leading,
+    format_subtree,
+)
 from tomlrt._kind import _Kind
 from tomlrt._paths import split_path, validate_path
 from tomlrt._render import render
@@ -245,6 +252,86 @@ class Container(dict[str, Any]):
         r"""The active newline of the owning document, or ``"\n"`` if detached."""
         lr = self._layout_root
         return lr._newline if lr is not None else "\n"  # noqa: SLF001
+
+    def format(self, *, comments: bool = True) -> None:
+        """Canonicalise this container's formatting in place.
+
+        Rewrites whitespace, indentation, separators, and newlines to a
+        canonical layout for every slot in this container's subtree:
+
+        * Keys, ``=`` spacing, and header brackets use canonical
+          whitespace.
+        * Blank lines between sibling key/value slots collapse to none;
+          structural section / array-of-tables headers are preceded by
+          exactly one blank line.
+        * Orphan comment blocks above slots are preserved verbatim.
+        * Inline arrays and inline tables are reformatted in place
+          while preserving their overall shape (single-line stays
+          single-line, multi-line stays multi-line).
+        * All newline characters are retargeted to the owning
+          document's newline style.
+
+        When ``comments`` is true (the default), comment text is also
+        normalised: ``#foo`` and ``#   foo`` both become ``# foo``, and
+        trailing whitespace inside comments is stripped.
+
+        Detached factory-style containers (``Table.section()`` /
+        ``Table.inline()`` not yet assigned anywhere) and inline
+        dotted-navigator views are not supported; calling
+        ``format()`` on one raises `TOMLError`.
+        """
+        kind = self._kind
+        nl = self._doc_newline
+
+        if kind is _Kind.INLINE_ROOT:
+            assert self._value is not None
+            _canon_inline_value(self._value, nl=nl, comments=comments)
+            return
+
+        if kind in (_Kind.INLINE_FACTORY, _Kind.INLINE_DOTTED_INNER):
+            msg = "format() is not supported on detached inline-table views"
+            raise TOMLError(msg)
+
+        if kind is _Kind.DOCUMENT:
+            assert isinstance(self, Document)
+            format_subtree(
+                start=self._head,
+                path=(),
+                nl=nl,
+                comments=comments,
+            )
+            return
+
+        if kind is _Kind.SECTION:
+            assert self._header_ref is not None
+            format_subtree(
+                start=self._header_ref.slot,
+                path=self._path,
+                nl=nl,
+                comments=comments,
+            )
+            return
+
+        # IMPLICIT_SECTION: slots are not contiguous in the doc stream,
+        # so we cannot do a subtree walk with inter-slot blank-line
+        # collapse.  Just canonicalise each owned slot's content and
+        # recurse into nested views via dict storage.
+        if not self._attached:
+            msg = "format() requires the container to be attached to a Document"
+            raise TOMLError(msg)
+        for ref in list(self._refs):
+            slot = ref.slot
+            if isinstance(slot, KVSlot):
+                _canon_kv_slot(slot, nl=nl, comments=comments)
+            elif isinstance(slot, StructuralHeaderSlot):
+                _canon_header_slot(slot, nl=nl, comments=comments)
+            _canon_leading(slot, nl=nl, target_blanks=None, comments=comments)
+        for value in self.values():
+            if isinstance(value, (Container, Array)):
+                value.format(comments=comments)
+            elif isinstance(value, AoT):
+                for entry in value:
+                    entry.format(comments=comments)
 
     @property
     def _attached(self) -> bool:

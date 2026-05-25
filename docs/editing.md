@@ -156,3 +156,17 @@ doc.promote_array("pkgs")                      # → [[pkgs]] … [[pkgs]]
 
 Promotion is rejected if it would lose inner comments; clear them first (see
 [Comments](comments.md)).
+
+## Canonical formatting
+
+Whenever you want to drop format preservation and snap a section, document, or
+array to a canonical layout, call `format()`:
+
+```python
+doc.format()           # whole document
+doc.table("tool").format()
+doc.array("pkgs").format()
+```
+
+See [Formatting](formatting.md) for what `format()` rewrites and what it
+leaves alone.
