@@ -3979,3 +3979,57 @@ def test_sort_round_trips_for_repeated_sorts() -> None:
     doc.sort()  # idempotent: already sorted
     twice = tomlrt.dumps(doc)
     assert once == twice
+
+
+def test_delete_first_kv_preserves_doc_preamble() -> None:
+    src = td("""
+        # preamble
+
+        x = 1
+        y = 2
+    """)
+    doc = tomlrt.loads(src)
+    del doc["x"]
+    assert tomlrt.dumps(doc) == td("""
+        # preamble
+
+        y = 2
+    """)
+
+
+def test_delete_first_section_preserves_doc_preamble() -> None:
+    src = td("""
+        # preamble
+
+        [a]
+        x = 1
+        [b]
+        y = 2
+    """)
+    doc = tomlrt.loads(src)
+    del doc["a"]
+    assert tomlrt.dumps(doc) == td("""
+        # preamble
+
+        [b]
+        y = 2
+    """)
+
+
+def test_delete_first_aot_entry_preserves_doc_preamble() -> None:
+    src = td("""
+        # preamble
+
+        [[a]]
+        x = 1
+        [[a]]
+        x = 2
+    """)
+    doc = tomlrt.loads(src)
+    del doc.aot("a")[0]
+    assert tomlrt.dumps(doc) == td("""
+        # preamble
+
+        [[a]]
+        x = 2
+    """)
