@@ -3007,6 +3007,70 @@ def test_multiline_setter_is_noop_when_already_singleline() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+def test_array_format_preserves_bracket_eol_comment() -> None:
+    src = td("""
+        xs = [ # opening
+          1,
+          2,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("xs").format()
+    assert tomlrt.dumps(doc) == td("""
+        xs = [ # opening
+          1,
+          2,
+        ]
+        """)
+
+
+def test_container_format_preserves_inline_table_bracket_eol_comment() -> None:
+    src = td("""
+        t = { # opening
+          a = 1,
+          b = 2,
+        }
+        """)
+    doc = tomlrt.loads(src)
+    doc.format()
+    assert tomlrt.dumps(doc) == td("""
+        t = { # opening
+          a = 1,
+          b = 2,
+        }
+        """)
+
+
+def test_set_multiline_true_preserves_bracket_eol_comment() -> None:
+    src = td("""
+        xs = [ # opening
+          1,
+          2,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("xs").set_multiline(multiline=True, indent="  ")
+    assert tomlrt.dumps(doc) == td("""
+        xs = [ # opening
+          1,
+          2,
+        ]
+        """)
+
+
+def test_array_format_preserves_bracket_eol_on_empty_array() -> None:
+    src = td("""
+        xs = [ # opening
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("xs").format()
+    assert tomlrt.dumps(doc) == td("""
+        xs = [ # opening
+        ]
+        """)
+
+
 def test_collapse_multiline_with_nested_array_comment_raises() -> None:
     src = td(
         """
