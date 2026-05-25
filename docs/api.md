@@ -53,6 +53,7 @@ code.
         - comments
         - leading_comments
         - leading_block
+        - has_header
         - sort
         - to_dict
 
@@ -80,6 +81,7 @@ code.
         - comments
         - leading_comments
         - leading_block
+        - has_header
         - sort
         - to_dict
 

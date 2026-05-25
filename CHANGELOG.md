@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Container.has_header(key)` predicate: does this child render with a
+  `[header]` line.
+
 ### Changed
 
 - `Table.header_comment` and `Table.header_leading_comments` getters
