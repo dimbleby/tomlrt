@@ -495,18 +495,29 @@ def format_subtree(
     to the canonical count: 1 blank line before any structural
     header, 0 otherwise.
     """
-    first = True
+    prev: Slot | None = None
     slot = start
     while slot is not None and _in_subtree(slot, path):
+        # A slot parsed as the file's final line carries
+        # ``eol.newline=None``.  If a later mutation (sort, splice)
+        # moved it off the tail, restore the terminator so the
+        # canonical inter-slot blank line materialises.  The walk's
+        # genuinely-final slot is never visited as ``prev``, so its
+        # no-final-newline state survives.
+        if prev is not None:
+            assert isinstance(prev, (KVSlot, StructuralHeaderSlot))
+            if prev.eol.newline is None:
+                prev.eol.newline = NewlineNode(nl)
         if isinstance(slot, KVSlot):
             _canon_kv_slot(slot, nl=nl, comments=comments)
         elif isinstance(slot, StructuralHeaderSlot):
             _canon_header_slot(slot, nl=nl, comments=comments)
-        target: int | None = (
-            None if first else (1 if isinstance(slot, StructuralHeaderSlot) else 0)
-        )
+        if prev is None:
+            target: int | None = None
+        else:
+            target = 1 if isinstance(slot, StructuralHeaderSlot) else 0
         _canon_leading(slot, nl=nl, target_blanks=target, comments=comments)
-        first = False
+        prev = slot
         slot = slot._next  # noqa: SLF001
 
 
