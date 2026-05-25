@@ -393,6 +393,24 @@ def test_section_scoped() -> None:
     """)
 
 
+def test_format_canonicalises_epilogue() -> None:
+    src = "key = 1\n#trailing  \n#  more  \n"
+    assert _roundtrip(src) == "key = 1\n# trailing\n# more\n"
+
+
+def test_format_canonicalises_epilogue_no_comments_flag() -> None:
+    # comments=False strips trailing WS on blank lines, but leaves
+    # comment text (including its trailing whitespace) alone.
+    src = "key = 1\n#trailing  \n  \n"
+    assert _roundtrip(src, comments=False) == "key = 1\n#trailing  \n\n"
+
+
+def test_format_canonicalises_empty_doc_preamble() -> None:
+    # Empty doc: everything lives in _trailing and surfaces as preamble.
+    src = "#hello  \n#  world\n"
+    assert _roundtrip(src) == "# hello\n# world\n"
+
+
 def test_format_returns_none() -> None:
     doc = tomlrt.loads("a = 1\n")
     assert doc.format() is None  # type: ignore[func-returns-value]

@@ -510,6 +510,27 @@ def format_subtree(
         slot = slot._next  # noqa: SLF001
 
 
+def format_document_trailing(
+    trailing: Trivia,
+    *,
+    nl: str,
+    comments: bool,
+) -> None:
+    """Canonicalise the trailing trivia of a :class:`Document`.
+
+    Retargets newlines to ``nl``, strips trailing whitespace on
+    blank lines, strips column-indent whitespace before orphan
+    comments, and (when ``comments`` is true) rewrites comment
+    text to canonical ``# body`` form.
+
+    Structural shape — line count, blank-line placement — is
+    preserved, so the user-visible split between preamble and
+    epilogue is unaffected.
+    """
+    retarget_trivia_newlines(trailing, nl)
+    _canon_trivia_text(trailing, comments=comments)
+
+
 __all__ = [
     "_canon_eol",
     "_canon_header_slot",
@@ -517,5 +538,6 @@ __all__ = [
     "_canon_kv_slot",
     "_canon_leading",
     "_canon_value",
+    "format_document_trailing",
     "format_subtree",
 ]
