@@ -882,6 +882,10 @@ class Container(dict[str, Any]):
         Inline containers have no structural children, so the partition
         is a no-op there and ``key`` / ``reverse`` behave as on a plain
         dict.
+
+        See [`has_header`][tomlrt.Table.has_header] for the predicate
+        that defines the partition; a custom ``key`` function can call
+        it to decide which side of the split a given child sits on.
         """
         current = list(dict.keys(self))
         if len(current) <= 1:
@@ -889,8 +893,8 @@ class Container(dict[str, Any]):
         if self._inline:
             new_order = sorted(current, key=key, reverse=reverse)
         else:
-            leaves = [k for k in current if not self._is_structural_child(k)]
-            sections = [k for k in current if self._is_structural_child(k)]
+            leaves = [k for k in current if not self.has_header(k)]
+            sections = [k for k in current if self.has_header(k)]
             leaves.sort(key=key, reverse=reverse)
             sections.sort(key=key, reverse=reverse)
             new_order = leaves + sections
@@ -902,13 +906,17 @@ class Container(dict[str, Any]):
             _layout_ops.reorder_container(self, new_order)
         _reorder_dict_storage(self, new_order)
 
-    def _is_structural_child(self, key: str) -> bool:
-        # A child whose physical block at this container contains a
-        # structural header slot (`[header]` / `[[header]]`) — i.e. a
-        # leaf KV placed after it would re-bind as nested. Mirrors
-        # the safety check in ``_layout_ops.reorder_container``.
-        # Implicit sections built entirely from dotted KVs have no
-        # header slot and so count as leaves for sort-ordering.
+    def has_header(self, key: str) -> bool:
+        """Whether ``key`` is bound to a child with a ``[header]`` line.
+
+        Returns ``True`` when this container's block for ``key`` contains
+        a structural header slot — i.e. a ``[header]`` section or a
+        ``[[header]]`` array-of-tables entry. Returns ``False`` for bare
+        ``key = value`` leaves, inline tables, and implicit sections
+        built entirely from dotted keys (e.g. ``a.x = 1``, where ``a``
+        has no header line of its own). Returns ``False`` for keys not
+        present.
+        """
         refs = self._index.get(key, ())
         return any(isinstance(r.slot, StructuralHeaderSlot) for r in refs)
 

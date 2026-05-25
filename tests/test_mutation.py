@@ -2931,6 +2931,67 @@ def test_collapse_multiline_with_nested_inline_table_comment_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_has_header_partitions_sections_from_leaves() -> None:
+    src = td("""
+        bare = 1
+        dotted.x = 2
+
+        [section]
+        x = 1
+
+        [[aot]]
+        y = 1
+
+        [[aot]]
+        y = 2
+
+        [inline_host]
+        inline = { a = 1 }
+        """)
+    doc = tomlrt.loads(src)
+    assert doc.has_header("bare") is False
+    assert doc.has_header("dotted") is False
+    assert doc.has_header("section") is True
+    assert doc.has_header("aot") is True
+    assert doc.has_header("inline_host") is True
+    assert doc.has_header("missing") is False
+    assert doc.table("inline_host").has_header("inline") is False
+    assert doc.table("dotted").has_header("x") is False
+
+
+def test_has_header_drives_custom_sort_key() -> None:
+    src = td("""
+        b = 1
+        a = 2
+
+        [zeta]
+        x = 1
+
+        [alpha]
+        y = 1
+        """)
+    doc = tomlrt.loads(src)
+    original = list(doc.keys())
+
+    def keyfn(k: str) -> tuple[int, str]:
+        # Sections sort by name; leaves keep their original order.
+        if doc.has_header(k):
+            return (1, k)
+        return (0, str(original.index(k)))
+
+    doc.sort(key=keyfn)
+    assert tomlrt.dumps(doc) == td("""
+        b = 1
+        a = 2
+
+        [alpha]
+        y = 1
+
+        [zeta]
+        x = 1
+        """)
+
+
 def test_sort_leaf_kvs_preserves_leading_and_eol_comments() -> None:
     src = td("""
         # preamble
