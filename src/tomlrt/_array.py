@@ -30,10 +30,10 @@ from tomlrt._array_comments import (
 from tomlrt._errors import TOMLError
 from tomlrt._format import (
     _canon_inline_value,
-    _canon_multi_line_items,
+    _canon_multiline_shape,
     _canon_value,
-    _finalise_inline_trivia,
-    _replace_pad,
+    _migrate_eol_post_comma_to_trailing,
+    _migrate_eol_trailing_to_post_comma,
 )
 from tomlrt._trivia import (
     CommentNode,
@@ -299,13 +299,9 @@ class Array(list[Any]):
             return self
         for it in items:
             _canon_value(it.value, nl=nl, comments=True, parent_indent=ind)
-        _canon_multi_line_items(items, nl=nl, indent=ind)
-        head_pad = Trivia([NewlineNode(text=nl), WhitespaceNode(text=ind)])
-        value.header_trivia = _replace_pad(value.header_trivia, head_pad)
-        value.final_trivia = _replace_pad(
-            value.final_trivia, Trivia([NewlineNode(text=nl)])
+        _canon_multiline_shape(
+            value, nl=nl, comments=True, item_indent=ind, outer_indent=""
         )
-        _finalise_inline_trivia(value, nl=nl, comments=True, item_indent=ind)
         return self
 
     def _synth_cst(self, value: object) -> tuple[Value, object]:
@@ -923,27 +919,6 @@ def _normalise_leading_nls(items: list[ArrayItem], nl: str, *, multiline: bool) 
             items[i].leading = Trivia(pieces[1:])
         elif not _item_has_eol(pred) and not has_nl:
             items[i].leading = Trivia([NewlineNode(text=nl), *pieces])
-
-
-def _migrate_eol_trailing_to_post_comma(item: ArrayItem) -> None:
-    """If item.trailing carries an EOL section, move it to post_comma_trivia.
-
-    Used when flipping from terminal (no comma) to internal (comma added):
-    the EOL row that previously sat between the value and the closing `]`
-    now logically follows the new comma.
-    """
-    eol, rest = split_eol_section(item.trailing)
-    if eol.pieces:
-        item.post_comma_trivia = eol
-        item.trailing = rest
-
-
-def _migrate_eol_post_comma_to_trailing(item: ArrayItem) -> None:
-    """Inverse of _migrate_eol_trailing_to_post_comma."""
-    eol, rest = split_eol_section(item.post_comma_trivia)
-    if eol.pieces:
-        item.trailing = Trivia(list(item.trailing.pieces) + list(eol.pieces))
-        item.post_comma_trivia = rest
 
 
 def _flip_to_internal(item: ArrayItem) -> None:

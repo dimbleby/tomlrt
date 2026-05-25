@@ -45,6 +45,7 @@ from tomlrt._trivia import (
     retarget_eol_newline,
     retarget_trivia_newlines,
     split_above_block,
+    split_eol_section,
     split_item_above,
     trivia_has_newline,
 )
@@ -344,20 +345,38 @@ def _canon_inline_value(
         _canon_single_line_inline(v)
         return
 
+    _canon_multiline_shape(
+        v, nl=nl, comments=comments, item_indent=item_indent, outer_indent=parent_indent
+    )
+
+
+def _canon_multiline_shape(
+    v: ArrayValue | InlineTableValue,
+    *,
+    nl: str,
+    comments: bool,
+    item_indent: str,
+    outer_indent: str,
+) -> None:
+    """Apply multi-line canonical shape to ``v``.
+
+    Shared backbone of the ``format()`` walk (``_canon_inline_value``)
+    and ``Array.set_multiline(multiline=True, ...)``. Canonicalises
+    per-item trivia, restamps the bracket-pad, then runs the final
+    text pass that retargets newlines and rewrites comment text.
+
+    The single-line path bypasses this entirely — its shaping
+    produces only empty / single-space trivia (no newlines, no
+    comments), so the finalise pass would be a no-op there.
+    """
+    items = _entries_of(v)
     _canon_multi_line_items(items, nl=nl, indent=item_indent)
     head_pad = (
         Trivia([NewlineNode(nl), WhitespaceNode(item_indent)]) if items else Trivia()
     )
-    final_pad = Trivia(
-        [NewlineNode(nl), WhitespaceNode(parent_indent)]
-        if parent_indent
-        else [NewlineNode(nl)]
-    )
+    final_pad = _compute_final_pad(items, nl=nl, outer_indent=outer_indent)
     v.header_trivia = _replace_pad(v.header_trivia, head_pad)
     v.final_trivia = _replace_pad(v.final_trivia, final_pad)
-    # Single-line shaping produces only empty / single-space trivia
-    # (no newlines, no comments), so the finalise pass would be a
-    # no-op there.
     _finalise_inline_trivia(v, nl=nl, comments=comments, item_indent=item_indent)
 
 
@@ -365,6 +384,54 @@ def _replace_pad(t: Trivia, new_pad: Trivia) -> Trivia:
     """Substitute the bracket-pad of ``t`` while preserving its above-block."""
     _, above = split_above_block(t)
     return join_above_block(new_pad, above)
+
+
+def _compute_final_pad(
+    items: Sequence[ArrayItem | InlineTableEntry],
+    *,
+    nl: str,
+    outer_indent: str,
+) -> Trivia:
+    r"""Pad before the closing bracket of a multi-line inline value.
+
+    Normally ``\n`` (plus ``outer_indent`` if any) — moves to the
+    next line and indents the bracket. If the last item's
+    ``post_comma_trivia`` already ends in a newline (e.g. because it
+    carries an EOL comment), the bracket-pad's own newline would
+    produce a spurious blank line before ``]`` / ``}``.
+    """
+    last_post_ends_in_nl = (
+        bool(items)
+        and bool(items[-1].post_comma_trivia.pieces)
+        and isinstance(items[-1].post_comma_trivia.pieces[-1], NewlineNode)
+    )
+    if last_post_ends_in_nl:
+        return Trivia([WhitespaceNode(outer_indent)]) if outer_indent else Trivia()
+    pieces: list[TriviaPiece] = [NewlineNode(nl)]
+    if outer_indent:
+        pieces.append(WhitespaceNode(outer_indent))
+    return Trivia(pieces)
+
+
+def _migrate_eol_trailing_to_post_comma(item: ArrayItem | InlineTableEntry) -> None:
+    """If ``item.trailing`` carries an EOL section, move it to post_comma_trivia.
+
+    Used when flipping from terminal (no comma) to internal (comma added):
+    the EOL row that previously sat between the value and the closing ``]``
+    / ``}`` now logically follows the new comma.
+    """
+    eol, rest = split_eol_section(item.trailing)
+    if eol.pieces:
+        item.post_comma_trivia = eol
+        item.trailing = rest
+
+
+def _migrate_eol_post_comma_to_trailing(item: ArrayItem | InlineTableEntry) -> None:
+    """Inverse of :func:`_migrate_eol_trailing_to_post_comma`."""
+    eol, rest = split_eol_section(item.post_comma_trivia)
+    if eol.pieces:
+        item.trailing = Trivia(list(item.trailing.pieces) + list(eol.pieces))
+        item.post_comma_trivia = rest
 
 
 def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
@@ -441,9 +508,13 @@ def _canon_multi_line_items(
         ``\n`` + indent; preserve ``above`` (an above-item comment
         block, possibly empty).
 
-    All items get ``has_comma=True`` (trailing-comma idiom).
-    ``post_comma_trivia`` shrinks to just an EOL section (`" #
-    comment\n"`) if a comment was attached, otherwise empty.
+    All items get ``has_comma=True`` (trailing-comma idiom). When an
+    item had no comma in source, its EOL comment may live in
+    ``trailing``; that section is migrated into ``post_comma_trivia``
+    so the synthesised comma sits between value and comment. After
+    migration ``trailing`` is cleared and ``post_comma_trivia``
+    shrinks to just an EOL section (`" # comment\n"`) when a comment
+    is attached, otherwise empty.
     """
     for k, it in enumerate(items):
         if k == 0:
@@ -452,6 +523,12 @@ def _canon_multi_line_items(
             _, above, _ = split_item_above(it.leading)
             canon_pad = Trivia([NewlineNode(nl), WhitespaceNode(indent)])
             it.leading = join_above_block(canon_pad, above)
+        # When ``has_comma`` is False, ``trailing`` may carry the
+        # item's EOL comment (between value and the bracket).
+        # Synthesising a comma moves that comment past the comma, so
+        # migrate it before clearing ``trailing``.
+        if not it.has_comma:
+            _migrate_eol_trailing_to_post_comma(it)
         it.trailing = Trivia()
         it.has_comma = True
         _canon_post_comma_trivia(it, nl=nl)
