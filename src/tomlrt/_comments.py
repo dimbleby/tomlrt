@@ -282,10 +282,7 @@ def _write_leading_block(
 
 def _validate_block_seq(value: object, name: str) -> tuple[str | None, ...]:
     """Type-check a leading-block tuple; entries are ``str`` or ``None``."""
-    if isinstance(value, str):
-        msg = f"{name} must be an iterable of comment strings or None"
-        raise TypeError(msg)
-    if not isinstance(value, Iterable):
+    if isinstance(value, str) or not isinstance(value, Iterable):
         msg = f"{name} must be an iterable of comment strings or None"
         raise TypeError(msg)
     out: list[str | None] = []
@@ -294,7 +291,7 @@ def _validate_block_seq(value: object, name: str) -> tuple[str | None, ...]:
             out.append(None)
             continue
         if not isinstance(c, str):
-            msg = f"{name} entries must be str or None"
+            msg = f"{name} entries must be strings or None"
             raise TypeError(msg)
         if "\n" in c or "\r" in c:
             msg = f"{name} entries must not contain a line terminator"
@@ -497,10 +494,7 @@ def _header_leading_block_set(c: Container, value: tuple[str | None, ...]) -> No
 
 
 def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
-    if isinstance(value, str):
-        msg = f"{name} must be an iterable of comment strings"
-        raise TypeError(msg)
-    if not isinstance(value, Iterable):
+    if isinstance(value, str) or not isinstance(value, Iterable):
         msg = f"{name} must be an iterable of comment strings"
         raise TypeError(msg)
     out: list[str] = []
@@ -509,7 +503,7 @@ def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
             msg = f"{name} entries must be strings"
             raise TypeError(msg)
         if "\n" in c or "\r" in c:
-            msg = "preamble lines must not contain a line terminator"
+            msg = f"{name} entries must not contain a line terminator"
             raise TOMLError(msg)
         _validate_comment_text(c)
         out.append(c)
