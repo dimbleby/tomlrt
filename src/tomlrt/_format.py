@@ -41,11 +41,14 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    line_has_comment,
+    line_has_newline,
     retarget_eol_newline,
     retarget_trivia_newlines,
     split_above_block,
     split_eol_section,
     split_item_above,
+    split_lines,
     trivia_has_newline,
 )
 from tomlrt._values import (
@@ -153,28 +156,6 @@ def _canon_trivia_text(
 # ---------------------------------------------------------------------------
 
 
-def _split_lines(pieces: list[TriviaPiece]) -> list[list[TriviaPiece]]:
-    """Group pieces into lines terminated by NewlineNode (or the tail)."""
-    out: list[list[TriviaPiece]] = []
-    cur: list[TriviaPiece] = []
-    for p in pieces:
-        cur.append(p)
-        if isinstance(p, NewlineNode):
-            out.append(cur)
-            cur = []
-    if cur:
-        out.append(cur)
-    return out
-
-
-def _line_has_comment(line: list[TriviaPiece]) -> bool:
-    return any(isinstance(p, CommentNode) for p in line)
-
-
-def _line_has_newline(line: list[TriviaPiece]) -> bool:
-    return any(isinstance(p, NewlineNode) for p in line)
-
-
 def _canon_leading(
     slot: Slot,
     *,
@@ -203,17 +184,17 @@ def _canon_leading(
     subtree, where the preceding gap is owned by something outside
     the subtree).
     """
-    lines = _split_lines(list(slot.leading.pieces))
+    lines = split_lines(list(slot.leading.pieces))
 
     # Trailing column-indent line (no newline, no comment).
-    if lines and not _line_has_newline(lines[-1]) and not _line_has_comment(lines[-1]):
+    if lines and not line_has_newline(lines[-1]) and not line_has_comment(lines[-1]):
         # Drop it entirely — canonical layout is unindented.
         lines.pop()
 
     # Split off the head-blank region (run of newline-only lines at the start).
     head_count = 0
-    while head_count < len(lines) and not _line_has_comment(lines[head_count]):
-        if not _line_has_newline(lines[head_count]):
+    while head_count < len(lines) and not line_has_comment(lines[head_count]):
+        if not line_has_newline(lines[head_count]):
             break
         head_count += 1
     middle = lines[head_count:]

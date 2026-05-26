@@ -38,6 +38,8 @@ from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
     WhitespaceNode,
+    line_has_comment,
+    split_lines,
 )
 
 if TYPE_CHECKING:
@@ -212,29 +214,6 @@ class EolCommentView(_SlotKeyedView[str]):
             slot.eol.trailing_ws = None
 
 
-def _split_leading_into_lines(leading: Trivia) -> list[list[TriviaPiece]]:
-    """Group trivia pieces into logical "lines" terminated by Newline.
-
-    Returns a list of lists; each inner list is the pieces that
-    appeared on a single source line up to and including the
-    terminating newline (if any).
-    """
-    lines: list[list[TriviaPiece]] = []
-    cur: list[TriviaPiece] = []
-    for p in leading.pieces:
-        cur.append(p)
-        if isinstance(p, NewlineNode):
-            lines.append(cur)
-            cur = []
-    if cur:
-        lines.append(cur)
-    return lines
-
-
-def _line_is_comment(line: list[TriviaPiece]) -> bool:
-    return any(isinstance(p, CommentNode) for p in line)
-
-
 def _split_attached_block(
     leading: Trivia,
 ) -> tuple[list[list[TriviaPiece]], list[list[TriviaPiece]], list[TriviaPiece]]:
@@ -249,7 +228,7 @@ def _split_attached_block(
     offset) — preserved separately so callers can reapply it
     when rebuilding the leading.
     """
-    lines = _split_leading_into_lines(leading)
+    lines = split_lines(leading.pieces)
     indent: list[TriviaPiece] = []
     if lines and not any(isinstance(p, NewlineNode) for p in lines[-1]):
         last = lines[-1]
@@ -258,7 +237,7 @@ def _split_attached_block(
             indent = last
             lines = lines[:-1]
     i = len(lines)
-    while i > 0 and _line_is_comment(lines[i - 1]):
+    while i > 0 and line_has_comment(lines[i - 1]):
         i -= 1
     above = lines[:i]
     attached = lines[i:]
@@ -339,7 +318,7 @@ def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
 def _slot_has_attached_comments(slot: Slot) -> bool:
     leading = slot.leading
     _above, attached, _indent = _split_attached_block(leading)
-    return any(_line_is_comment(line) for line in attached)
+    return any(line_has_comment(line) for line in attached)
 
 
 class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
@@ -582,9 +561,9 @@ def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
 
 
 def _doc_preamble_get(doc: Document) -> tuple[str, ...]:
-    lines = _split_leading_into_lines(doc._preamble)  # noqa: SLF001
+    lines = split_lines(doc._preamble.pieces)  # noqa: SLF001
     # Drop the trailing blank-line separator before the first slot.
-    while lines and not _line_has_comment_or_text(lines[-1]):
+    while lines and not line_has_comment(lines[-1]):
         lines.pop()
     return _lines_to_comments(lines)
 
@@ -606,7 +585,7 @@ def _doc_preamble_set(doc: Document, value: tuple[str, ...]) -> None:
 
 
 def _doc_epilogue_get(doc: Document) -> tuple[str, ...]:
-    return _lines_to_comments(_split_leading_into_lines(doc._trailing))  # noqa: SLF001
+    return _lines_to_comments(split_lines(doc._trailing.pieces))  # noqa: SLF001
 
 
 def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
@@ -620,10 +599,6 @@ def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
         new_pieces.append(CommentNode(_encode_comment(c)))
         new_pieces.append(NewlineNode(nl))
     doc._trailing.pieces = new_pieces  # noqa: SLF001
-
-
-def _line_has_comment_or_text(line: list[TriviaPiece]) -> bool:
-    return any(isinstance(p, CommentNode) for p in line)
 
 
 __all__ = ["EolCommentView", "LeadingBlockView", "LeadingCommentView"]
