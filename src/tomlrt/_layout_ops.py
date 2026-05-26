@@ -3143,7 +3143,7 @@ def _direct_child_key(
     if isinstance(slot, StructuralHeaderSlot):
         root: tuple[str, ...] = tuple(slot.path)
     elif isinstance(slot, KVSlot):
-        root = (*slot.host_path, *(p.value for p in slot.key_parts))
+        root = (*slot.host_path, *slot.key)
     else:
         return None
     if len(root) > parent_plen and root[:parent_plen] == parent_path:
