@@ -81,12 +81,7 @@ def _validate_comment_str(value: object, name: str) -> str:
 
 def _decode_comment(raw: str) -> str:
     """Strip the leading ``#`` and one optional space from a raw comment."""
-    if raw.startswith("#"):
-        rest = raw[1:]
-        if rest.startswith(" "):
-            return rest[1:]
-        return rest
-    return raw
+    return raw.removeprefix("#").removeprefix(" ")
 
 
 def _encode_comment(text: str) -> str:
