@@ -82,7 +82,7 @@ def _find_entry(
     iv: InlineTableValue, key_path: tuple[str, ...]
 ) -> tuple[int, InlineTableEntry] | None:
     for i, e in enumerate(iv.entries):
-        if tuple(p.value for p in e.key_parts) == key_path:
+        if e.key_path == key_path:
             return i, e
     return None
 
@@ -96,8 +96,7 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
     n = len(key_path)
     out: list[int] = []
     for i, e in enumerate(iv.entries):
-        kp = tuple(p.value for p in e.key_parts)
-        if len(kp) > n and kp[:n] == key_path:
+        if len(e.key_path) > n and e.key_path[:n] == key_path:
             out.append(i)
     return out
 
@@ -332,7 +331,7 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     blocks: dict[str, list[InlineTableEntry]] = {k: [] for k in new_key_order}
     owned_positions: list[int] = []
     for i, e in enumerate(iv.entries):
-        kp = tuple(p.value for p in e.key_parts)
+        kp = e.key_path
         if len(kp) > plen and kp[:plen] == prefix and kp[plen] in blocks:
             blocks[kp[plen]].append(e)
             owned_positions.append(i)
