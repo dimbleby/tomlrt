@@ -74,6 +74,35 @@ def trivia_has_newline(t: Trivia) -> bool:
     return any(isinstance(p, NewlineNode) for p in t.pieces)
 
 
+def split_lines(pieces: list[TriviaPiece]) -> list[list[TriviaPiece]]:
+    """Group ``pieces`` into logical lines terminated by ``NewlineNode``.
+
+    Each inner list is the pieces that appeared on a single source line
+    up to and including the terminating newline (if any). A trailing
+    run without a newline becomes the final inner list.
+    """
+    out: list[list[TriviaPiece]] = []
+    cur: list[TriviaPiece] = []
+    for p in pieces:
+        cur.append(p)
+        if isinstance(p, NewlineNode):
+            out.append(cur)
+            cur = []
+    if cur:
+        out.append(cur)
+    return out
+
+
+def line_has_comment(line: list[TriviaPiece]) -> bool:
+    """True iff ``line`` contains a ``CommentNode``."""
+    return any(isinstance(p, CommentNode) for p in line)
+
+
+def line_has_newline(line: list[TriviaPiece]) -> bool:
+    """True iff ``line`` contains a ``NewlineNode``."""
+    return any(isinstance(p, NewlineNode) for p in line)
+
+
 def retarget_trivia_newlines(t: Trivia, target: str) -> None:
     """Rewrite every ``NewlineNode.text`` in ``t`` to ``target``.
 
@@ -353,12 +382,15 @@ __all__ = [
     "WhitespaceNode",
     "indent_from_final_trivia",
     "join_above_block",
+    "line_has_comment",
+    "line_has_newline",
     "restamp_bracket_pad_for_first",
     "retarget_eol_newline",
     "retarget_trivia_newlines",
     "split_above_block",
     "split_eol_section",
     "split_item_above",
+    "split_lines",
     "strip_trailing_indent",
     "trivia_has_comment",
     "trivia_has_newline",

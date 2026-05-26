@@ -32,7 +32,7 @@ import contextlib
 import copy
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from tomlrt._comments import _line_is_comment, _split_attached_block
+from tomlrt._comments import _split_attached_block
 from tomlrt._kind import _Kind
 from tomlrt._scalar import is_scalar
 from tomlrt._slots import (
@@ -48,6 +48,7 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    line_has_comment,
 )
 from tomlrt._values import make_keyparts
 
@@ -1669,7 +1670,7 @@ def _split_leading_for_reorder(doc: Document, slot: Slot) -> tuple[Trivia, Trivi
     del doc
     above, attached, indent = _split_attached_block(slot.leading)
     i = 0
-    while i < len(above) and not _line_is_comment(above[i]):
+    while i < len(above) and not line_has_comment(above[i]):
         i += 1
     return _split_at_remainder(slot.leading, [*above[i:], *attached], indent)
 
