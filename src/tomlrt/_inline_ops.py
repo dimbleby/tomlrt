@@ -33,20 +33,19 @@ from tomlrt._format import (
     _normalise_row_breaks,
     _put_eol,
     _take_eol,
-    flip_to_internal,
+    append_to_comma_value,
+    detect_style,
 )
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
     join_above_block,
-    restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
     strip_trailing_indent,
 )
 from tomlrt._values import (
     InlineTableEntry,
-    inter_item_separator,
     make_keyparts,
     value_is_multiline,
 )
@@ -143,55 +142,18 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         eq_post = " "
     new_entry = InlineTableEntry(
         leading=Trivia(),
-        key_parts=make_keyparts(key_path),
-        key_seps=["."] * (len(key_path) - 1),
-        pre_eq=eq_pre,
-        post_eq=eq_post,
         value=new_value,
         trailing=Trivia(),
         has_comma=False,
         post_comma_trivia=Trivia(),
+        key_parts=make_keyparts(key_path),
+        key_seps=["."] * (len(key_path) - 1),
+        pre_eq=eq_pre,
+        post_eq=eq_post,
         key_path=key_path,
     )
-
-    if not iv.items:
-        # Empty {}: reframe the bracket pad. For a single-line empty
-        # (``{}`` or ``{ }``) `final_trivia` is empty or one WS; the
-        # helper mirrors it on both sides. For a multi-line empty
-        # (``{\n}``) the helper splits at the trailing newline so the
-        # new entry gets an indented row of its own. In the multi-line
-        # case the entry also needs a trailing comma to match the
-        # canonical ``{\n    k = v,\n}`` shape.
-        is_multiline = value_is_multiline(iv)
-        iv.header_trivia, iv.final_trivia = restamp_bracket_pad_for_first(
-            iv.final_trivia
-        )
-        if is_multiline:
-            new_entry.has_comma = True
-        iv.items.append(new_entry)
-        return
-
-    # Inter-entry separator: structural pad portion of entries[1].leading
-    # (mirrors :func:`tomlrt._array._detect_style`). Cloning the full
-    # leading would replicate any above-entry comment block onto the
-    # new entry.
-    inter_sep = inter_item_separator(iv.items)
-    is_multiline = value_is_multiline(iv)
-
-    last = iv.items[-1]
-    keep_trailing_comma = last.has_comma
-    flip_to_internal(last)
-    new_entry.leading = inter_sep
-    if keep_trailing_comma:
-        new_entry.has_comma = True
-        new_entry.post_comma_trivia = Trivia()
-    iv.items.append(new_entry)
-    _normalise_row_breaks(
-        iv.items,
-        iv,
-        root._doc_newline,  # noqa: SLF001
-        multiline=is_multiline,
-    )
+    style = detect_style(iv, multiline_flag=False)
+    append_to_comma_value(iv, new_entry, style, root._doc_newline)  # noqa: SLF001
 
 
 def delete_entry(t: Container, key: str) -> bool:

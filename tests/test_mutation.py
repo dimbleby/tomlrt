@@ -2599,8 +2599,32 @@ def test_inline_append_keeps_eol_after_comma_not_orphans_comma() -> None:
     src = "obj = { a = 1 # eol-on-a\n  }\n"
     doc = tomlrt.loads(src)
     doc.table("obj")["b"] = 2
-    assert tomlrt.dumps(doc) == "obj = { a = 1, # eol-on-a\n b = 2\n  }\n"
+    assert tomlrt.dumps(doc) == "obj = { a = 1, # eol-on-a\n    b = 2\n  }\n"
     assert tomlrt.loads(tomlrt.dumps(doc)).table("obj").to_dict() == {"a": 1, "b": 2}
+
+
+def test_inline_append_migrates_above_bracket_comment_to_new_entry() -> None:
+    # An above-`}` comment block conceptually belongs to the item
+    # below it. When appending a new entry, the block must migrate
+    # off the bracket pad and onto the new entry's leading — mirror
+    # of the existing inline-array behaviour. Earlier code left the
+    # comment after the new entry, which read as if it belonged to
+    # the bracket, not to either entry.
+    src = td("""
+        obj = {
+            a = 1,
+            # comment above the closing brace
+        }
+    """)
+    doc = tomlrt.loads(src)
+    doc.table("obj")["b"] = 2
+    assert tomlrt.dumps(doc) == td("""
+        obj = {
+            a = 1,
+            # comment above the closing brace
+            b = 2,
+        }
+    """)
 
 
 def test_inline_delete_dotted_prefix_removes_all_subentries() -> None:
