@@ -1839,6 +1839,7 @@ def clone_aot_entry(
     src: Container | AoTEntry,
     *,
     dst_path: tuple[str, ...] | None = None,
+    preserve_source_separator: bool = False,
 ) -> Table:
     """Append a deep CST clone of ``src`` to ``aot``.
 
@@ -1851,8 +1852,12 @@ def clone_aot_entry(
     Preserves the source entry's per-slot leading / EOL / lexeme bytes
     so per-entry comments and trailing-comment formatting survive.
     The cloned entry's header leading is rewritten to the
-    ``_aot_separator`` policy for "next entry", but any post-structural
-    comment block on the source header is retained.
+    destination's ``_aot_separator`` policy by default — that's what
+    a single-entry append wants. Pass
+    ``preserve_source_separator=True`` to keep the source's structural
+    leading verbatim, which is what bulk-cloning a whole AoT
+    (:func:`clone_aot`) wants so the source's inter-entry layout
+    survives the transplant.
 
     Supports source entries that include nested ``[a.sub]`` headers
     and their KVSlots. ``dst_path`` (defaults to ``aot._path``) lets
@@ -1864,7 +1869,6 @@ def clone_aot_entry(
     """
     if isinstance(src, AoTEntry):
         src_entry = src
-        src_layout_root = None
         src_slots: list[Slot] = list(src_entry.entry_slots)
     else:
         owner = src._owner_aot_entry  # noqa: SLF001
@@ -1872,23 +1876,19 @@ def clone_aot_entry(
             msg = "Source entry has no owning AoTEntry"
             raise RuntimeError(msg)
         src_entry = owner
-        src_layout_root = src._layout_root  # noqa: SLF001
         # _gather_subtree_slots (not just entry.entry_slots) so nested
         # ``[[a.x]]`` entries living physically inside this entry's
         # body come along — entry_slots only holds the entry's *own*
         # slots, not those owned by nested AoTEntries.
         src_slots = _gather_subtree_slots(src)
 
-    layout_root = aot._layout_root  # noqa: SLF001
-    path = aot._path  # noqa: SLF001
-    target_path = dst_path if dst_path is not None else path
-    same_aot_clone = target_path == src_entry.path and src_layout_root is layout_root
+    target_path = dst_path if dst_path is not None else aot._path  # noqa: SLF001
     return _install_cloned_aot_entry(
         aot,
         src_slots,
         src_entry.path,
         target_path=target_path,
-        rewrite_separator=same_aot_clone,
+        rewrite_separator=not preserve_source_separator,
     )
 
 
@@ -1939,10 +1939,11 @@ def _install_cloned_aot_entry(
 
     ``rewrite_separator``: if True, the source's structural leading
     is replaced with destination-style preamble (entry 0) or the
-    AoT's existing inter-entry separator (entry > 0). If False
-    (cross-doc / cross-key clone of an existing AoT entry past the
-    first), keep the source's leading verbatim so the original
-    inter-entry separator survives.
+    AoT's existing inter-entry separator (entry > 0). Single-entry
+    append paths want this so the new entry adopts the destination's
+    layout. Bulk clone of a whole AoT
+    (:func:`clone_aot`) sets this False past entry 0 so the source's
+    inter-entry separator survives the transplant.
     """
     from tomlrt._container import Table  # noqa: PLC0415
 
@@ -1970,7 +1971,7 @@ def _install_cloned_aot_entry(
         _retarget_header_separator(cloned_header, _build_section_leading(doc))
     elif rewrite_separator:
         _retarget_header_separator(cloned_header, _aot_separator(aot, doc))
-    # else: keep source leading verbatim (cross-doc / cross-key).
+    # else: keep source leading verbatim (bulk-clone past entry 0).
 
     entry_table = Table()
     _install_cloned_structural_block(
@@ -2163,7 +2164,12 @@ def clone_aot(
 
     dict.__setitem__(parent, key, new_aot)
     for src_entry_table in list(src_aot):
-        clone_aot_entry(new_aot, src_entry_table, dst_path=target_path)
+        clone_aot_entry(
+            new_aot,
+            src_entry_table,
+            dst_path=target_path,
+            preserve_source_separator=True,
+        )
     return new_aot
 
 
