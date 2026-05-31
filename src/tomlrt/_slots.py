@@ -194,11 +194,6 @@ class StructuralHeaderSlot(Slot):
         )
 
 
-# Aliases for readability; not separate types.
-HeaderSlot = StructuralHeaderSlot
-AoTHeaderSlot = StructuralHeaderSlot
-
-
 # ---------------------------------------------------------------------------
 # SlotRef (per-container occurrence)
 # ---------------------------------------------------------------------------
@@ -261,8 +256,6 @@ def retarget_slot_newlines(slot: Slot, target: str) -> None:
 
 __all__ = [
     "AoTEntry",
-    "AoTHeaderSlot",
-    "HeaderSlot",
     "KVSlot",
     "Slot",
     "SlotRef",
