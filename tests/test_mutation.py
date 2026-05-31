@@ -2797,7 +2797,6 @@ def test_readd_into_emptied_aot_implicit_anchors_inside_entry() -> None:
     out = tomlrt.dumps(doc)
     assert out == td("""
         [[arr]]
-
         [arr.foo]
         new = 1
 
