@@ -23,20 +23,22 @@ from tomlrt._array_comments import (
     ArrayEolView,
     ArrayLeadingView,
 )
-from tomlrt._errors import TOMLError
-from tomlrt._format import (
+from tomlrt._comma_ops import (
     CommaStyle,
-    _canon_inline_value,
-    _canon_multiline_shape,
-    _canon_value,
     _normalise_row_breaks,
-    append_to_comma_value,
     detect_style,
     flip_to_internal,
     flip_to_terminal,
     migrate_bracket_above,
-    remove_owned_from_comma_value,
-    reorder_comma_value_owned,
+    reorder_owned,
+    splice_in,
+    splice_out,
+)
+from tomlrt._errors import TOMLError
+from tomlrt._format import (
+    _canon_inline_value,
+    _canon_multiline_shape,
+    _canon_value,
 )
 from tomlrt._trivia import (
     NewlineNode,
@@ -326,7 +328,7 @@ class Array(list[Any]):
         original layout — not the half-mutated state).
         """
         new_item = _make_item(cst, has_comma=False)
-        append_to_comma_value(self._value, new_item, style, self._doc_newline)
+        splice_in(self._value, new_item, style, self._doc_newline)
         list.append(self, decoded)
 
     def _restamp_for_first_append(self) -> None:
@@ -450,7 +452,7 @@ class Array(list[Any]):
             return
         new_items = [items[j] for j in order]
         new_decoded = [self[j] for j in order]
-        reorder_comma_value_owned(
+        reorder_owned(
             self._value,
             range(len(items)),
             new_items,
@@ -530,7 +532,7 @@ class Array(list[Any]):
             list.__delitem__(self, index)
             return
         list.__delitem__(self, index)
-        remove_owned_from_comma_value(
+        splice_out(
             self._value,
             removed,
             self._doc_newline,
