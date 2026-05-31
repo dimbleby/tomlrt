@@ -38,11 +38,11 @@ def coerce_scalar(
     if isinstance(v, bool):
         return BoolValue(lexeme="true" if v else "false", value=v)
     if isinstance(v, int):
-        return IntegerValue(lexeme=str(v), value=v, style="dec")
+        return IntegerValue(lexeme=str(v), value=v)
     if isinstance(v, float):
         return FloatValue(lexeme=float_lexeme(v), value=v)
     if isinstance(v, str):
-        return StringValue(lexeme=basic_string_lexeme(v), value=v, style="basic")
+        return StringValue(lexeme=basic_string_lexeme(v), value=v)
     if isinstance(v, datetime):
         return DateTimeValue(lexeme=v.isoformat(), value=v)
     if isinstance(v, date):
