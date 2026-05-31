@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the canonical indent and trailing comma.
 - Emptying then re-adding to a bracketed value with a bracket-EOL
   comment no longer drops the comment or leaves a blank line.
+- Inline-table mutation (append / delete / sort) no longer drops
+  above-bracket and above-entry comment blocks; `Array.sort()` and
+  `Array.reverse()` now preserve per-position indents and above-`]`
+  comments rather than wholesale-restamping them.
 
 ## [1.7.0] - 2026-05-25
 
