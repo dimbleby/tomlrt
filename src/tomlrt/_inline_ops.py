@@ -30,18 +30,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tomlrt._format import (
-    _put_eol,
-    _take_eol,
     append_to_comma_value,
     detect_style,
     remove_head_from_comma_value,
     remove_tail_from_comma_value,
+    reorder_comma_value_owned,
 )
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
-    join_above_block,
-    split_above_block,
     split_item_above,
     strip_trailing_indent,
 )
@@ -259,16 +256,14 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     """Reorder direct children of an inline-table container.
 
     Permutes ``InlineTableValue.items`` so that the c-direct-child
-    keys appear in ``new_key_order``. The above-block and the EOL
-    section (the row-attached ``# comment`` line) both travel with the
-    entry. Purely positional state — the inter-entry pad, ``has_comma``,
-    and any structural ws in ``trailing`` / ``post_comma_trivia`` —
-    stays at its position, so e.g. the entry that ends up at the last
-    position correctly drops its trailing comma.
-
-    Foreign entries (whose key path doesn't start with c's prefix —
-    only possible when c is a dotted-inner navigator) keep their
-    absolute positions; only owned positions are reordered.
+    keys appear in ``new_key_order``. Direct-child-key grouping
+    keeps dotted-prefix entries (``a.b``, ``a.c``) adjacent under
+    their shared prefix. Foreign entries (whose key path doesn't
+    start with c's prefix — only possible when c is a dotted-inner
+    navigator) keep their absolute positions; only owned positions
+    are reordered. The actual permutation machinery (positional vs
+    entry-attached state) lives in
+    :func:`tomlrt._format.reorder_comma_value_owned`.
 
     ``new_key_order`` is trusted to be a permutation of
     ``dict.keys(c)``. Only mutates the CST; dict storage is the
@@ -289,46 +284,14 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
             blocks[kp[plen]].append(e)
             owned_positions.append(i)
 
-    if len(owned_positions) <= 1:
-        return
-
-    # Snapshot positional state (stays at position) and entry-attached
-    # state (travels with the entry) for each owned position.
-    # entries[0]'s above-block lives in iv.header_trivia under the
-    # canonical model.
-    pos_state: dict[int, tuple[Trivia, bool, Trivia, Trivia]] = {}
-    above_by_entry: dict[int, Trivia] = {}
-    eol_by_entry: dict[int, Trivia] = {}
-    for i in owned_positions:
-        e = iv.items[i]
-        src = iv.header_trivia if i == 0 else e.leading
-        pad, above = split_above_block(src)
-        eol_by_entry[id(e)] = _take_eol(e)
-        pos_state[i] = (pad, e.has_comma, e.post_comma_trivia, e.trailing)
-        above_by_entry[id(e)] = above
-
     new_owned = [e for k in new_key_order for e in blocks[k]]
-    new_entries = list(iv.items)
-    for pos, e in zip(owned_positions, new_owned, strict=True):
-        new_entries[pos] = e
-    iv.items = new_entries
-
-    # Restore positional state and re-stitch each entry's travelling
-    # pieces. The EOL section is routed to whichever channel matches
-    # the new position's ``has_comma``.
-    for pos in owned_positions:
-        e = iv.items[pos]
-        pad, has_comma, post_rest, trail_rest = pos_state[pos]
-        e.has_comma = has_comma
-        e.post_comma_trivia = post_rest
-        e.trailing = trail_rest
-        _put_eol(e, eol_by_entry[id(e)])
-        above = above_by_entry[id(e)]
-        if pos == 0:
-            iv.header_trivia = join_above_block(pad, above)
-            e.leading = Trivia()
-        else:
-            e.leading = join_above_block(pad, above)
+    reorder_comma_value_owned(
+        iv,
+        owned_positions,
+        new_owned,
+        root._doc_newline,  # noqa: SLF001
+        is_multiline=value_is_multiline(iv),
+    )
 
 
 __all__ = ["append_entry", "delete_entry", "reorder_inline", "replace_entry_value"]

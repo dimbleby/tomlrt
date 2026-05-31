@@ -22,10 +22,6 @@ from tomlrt import _layout_ops
 from tomlrt._array_comments import (
     ArrayEolView,
     ArrayLeadingView,
-    _slot_indent,
-    apply_comments,
-    clear_all_comments,
-    snapshot_comments,
 )
 from tomlrt._errors import TOMLError
 from tomlrt._format import (
@@ -41,6 +37,7 @@ from tomlrt._format import (
     migrate_bracket_above,
     remove_head_from_comma_value,
     remove_tail_from_comma_value,
+    reorder_comma_value_owned,
 )
 from tomlrt._trivia import (
     NewlineNode,
@@ -453,27 +450,18 @@ class Array(list[Any]):
         items = self._value.items
         if not items:
             return
-        # Sample style + indent before the permutation: _slot_indent
-        # reads items[1].leading, which is about to be overwritten.
-        style = self._style()
-        canonical_indent = _slot_indent(self) if style.is_multiline else ""
-        leadings, eols = snapshot_comments(self)
         new_items = [items[j] for j in order]
         new_decoded = [self[j] for j in order]
-        new_leadings = [leadings[j] for j in order]
-        new_eols = [eols[j] for j in order]
-        items[:] = new_items
+        reorder_comma_value_owned(
+            self._value,
+            range(len(items)),
+            new_items,
+            self._doc_newline,
+            is_multiline=self._style().is_multiline,
+        )
         list.clear(self)
         for v in new_decoded:
             list.append(self, v)
-        nl = self._doc_newline
-        _restamp_canonical_pads(self._value, style, nl, canonical_indent)
-        for it in items:
-            it.post_comma_trivia = Trivia()
-            it.trailing = Trivia()
-        _renormalise_commas(items, style)
-        clear_all_comments(self)
-        apply_comments(self, new_leadings, new_eols)
 
     @overload
     def __setitem__(self, index: SupportsIndex, value: Any) -> None: ...
@@ -648,40 +636,6 @@ def _make_item(
         has_comma=has_comma,
         post_comma_trivia=Trivia(),
     )
-
-
-def _restamp_canonical_pads(
-    value: ArrayValue, style: CommaStyle, nl: str, indent: str
-) -> None:
-    r"""Reset the bracket pad and inter-item separators to canonical form.
-
-    Canonical multi-line shape:
-      * ``header_trivia`` = leading ``\\n`` + per-item indent (item 0's
-        above-region)
-      * ``items[k].leading`` (k >= 1) = ``\\n`` + indent
-      * ``items[0].leading`` = empty
-      * ``final_trivia`` = closing ``\\n``
-
-    Canonical single-line shape:
-      * ``header_trivia`` / ``final_trivia`` left untouched (caller
-        owns the bracket-inner padding rules — see
-        ``_canon_single_line_inline``)
-      * ``items[0].leading`` = empty; ``items[k].leading`` (k >= 1) =
-        ``style.inter_separator``
-
-    Caller must guarantee ``value.items`` is non-empty (the empty
-    canonical form is the responsibility of ``__delitem__`` /
-    ``strip_trailing_indent``). Caller is responsible for reapplying
-    per-item comments.
-    """
-    if style.is_multiline:
-        sep = Trivia([NewlineNode(text=nl), WhitespaceNode(text=indent)])
-        value.header_trivia = sep.copy()
-        value.final_trivia = Trivia([NewlineNode(text=nl)])
-    else:
-        sep = style.inter_separator
-    for k, it in enumerate(value.items):
-        it.leading = Trivia() if k == 0 else sep.copy()
 
 
 def _value_has_any_comment(val: Value) -> bool:
