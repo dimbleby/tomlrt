@@ -568,25 +568,30 @@ def test_format_multiline_array_keeps_eol_comment_no_blank() -> None:
 
 
 def test_format_implicit_section() -> None:
-    """`format()` on an implicit-section view canonicalises its owned slots.
+    """`format()` on an implicit-section view canonicalises all owned slots.
 
     Implicit sections have no `[a]` header in source — their slots are
-    only reached via descendant headers like `[a.b]` — so the path
+    only reached via descendants (dotted KVs like `a.x = 1`, sub-section
+    headers like `[a.b]`, AoT headers like `[[a.arr]]`) — so the path
     cannot reuse the contiguous subtree walk used for SECTION views.
+    Exercise all three flavours so every branch of the implicit-section
+    canonicaliser runs.
     """
     src = td("""
+        a.x   =1
         [a.b]
-        x   =1
-        [a.c]
         y=2
+        [[a.arr]]
+        z=3
     """)
     doc = tomlrt.loads(src)
     doc.table("a").format()
     assert tomlrt.dumps(doc) == td("""
+        a.x = 1
         [a.b]
-        x = 1
-        [a.c]
         y = 2
+        [[a.arr]]
+        z = 3
     """)
 
 
