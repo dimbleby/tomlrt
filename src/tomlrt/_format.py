@@ -949,6 +949,44 @@ def append_to_comma_value(
     _normalise_row_breaks(items, cv, nl, multiline=style.is_multiline)
 
 
+def remove_tail_from_comma_value(
+    cv: CommaValue[_CV_ItemT],
+    nl: str,
+    *,
+    removed_had_comma: bool,
+    is_multiline: bool,
+) -> None:
+    """Re-terminalise the new last item after a tail removal.
+
+    Shared between :class:`tomlrt._array.Array`'s tail-delete and
+    :mod:`tomlrt._inline_ops`'s ``_fix_tail_after_delete``. Both face
+    the same transition: the previous tail has been spliced out, and
+    the item that was internal is now the new tail.
+
+    Steps (mirroring :func:`append_to_comma_value` in reverse):
+      * take the entry-attached EOL section off the new tail (it
+        currently lives in ``post_comma_trivia`` because the entry
+        was internal);
+      * adopt the removed entry's trailing-comma policy on the new
+        tail and clear its now-stale ``post_comma_trivia``;
+      * put the EOL section back, routed to ``trailing`` or
+        ``post_comma_trivia`` per the new ``has_comma`` state;
+      * renormalise the row-break invariant.
+
+    No-ops when ``cv.items`` is empty (the caller's ``strip_trailing_indent``
+    or equivalent handles the no-item canonical form).
+    """
+    items = cv.items
+    if not items:
+        return
+    new_last = items[-1]
+    eol = _take_eol(new_last)
+    new_last.has_comma = removed_had_comma
+    new_last.post_comma_trivia = Trivia()
+    _put_eol(new_last, eol)
+    _normalise_row_breaks(items, cv, nl, multiline=is_multiline)
+
+
 __all__ = [
     "CommaStyle",
     "_canon_eol",
@@ -964,4 +1002,5 @@ __all__ = [
     "format_document_trailing",
     "format_subtree",
     "migrate_bracket_above",
+    "remove_tail_from_comma_value",
 ]
