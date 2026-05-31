@@ -1838,6 +1838,7 @@ def test_aot_append_preserves_source_table_comments() -> None:
     assert out == td("""
         [[a]]
         first = 0
+
         [[a]]
         # inner-leading
         x = 1  # inner-eol
@@ -1864,6 +1865,7 @@ def test_aot_insert_preserves_source_table_comments() -> None:
         [[b]]
         # top
         q = 1  # eol
+
         [[b]]
         x = 0
         """)
