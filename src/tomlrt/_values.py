@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -36,15 +36,10 @@ if TYPE_CHECKING:
     from datetime import date, datetime, time
 
 
-StringStyle = Literal["basic", "literal", "ml-basic", "ml-literal"]
-IntStyle = Literal["dec", "hex", "oct", "bin"]
-
-
 @dataclass(slots=True, eq=False)
 class StringValue:
     lexeme: str  # including quotes
     value: str
-    style: StringStyle
 
     def render(self) -> str:
         return self.lexeme
@@ -54,7 +49,6 @@ class StringValue:
 class IntegerValue:
     lexeme: str
     value: int
-    style: IntStyle
 
     def render(self) -> str:
         return self.lexeme
@@ -98,7 +92,6 @@ class KeyPart:
 
     raw: str  # source representation including any surrounding quotes
     value: str  # the decoded key string
-    kind: Literal["bare", "basic", "literal"]
 
     def render(self) -> str:
         return self.raw
@@ -127,8 +120,8 @@ _RE_BARE_KEY_FULL = re.compile(r"\A[A-Za-z0-9_\-]+\Z")
 def make_keypart(name: str) -> KeyPart:
     """Build a ``KeyPart`` for ``name``, choosing bare vs basic-quoted."""
     if _RE_BARE_KEY_FULL.match(name):
-        return KeyPart(raw=name, value=name, kind="bare")
-    return KeyPart(raw=quote_basic_key(name), value=name, kind="basic")
+        return KeyPart(raw=name, value=name)
+    return KeyPart(raw=quote_basic_key(name), value=name)
 
 
 def make_keyparts(path: tuple[str, ...]) -> list[KeyPart]:
@@ -373,10 +366,8 @@ __all__ = [
     "FloatValue",
     "InlineTableEntry",
     "InlineTableValue",
-    "IntStyle",
     "IntegerValue",
     "KeyPart",
-    "StringStyle",
     "StringValue",
     "Value",
     "inter_item_separator",

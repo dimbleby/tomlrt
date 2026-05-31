@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final
 
 from tomlrt._errors import TOMLParseError
 from tomlrt._trivia import (
@@ -38,7 +38,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from tomlrt._values import IntStyle, Value
+    from tomlrt._values import Value
 
 # Comment body: anything except newline + control chars (tab is OK).
 _RE_COMMENT_BODY: Final = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
@@ -407,11 +407,7 @@ class _Scanner:
             body_end = m.end()
             if body_end < end and src[body_end] == '"':
                 self.pos = body_end + 1
-                return StringValue(
-                    lexeme="",
-                    value=src[body_start:body_end],
-                    style="basic",
-                )
+                return StringValue(lexeme="", value=src[body_start:body_end])
             self.pos = body_end
         else:
             self.pos = body_start
@@ -425,7 +421,7 @@ class _Scanner:
             ch = src[self.pos]
             if ch == '"':
                 self.pos += 1
-                return StringValue(lexeme="", value="".join(out), style="basic")
+                return StringValue(lexeme="", value="".join(out))
             if ch == "\\":
                 out.append(self._scan_escape())
             elif ch == "\n" or ch == "\r":
@@ -470,7 +466,7 @@ class _Scanner:
                     out.append('"')
                     self.pos += 1
                     extras += 1
-                return StringValue(lexeme="", value="".join(out), style="ml-basic")
+                return StringValue(lexeme="", value="".join(out))
             ch = self.peek()
             if ch == '"':
                 # Single or double quote (not the closing triple) — emit and
@@ -549,7 +545,7 @@ class _Scanner:
         if ch == "'":
             value = src[start : self.pos]
             self.pos += 1
-            return StringValue("", value, "literal")
+            return StringValue("", value)
         if ch == "\n" or ch == "\r":
             msg = "newline in literal string"
             raise self.error(msg)
@@ -585,7 +581,7 @@ class _Scanner:
                     out.append("'")
                     self.pos += 1
                     extras += 1
-                return StringValue(lexeme="", value="".join(out), style="ml-literal")
+                return StringValue(lexeme="", value="".join(out))
             ch = self.peek()
             if ch == "'":
                 # Single quote, not the closing triple — emit and continue.
@@ -654,16 +650,13 @@ class _Scanner:
         ch = src[pos] if pos < self.end else ""
         if ch == '"' or ch == "'":
             s = self.scan_string(allow_multiline=False)
-            kind: Literal["bare", "basic", "literal"] = (
-                "basic" if s.style == "basic" else "literal"
-            )
-            return KeyPart(s.lexeme, s.value, kind)
+            return KeyPart(s.lexeme, s.value)
         m = _RE_BARE_KEY.match(src, pos)
         if m is not None:
             end_pos = m.end()
             raw = src[pos:end_pos]
             self.pos = end_pos
-            return KeyPart(raw, raw, "bare")
+            return KeyPart(raw, raw)
         msg = f"expected key, got {ch!r}"
         raise self.error(msg)
 
@@ -799,8 +792,7 @@ class _Scanner:
                 raise self.error(msg, at=at)
             base = {"0x": 16, "0o": 8, "0b": 2}[prefix]
             value = int(digits.replace("_", ""), base)
-            style_map: dict[str, IntStyle] = {"0x": "hex", "0o": "oct", "0b": "bin"}
-            return IntegerValue(token, value, style_map[prefix])
+            return IntegerValue(token, value)
 
         sign = ""
         if body and body[0] in "+-":
@@ -823,7 +815,7 @@ class _Scanner:
             msg = f"leading zeros are not allowed in {token!r}"
             raise self.error(msg, at=at)
         value = int(sign + digits_only)
-        return IntegerValue(token, value, "dec")
+        return IntegerValue(token, value)
 
     def _parse_float_token(self, token: str, *, at: int) -> FloatValue:
         body = token
