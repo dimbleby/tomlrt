@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   above-bracket and above-entry comment blocks; `Array.sort()` and
   `Array.reverse()` now preserve per-position indents and above-`]`
   comments rather than wholesale-restamping them.
+- `Array.leading_comments[i] = ()` no longer silently promotes a
+  single-line array to multi-line (the empty assignment is a
+  semantic delete-if-present).
 
 ## [1.7.0] - 2026-05-25
 
