@@ -4358,3 +4358,73 @@ def test_array_del_tail_preserves_survivor_eol_comment() -> None:
             2, # two
         ]
     """)
+
+
+# ---------------------------------------------------------------------------
+# Container.update — error contract on >1 positional arg
+# ---------------------------------------------------------------------------
+
+
+def test_update_rejects_multiple_positional_args() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="at most 1 argument"):
+        doc.update({"b": 2}, {"c": 3})
+
+
+# ---------------------------------------------------------------------------
+# Table.promote_array — validation error paths
+# ---------------------------------------------------------------------------
+
+
+def test_promote_array_missing_key_raises() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(KeyError, match="not in table"):
+        doc.promote_array("missing")
+
+
+def test_promote_array_not_an_array_raises() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="not an array"):
+        doc.promote_array("a")
+
+
+def test_promote_array_empty_raises() -> None:
+    doc = tomlrt.loads("a = []\n")
+    with pytest.raises(tomlrt.TOMLError, match="empty array"):
+        doc.promote_array("a")
+
+
+def test_promote_array_non_inline_table_element_raises() -> None:
+    doc = tomlrt.loads("a = [1, 2, 3]\n")
+    with pytest.raises(tomlrt.TOMLError, match="non-inline-table"):
+        doc.promote_array("a")
+
+
+def test_promote_array_on_inline_host_raises() -> None:
+    doc = tomlrt.loads("t = {arr = [{x = 1}]}\n")
+    inline = doc.table("t")
+    with pytest.raises(tomlrt.TOMLError, match="inline tables"):
+        inline.promote_array("arr")
+
+
+def test_promote_array_with_outer_comments_raises() -> None:
+    src = td("""
+        a = [
+          # outer
+          {x = 1},
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    with pytest.raises(tomlrt.TOMLError, match="comments that would be lost"):
+        doc.promote_array("a")
+
+
+def test_promote_array_with_entry_inner_comments_raises() -> None:
+    src = td("""
+        a = [{
+          x = 1, # inner
+        }]
+    """)
+    doc = tomlrt.loads(src)
+    with pytest.raises(tomlrt.TOMLError, match="inner comments"):
+        doc.promote_array("a")

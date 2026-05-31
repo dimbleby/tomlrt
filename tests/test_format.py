@@ -565,3 +565,35 @@ def test_format_multiline_array_keeps_eol_comment_no_blank() -> None:
           2,
         ]
     """)
+
+
+def test_format_implicit_section() -> None:
+    """`format()` on an implicit-section view canonicalises its owned slots.
+
+    Implicit sections have no `[a]` header in source — their slots are
+    only reached via descendant headers like `[a.b]` — so the path
+    cannot reuse the contiguous subtree walk used for SECTION views.
+    """
+    src = td("""
+        [a.b]
+        x   =1
+        [a.c]
+        y=2
+    """)
+    doc = tomlrt.loads(src)
+    doc.table("a").format()
+    assert tomlrt.dumps(doc) == td("""
+        [a.b]
+        x = 1
+        [a.c]
+        y = 2
+    """)
+
+
+def test_format_implicit_section_detached_raises() -> None:
+    """A detached implicit-section view cannot be formatted."""
+    doc = tomlrt.loads("[a.b]\nx = 1\n")
+    implicit = doc.table("a")
+    del doc["a"]
+    with pytest.raises(TOMLError, match="attached"):
+        implicit.format()
