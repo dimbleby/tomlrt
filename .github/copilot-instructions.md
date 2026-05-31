@@ -113,9 +113,14 @@ them. Read roughly in this order:
   `final_trivia` (gap before the closing bracket) — so that the
   above-item region of item 0 and the post-comma trivia of item -1
   have a single canonical owner; per-item `leading` only owns the
-  region above items 1..n-1. The alias `CommaItem = ArrayItem` is
-  the canonical "any comma-list item" name at call sites that work
-  generically over either flavour.
+  region above items 1..n-1. Each item is one of two sibling
+  concrete leaves of a `CommaItem` base: `ArrayItem` (bare value,
+  used by `ArrayValue`) or `InlineTableEntry` (with a ``key = ``
+  prefix, used by `InlineTableValue`). Annotate with `CommaItem`
+  when working polymorphically over both flavours and with the
+  concrete leaf when the code is flavour-specific —
+  `ArrayValue.items: list[ArrayItem]` narrows away
+  `InlineTableEntry` at the type level.
 - **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:

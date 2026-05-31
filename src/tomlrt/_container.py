@@ -79,13 +79,14 @@ if TYPE_CHECKING:
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._values import (
+        CommaItem,
         CommaValue,
         Value,
     )
 
 
 _T = TypeVar("_T")
-_ItemT = TypeVar("_ItemT", bound="ArrayItem")
+_ItemT = TypeVar("_ItemT", bound="CommaItem")
 
 _MISSING: Any = object()
 
