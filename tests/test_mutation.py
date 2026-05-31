@@ -4439,3 +4439,58 @@ def test_promote_array_with_entry_inner_comments_raises() -> None:
     doc = tomlrt.loads(src)
     with pytest.raises(tomlrt.TOMLError, match="inner comments"):
         doc.promote_array("a")
+
+
+# ---------------------------------------------------------------------------
+# AoT index-error / no-op contracts (closes _layout_ops coverage)
+# ---------------------------------------------------------------------------
+
+
+def test_aot_pop_positive_out_of_range() -> None:
+    doc = tomlrt.loads("[[a]]\nx = 1\n")
+    with pytest.raises(IndexError, match="out of range"):
+        doc.aot("a").pop(99)
+
+
+def test_aot_pop_negative_out_of_range() -> None:
+    doc = tomlrt.loads("[[a]]\nx = 1\n")
+    with pytest.raises(IndexError, match="out of range"):
+        doc.aot("a").pop(-5)
+
+
+def test_aot_delitem_out_of_range() -> None:
+    doc = tomlrt.loads("[[a]]\nx = 1\n")
+    with pytest.raises(IndexError, match="out of range"):
+        del doc.aot("a")[99]
+
+
+def test_aot_self_assign_is_noop() -> None:
+    """``aot[i] = aot[i]`` is a no-op; bytes-stable."""
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        x = 1
+        [[a]]
+        y = 2
+    """)
+    )
+    src = tomlrt.dumps(doc)
+    doc.aot("a")[0] = doc.aot("a")[0]
+    assert tomlrt.dumps(doc) == src
+
+
+def test_aot_cross_doc_assign_negative_index() -> None:
+    """Assigning a foreign AoT entry to a negative index normalises the
+    index (line 2769 in replace_aot_entry_with_clone)."""
+    src_doc = tomlrt.loads("[[s]]\nv = 99\n")
+    dst_doc = tomlrt.loads(
+        td("""
+        [[a]]
+        x = 1
+        [[a]]
+        y = 2
+    """)
+    )
+    dst_doc.aot("a")[-1] = src_doc.aot("s")[0]
+    assert dst_doc.aot("a")[1]["v"] == 99
+    assert "y" not in dst_doc.aot("a")[1]
