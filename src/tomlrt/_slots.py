@@ -45,7 +45,6 @@ class AoTEntry:
     """
 
     path: tuple[str, ...]
-    ordinal: int
     entry_slots: list[Slot] = field(default_factory=list)
 
 

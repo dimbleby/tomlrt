@@ -14,10 +14,9 @@ Design notes:
 * ``c._refs`` mirrors the doc-stream subset of slots referenced by
   ``c``. For direct (non-dotted) KV inserts, the new ref's correct
   position in ``c._refs`` is **immediately after the anchor's ref**
-  (or at the front if there is no anchor ref). This preserves the
-  invariant that ``c._subtree_tail`` (a property = ``c._refs[-1]``)
-  matches doc-stream order, and avoids drift in layouts where ``c``
-  has later child-section refs sitting after its body region.
+  (or at the front if there is no anchor ref). This avoids drift in
+  layouts where ``c`` has later child-section refs sitting after its
+  body region.
 
 * ``c._body_tail`` is maintained incrementally: O(1) on insert, and
   O(len(c._refs)) only on the rare delete-of-current-tail.
@@ -1777,7 +1776,7 @@ def add_aot_entry(
     assert path
 
     ordinal = len(aot)
-    entry = AoTEntry(path=path, ordinal=ordinal)
+    entry = AoTEntry(path=path)
     leading = _build_section_leading(doc) if ordinal == 0 else _aot_separator(aot, doc)
     header = _new_section_header(
         path,
@@ -1961,7 +1960,7 @@ def _install_cloned_aot_entry(
     assert target_path
 
     ordinal = len(aot)
-    new_entry = AoTEntry(path=target_path, ordinal=ordinal)
+    new_entry = AoTEntry(path=target_path)
 
     cloned_slots = _clone_entry_slots(
         src_slots,
@@ -2235,7 +2234,6 @@ def _clone_entry_slots(
             continue
         nested_entry_map[id(s.entry)] = AoTEntry(
             path=_rebase_path(s.entry.path, src_prefix, target_prefix),
-            ordinal=s.entry.ordinal,
         )
 
     cloned: list[Slot] = []

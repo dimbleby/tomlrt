@@ -922,7 +922,7 @@ class _Scanner:
             except ValueError as exc:
                 msg = f"invalid time {text!r}: {exc}"
                 raise self.error(msg, at=at) from exc
-            return DateTimeValue(raw, value, "local-time")
+            return DateTimeValue(raw, value)
 
         if len(text) < 10 or text[4] != "-" or text[7] != "-":
             msg = f"invalid date/datetime {text!r}"
@@ -939,7 +939,7 @@ class _Scanner:
 
         rest = text[10:]
         if not rest:
-            return DateTimeValue(raw, d, "local-date")
+            return DateTimeValue(raw, d)
         if rest[0] not in ("T", "t", " "):
             msg = f"expected date/time separator, got {rest[0]!r}"
             raise self.error(msg, at=at)
@@ -955,7 +955,7 @@ class _Scanner:
             except ValueError as exc:
                 msg = f"invalid time {time_part!r}: {exc}"
                 raise self.error(msg, at=at) from exc
-            return DateTimeValue(raw, datetime.combine(d, t), "local-datetime")
+            return DateTimeValue(raw, datetime.combine(d, t))
         try:
             t = self._parse_time_text(time_part[:offset_pos])
             tz = self._parse_offset(time_part[offset_pos:])
@@ -963,7 +963,7 @@ class _Scanner:
             msg = f"invalid datetime {text!r}: {exc}"
             raise self.error(msg, at=at) from exc
         dt = datetime.combine(d, t).replace(tzinfo=tz)
-        return DateTimeValue(raw, dt, "offset-datetime")
+        return DateTimeValue(raw, dt)
 
     @staticmethod
     def _parse_time_text(text: str) -> time:

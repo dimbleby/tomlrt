@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING
 
 from tomlrt._values import (
     BoolValue,
@@ -19,9 +18,6 @@ from tomlrt._values import (
     IntegerValue,
     StringValue,
 )
-
-if TYPE_CHECKING:
-    from tomlrt._values import DateLikeKind
 
 
 def is_scalar(v: object) -> bool:
@@ -48,11 +44,11 @@ def coerce_scalar(
     if isinstance(v, str):
         return StringValue(lexeme=basic_string_lexeme(v), value=v, style="basic")
     if isinstance(v, datetime):
-        return DateTimeValue(lexeme=v.isoformat(), value=v, kind=dt_kind(v))
+        return DateTimeValue(lexeme=v.isoformat(), value=v)
     if isinstance(v, date):
-        return DateTimeValue(lexeme=v.isoformat(), value=v, kind="local-date")
+        return DateTimeValue(lexeme=v.isoformat(), value=v)
     if isinstance(v, time):
-        return DateTimeValue(lexeme=v.isoformat(), value=v, kind="local-time")
+        return DateTimeValue(lexeme=v.isoformat(), value=v)
     msg = f"cannot coerce {type(v).__name__} to a TOML scalar"
     raise TypeError(msg)
 
@@ -94,7 +90,3 @@ def basic_string_lexeme(v: str) -> str:
             out.append(ch)
     out.append('"')
     return "".join(out)
-
-
-def dt_kind(v: datetime) -> DateLikeKind:
-    return "offset-datetime" if v.tzinfo is not None else "local-datetime"

@@ -10,9 +10,9 @@ The parser drives this with two operations:
 Plus ``check_inline_key_conflict`` for inline-table local
 duplicate / dotted-prefix detection.
 
-The validator also tracks AoT entry ordinals so the parser can
-attach the correct ``AoTEntry`` (= owning array-of-tables entry)
-to each physical slot it builds.
+The validator also tracks the active ``AoTEntry`` per AoT path so
+the parser can attach the correct owning entry to each physical
+slot it builds.
 """
 
 from __future__ import annotations
@@ -45,7 +45,6 @@ class _Validator:
         "_error",
         "_explicit_table_paths",
         "_implicit_table_paths",
-        "_next_ordinal",
         "_value_paths",
     )
 
@@ -64,10 +63,8 @@ class _Validator:
 
         # AoT-entry tracking. ``_active_aot_entries`` maps each
         # currently-open AoT path to the most recent AoTEntry opened
-        # there. ``_next_ordinal`` records the next ordinal to use for
-        # each path (so ordinals keep growing across `_reset_scope_under`).
+        # there.
         self._active_aot_entries: dict[tuple[str, ...], AoTEntry] = {}
-        self._next_ordinal: dict[tuple[str, ...], int] = {}
         self._current_owner_aot_entry: AoTEntry | None = None
 
     # ------------------------------------------------------------------
@@ -137,9 +134,7 @@ class _Validator:
             self._reset_scope_under(path)
             self._aot_paths.add(path)
             self._track(path)
-            ordinal = self._next_ordinal.get(path, 0)
-            self._next_ordinal[path] = ordinal + 1
-            new_entry = AoTEntry(path=path, ordinal=ordinal)
+            new_entry = AoTEntry(path=path)
             self._active_aot_entries[path] = new_entry
 
         # Intermediate prefixes become implicit tables.
