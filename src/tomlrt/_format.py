@@ -33,7 +33,8 @@ in place — comment text is rewritten to ``# body`` form when
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypeVar
 
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
@@ -41,8 +42,11 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    indent_from_final_trivia,
+    join_above_block,
     line_has_comment,
     line_has_newline,
+    restamp_bracket_pad_for_first,
     retarget_eol_newline,
     retarget_trivia_newlines,
     split_above_block,
@@ -54,6 +58,7 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
+    inter_item_separator,
     value_is_multiline,
 )
 
@@ -67,6 +72,7 @@ if TYPE_CHECKING:
     )
     from tomlrt._values import (
         CommaItem,
+        CommaValue,
         Value,
     )
 
@@ -422,7 +428,7 @@ def _item_has_eol(item: CommaItem) -> bool:
 
 def _normalise_row_breaks(
     items: Sequence[CommaItem],
-    value: ArrayValue | InlineTableValue,
+    value: CommaValue[_CV_ItemT],
     nl: str,
     *,
     multiline: bool,
@@ -784,13 +790,178 @@ def format_document_trailing(
     _canon_trivia_text(trailing, comments=comments)
 
 
+# ---------------------------------------------------------------------------
+# Comma-separated value style detection + append orchestration
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class CommaStyle:
+    """Inferred layout policy for an inline array or inline table.
+
+    Used by both the inline-array and inline-table append paths to
+    decide where the new item goes, how the previous-last is flipped
+    to internal, and whether the new last carries a trailing comma.
+    """
+
+    is_multiline: bool
+    inter_separator: Trivia
+    trailing_comma: bool
+    trailing_post: Trivia
+
+
+_CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
+
+
+def detect_style(
+    value: ArrayValue | InlineTableValue | None, *, multiline_flag: bool
+) -> CommaStyle:
+    """Infer a :class:`CommaStyle` for ``value`` (or for a fresh value).
+
+    Sample-bounded under the canonical model: multi-line-ness shows up
+    in ``header_trivia`` / ``final_trivia`` / ``items[k>=1].leading``,
+    so we don't need to walk every item. For a single-item multi-line
+    value we synthesise the inter-item separator from the bracket-pad
+    indent (no peer to sample from).
+    """
+    if value is None:
+        return CommaStyle(
+            is_multiline=multiline_flag,
+            inter_separator=Trivia([WhitespaceNode(text=" ")]),
+            trailing_comma=multiline_flag,
+            trailing_post=Trivia(),
+        )
+    items = value.items
+    is_multiline = multiline_flag or value_is_multiline(value)
+    if is_multiline and len(items) < 2:
+        nl_text = "\n"
+        for p in value.header_trivia.pieces:
+            if isinstance(p, NewlineNode):
+                nl_text = p.text
+                break
+        else:
+            for p in value.final_trivia.pieces:
+                if isinstance(p, NewlineNode):
+                    nl_text = p.text
+                    break
+        indent = _first_indent_after_newline(value.header_trivia)
+        if not indent:
+            indent = indent_from_final_trivia(value.final_trivia) or "    "
+        inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text=indent)])
+    else:
+        inter_sep = inter_item_separator(items)
+    trailing_comma = items[-1].has_comma if items else is_multiline
+    pad_ft, _above_ft = split_above_block(value.final_trivia)
+    trailing_post = pad_ft if pad_ft.pieces else value.final_trivia.copy()
+    if not items and is_multiline and not trailing_post.pieces:
+        nl_text = "\n"
+        trailing_post = Trivia([NewlineNode(text=nl_text)])
+    return CommaStyle(
+        is_multiline=is_multiline,
+        inter_separator=inter_sep,
+        trailing_comma=trailing_comma,
+        trailing_post=trailing_post,
+    )
+
+
+def _first_indent_after_newline(trivia: Trivia) -> str:
+    pieces = trivia.pieces
+    for i, p in enumerate(pieces):
+        if (
+            isinstance(p, NewlineNode)
+            and i + 1 < len(pieces)
+            and isinstance(pieces[i + 1], WhitespaceNode)
+        ):
+            return str(pieces[i + 1].text)
+    return ""
+
+
+def migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, Trivia]:
+    """Migrate any above-bracket comment block onto a new item's leading.
+
+    An above-block in ``header_trivia`` / ``final_trivia`` (the
+    structural row(s) between the bracket and the next/last item)
+    conceptually belongs to the item below it. When a new boundary
+    item is being inserted or appended, the block migrates from the
+    bracket pad onto that item's leading.
+
+    Returns ``(new_bracket, new_leading)``.
+    """
+    pad, above = split_above_block(bracket)
+    return pad, join_above_block(separator, above)
+
+
+def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
+    """Make ``item`` look like the terminal (last) item per style."""
+    if style.trailing_comma:
+        if not item.has_comma:
+            eol = _take_eol(item)
+            item.has_comma = True
+            _put_eol(item, eol)
+        # When has_comma==True, post_comma_trivia carries any EOL the
+        # parser/mutation already filed there; keep it intact.
+        return
+    # No trailing comma policy: drop the comma; carry any EOL back
+    # to trailing.
+    if item.has_comma:
+        eol = _take_eol(item)
+        item.has_comma = False
+        item.post_comma_trivia = Trivia()
+        _put_eol(item, eol)
+
+
+def append_to_comma_value(
+    cv: CommaValue[_CV_ItemT],
+    new_item: _CV_ItemT,
+    style: CommaStyle,
+    nl: str,
+) -> None:
+    """Append ``new_item`` to ``cv`` honouring ``style``.
+
+    Shared orchestration for inline arrays and inline tables. The
+    caller is responsible for constructing ``new_item`` of the
+    appropriate concrete type (``ArrayItem`` for an array,
+    ``InlineTableEntry`` for an inline table) and for computing the
+    appropriate ``style`` (typically via :func:`detect_style`).
+
+    Empty case: reframes the bracket pad so the new item sits on its
+    own canonical row, then flips it to terminal-per-style.
+
+    Non-empty case: migrates any above-bracket comment block onto the
+    new item's leading, flips the previous-last to internal, appends,
+    flips the new item to terminal-per-style, and renormalises the
+    row-break invariant.
+    """
+    items = cv.items
+    if not items:
+        cv.header_trivia, cv.final_trivia = restamp_bracket_pad_for_first(
+            cv.final_trivia
+        )
+        items.append(new_item)
+        flip_to_terminal(new_item, style)
+        return
+    cv.final_trivia, new_item.leading = migrate_bracket_above(
+        cv.final_trivia, style.inter_separator
+    )
+    flip_to_internal(items[-1])
+    items.append(new_item)
+    flip_to_terminal(new_item, style)
+    _normalise_row_breaks(items, cv, nl, multiline=style.is_multiline)
+
+
 __all__ = [
+    "CommaStyle",
     "_canon_eol",
     "_canon_header_slot",
     "_canon_inline_value",
     "_canon_kv_slot",
     "_canon_leading",
     "_canon_value",
+    "append_to_comma_value",
+    "detect_style",
+    "flip_to_internal",
+    "flip_to_terminal",
     "format_document_trailing",
     "format_subtree",
+    "migrate_bracket_above",
 ]
