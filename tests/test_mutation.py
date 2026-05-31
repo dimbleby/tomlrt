@@ -2590,6 +2590,19 @@ def test_inline_append_does_not_steal_eol_comment_in_multiline() -> None:
     assert tomlrt.loads(out).table("obj").to_dict() == {"a": 1, "b": 2}
 
 
+def test_inline_append_keeps_eol_after_comma_not_orphans_comma() -> None:
+    # When appending to a last entry that has an EOL comment but no
+    # trailing comma, the comma must land immediately after the value
+    # (with the comment moving to after the comma). Earlier code left
+    # the comment in place and put the comma on its own line, yielding
+    # the orphan-comma layout ``a = 1 # eol-on-a\n,\n  b = 2\n  }``.
+    src = "obj = { a = 1 # eol-on-a\n  }\n"
+    doc = tomlrt.loads(src)
+    doc.table("obj")["b"] = 2
+    assert tomlrt.dumps(doc) == "obj = { a = 1, # eol-on-a\n b = 2\n  }\n"
+    assert tomlrt.loads(tomlrt.dumps(doc)).table("obj").to_dict() == {"a": 1, "b": 2}
+
+
 def test_inline_delete_dotted_prefix_removes_all_subentries() -> None:
     doc = tomlrt.loads("obj = { a.b = 1, a.c = 2, d = 3 }\n")
     obj = doc.table("obj")

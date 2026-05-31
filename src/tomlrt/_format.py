@@ -496,6 +496,27 @@ def _put_eol(item: CommaItem, eol: Trivia) -> None:
         item.trailing = Trivia([*item.trailing.pieces, *eol.pieces])
 
 
+def flip_to_internal(item: CommaItem) -> None:
+    """Make ``item`` look like an internal (non-last) item.
+
+    Under the canonical model the inter-item separator lives in the
+    NEXT item's leading; this function only ensures the comma is set
+    and carries any EOL comment across the channel flip (trailing →
+    post_comma_trivia) so the comma stays immediately after the
+    value and the comment after the comma. No-op if the item already
+    has a comma.
+
+    Shared between the inline-array append path and the inline-table
+    append path, both of which transition a previously-terminal item
+    into an internal item when a new item is being appended.
+    """
+    if item.has_comma:
+        return
+    eol = _take_eol(item)
+    item.has_comma = True
+    _put_eol(item, eol)
+
+
 def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
     """Bracket-inner padding for a single-line inline value.
 
