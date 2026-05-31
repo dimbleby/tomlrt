@@ -341,11 +341,14 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
     @override
     def __setitem__(self, key: int, value: tuple[str, ...] | list[str]) -> None:
         seq = _validate_comment_seq(value, "leading_comments")
-        _ensure_multiline(self._arr)
         idx = _check_index(self._arr, key)
         if not seq:
+            # Empty assignment means "no leading comments" — semantically
+            # a delete-if-present. Don't auto-promote to multi-line: the
+            # array doesn't need newlines to carry zero comments.
             self._delete(idx, allow_missing=True)
             return
+        _ensure_multiline(self._arr)
         encoded = tuple(_encode_comment(c) for c in seq)
         _set_above_pieces(
             self._arr._value,  # noqa: SLF001
