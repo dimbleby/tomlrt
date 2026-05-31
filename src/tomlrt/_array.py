@@ -36,6 +36,7 @@ from tomlrt._format import (
     _normalise_row_breaks,
     _put_eol,
     _take_eol,
+    flip_to_internal,
 )
 from tomlrt._trivia import (
     NewlineNode,
@@ -349,7 +350,7 @@ class Array(list[Any]):
         self._value.final_trivia, new_leading = _migrate_bracket_above(
             self._value.final_trivia, style.inter_separator
         )
-        _flip_to_internal(items[-1])
+        flip_to_internal(items[-1])
         new_item = _make_item(cst, leading=new_leading, has_comma=False)
         items.append(new_item)
         _flip_to_terminal(new_item, style)
@@ -810,20 +811,6 @@ def _migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, 
     return pad, join_above_block(separator, above)
 
 
-def _flip_to_internal(item: ArrayItem) -> None:
-    """Make ``item`` look like an internal (non-last) item.
-
-    Under the canonical model the inter-item separator lives in the
-    NEXT item's leading; this function only ensures the comma is set
-    and carries any EOL comment across the channel flip.
-    """
-    if item.has_comma:
-        return
-    eol = _take_eol(item)
-    item.has_comma = True
-    _put_eol(item, eol)
-
-
 def _flip_to_terminal(item: ArrayItem, style: _ArrayStyle) -> None:
     """Make ``item`` look like the terminal (last) item per style."""
     if style.trailing_comma:
@@ -866,7 +853,7 @@ def _renormalise_commas(items: list[ArrayItem], style: _ArrayStyle) -> None:
     if not items:
         return
     for it in items[:-1]:
-        _flip_to_internal(it)
+        flip_to_internal(it)
     _flip_to_terminal(items[-1], style)
 
 

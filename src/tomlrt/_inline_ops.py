@@ -33,6 +33,7 @@ from tomlrt._format import (
     _normalise_row_breaks,
     _put_eol,
     _take_eol,
+    flip_to_internal,
 )
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
@@ -179,16 +180,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
 
     last = iv.items[-1]
     keep_trailing_comma = last.has_comma
-    if not last.has_comma:
-        # Mirror the inline-array policy: transfer any row-attached
-        # EOL section from `trailing` (where it sits while the entry
-        # is terminal-without-comma) to `post_comma_trivia` (where it
-        # belongs once the entry becomes internal-with-comma). This
-        # keeps the comma immediately after the value and the
-        # comment after the comma — the canonical multi-line layout.
-        eol = _take_eol(last)
-        last.has_comma = True
-        _put_eol(last, eol)
+    flip_to_internal(last)
     new_entry.leading = inter_sep
     if keep_trailing_comma:
         new_entry.has_comma = True
