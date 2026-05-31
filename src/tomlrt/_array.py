@@ -34,13 +34,12 @@ from tomlrt._format import (
     _canon_multiline_shape,
     _canon_value,
     _normalise_row_breaks,
-    _put_eol,
-    _take_eol,
     append_to_comma_value,
     detect_style,
     flip_to_internal,
     flip_to_terminal,
     migrate_bracket_above,
+    remove_tail_from_comma_value,
 )
 from tomlrt._trivia import (
     NewlineNode,
@@ -583,14 +582,16 @@ class Array(list[Any]):
             self._value.header_trivia = join_above_block(head_pad, new_first_above)
             items[0].leading = Trivia()
         if tail_removed:
-            new_last = items[-1]
-            new_last_eol = _take_eol(new_last)
-            new_last.has_comma = new_terminal_has_comma
-            new_last.post_comma_trivia = Trivia()
-            _put_eol(new_last, new_last_eol)
-        _normalise_row_breaks(
-            items, self._value, self._doc_newline, multiline=is_multiline
-        )
+            remove_tail_from_comma_value(
+                self._value,
+                self._doc_newline,
+                removed_had_comma=new_terminal_has_comma,
+                is_multiline=is_multiline,
+            )
+        else:
+            _normalise_row_breaks(
+                items, self._value, self._doc_newline, multiline=is_multiline
+            )
 
     @override
     def __iadd__(self, values: Iterable[Any]) -> Self:

@@ -30,18 +30,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tomlrt._format import (
-    _normalise_row_breaks,
     _put_eol,
     _take_eol,
     append_to_comma_value,
     detect_style,
+    remove_tail_from_comma_value,
 )
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
     join_above_block,
     split_above_block,
-    split_eol_section,
     strip_trailing_indent,
 )
 from tomlrt._values import (
@@ -213,26 +212,19 @@ def _fix_tail_after_delete(
 ) -> None:
     """Promote a new tail after deleting the trailing entry.
 
-    The structural pad and comma-style come from the removed entry's
-    position; the EOL section already on the new tail is entry-attached
-    and must be preserved across any ``has_comma`` flip.
+    Thin wrapper around :func:`remove_tail_from_comma_value` that
+    bails out when the deletion was not of the original tail (in
+    which case the existing tail is unchanged and no fix-up is
+    needed). All comma / EOL / row-break logic lives in the shared
+    helper, alongside the matching :func:`append_to_comma_value`.
     """
     if not iv.items or removed_idx != len(iv.items):
         return
-    new_last = iv.items[-1]
-    new_last_eol = _take_eol(new_last)
-    is_multiline = value_is_multiline(iv)
-    new_last.has_comma = removed.has_comma
-    new_last.post_comma_trivia = Trivia()
-    if not removed.has_comma and not new_last.trailing.pieces:
-        _, removed_trail_rest = split_eol_section(removed.trailing)
-        new_last.trailing = removed_trail_rest
-    _put_eol(new_last, new_last_eol)
-    _normalise_row_breaks(
-        iv.items,
+    remove_tail_from_comma_value(
         iv,
         nl,
-        multiline=is_multiline,
+        removed_had_comma=removed.has_comma,
+        is_multiline=value_is_multiline(iv),
     )
 
 
