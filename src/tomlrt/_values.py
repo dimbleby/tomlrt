@@ -22,6 +22,7 @@ from tomlrt._trivia import (
     WhitespaceNode,
     retarget_trivia_newlines,
     split_item_above,
+    trivia_has_newline,
 )
 
 if TYPE_CHECKING:
@@ -291,6 +292,38 @@ def inter_item_separator(items: Sequence[CommaItem]) -> Trivia:
     return Trivia([WhitespaceNode(text=" ")])
 
 
+def entries_of(v: ArrayValue | InlineTableValue) -> Sequence[CommaItem]:
+    """Common accessor for the item list of an inline array / table.
+
+    ``ArrayValue.items`` and ``InlineTableValue.entries`` carry the
+    same per-row shape (`CommaItem`) under different field names —
+    this accessor lets shared helpers iterate either without
+    isinstance-dispatching at every call site.
+    """
+    return v.items if isinstance(v, ArrayValue) else v.entries
+
+
+def value_is_multiline(v: ArrayValue | InlineTableValue) -> bool:
+    """Shape detection: any structural ``NewlineNode`` inside means multi-line.
+
+    Inspects every trivia region that can hold a structural newline
+    under the canonical model (``header_trivia`` / ``final_trivia`` /
+    per-item ``leading`` / ``trailing`` / ``post_comma_trivia``).
+    Sufficient and correct independent of which subset of those
+    regions actually carries the row breaks in a given layout.
+    """
+    if trivia_has_newline(v.header_trivia) or trivia_has_newline(v.final_trivia):
+        return True
+    for it in entries_of(v):
+        if (
+            trivia_has_newline(it.leading)
+            or trivia_has_newline(it.post_comma_trivia)
+            or trivia_has_newline(it.trailing)
+        ):
+            return True
+    return False
+
+
 def retarget_value_newlines(v: Value, target: str) -> None:
     """Recursively rewrite every ``NewlineNode.text`` under ``v`` to ``target``.
 
@@ -335,6 +368,8 @@ __all__ = [
     "StringStyle",
     "StringValue",
     "Value",
+    "entries_of",
     "inter_item_separator",
     "retarget_value_newlines",
+    "value_is_multiline",
 ]

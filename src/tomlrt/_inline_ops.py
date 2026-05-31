@@ -44,9 +44,13 @@ from tomlrt._trivia import (
     split_eol_section,
     strip_trailing_indent,
     trivia_has_comment,
-    trivia_has_newline,
 )
-from tomlrt._values import InlineTableEntry, inter_item_separator, make_keyparts
+from tomlrt._values import (
+    InlineTableEntry,
+    inter_item_separator,
+    make_keyparts,
+    value_is_multiline,
+)
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
@@ -163,7 +167,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         # new entry gets an indented row of its own. In the multi-line
         # case the entry also needs a trailing comma to match the
         # canonical ``{\n    k = v,\n}`` shape.
-        is_multiline = trivia_has_newline(iv.final_trivia)
+        is_multiline = value_is_multiline(iv)
         iv.header_trivia, iv.final_trivia = restamp_bracket_pad_for_first(
             iv.final_trivia
         )
@@ -177,9 +181,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     # leading would replicate any above-entry comment block onto the
     # new entry.
     inter_sep = inter_item_separator(iv.entries)
-    is_multiline = trivia_has_newline(iv.header_trivia) or any(
-        trivia_has_newline(e.leading) for e in iv.entries
-    )
+    is_multiline = value_is_multiline(iv)
 
     last = iv.entries[-1]
     keep_trailing_comma = last.has_comma
@@ -272,9 +274,7 @@ def _fix_tail_after_delete(
         return
     new_last = iv.entries[-1]
     new_last_eol = _take_eol(new_last)
-    is_multiline = trivia_has_newline(iv.header_trivia) or any(
-        trivia_has_newline(e.leading) for e in iv.entries
-    )
+    is_multiline = value_is_multiline(iv)
     new_last.has_comma = removed.has_comma
     new_last.post_comma_trivia = Trivia()
     if not removed.has_comma and not new_last.trailing.pieces:
