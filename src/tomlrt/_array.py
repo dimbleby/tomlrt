@@ -54,7 +54,7 @@ from tomlrt._typecheck import _validate_mapping
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
-    InlineTableValue,
+    CommaValue,
     inter_item_separator,
     value_is_multiline,
 )
@@ -67,7 +67,6 @@ if TYPE_CHECKING:
     from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
         CommaItem,
-        InlineTableEntry,
         Value,
     )
 
@@ -845,16 +844,11 @@ def _flip_to_terminal(item: ArrayItem, style: _ArrayStyle) -> None:
 
 
 def _value_has_any_comment(val: Value) -> bool:
-    items: list[ArrayItem] | list[InlineTableEntry]
-    if isinstance(val, ArrayValue):
-        items = val.items
-    elif isinstance(val, InlineTableValue):
-        items = val.entries
-    else:
+    if not isinstance(val, CommaValue):
         return False
     if trivia_has_comment(val.header_trivia) or trivia_has_comment(val.final_trivia):
         return True
-    return any(_item_has_any_comment(it) for it in items)
+    return any(_item_has_any_comment(it) for it in val.items)
 
 
 def _item_has_any_comment(item: CommaItem) -> bool:

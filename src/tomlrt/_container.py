@@ -79,11 +79,13 @@ if TYPE_CHECKING:
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._values import (
+        CommaValue,
         Value,
     )
 
 
 _T = TypeVar("_T")
+_ItemT = TypeVar("_ItemT", bound="ArrayItem")
 
 _MISSING: Any = object()
 
@@ -1492,9 +1494,7 @@ def _inline_value_has_inner_comments(v: object) -> bool:
     Used to refuse ``promote_inline`` on inline tables whose comments
     would have nowhere to live in the promoted form.
     """
-    if not isinstance(v, InlineTableValue):
-        return False
-    return _comma_value_has_outer_comments(v.final_trivia, v.entries, v.header_trivia)
+    return isinstance(v, InlineTableValue) and _comma_value_has_outer_comments(v)
 
 
 def _array_value_has_outer_comments(v: object) -> bool:
@@ -1504,25 +1504,17 @@ def _array_value_has_outer_comments(v: object) -> bool:
     inline-value comments are tested separately (and produce a
     different error message).
     """
-    if not isinstance(v, ArrayValue):
-        return False
-    return _comma_value_has_outer_comments(v.final_trivia, v.items, v.header_trivia)
+    return isinstance(v, ArrayValue) and _comma_value_has_outer_comments(v)
 
 
-def _comma_value_has_outer_comments(
-    final_trivia: Trivia,
-    parts: Iterable[ArrayItem | InlineTableEntry],
-    header_trivia: Trivia | None = None,
-) -> bool:
-    if trivia_has_comment(final_trivia):
-        return True
-    if header_trivia is not None and trivia_has_comment(header_trivia):
+def _comma_value_has_outer_comments(v: CommaValue[_ItemT]) -> bool:
+    if trivia_has_comment(v.header_trivia) or trivia_has_comment(v.final_trivia):
         return True
     return any(
         trivia_has_comment(p.leading)
         or trivia_has_comment(p.trailing)
         or trivia_has_comment(p.post_comma_trivia)
-        for p in parts
+        for p in v.items
     )
 
 
@@ -1973,7 +1965,7 @@ def _populate_inline_table(
             post_comma_trivia=Trivia(),
             key_path=(k,),
         )
-        val.entries.append(entry)
+        val.items.append(entry)
         dict.__setitem__(table, k, sub_dec)
     if items:
         val.header_trivia = Trivia([WhitespaceNode(text=" ")])

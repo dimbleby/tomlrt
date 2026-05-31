@@ -306,7 +306,7 @@ def _decode_inline_table(
     )
     table._inline = True  # noqa: SLF001
     table._value = value  # noqa: SLF001
-    for entry in value.entries:
+    for entry in value.items:
         decoded_key = entry.key_path
         cur: Container = table
         for step in decoded_key[:-1]:
