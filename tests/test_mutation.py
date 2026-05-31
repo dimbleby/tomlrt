@@ -4494,3 +4494,30 @@ def test_aot_cross_doc_assign_negative_index() -> None:
     dst_doc.aot("a")[-1] = src_doc.aot("s")[0]
     assert dst_doc.aot("a")[1]["v"] == 99
     assert "y" not in dst_doc.aot("a")[1]
+
+
+def test_aot_sort_singleton_short_circuits() -> None:
+    """``aot.sort()`` on a single-entry AoT takes the early-return path
+    and leaves the doc byte-stable."""
+    doc = tomlrt.loads("[[a]]\nx = 1\n")
+    src = tomlrt.dumps(doc)
+    doc.aot("a").sort(key=lambda t: t.get("x", 0))
+    assert tomlrt.dumps(doc) == src
+
+
+def test_aot_sort_empty_short_circuits() -> None:
+    """``aot.sort()`` on an empty AoT also takes the early-return path."""
+    doc = tomlrt.loads("")
+    doc["a"] = AoT()
+    doc.aot("a").sort(key=lambda _t: 0)
+
+
+def test_demote_synthetic_placeholder_transfers_preamble() -> None:
+    """Demoting an empty synthetic placeholder hands its leading trivia
+    off to the successor so the doc preamble survives."""
+    doc = tomlrt.loads("# preamble comment\n[existing]\nx = 1\n")
+    doc["tool"] = Table.section()
+    doc["tool"]["sub"] = Table.section({"k": 1})
+    out = tomlrt.dumps(doc)
+    assert "[tool.sub]" in out
+    assert "\n[tool]\n" not in "\n" + out
