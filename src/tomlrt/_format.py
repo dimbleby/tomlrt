@@ -53,6 +53,7 @@ from tomlrt._trivia import (
     split_eol_section,
     split_item_above,
     split_lines,
+    strip_trailing_indent,
 )
 from tomlrt._values import (
     ArrayValue,
@@ -1014,6 +1015,82 @@ def remove_head_from_comma_value(
     cv.items[0].leading = Trivia()
 
 
+def remove_owned_from_comma_value(
+    cv: CommaValue[_CV_ItemT],
+    removed_indices: Sequence[int],
+    nl: str,
+    *,
+    is_multiline: bool,
+    strip_when_empty: bool = True,
+) -> None:
+    """Splice out ``removed_indices`` and run the boundary fixups.
+
+    Shared orchestration for inline-array tail/head/internal removal
+    (``Array.__delitem__``) and inline-table key / dotted-prefix
+    removal (``_inline_ops.delete_entry``). The caller is responsible
+    for the kind-specific logic that *finds* the indices to remove
+    (slice-vs-int normalisation for arrays, key / prefix lookup for
+    inline tables) and for any associated logical-view bookkeeping
+    (decoded ``list`` / ``dict`` removal).
+
+    Steps:
+      * snapshot the above-block of the soon-to-be-new-first item
+        when position 0 is among ``removed_indices`` (so the
+        canonical "above-block of item 0 lives in header_trivia"
+        invariant can be restored after the splice);
+      * capture the about-to-be-removed tail's ``has_comma`` policy
+        (so the new tail can adopt it);
+      * pop the removed indices from ``cv.items`` in reverse order;
+      * if no items remain, call :func:`strip_trailing_indent` to
+        canonicalise the empty bracket pad (unless
+        ``strip_when_empty`` is False — used by callers that own a
+        different empty-canonicalisation policy);
+      * else dispatch to :func:`remove_head_from_comma_value` /
+        :func:`remove_tail_from_comma_value` /
+        :func:`_normalise_row_breaks` as appropriate.
+
+    ``removed_indices`` must be a list of valid distinct indices into
+    ``cv.items`` (not necessarily sorted on input; sorted internally).
+    """
+    if not removed_indices:
+        return
+    items = cv.items
+    if not items:
+        return
+    sorted_removed = sorted(removed_indices)
+    removed_set = set(sorted_removed)
+    last_idx = len(items) - 1
+    zero_removed = 0 in removed_set
+    tail_removed = last_idx in removed_set
+
+    new_first_above: Trivia = Trivia()
+    if zero_removed:
+        for k in range(1, len(items)):
+            if k not in removed_set:
+                _h, new_first_above, _t = split_item_above(items[k].leading)
+                break
+    new_terminal_has_comma = items[last_idx].has_comma if tail_removed else False
+
+    for i in reversed(sorted_removed):
+        items.pop(i)
+
+    if not items:
+        if strip_when_empty:
+            strip_trailing_indent(cv.header_trivia, cv.final_trivia)
+        return
+    if zero_removed:
+        remove_head_from_comma_value(cv, new_first_above)
+    if tail_removed:
+        remove_tail_from_comma_value(
+            cv,
+            nl,
+            removed_had_comma=new_terminal_has_comma,
+            is_multiline=is_multiline,
+        )
+    else:
+        _normalise_row_breaks(items, cv, nl, multiline=is_multiline)
+
+
 def reorder_comma_value_owned(
     cv: CommaValue[_CV_ItemT],
     owned_positions: Sequence[int],
@@ -1104,6 +1181,7 @@ __all__ = [
     "format_subtree",
     "migrate_bracket_above",
     "remove_head_from_comma_value",
+    "remove_owned_from_comma_value",
     "remove_tail_from_comma_value",
     "reorder_comma_value_owned",
 ]

@@ -35,8 +35,7 @@ from tomlrt._format import (
     flip_to_internal,
     flip_to_terminal,
     migrate_bracket_above,
-    remove_head_from_comma_value,
-    remove_tail_from_comma_value,
+    remove_owned_from_comma_value,
     reorder_comma_value_owned,
 )
 from tomlrt._trivia import (
@@ -44,7 +43,6 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
     restamp_bracket_pad_for_first,
-    split_item_above,
     strip_trailing_indent,
     trivia_has_comment,
 )
@@ -515,10 +513,10 @@ class Array(list[Any]):
         if not items:
             list.__delitem__(self, index)  # propagate IndexError
             return
-        # Normalise to a sorted list of removed positions so we can
-        # reason uniformly about delete-at-0 and tail removal.
+        # Normalise to a list of removed positions so the shared
+        # comma-list orchestration can run uniformly.
         if isinstance(index, slice):
-            removed = sorted(range(*index.indices(len(items))))
+            removed = list(range(*index.indices(len(items))))
         else:
             i = int(index)
             if i < 0:
@@ -531,49 +529,13 @@ class Array(list[Any]):
         if not removed:
             list.__delitem__(self, index)
             return
-        last_idx = len(items) - 1
-        zero_removed = 0 in removed
-        tail_removed = last_idx in removed
-        survivors_after_zero = [
-            j for j in range(len(items)) if j > 0 and j not in removed
-        ]
-        # Capture per-item snapshots needed for boundary fix-ups.
-        # When position 0 is removed, the new items[0] inherits a
-        # leading whose above-block currently lives in items[k].leading
-        # for the smallest surviving k > 0.
-        new_first_above: Trivia = Trivia()
-        if zero_removed and survivors_after_zero:
-            k = survivors_after_zero[0]
-            _head, new_first_above, _tail = split_item_above(items[k].leading)
-        is_multiline = self._multiline or value_is_multiline(self._value)
-        # On tail removal the new last item inherits the comma policy
-        # from the original terminal. The row-break invariant is
-        # restored below by `_normalise_row_breaks`; we just need to
-        # propagate the comma state and clear any post_comma_trivia
-        # left over from internal-row state.
-        new_terminal_has_comma = items[last_idx].has_comma if tail_removed else False
-        del items[index]
         list.__delitem__(self, index)
-        if not items:
-            # Strip the per-item indent that used to anchor items[0]
-            # from header_trivia — it has no item left to indent and
-            # would otherwise render as ``[<indent>\n]``. Any bracket-
-            # pad / bracket-EOL block before it is preserved.
-            strip_trailing_indent(self._value.header_trivia, self._value.final_trivia)
-            return
-        if zero_removed:
-            remove_head_from_comma_value(self._value, new_first_above)
-        if tail_removed:
-            remove_tail_from_comma_value(
-                self._value,
-                self._doc_newline,
-                removed_had_comma=new_terminal_has_comma,
-                is_multiline=is_multiline,
-            )
-        else:
-            _normalise_row_breaks(
-                items, self._value, self._doc_newline, multiline=is_multiline
-            )
+        remove_owned_from_comma_value(
+            self._value,
+            removed,
+            self._doc_newline,
+            is_multiline=self._multiline or value_is_multiline(self._value),
+        )
 
     @override
     def __iadd__(self, values: Iterable[Any]) -> Self:

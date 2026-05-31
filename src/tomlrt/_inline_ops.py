@@ -32,15 +32,12 @@ from typing import TYPE_CHECKING
 from tomlrt._format import (
     append_to_comma_value,
     detect_style,
-    remove_head_from_comma_value,
-    remove_tail_from_comma_value,
+    remove_owned_from_comma_value,
     reorder_comma_value_owned,
 )
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
-    split_item_above,
-    strip_trailing_indent,
 )
 from tomlrt._values import (
     InlineTableEntry,
@@ -167,89 +164,20 @@ def delete_entry(t: Container, key: str) -> bool:
     assert iv is not None
     full_path = _entry_key_path(t, key)
 
-    # Single exact match (the common, leaf-key case).
     found = _find_entry(iv, full_path)
     if found is not None:
-        idx, removed = found
-        new_first_above = _capture_new_first_above(iv, removed_indices={idx})
-        iv.items.pop(idx)
-        _fix_tail_after_delete(iv, idx, removed, root._doc_newline)  # noqa: SLF001
-        if idx == 0 and iv.items:
-            remove_head_from_comma_value(iv, new_first_above)
-        if not iv.items:
-            strip_trailing_indent(iv.header_trivia, iv.final_trivia)
-        return True
-
-    # Prefix delete: dotted-prefix container.
-    indices = _find_prefix_entries(iv, full_path)
-    if not indices:
-        return False
-    original_len = len(iv.items)
-    last_removed_idx = indices[-1]
-    last_removed_entry = iv.items[last_removed_idx]
-    first_removed_was_head = indices[0] == 0
-    new_first_above = (
-        _capture_new_first_above(iv, removed_indices=set(indices))
-        if first_removed_was_head
-        else Trivia()
-    )
-    for i in reversed(indices):
-        iv.items.pop(i)
-    # Tail fixup: only if the original tail was actually removed.
-    if last_removed_idx == original_len - 1:
-        _fix_tail_after_delete(
-            iv,
-            len(iv.items),
-            last_removed_entry,
-            root._doc_newline,  # noqa: SLF001
-        )
-    if first_removed_was_head and iv.items:
-        remove_head_from_comma_value(iv, new_first_above)
-    if not iv.items:
-        strip_trailing_indent(iv.header_trivia, iv.final_trivia)
-    return True
-
-
-def _capture_new_first_above(
-    iv: InlineTableValue, *, removed_indices: set[int]
-) -> Trivia:
-    """Snapshot the above-block of the entry that will become entries[0].
-
-    Called *before* removing ``removed_indices`` from ``iv.items`` when
-    index 0 is among them. Returns the above-item block of the smallest
-    surviving index > 0; empty when no such survivor exists.
-    """
-    if 0 not in removed_indices:
-        return Trivia()
-    for k in range(1, len(iv.items)):
-        if k not in removed_indices:
-            _head, above, _tail = split_item_above(iv.items[k].leading)
-            return above
-    return Trivia()
-
-
-def _fix_tail_after_delete(
-    iv: InlineTableValue,
-    removed_idx: int,
-    removed: InlineTableEntry,
-    nl: str,
-) -> None:
-    """Promote a new tail after deleting the trailing entry.
-
-    Thin wrapper around :func:`remove_tail_from_comma_value` that
-    bails out when the deletion was not of the original tail (in
-    which case the existing tail is unchanged and no fix-up is
-    needed). All comma / EOL / row-break logic lives in the shared
-    helper, alongside the matching :func:`append_to_comma_value`.
-    """
-    if not iv.items or removed_idx != len(iv.items):
-        return
-    remove_tail_from_comma_value(
+        indices: list[int] = [found[0]]
+    else:
+        indices = _find_prefix_entries(iv, full_path)
+        if not indices:
+            return False
+    remove_owned_from_comma_value(
         iv,
-        nl,
-        removed_had_comma=removed.has_comma,
+        indices,
+        root._doc_newline,  # noqa: SLF001
         is_multiline=value_is_multiline(iv),
     )
+    return True
 
 
 def reorder_inline(c: Container, new_key_order: list[str]) -> None:
