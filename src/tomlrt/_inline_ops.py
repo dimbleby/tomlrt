@@ -37,13 +37,11 @@ from tomlrt._format import (
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
-    WhitespaceNode,
     join_above_block,
     restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
     strip_trailing_indent,
-    trivia_has_comment,
 )
 from tomlrt._values import (
     InlineTableEntry,
@@ -103,10 +101,6 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
         if len(e.key_path) > n and e.key_path[:n] == key_path:
             out.append(i)
     return out
-
-
-def _ws(text: str) -> Trivia:
-    return Trivia(pieces=[WhitespaceNode(text=text)])
 
 
 # ---------------------------------------------------------------------------
@@ -186,16 +180,15 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     last = iv.items[-1]
     keep_trailing_comma = last.has_comma
     if not last.has_comma:
-        if trivia_has_comment(last.trailing):
-            # Trailing carries a comment / newline — leave it where the
-            # user put it; default the inter_sep to a single space.
-            inter_sep = _ws(" ")
-        else:
-            # Promote `last`: take its (whitespace-only) trailing as the
-            # bracket pad before the new entry's row.
-            last.trailing = Trivia()
+        # Mirror the inline-array policy: transfer any row-attached
+        # EOL section from `trailing` (where it sits while the entry
+        # is terminal-without-comma) to `post_comma_trivia` (where it
+        # belongs once the entry becomes internal-with-comma). This
+        # keeps the comma immediately after the value and the
+        # comment after the comma — the canonical multi-line layout.
+        eol = _take_eol(last)
         last.has_comma = True
-        last.post_comma_trivia = Trivia()
+        _put_eol(last, eol)
     new_entry.leading = inter_sep
     if keep_trailing_comma:
         new_entry.has_comma = True
