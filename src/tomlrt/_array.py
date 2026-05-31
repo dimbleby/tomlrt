@@ -39,15 +39,14 @@ from tomlrt._format import (
     flip_to_internal,
     flip_to_terminal,
     migrate_bracket_above,
+    remove_head_from_comma_value,
     remove_tail_from_comma_value,
 )
 from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
-    join_above_block,
     restamp_bracket_pad_for_first,
-    split_above_block,
     split_item_above,
     strip_trailing_indent,
     trivia_has_comment,
@@ -575,12 +574,7 @@ class Array(list[Any]):
             strip_trailing_indent(self._value.header_trivia, self._value.final_trivia)
             return
         if zero_removed:
-            # The new items[0] absorbs nothing into its leading
-            # (canonical empty); the above-block that previously sat
-            # before it migrates into header_trivia.
-            head_pad, _drop = split_above_block(self._value.header_trivia)
-            self._value.header_trivia = join_above_block(head_pad, new_first_above)
-            items[0].leading = Trivia()
+            remove_head_from_comma_value(self._value, new_first_above)
         if tail_removed:
             remove_tail_from_comma_value(
                 self._value,

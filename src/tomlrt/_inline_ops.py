@@ -34,6 +34,7 @@ from tomlrt._format import (
     _take_eol,
     append_to_comma_value,
     detect_style,
+    remove_head_from_comma_value,
     remove_tail_from_comma_value,
 )
 from tomlrt._kind import _Kind
@@ -41,6 +42,7 @@ from tomlrt._trivia import (
     Trivia,
     join_above_block,
     split_above_block,
+    split_item_above,
     strip_trailing_indent,
 )
 from tomlrt._values import (
@@ -172,9 +174,11 @@ def delete_entry(t: Container, key: str) -> bool:
     found = _find_entry(iv, full_path)
     if found is not None:
         idx, removed = found
+        new_first_above = _capture_new_first_above(iv, removed_indices={idx})
         iv.items.pop(idx)
         _fix_tail_after_delete(iv, idx, removed, root._doc_newline)  # noqa: SLF001
-        _fix_head_after_delete(iv, idx)
+        if idx == 0 and iv.items:
+            remove_head_from_comma_value(iv, new_first_above)
         if not iv.items:
             strip_trailing_indent(iv.header_trivia, iv.final_trivia)
         return True
@@ -187,6 +191,11 @@ def delete_entry(t: Container, key: str) -> bool:
     last_removed_idx = indices[-1]
     last_removed_entry = iv.items[last_removed_idx]
     first_removed_was_head = indices[0] == 0
+    new_first_above = (
+        _capture_new_first_above(iv, removed_indices=set(indices))
+        if first_removed_was_head
+        else Trivia()
+    )
     for i in reversed(indices):
         iv.items.pop(i)
     # Tail fixup: only if the original tail was actually removed.
@@ -197,11 +206,29 @@ def delete_entry(t: Container, key: str) -> bool:
             last_removed_entry,
             root._doc_newline,  # noqa: SLF001
         )
-    if first_removed_was_head:
-        _fix_head_after_delete(iv, 0)
+    if first_removed_was_head and iv.items:
+        remove_head_from_comma_value(iv, new_first_above)
     if not iv.items:
         strip_trailing_indent(iv.header_trivia, iv.final_trivia)
     return True
+
+
+def _capture_new_first_above(
+    iv: InlineTableValue, *, removed_indices: set[int]
+) -> Trivia:
+    """Snapshot the above-block of the entry that will become entries[0].
+
+    Called *before* removing ``removed_indices`` from ``iv.items`` when
+    index 0 is among them. Returns the above-item block of the smallest
+    surviving index > 0; empty when no such survivor exists.
+    """
+    if 0 not in removed_indices:
+        return Trivia()
+    for k in range(1, len(iv.items)):
+        if k not in removed_indices:
+            _head, above, _tail = split_item_above(iv.items[k].leading)
+            return above
+    return Trivia()
 
 
 def _fix_tail_after_delete(
@@ -226,19 +253,6 @@ def _fix_tail_after_delete(
         removed_had_comma=removed.has_comma,
         is_multiline=value_is_multiline(iv),
     )
-
-
-def _fix_head_after_delete(iv: InlineTableValue, removed_idx: int) -> None:
-    """Restore canonical entries[0].leading == Trivia() after head delete.
-
-    Under the canonical model, the bracket pad before entries[0] lives
-    in ``header_trivia``; ``entries[0].leading`` is always empty. After
-    deleting the head, the new head's ``leading`` (which used to be the
-    inter-entry separator) becomes redundant — drop it.
-    """
-    if not iv.items or removed_idx != 0:
-        return
-    iv.items[0].leading = Trivia()
 
 
 def reorder_inline(c: Container, new_key_order: list[str]) -> None:
