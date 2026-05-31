@@ -44,7 +44,6 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
-    restamp_bracket_pad_for_first,
     strip_trailing_indent,
     trivia_has_comment,
 )
@@ -330,26 +329,6 @@ class Array(list[Any]):
         new_item = _make_item(cst, has_comma=False)
         splice_in(self._value, new_item, style, self._doc_newline)
         list.append(self, decoded)
-
-    def _restamp_for_first_append(self) -> None:
-        """Reframe an empty array's final_trivia into header_trivia + tail.
-
-        Called from the first ``append`` onto an empty multiline array.
-        Splits ``final_trivia`` so that:
-          * ``header_trivia`` carries the bracket-line break, any
-            above-item comments, and the indent for the about-to-be-
-            inserted value;
-          * ``final_trivia`` carries just the line break that puts
-            ``]`` on its own line.
-        For single-line empty arrays (``[ ]``), mirrors the inner space
-        on both sides so both bracket faces stay padded.
-        """
-        ft = self._value.final_trivia
-        if not ft.pieces:
-            return
-        self._value.header_trivia, self._value.final_trivia = (
-            restamp_bracket_pad_for_first(ft)
-        )
 
     @override
     def extend(self, values: Iterable[Any]) -> None:

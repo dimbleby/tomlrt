@@ -38,12 +38,6 @@ if TYPE_CHECKING:
 
 StringStyle = Literal["basic", "literal", "ml-basic", "ml-literal"]
 IntStyle = Literal["dec", "hex", "oct", "bin"]
-DateLikeKind = Literal[
-    "offset-datetime",
-    "local-datetime",
-    "local-date",
-    "local-time",
-]
 
 
 @dataclass(slots=True, eq=False)
@@ -88,7 +82,6 @@ class BoolValue:
 class DateTimeValue:
     lexeme: str
     value: datetime | date | time
-    kind: DateLikeKind
 
     def render(self) -> str:
         return self.lexeme
@@ -376,7 +369,6 @@ __all__ = [
     "BoolValue",
     "CommaItem",
     "CommaValue",
-    "DateLikeKind",
     "DateTimeValue",
     "FloatValue",
     "InlineTableEntry",

@@ -96,8 +96,7 @@ class Container(dict[str, Any]):
 
     Reads are pure dict operations. Mutation paths use the per-container
     cache (`_index` / `_refs` / `_header_ref` / `_body_tail`)
-    maintained alongside the dict storage. ``_subtree_tail`` is exposed
-    as a derived `@property` over `_refs`. For inline tables
+    maintained alongside the dict storage. For inline tables
     (`_inline=True`) the slot-stream caches stay empty and `_value`
     points at the backing `InlineTableValue` instead — inline mutation
     lives in a separate code path.
@@ -408,19 +407,6 @@ class Container(dict[str, Any]):
         self._parent = parent
         self._path = path
         self._owner_aot_entry = owner
-
-    @property
-    def _subtree_tail(self) -> Slot | None:
-        """Last slot owned anywhere in this container's subtree.
-
-        Derived strictly from ``_refs`` ordering; not stored. Used as
-        the insert-after anchor for child structural blocks (sections,
-        AoT entries, dotted-descendant slots). Reading this on an
-        inline-table view (where ``_refs`` stays empty) returns
-        ``None``.
-        """
-        refs = self._refs
-        return refs[-1].slot if refs else None
 
     # ------------------------------------------------------------------
     # Typed accessors
