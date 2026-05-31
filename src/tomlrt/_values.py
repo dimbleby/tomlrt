@@ -165,11 +165,16 @@ def render_dotted(parts: list[KeyPart], seps: list[str]) -> str:
 
 
 @dataclass(slots=True, eq=False)
-class ArrayItem:
-    """One bare-value slot inside a comma-separated value.
+class CommaItem:
+    """One slot inside a comma-separated value.
 
     Layout: ``leading value trailing [comma post_comma_trivia]``.
-    Base for `InlineTableEntry`, which adds the ``key = `` prefix.
+    Shared base of the two concrete leaves: `ArrayItem` (bare value,
+    used by `ArrayValue`) and `InlineTableEntry` (with a ``key = ``
+    prefix, used by `InlineTableValue`). The two leaves are siblings,
+    not parent/child — annotate with `CommaItem` when working
+    polymorphically over both, and with the concrete leaf when the
+    caller is flavour-specific.
     """
 
     leading: Trivia
@@ -186,10 +191,20 @@ class ArrayItem:
 
 
 @dataclass(slots=True, eq=False)
-class InlineTableEntry(ArrayItem):
+class ArrayItem(CommaItem):
+    """One bare-value slot inside an inline array.
+
+    Adds no fields over `CommaItem`; exists as a distinct concrete
+    leaf so `ArrayValue.items: list[ArrayItem]` narrows away
+    `InlineTableEntry` at the type level.
+    """
+
+
+@dataclass(slots=True, eq=False)
+class InlineTableEntry(CommaItem):
     """One ``key = value`` slot inside an inline table.
 
-    Extends `ArrayItem` with the key prefix. The shared trivia +
+    Extends `CommaItem` with the key prefix. The shared trivia +
     comma machinery lives on the base; only the key-prefix fields
     and the keyed-form `render` are added here.
     """
@@ -225,13 +240,12 @@ class InlineTableEntry(ArrayItem):
 
 
 # Any per-item shape — bare `ArrayItem` or keyed `InlineTableEntry`.
-# Since `InlineTableEntry` is a subclass, an `ArrayItem` annotation
-# already accepts both at the type level; this alias is the public
-# name for "any comma-list item" and reads better at call sites.
-CommaItem = ArrayItem
+# `CommaItem` is the real base class of both; use it at call sites
+# that are polymorphic over the two flavours, and use the concrete
+# leaf where the code is flavour-specific.
 
 
-_ItemT = TypeVar("_ItemT", bound=ArrayItem)
+_ItemT = TypeVar("_ItemT", bound=CommaItem)
 
 
 @dataclass(slots=True, eq=False)
@@ -301,7 +315,7 @@ Value = (
 )
 
 
-def inter_item_separator(items: Sequence[ArrayItem]) -> Trivia:
+def inter_item_separator(items: Sequence[CommaItem]) -> Trivia:
     """Structural-pad portion of ``items[1].leading``; ``" "`` if ``len < 2``.
 
     Excludes any above-item comment block, which belongs to the item's
