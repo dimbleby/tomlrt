@@ -43,11 +43,7 @@ def coerce_scalar(
         return FloatValue(lexeme=float_lexeme(v), value=v)
     if isinstance(v, str):
         return StringValue(lexeme=basic_string_lexeme(v), value=v)
-    if isinstance(v, datetime):
-        return DateTimeValue(lexeme=v.isoformat(), value=v)
-    if isinstance(v, date):
-        return DateTimeValue(lexeme=v.isoformat(), value=v)
-    if isinstance(v, time):
+    if isinstance(v, (datetime, date, time)):
         return DateTimeValue(lexeme=v.isoformat(), value=v)
     msg = f"cannot coerce {type(v).__name__} to a TOML scalar"
     raise TypeError(msg)
