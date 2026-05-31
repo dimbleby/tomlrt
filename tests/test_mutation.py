@@ -4371,6 +4371,17 @@ def test_update_rejects_multiple_positional_args() -> None:
         doc.update({"b": 2}, {"c": 3})
 
 
+def test_inline_setitem_non_coerceable_matches_regular_table() -> None:
+    """Inline-table assignment of a non-coerceable type raises the same
+    ``TypeError: Cannot convert ...`` as the regular-table path, rather
+    than the previous misleading ``NotImplementedError`` about
+    "live-attach of typed Container/Array/AoT"."""
+    doc = tomlrt.loads("t = {a = 1}\n")
+    inline = doc.table("t")
+    with pytest.raises(TypeError, match="Cannot convert set"):
+        inline["x"] = {1, 2, 3}
+
+
 # ---------------------------------------------------------------------------
 # Table.promote_array — validation error paths
 # ---------------------------------------------------------------------------

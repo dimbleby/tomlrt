@@ -950,14 +950,10 @@ class Container(dict[str, Any]):
 
     def _inline_setitem(self, key: str, value: Any) -> None:
         # ``__setitem__`` has already rejected ``AoT`` / section values
-        # for inline hosts. What remains is the live-attach gap for
-        # typed sub-containers.
-        if not is_scalar(value) and not _is_synth_inline(value):
-            msg = (
-                "live-attach of typed Container/Array/AoT into an inline table "
-                "is not supported"
-            )
-            raise NotImplementedError(msg)
+        # for inline hosts. Non-coerceable types (``set``, custom
+        # classes, …) fall through to ``_synth_value`` below, which
+        # raises the canonical ``TypeError: Cannot convert ... to a
+        # TOML value`` — same message the regular-table path produces.
         if key in self and isinstance(dict.__getitem__(self, key), Container):
             # Overwriting a dotted-prefix sub-table (e.g. `server`
             # in `{server.host = "x", server.port = 80}`) with a
