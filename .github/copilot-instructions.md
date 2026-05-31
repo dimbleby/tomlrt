@@ -335,6 +335,26 @@ wrong.
 When adding behaviour, add a focused unit test in the relevant file
 **and** consider whether the property tests should grow.
 
+### Test-writing conventions
+
+- **Assert on the full rendered document, not substrings.** Compare
+  `tomlrt.dumps(doc)` to the complete expected output with `==`.
+  Substring checks (`"foo" in out`, `"\n[bar]\n" not in out`) and
+  dict-membership checks (`doc["a"]["b"] == 1`) silently miss the
+  whitespace, comment, and trivia regressions the format-preserving
+  invariant exists to catch. The few exceptions are pure error-path
+  tests (`pytest.raises(...)`) that don't render anything.
+- **Use `td(""" … """)` for both input fixtures and expected output.**
+  Indented triple-quoted literals read top-to-bottom in TOML
+  syntax; walls of `\n`-escaped strings hide structure and make
+  byte-level diffs unreadable when an assertion fails. Reach for
+  `\n`-escaped strings only for very short single-line fixtures
+  where the noise of `td()` would dominate.
+- **Don't reference line numbers in test docstrings or comments.**
+  Source line numbers shift on every refactor; an explanatory note
+  that names the function and the behaviour it pins ages well, a
+  line-number reference doesn't.
+
 ## Documentation
 
 User-facing prose docs live under `docs/` and are published at
