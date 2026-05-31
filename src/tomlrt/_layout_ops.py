@@ -1311,7 +1311,15 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         # Empty doc → no preceding header → drop the leading.
         header_slot.leading = Trivia()
     else:
-        insert_after(doc._tail, header_slot, doc)  # noqa: SLF001
+        anchor = doc._tail  # noqa: SLF001
+        insert_after(anchor, header_slot, doc)
+    # If the synthesised header now sits immediately after another
+    # structural header (the parent entry's own ``[[arr]]`` after
+    # its body was emptied, or any back-to-back ``[a]`` / ``[a.sub]``
+    # pair), drop the inter-section blank — there's no body to
+    # separate from.
+    if isinstance(header_slot._prev, StructuralHeaderSlot):  # noqa: SLF001
+        header_slot.leading = Trivia()
 
     ancestors = _ancestor_chain(c)
     # When ``c`` lives inside an AoT entry and was anchored after
