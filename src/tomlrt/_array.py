@@ -56,6 +56,7 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableValue,
     inter_item_separator,
+    value_is_multiline,
 )
 
 if TYPE_CHECKING:
@@ -583,11 +584,7 @@ class Array(list[Any]):
         if zero_removed and survivors_after_zero:
             k = survivors_after_zero[0]
             _head, new_first_above, _tail = split_item_above(items[k].leading)
-        is_multiline = (
-            self._multiline
-            or trivia_has_newline(self._value.header_trivia)
-            or trivia_has_newline(self._value.final_trivia)
-        )
+        is_multiline = self._multiline or value_is_multiline(self._value)
         # On tail removal the new last item inherits the comma policy
         # from the original terminal. The row-break invariant is
         # restored below by `_normalise_row_breaks`; we just need to

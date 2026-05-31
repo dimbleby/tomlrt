@@ -49,12 +49,13 @@ from tomlrt._trivia import (
     split_eol_section,
     split_item_above,
     split_lines,
-    trivia_has_newline,
 )
 from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
+    entries_of,
+    value_is_multiline,
 )
 
 if TYPE_CHECKING:
@@ -287,27 +288,6 @@ def _canon_header_slot(slot: StructuralHeaderSlot, *, nl: str, comments: bool) -
 # ---------------------------------------------------------------------------
 
 
-def _entries_of(
-    v: ArrayValue | InlineTableValue,
-) -> Sequence[ArrayItem | InlineTableEntry]:
-    """Common accessor for the items list of an inline array / table."""
-    return v.items if isinstance(v, ArrayValue) else v.entries
-
-
-def _value_is_multiline(av: ArrayValue | InlineTableValue) -> bool:
-    """Shape detection: any structural NewlineNode inside means multi-line."""
-    if trivia_has_newline(av.header_trivia) or trivia_has_newline(av.final_trivia):
-        return True
-    for it in _entries_of(av):
-        if (
-            trivia_has_newline(it.leading)
-            or trivia_has_newline(it.post_comma_trivia)
-            or trivia_has_newline(it.trailing)
-        ):
-            return True
-    return False
-
-
 def _canon_inline_value(
     v: ArrayValue | InlineTableValue,
     *,
@@ -321,8 +301,8 @@ def _canon_inline_value(
     single-line or multi-line shape, then (for multi-line) runs a
     final text pass over the value's trivia tree.
     """
-    items = _entries_of(v)
-    multi = _value_is_multiline(v)
+    items = entries_of(v)
+    multi = value_is_multiline(v)
     item_indent = parent_indent + "  " if multi else parent_indent
 
     for it in items:
@@ -358,7 +338,7 @@ def _canon_multiline_shape(
     produces only empty / single-space trivia (no newlines, no
     comments), so the finalise pass would be a no-op there.
     """
-    items = _entries_of(v)
+    items = entries_of(v)
     last_line_open = _canon_multi_line_items(items, nl=nl, indent=item_indent)
     if items:
         head_eol, _ = split_eol_section(v.header_trivia)
@@ -533,7 +513,7 @@ def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
 def _canon_single_line_inline(v: ArrayValue | InlineTableValue) -> None:
     v.header_trivia = _inner_space(v)
     v.final_trivia = _inner_space(v)
-    items = _entries_of(v)
+    items = entries_of(v)
     n = len(items)
     for k, it in enumerate(items):
         it.leading = Trivia() if k == 0 else Trivia([WhitespaceNode(" ")])
@@ -578,7 +558,7 @@ def _finalise_inline_trivia(
         comment_indent=item_indent,
         first_line_is_eol=final_first_line_is_eol,
     )
-    for it in _entries_of(v):
+    for it in entries_of(v):
         retarget_trivia_newlines(it.leading, nl)
         retarget_trivia_newlines(it.trailing, nl)
         retarget_trivia_newlines(it.post_comma_trivia, nl)
