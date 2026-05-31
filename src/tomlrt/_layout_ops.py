@@ -112,26 +112,24 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     lines) and the install side (``_synthesise_header_then_insert_kv``
     rewriting the descendant's leading, ``append_direct_kv``'s
     head-of-doc blank-line guard).
+
+    Precondition: ``key`` is currently bound under ``parent``.
     """
-    primary_refs = list(parent._index.get(key, ()))  # noqa: SLF001
-    saved_anchor_prev: Slot | None = None
-    saved_leading_pieces: list[TriviaPiece] = []
-    successor_slot: Slot | None = None
-    successor_leading: list[TriviaPiece] | None = None
-    if primary_refs:
-        old_primary = primary_refs[0].slot
-        saved_anchor_prev = old_primary._prev  # noqa: SLF001
-        saved_leading_pieces = list(old_primary.leading.pieces)
-        successor_slot = _find_binding_successor(parent, key)
-        if successor_slot is not None:
-            successor_leading = list(successor_slot.leading.pieces)
+    primary_ref = parent._index[key][0]  # noqa: SLF001
+    old_primary = primary_ref.slot
+    saved_anchor_prev = old_primary._prev  # noqa: SLF001
+    saved_leading_pieces = list(old_primary.leading.pieces)
+    successor_slot = _find_binding_successor(parent, key)
+    successor_leading = (
+        list(successor_slot.leading.pieces) if successor_slot is not None else None
+    )
     del parent[key]
     doc = parent._attached_doc  # noqa: SLF001
     with _record_install(doc) as new_slots:
         parent[key] = value
-    if not primary_refs or not new_slots:
-        # ``not new_slots`` covers slotless bindings (e.g. an empty
-        # AoT) — no physical region exists to reposition.
+    if not new_slots:
+        # Slotless binding (e.g. an empty AoT) — no physical region
+        # exists to reposition.
         return
     _move_slots_to_anchor(parent, new_slots, saved_anchor_prev, saved_leading_pieces)
     if (
@@ -1574,15 +1572,13 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     assert isinstance(header, StructuralHeaderSlot)
     if not header.synthetic or header.kind != "table":
         return
-    # The header's physical body is the doc-stream span from the slot
-    # after the header up to (but not including) the next structural
-    # header or EOF.  Walk it; if any KVSlot lives there, keep the
-    # header.
-    s = header._next  # noqa: SLF001
-    while s is not None and not isinstance(s, StructuralHeaderSlot):
-        if isinstance(s, KVSlot):
-            return
-        s = s._next  # noqa: SLF001
+    # The header's physical body extends to the next structural
+    # header or EOF. Every Slot is either a KVSlot or a
+    # StructuralHeaderSlot, so the body is non-empty iff the very
+    # next slot is a KVSlot.
+    successor = header._next  # noqa: SLF001
+    if isinstance(successor, KVSlot):
+        return
     layout_root = parent._layout_root  # noqa: SLF001
     from tomlrt._container import Document  # noqa: PLC0415
 
@@ -1592,7 +1588,6 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     # Hand the demoted header's leading trivia (which carries the
     # file preamble when it sits at doc head) off to the successor
     # so comments aren't silently dropped on promotion to implicit.
-    successor = header._next  # noqa: SLF001
     unlink_slot(header, doc, strip_new_head_leading=True)
     if successor is not None and header.leading.pieces:
         successor.leading.pieces = [
@@ -2576,17 +2571,17 @@ def unfile_ref(ref: SlotRef) -> None:
     ref was the container's own-header ref.
     """
     c = ref.container
-    if not c._inline:  # noqa: SLF001
-        _pop_or_remove(c._refs, ref)  # noqa: SLF001
-        local_key = ref.local_key
-        if local_key is None:
-            if c._header_ref is ref:  # noqa: SLF001
-                c._header_ref = None  # noqa: SLF001
-        else:
-            bucket = c._index[local_key]  # noqa: SLF001
-            _pop_or_remove(bucket, ref)
-            if not bucket:
-                del c._index[local_key]  # noqa: SLF001
+    assert not c._inline, "inline containers do not file refs"  # noqa: SLF001
+    _pop_or_remove(c._refs, ref)  # noqa: SLF001
+    local_key = ref.local_key
+    if local_key is None:
+        assert c._header_ref is ref  # noqa: SLF001
+        c._header_ref = None  # noqa: SLF001
+    else:
+        bucket = c._index[local_key]  # noqa: SLF001
+        _pop_or_remove(bucket, ref)
+        if not bucket:
+            del c._index[local_key]  # noqa: SLF001
     _pop_or_remove(ref.slot._refs, ref)  # noqa: SLF001
 
 
