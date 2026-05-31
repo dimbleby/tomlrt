@@ -117,7 +117,7 @@ def test_quoted_key_when_bare_invalid() -> None:
     doc = tomlrt.loads("")
     doc["weird key.com"] = 1
     out = tomlrt.dumps(doc)
-    assert '"weird key.com"' in out
+    assert out == '"weird key.com" = 1\n'
     assert _reparses(out) == {"weird key.com": 1}
 
 
@@ -180,8 +180,7 @@ def test_inline_table_append() -> None:
     obj = doc.table("obj")
     obj["b"] = 2
     out = tomlrt.dumps(doc)
-    assert "a = 1" in out
-    assert "b = 2" in out
+    assert out == "obj = { a = 1, b = 2 }\n"
     assert _reparses(out) == {"obj": {"a": 1, "b": 2}}
 
 
@@ -757,7 +756,13 @@ def test_aot_pop_first_entry_takes_owned_subsections_with_it() -> None:
     popped = aot.pop(0)
     assert popped["name"] == "a"
     out = tomlrt.dumps(doc)
-    assert "[pkg.dep]" not in out  # the owned sub-section went with entry 0
+    assert out == td("""
+        [[pkg]]
+        name = "b"
+
+        [[pkg]]
+        name = "c"
+        """)
     assert _reparses(out) == {"pkg": [{"name": "b"}, {"name": "c"}]}
 
 
@@ -805,8 +810,7 @@ def test_aot_clear_removes_all_entries_and_owned_subsections() -> None:
     aot.clear()
     assert len(aot) == 0
     out = tomlrt.dumps(doc)
-    assert "[[pkg]]" not in out
-    assert "[pkg.dep]" not in out
+    assert out == ""
     assert _reparses(out) == {}
 
 
@@ -1623,7 +1627,13 @@ def test_aot_add_blank_separates_consecutive_entries() -> None:
     aot.add({"name": "b"})
     out = tomlrt.dumps(doc)
     # Same blank-separation behaviour as append, since add wraps it.
-    assert 'name = "a"\n\n[[pkg]]' in out
+    assert out == td("""
+        [[pkg]]
+        name = "a"
+
+        [[pkg]]
+        name = "b"
+        """)
 
 
 # ---------------------------------------------------------------------------
@@ -1636,7 +1646,7 @@ def test_array_append_dict_synthesises_inline_table() -> None:
     arr = doc.array("xs")
     arr.append({"a": 1})
     out = tomlrt.dumps(doc)
-    assert "{ a = 1 }" in out
+    assert out == "xs = [{ a = 1 }]\n"
     parsed = _reparses(out)
     assert parsed == {"xs": [{"a": 1}]}
 
@@ -2424,9 +2434,11 @@ def test_clear_nested_section_keeps_anchor_and_drops_subsections() -> None:
     assert dict(doc["a"]) == {}
     assert dict(doc["b"]) == {"z": 3}
     out = tomlrt.dumps(doc)
-    assert "[a]" in out
-    assert "[a.sub]" not in out
-    assert "[b]" in out
+    assert out == td("""
+        [a]
+        [b]
+        z = 3
+        """)
 
 
 def test_clear_aot_entry_does_not_touch_siblings() -> None:
@@ -2783,7 +2795,15 @@ def test_readd_into_emptied_aot_implicit_anchors_inside_entry() -> None:
     del foo["bar"]
     foo["new"] = 1
     out = tomlrt.dumps(doc)
-    assert "[arr.foo]\nnew = 1" in out
+    assert out == td("""
+        [[arr]]
+
+        [arr.foo]
+        new = 1
+
+        [[arr]]
+        name = 2
+        """)
     assert (
         tomlrt.loads(out).to_dict()
         == doc.to_dict()
@@ -3041,8 +3061,10 @@ def test_delete_aot_entry_with_nested_aot() -> None:
     del doc.aot("outer")[0]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"outer": [{"x": 2}]}
-    # The nested entries' headers must have gone with their parent.
-    assert "[[outer.inner]]" not in out
+    assert out == td("""
+        [[outer]]
+        x = 2
+        """)
 
 
 # ---------------------------------------------------------------------------
@@ -3063,7 +3085,12 @@ def test_standalone_array_set_multiline_then_attach() -> None:
     doc = tomlrt.loads("")
     doc["xs"] = arr
     out = tomlrt.dumps(doc)
-    assert "\n" in out  # rendered multiline
+    assert out == td("""
+        xs = [
+          1,
+          2,
+        ]
+        """)
     assert _reparses(out) == {"xs": [1, 2]}
 
 

@@ -72,7 +72,7 @@ def test_mutation_after_assignment_is_visible_in_document() -> None:
     doc["foo"] = t
     t["b"] = 2
     rendered = tomlrt.dumps(doc)
-    assert "b = 2" in rendered
+    assert rendered == "foo = { a = 1, b = 2 }\n"
     assert _reparses(rendered) == {"foo": {"a": 1, "b": 2}}
 
 
@@ -353,16 +353,20 @@ def test_array_multiline_layout_preserved_through_live_attach() -> None:
     doc["xs"] = arr
     assert doc["xs"] is arr
     out = tomlrt.dumps(doc)
-    # Multiline format: items each on their own line.
-    assert "\n    1" in out
-    assert "\n    2" in out
+    assert out == td("""
+        xs = [
+            1,
+            2,
+            3,
+        ]
+        """)
 
 
 def test_array_multiline_live_attach_into_crlf_document() -> None:
     doc = tomlrt.loads('name = "x"\r\n')
     doc["xs"] = Array(["foo", "bar"], multiline=True)
     out = tomlrt.dumps(doc)
-    assert "\n" not in out.replace("\r\n", "")
+    assert out == 'name = "x"\r\nxs = [\r\n    "foo",\r\n    "bar",\r\n]\r\n'
 
 
 def test_array_detached_from_crlf_reattached_into_lf_document() -> None:
@@ -372,7 +376,7 @@ def test_array_detached_from_crlf_reattached_into_lf_document() -> None:
     doc2 = tomlrt.loads("")
     doc2["ys"] = arr
     out = tomlrt.dumps(doc2)
-    assert "\r" not in out
+    assert out == "ys = [\n    1,\n    2,\n]\n"
 
 
 def test_plain_list_assignment_is_snapshot() -> None:
@@ -753,7 +757,13 @@ def test_section_placeholder_does_not_leak_into_dump() -> None:
     parent["sub"] = Table.section({"k": "v"})
     doc["root"] = parent
     out = tomlrt.dumps(doc)
-    assert "__tomlrt_detached__" not in out
+    assert out == td("""
+        [root]
+        name = "p"
+
+        [root.sub]
+        k = "v"
+        """)
 
 
 def test_section_replacement_preserves_prior_leading() -> None:
@@ -766,8 +776,12 @@ x = 1
     doc = tomlrt.loads(src)
     doc["a"] = Table.section({"x": 2})
     out = tomlrt.dumps(doc)
-    assert out.startswith("# comment above\n\n[a]\n")
-    assert "x = 2" in out
+    assert out == td("""
+        # comment above
+
+        [a]
+        x = 2
+        """)
 
 
 def test_section_parse_dump_byte_exact_unchanged() -> None:

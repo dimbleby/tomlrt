@@ -83,8 +83,15 @@ def test_held_reference_orphans_on_delete() -> None:
     assert held["name"] == "x"
     # ...but mutations through it are silently invisible to the document.
     held["new"] = 99
-    assert "new" not in tomlrt.dumps(doc)
-    assert "[tool]" not in tomlrt.dumps(doc)
+    assert tomlrt.dumps(doc) == td("""
+        title = "demo"
+
+        [[entries]]
+        k = 1
+
+        [[entries]]
+        k = 2
+        """)
 
 
 def test_held_reference_does_not_resurrect() -> None:
@@ -116,7 +123,10 @@ def test_empty_aot_appendable_after_set() -> None:
     doc["things"] = AoT()
     aot = doc["things"]
     aot.add({"k": 1})
-    assert tomlrt.dumps(doc).strip().endswith("k = 1")
+    assert tomlrt.dumps(doc) == td("""
+        [[things]]
+        k = 1
+        """)
     # And still the same object.
     assert aot is doc["things"]
 
@@ -139,8 +149,12 @@ def test_update_via_kwargs_and_mapping() -> None:
     assert doc["a"]["y"] == 2
     assert doc["a"]["z"] == 3
     rendered = tomlrt.dumps(doc)
-    assert "y = 2" in rendered
-    assert "z = 3" in rendered
+    assert rendered == td("""
+        [a]
+        x = 1
+        y = 2
+        z = 3
+        """)
 
 
 def test_update_via_iterable_of_pairs() -> None:
@@ -164,7 +178,11 @@ def test_setdefault_missing_inserts_and_returns() -> None:
     result = a.setdefault("y", 42)
     assert result == 42
     assert a["y"] == 42
-    assert "y = 42" in tomlrt.dumps(doc)
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+        y = 42
+        """)
 
 
 def test_clear_removes_keys_from_cst() -> None:
