@@ -107,12 +107,15 @@ them. Read roughly in this order:
 - **`_values.py`** — the inline-value layer. Every TOML value
   (scalar, `ArrayValue`, `InlineTableValue`) carries enough source
   text to re-emit byte-exactly. Pure data; no slot-stream awareness.
-  `ArrayValue` and `InlineTableValue` carry a pair of bracket-pad
+  `ArrayValue` and `InlineTableValue` share a generic `CommaValue`
+  base that owns the `items` list plus a pair of bracket-pad
   anchors — `header_trivia` (gap immediately after `[` / `{`) and
   `final_trivia` (gap before the closing bracket) — so that the
   above-item region of item 0 and the post-comma trivia of item -1
   have a single canonical owner; per-item `leading` only owns the
-  region above items 1..n-1.
+  region above items 1..n-1. The alias `CommaItem = ArrayItem` is
+  the canonical "any comma-list item" name at call sites that work
+  generically over either flavour.
 - **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:
@@ -175,13 +178,37 @@ them. Read roughly in this order:
   tables are decoupled from the doc-stream linked list: a top-
   level inline table is one `KVSlot` whose `value` is an
   `InlineTableValue`, and mutation operates on
-  `InlineTableValue.entries` directly. Owns the trivia fixups
-  required to keep the result a valid, nicely-spaced inline table —
-  including re-anchoring the bracket-pad (`header_trivia` /
-  `final_trivia`) when the boundary entry changes. The same
-  re-anchoring logic exists for inline arrays in `_array.py` /
-  `_array_comments.py`; the helpers `split_above_block` /
-  `join_above_block` in `_trivia.py` are the shared primitives.
+  `InlineTableValue.items` directly. Thin orchestration only —
+  every structural splice / reorder / boundary fix-up is delegated
+  to `_comma_ops` so inline-array and inline-table mutation share
+  one canonical implementation; this module just resolves the
+  outermost inline-table for a dotted key, files / unfiles the
+  matching `InlineTableEntry`, and forwards to `splice_in` /
+  `splice_out` / `reorder_owned`.
+- **`_comma_ops.py`** — structural mutation primitives shared by
+  inline arrays (`Array`) and inline tables (`_inline_ops`).
+  Owns the canonical layout invariants for any `CommaValue`:
+  per-item trivia ownership, the single-row-break rule, EOL
+  section attachment, and trailing-comma policy. Public surface
+  is intentionally small — `splice_in`, `splice_out`,
+  `splice_out_head`, `splice_out_tail`, `reorder_owned`, plus
+  the `flip_to_internal` / `flip_to_terminal` boundary helpers
+  and the `_take_eol` / `_put_eol` EOL-section primitives. The
+  shared bracket-pad re-anchoring uses `split_above_block` /
+  `join_above_block` from `_trivia.py`. A future change to the
+  canonical inline-value model only needs to land here.
+- **`_format.py`** — pure-function canonicaliser invoked by the
+  public `Container.format()` / `Array.format()` methods. Walks a
+  subtree of slots / values and rewrites trivia to a canonical
+  shape (KV `key = value` spacing, header inner-pad, sibling-
+  spacing rules, single-line vs multi-line inline shape, EOL
+  comment placement). Shape-preserving for inline values
+  (single-line stays single-line; multi-line stays multi-line)
+  and idempotent. The structural counterpart is `_comma_ops`,
+  which owns *changing* layout; this module owns
+  *canonicalising* the layout you already have. Re-uses
+  `flip_to_*` / `_take_eol` / `_put_eol` from `_comma_ops` for
+  the bits that touch the comma-value boundary.
 - **`_render.py`** — pure linear walk of the doc-stream slot list
   + trailing trivia → source string. Byte-exact for any
   unmodified parse.
@@ -200,10 +227,12 @@ them. Read roughly in this order:
   owning document, or `\n` if detached" accessor — prefer it over
   reaching into `_layout_root._newline`. Public `Mapping` /
   `MutableMapping` API; mutation is delegated to `_layout_ops` /
-  `_inline_ops`.
+  `_inline_ops` (which in turn delegates to `_comma_ops` for
+  inline-value structural fix-ups).
 - **`_array.py`** — `Array(list)` (inline arrays) and
   `AoT(list[Table])` (array-of-tables) views, plus the `AoTEntry`
-  glue that connects an entry's slots to its Table view.
+  glue that connects an entry's slots to its Table view. Inline-
+  array structural mutation is forwarded to `_comma_ops`.
 - **`_comments.py`** — the `MutableMapping`-shaped EOL / leading-
   comment side-channel views over `Container` slot trivia
   (`Container.comments`, `Container.leading_comments`).
@@ -286,6 +315,8 @@ wrong.
   `TOMLParseError` or accepts and round-trips byte-exactly. Marked
   `slow`, so it is only picked up by `pytest -m slow` (`make fuzz`).
 - `tests/test_mutation.py` — the dict/list mutation API.
+- `tests/test_format.py` — the `Container.format()` /
+  `Array.format()` canonicaliser.
 - `tests/test_live_attach.py` — live-attach semantics for
   `Table.inline`, `Array`, and `AoT` when assigned into a document.
 - `tests/test_synthesise_and_io.py` — value synthesis and binary I/O.
@@ -317,8 +348,9 @@ uv run --group docs zensical build     # what CI runs
 The API reference page (`docs/api.md`) is generated from docstrings
 via `mkdocstrings`, so docstring changes flow through automatically.
 The task-oriented pages (`quickstart.md`, `building.md`, `reading.md`,
-`editing.md`, `comments.md`, `errors.md`) are hand-written — update
-them when you add, rename, or change behaviour of any public API.
+`editing.md`, `comments.md`, `formatting.md`, `errors.md`) are
+hand-written — update them when you add, rename, or change behaviour
+of any public API.
 
 ## Things to avoid
 
