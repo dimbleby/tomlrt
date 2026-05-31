@@ -54,7 +54,6 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
-    entries_of,
     value_is_multiline,
 )
 
@@ -67,7 +66,7 @@ if TYPE_CHECKING:
         TriviaPiece,
     )
     from tomlrt._values import (
-        ArrayItem,
+        CommaItem,
         Value,
     )
 
@@ -301,7 +300,7 @@ def _canon_inline_value(
     single-line or multi-line shape, then (for multi-line) runs a
     final text pass over the value's trivia tree.
     """
-    items = entries_of(v)
+    items = v.items
     multi = value_is_multiline(v)
     item_indent = parent_indent + "  " if multi else parent_indent
 
@@ -338,7 +337,7 @@ def _canon_multiline_shape(
     produces only empty / single-space trivia (no newlines, no
     comments), so the finalise pass would be a no-op there.
     """
-    items = entries_of(v)
+    items = v.items
     last_line_open = _canon_multi_line_items(items, nl=nl, indent=item_indent)
     if items:
         head_eol, _ = split_eol_section(v.header_trivia)
@@ -410,7 +409,7 @@ def _compose_pad(
     return Trivia(pieces)
 
 
-def _item_has_eol(item: ArrayItem | InlineTableEntry) -> bool:
+def _item_has_eol(item: CommaItem) -> bool:
     """True if the item carries an inline EOL comment.
 
     When the item has a comma, the EOL section lives in
@@ -422,7 +421,7 @@ def _item_has_eol(item: ArrayItem | InlineTableEntry) -> bool:
 
 
 def _normalise_row_breaks(
-    items: list[ArrayItem] | list[InlineTableEntry],
+    items: Sequence[CommaItem],
     value: ArrayValue | InlineTableValue,
     nl: str,
     *,
@@ -466,7 +465,7 @@ def _normalise_row_breaks(
         ft.pieces = [NewlineNode(text=nl), *ft.pieces]
 
 
-def _take_eol(item: ArrayItem | InlineTableEntry) -> Trivia:
+def _take_eol(item: CommaItem) -> Trivia:
     """Split out and return the item's row-attached EOL section.
 
     The EOL section lives in ``post_comma_trivia`` when the item has
@@ -482,7 +481,7 @@ def _take_eol(item: ArrayItem | InlineTableEntry) -> Trivia:
     return eol
 
 
-def _put_eol(item: ArrayItem | InlineTableEntry, eol: Trivia) -> None:
+def _put_eol(item: CommaItem, eol: Trivia) -> None:
     """Append a previously-taken EOL section onto the item.
 
     Routes to ``post_comma_trivia`` or ``trailing`` according to the
@@ -505,7 +504,7 @@ def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
     produces a fresh ``Trivia`` so callers can assign it to
     ``header_trivia`` and ``final_trivia`` independently.
     """
-    if isinstance(v, InlineTableValue) and v.entries:
+    if isinstance(v, InlineTableValue) and v.items:
         return Trivia([WhitespaceNode(" ")])
     return Trivia()
 
@@ -513,7 +512,7 @@ def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
 def _canon_single_line_inline(v: ArrayValue | InlineTableValue) -> None:
     v.header_trivia = _inner_space(v)
     v.final_trivia = _inner_space(v)
-    items = entries_of(v)
+    items = v.items
     n = len(items)
     for k, it in enumerate(items):
         it.leading = Trivia() if k == 0 else Trivia([WhitespaceNode(" ")])
@@ -558,7 +557,7 @@ def _finalise_inline_trivia(
         comment_indent=item_indent,
         first_line_is_eol=final_first_line_is_eol,
     )
-    for it in entries_of(v):
+    for it in v.items:
         retarget_trivia_newlines(it.leading, nl)
         retarget_trivia_newlines(it.trailing, nl)
         retarget_trivia_newlines(it.post_comma_trivia, nl)
@@ -573,7 +572,7 @@ def _finalise_inline_trivia(
 
 
 def _canon_multi_line_items(
-    items: Sequence[ArrayItem | InlineTableEntry],
+    items: Sequence[CommaItem],
     *,
     nl: str,
     indent: str,
@@ -627,7 +626,7 @@ def _canon_multi_line_items(
     return prev_line_open
 
 
-def _canon_post_comma_trivia(item: ArrayItem | InlineTableEntry, *, nl: str) -> bool:
+def _canon_post_comma_trivia(item: CommaItem, *, nl: str) -> bool:
     r"""Canonicalise ``post_comma_trivia``; return True if the line was closed.
 
     If the first non-whitespace piece is a comment it is preserved as

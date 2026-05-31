@@ -263,7 +263,7 @@ class _Validator:
         *,
         abs_prefix: tuple[str, ...] | None,
     ) -> None:
-        for entry in table.entries:
+        for entry in table.items:
             path = entry.key_path
             if abs_prefix is not None:
                 full = abs_prefix + path

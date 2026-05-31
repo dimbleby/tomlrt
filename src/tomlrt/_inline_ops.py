@@ -3,7 +3,7 @@
 Inline tables are decoupled from the doc-stream linked list: a top-
 level inline table is wrapped by a single `KVSlot` whose `value` is
 an `InlineTableValue`. Mutation of the inline-table contents is a
-local operation on the `InlineTableValue.entries` list, plus a
+local operation on the `InlineTableValue.items` list, plus a
 matching `dict.__setitem__` / `__delitem__` on the logical view.
 This module owns the trivia fixups required to keep the result a
 valid, nicely-spaced inline table:
@@ -85,7 +85,7 @@ def _entry_key_path(t: Container, leaf: str) -> tuple[str, ...]:
 def _find_entry(
     iv: InlineTableValue, key_path: tuple[str, ...]
 ) -> tuple[int, InlineTableEntry] | None:
-    for i, e in enumerate(iv.entries):
+    for i, e in enumerate(iv.items):
         if e.key_path == key_path:
             return i, e
     return None
@@ -99,7 +99,7 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
     """
     n = len(key_path)
     out: list[int] = []
-    for i, e in enumerate(iv.entries):
+    for i, e in enumerate(iv.items):
         if len(e.key_path) > n and e.key_path[:n] == key_path:
             out.append(i)
     return out
@@ -139,8 +139,8 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     key_path = _entry_key_path(t, key)
 
     # Sample `=` padding from any existing entry; default to ` = `.
-    if iv.entries:
-        sample = iv.entries[0]
+    if iv.items:
+        sample = iv.items[0]
         eq_pre = sample.pre_eq
         eq_post = sample.post_eq
     else:
@@ -159,7 +159,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         key_path=key_path,
     )
 
-    if not iv.entries:
+    if not iv.items:
         # Empty {}: reframe the bracket pad. For a single-line empty
         # (``{}`` or ``{ }``) `final_trivia` is empty or one WS; the
         # helper mirrors it on both sides. For a multi-line empty
@@ -173,17 +173,17 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         )
         if is_multiline:
             new_entry.has_comma = True
-        iv.entries.append(new_entry)
+        iv.items.append(new_entry)
         return
 
     # Inter-entry separator: structural pad portion of entries[1].leading
     # (mirrors :func:`tomlrt._array._detect_style`). Cloning the full
     # leading would replicate any above-entry comment block onto the
     # new entry.
-    inter_sep = inter_item_separator(iv.entries)
+    inter_sep = inter_item_separator(iv.items)
     is_multiline = value_is_multiline(iv)
 
-    last = iv.entries[-1]
+    last = iv.items[-1]
     keep_trailing_comma = last.has_comma
     if not last.has_comma:
         if trivia_has_comment(last.trailing):
@@ -200,9 +200,9 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     if keep_trailing_comma:
         new_entry.has_comma = True
         new_entry.post_comma_trivia = Trivia()
-    iv.entries.append(new_entry)
+    iv.items.append(new_entry)
     _normalise_row_breaks(
-        iv.entries,
+        iv.items,
         iv,
         root._doc_newline,  # noqa: SLF001
         multiline=is_multiline,
@@ -226,10 +226,10 @@ def delete_entry(t: Container, key: str) -> bool:
     found = _find_entry(iv, full_path)
     if found is not None:
         idx, removed = found
-        iv.entries.pop(idx)
+        iv.items.pop(idx)
         _fix_tail_after_delete(iv, idx, removed, root._doc_newline)  # noqa: SLF001
         _fix_head_after_delete(iv, idx)
-        if not iv.entries:
+        if not iv.items:
             strip_trailing_indent(iv.header_trivia, iv.final_trivia)
         return True
 
@@ -237,23 +237,23 @@ def delete_entry(t: Container, key: str) -> bool:
     indices = _find_prefix_entries(iv, full_path)
     if not indices:
         return False
-    original_len = len(iv.entries)
+    original_len = len(iv.items)
     last_removed_idx = indices[-1]
-    last_removed_entry = iv.entries[last_removed_idx]
+    last_removed_entry = iv.items[last_removed_idx]
     first_removed_was_head = indices[0] == 0
     for i in reversed(indices):
-        iv.entries.pop(i)
+        iv.items.pop(i)
     # Tail fixup: only if the original tail was actually removed.
     if last_removed_idx == original_len - 1:
         _fix_tail_after_delete(
             iv,
-            len(iv.entries),
+            len(iv.items),
             last_removed_entry,
             root._doc_newline,  # noqa: SLF001
         )
     if first_removed_was_head:
         _fix_head_after_delete(iv, 0)
-    if not iv.entries:
+    if not iv.items:
         strip_trailing_indent(iv.header_trivia, iv.final_trivia)
     return True
 
@@ -270,9 +270,9 @@ def _fix_tail_after_delete(
     position; the EOL section already on the new tail is entry-attached
     and must be preserved across any ``has_comma`` flip.
     """
-    if not iv.entries or removed_idx != len(iv.entries):
+    if not iv.items or removed_idx != len(iv.items):
         return
-    new_last = iv.entries[-1]
+    new_last = iv.items[-1]
     new_last_eol = _take_eol(new_last)
     is_multiline = value_is_multiline(iv)
     new_last.has_comma = removed.has_comma
@@ -282,7 +282,7 @@ def _fix_tail_after_delete(
         new_last.trailing = removed_trail_rest
     _put_eol(new_last, new_last_eol)
     _normalise_row_breaks(
-        iv.entries,
+        iv.items,
         iv,
         nl,
         multiline=is_multiline,
@@ -297,15 +297,15 @@ def _fix_head_after_delete(iv: InlineTableValue, removed_idx: int) -> None:
     deleting the head, the new head's ``leading`` (which used to be the
     inter-entry separator) becomes redundant — drop it.
     """
-    if not iv.entries or removed_idx != 0:
+    if not iv.items or removed_idx != 0:
         return
-    iv.entries[0].leading = Trivia()
+    iv.items[0].leading = Trivia()
 
 
 def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     """Reorder direct children of an inline-table container.
 
-    Permutes ``InlineTableValue.entries`` so that the c-direct-child
+    Permutes ``InlineTableValue.items`` so that the c-direct-child
     keys appear in ``new_key_order``. The above-block and the EOL
     section (the row-attached ``# comment`` line) both travel with the
     entry. Purely positional state — the inter-entry pad, ``has_comma``,
@@ -330,7 +330,7 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
 
     blocks: dict[str, list[InlineTableEntry]] = {k: [] for k in new_key_order}
     owned_positions: list[int] = []
-    for i, e in enumerate(iv.entries):
+    for i, e in enumerate(iv.items):
         kp = e.key_path
         if len(kp) > plen and kp[:plen] == prefix and kp[plen] in blocks:
             blocks[kp[plen]].append(e)
@@ -347,7 +347,7 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     above_by_entry: dict[int, Trivia] = {}
     eol_by_entry: dict[int, Trivia] = {}
     for i in owned_positions:
-        e = iv.entries[i]
+        e = iv.items[i]
         src = iv.header_trivia if i == 0 else e.leading
         pad, above = split_above_block(src)
         eol_by_entry[id(e)] = _take_eol(e)
@@ -355,16 +355,16 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
         above_by_entry[id(e)] = above
 
     new_owned = [e for k in new_key_order for e in blocks[k]]
-    new_entries = list(iv.entries)
+    new_entries = list(iv.items)
     for pos, e in zip(owned_positions, new_owned, strict=True):
         new_entries[pos] = e
-    iv.entries = new_entries
+    iv.items = new_entries
 
     # Restore positional state and re-stitch each entry's travelling
     # pieces. The EOL section is routed to whichever channel matches
     # the new position's ``has_comma``.
     for pos in owned_positions:
-        e = iv.entries[pos]
+        e = iv.items[pos]
         pad, has_comma, post_rest, trail_rest = pos_state[pos]
         e.has_comma = has_comma
         e.post_comma_trivia = post_rest

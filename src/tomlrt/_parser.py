@@ -296,7 +296,7 @@ class _Parser:
         leading = Trivia()  # entries[0].leading is always empty
         seen_values: set[tuple[str, ...]] = set()
         seen_prefixes: set[tuple[str, ...]] = set()
-        entries = node.entries
+        entries = node.items
         while True:
             key_at = sc.pos
             key_parts, key_seps, pre_eq = self._parse_key()
