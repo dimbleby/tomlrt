@@ -127,8 +127,7 @@ def test_assign_bool_renders_as_toml_bool() -> None:
     doc["x"] = True
     doc["y"] = False
     out = tomlrt.dumps(doc)
-    assert "x = true" in out
-    assert "y = false" in out
+    assert out == "x = true\ny = false\n"
     re = tomlrt.loads(out)
     assert re["x"] is True
     assert re["y"] is False
@@ -146,7 +145,7 @@ def test_assign_float_basic_gets_dot_zero_when_missing() -> None:
     out = tomlrt.dumps(doc)
     # repr(3.0) is "3.0" already, but values like 1e10 round-trip via repr
     # which emits no dot; the helper appends one.
-    assert "x = 3.0" in out
+    assert out == "x = 3.0\n"
     assert tomlrt.loads(out)["x"] == 3.0
 
 
@@ -164,9 +163,7 @@ def test_assign_float_inf_and_nan() -> None:
     doc["y"] = -math.inf
     doc["z"] = math.nan
     out = tomlrt.dumps(doc)
-    assert "x = inf" in out
-    assert "y = -inf" in out
-    assert "z = nan" in out
+    assert out == "x = inf\ny = -inf\nz = nan\n"
     re = tomlrt.loads(out)
     assert re["x"] == math.inf
     assert re["y"] == -math.inf
@@ -177,7 +174,7 @@ def test_assign_local_date() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = date(2024, 7, 4)
     out = tomlrt.dumps(doc)
-    assert "x = 2024-07-04" in out
+    assert out == "x = 2024-07-04\n"
     assert tomlrt.loads(out)["x"] == date(2024, 7, 4)
 
 
@@ -185,7 +182,7 @@ def test_assign_local_time() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = time(13, 30, 45)
     out = tomlrt.dumps(doc)
-    assert "x = 13:30:45" in out
+    assert out == "x = 13:30:45\n"
     assert tomlrt.loads(out)["x"] == time(13, 30, 45)
 
 
@@ -193,7 +190,7 @@ def test_assign_local_datetime() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = datetime(2024, 7, 4, 12, 0, 0)  # noqa: DTZ001
     out = tomlrt.dumps(doc)
-    assert "x = 2024-07-04T12:00:00" in out
+    assert out == "x = 2024-07-04T12:00:00\n"
     assert tomlrt.loads(out)["x"] == datetime(2024, 7, 4, 12, 0, 0)  # noqa: DTZ001
 
 
@@ -393,8 +390,11 @@ def test_document_factory_supports_full_build_and_dump() -> None:
 def test_document_factory_with_data_uses_sections_for_nested_mappings() -> None:
     doc = Document({"server": {"port": 8080, "host": "localhost"}})
     out = tomlrt.dumps(doc)
-    assert "[server]" in out
-    assert "{" not in out  # no inline tables
+    assert out == td("""
+        [server]
+        port = 8080
+        host = "localhost"
+        """)
     assert tomlrt.loads(out) == {"server": {"port": 8080, "host": "localhost"}}
 
 
@@ -410,15 +410,14 @@ def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
 def test_document_factory_with_explicit_array_keeps_inline_array() -> None:
     doc = Document({"xs": tomlrt.Array([{"a": 1}])})
     out = tomlrt.dumps(doc)
-    assert "[[" not in out
-    assert "{" in out  # inline-table rendering
+    assert out == "xs = [{ a = 1 }]\n"
     assert tomlrt.loads(out) == {"xs": [{"a": 1}]}
 
 
 def test_document_factory_with_data_keeps_leaf_arrays_inline() -> None:
     doc = Document({"xs": [1, 2, 3]})
     out = tomlrt.dumps(doc)
-    assert "[[" not in out  # not promoted to AoT
+    assert out == "xs = [1, 2, 3]\n"
     assert tomlrt.loads(out) == {"xs": [1, 2, 3]}
 
 
@@ -440,8 +439,13 @@ def test_document_factory_with_data_recurses_deeply() -> None:
     }
     doc = Document(data)
     out = tomlrt.dumps(doc)
-    assert "[tool.poetry]" in out
-    assert "[tool.poetry.dependencies]" in out
+    assert out == td("""
+        [tool.poetry]
+        name = "demo"
+
+        [tool.poetry.dependencies]
+        requests = "^2.0"
+        """)
     assert tomlrt.loads(out) == data
 
 
@@ -460,7 +464,7 @@ def test_document_factory_with_data_aot_with_nested_table() -> None:
 def test_document_factory_with_empty_list_stays_inline_empty_array() -> None:
     doc = Document({"xs": []})
     out = tomlrt.dumps(doc)
-    assert "[[" not in out
+    assert out == "xs = []\n"
     assert tomlrt.loads(out) == {"xs": []}
 
 

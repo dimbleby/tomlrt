@@ -162,7 +162,7 @@ def test_dotted_key_table_delete_via_subtable() -> None:
     a = doc.table("a")
     del a["c"]
     assert dict(a) == {"b": 1, "d": 3}
-    assert "c" not in tomlrt.dumps(doc)
+    assert tomlrt.dumps(doc) == "a.b = 1\na.d = 3\n"
 
 
 def test_dotted_key_table_delete_missing_raises() -> None:
@@ -396,8 +396,16 @@ def test_root_section_after_multi_entry_aot() -> None:
     doc = tomlrt.loads("[[package]]\nname='a'\n\n[[package]]\nname='b'\n")
     doc["metadata"] = tomlrt.Table.section({"v": 1})
     out = tomlrt.dumps(doc)
-    assert "[metadata]" in out
-    assert out.index("[metadata]") > out.index("name='b'")
+    assert out == td("""
+        [[package]]
+        name='a'
+
+        [[package]]
+        name='b'
+
+        [metadata]
+        v = 1
+        """)
     assert tomlrt.dumps(tomlrt.loads(out)) == out
 
 
@@ -442,15 +450,13 @@ def test_cross_doc_update_preserves_dotted_super_table() -> None:
     dst1 = tomlrt.loads("")
     dst1.update(src)
     out1 = tomlrt.dumps(dst1)
-    assert "[tool]\n" not in out1
-    assert "[tool.poetry]" in out1
+    assert out1 == "[tool.poetry]\npackages = []\n"
 
     dst2 = tomlrt.loads("")
     for k, v in src.items():
         dst2[k] = v
     out2 = tomlrt.dumps(dst2)
-    assert "[tool]\n" not in out2
-    assert "[tool.poetry]" in out2
+    assert out2 == "[tool.poetry]\npackages = []\n"
 
 
 def test_cross_doc_array_assignment_preserves_multiline_layout() -> None:
@@ -465,7 +471,13 @@ def test_cross_doc_array_assignment_preserves_multiline_layout() -> None:
     )
     # Source is independent of subsequent destination mutation.
     dst["project"]["dependencies"].remove("foo>=2.0")
-    assert "foo>=2.0" in tomlrt.dumps(src)
+    assert tomlrt.dumps(src) == td("""
+        [project]
+        dependencies = [
+            "foo>=2.0",
+            "bar>=1.0",
+        ]
+        """)
 
 
 def test_cross_doc_inline_table_assignment_preserves_spacing() -> None:
@@ -577,20 +589,11 @@ def test_cross_doc_table_assign_with_nested_aot() -> None:
     for k, v in a.items():
         b[k] = v
     out = tomlrt.dumps(b)
-    # Logical content matches.
-    assert _reparses(out) == _reparses(src)
-    # The nested AoT lands as ``[[..]]`` rather than getting flattened
-    # to an inline table or raising.
-    assert "[[tool.poetry.source]]" in out
-    # Implicit super-tables stay implicit: no empty ``[tool]`` /
-    # ``[tool.poetry]`` headers polluting the output.
-    for line in out.splitlines():
-        stripped = line.strip()
-        assert stripped not in ("[tool]", "[tool.poetry]")
+    assert out == src
     # And mutating the source must not bleed into the destination.
     a_src = a["tool"]["poetry"].aot("source")
     a_src[0]["name"] = "MUT"
-    assert "MUT" not in tomlrt.dumps(b)
+    assert tomlrt.dumps(b) == src
 
 
 def test_cross_doc_table_assign_with_explicit_header_and_nested_aot() -> None:
@@ -606,8 +609,7 @@ def test_cross_doc_table_assign_with_explicit_header_and_nested_aot() -> None:
     dst = Document()
     dst["a"] = src["a"]
     out = dst.render()
-    assert "[[a.x]]" in out
-    assert _reparses(out) == _reparses("[a]\n[[a.x]]\ny = 1\n\n[[a.x]]\ny = 2\n")
+    assert out == "[a]\n[[a.x]]\ny = 1\n\n[[a.x]]\ny = 2\n"
 
 
 def test_aot_append_entry_preserves_nested_aot() -> None:
@@ -698,8 +700,7 @@ def test_cross_doc_table_assign_preserves_header_leading_comments() -> None:
     assert table.header_leading_comments == ("bee",)
     assert table.header_comment == "eol"
     out = dst.render()
-    assert "# bee" in out
-    assert "# eol" in out
+    assert out == "# bee\n[b]  # eol\nval = 2\n"
 
 
 def test_cross_doc_section_header_indent_preserved_without_comment() -> None:
@@ -807,8 +808,7 @@ def test_cross_doc_table_assign_preserves_comments() -> None:
     b = Document()
     b["srv"] = a["srv"]
     out = tomlrt.dumps(b)
-    assert "# inner" in out
-    assert 'host = "a.example"' in out
+    assert out == src
 
 
 def test_cross_doc_assign_whole_document() -> None:
@@ -831,11 +831,16 @@ def test_cross_doc_assign_whole_document() -> None:
     b = Document()
     b["wrap"] = a
     out = tomlrt.dumps(b)
-    assert _reparses(out) == {
-        "wrap": {"top": 1, "lit": "x", "s": {"x": 1}, "a": [{"n": 1}]},
-    }
-    # Nested AoT survives as `[[..]]`, not flattened.
-    assert "[[wrap.a]]" in out
+    assert out == td("""
+        wrap.top = 1
+        wrap.lit = "x"
+
+        [wrap.s]
+        x = 1
+
+        [[wrap.a]]
+        n = 1
+        """)
 
 
 def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
@@ -893,8 +898,13 @@ def test_self_overlap_assign_replaces_with_child_block() -> None:
     )
     doc["a"] = doc["a"]["b"]
     out = tomlrt.dumps(doc)
-    assert _reparses(out) == {"a": {"y": 2, "list": [{"n": 1}]}}
-    assert "[[a.list]]" in out
+    assert out == td("""
+        [a]
+        y = 2
+
+        [[a.list]]
+        n = 1
+        """)
     # And the simple (no-AoT) variant stays a section, not an inline table.
     doc2 = tomlrt.loads(
         td("""
@@ -905,7 +915,10 @@ def test_self_overlap_assign_replaces_with_child_block() -> None:
         """)
     )
     doc2["a"] = doc2["a"]["b"]
-    assert tomlrt.dumps(doc2).startswith("[a]\n")
+    assert tomlrt.dumps(doc2) == td("""
+        [a]
+        y = 2
+        """)
 
 
 def test_cross_doc_splice_no_doubled_blank_lines() -> None:
@@ -1229,8 +1242,16 @@ def test_aot_constructor_preserves_nested_aot() -> None:
         ],
     )
     rendered = tomlrt.dumps(doc)
-    assert "tags = [" not in rendered
-    assert rendered.count("[[pkg.tags]]") == 2
+    assert rendered == td("""
+        [[pkg]]
+        name = "A"
+
+        [[pkg.tags]]
+        k = 1
+
+        [[pkg.tags]]
+        k = 2
+        """)
     assert tomlrt.loads(rendered).render() == rendered
 
 
@@ -2052,7 +2073,6 @@ def test_array_set_multiline_preserves_crlf_newlines() -> None:
     doc = tomlrt.loads("a = [1, 2]\r\n")
     doc.array("a").set_multiline(multiline=True, indent="  ")
     out = tomlrt.dumps(doc)
-    assert "\n" not in out.replace("\r\n", "")
     assert out == "a = [\r\n  1,\r\n  2,\r\n]\r\n"
 
 
@@ -2239,7 +2259,14 @@ def test_assign_aot_creates_repeated_headers() -> None:
     doc["packages"] = AoT([{"name": "a", "version": "1.0"}, {"name": "b"}])
     aot = doc.aot("packages")
     assert len(aot) == 2
-    assert "[[packages]]" in tomlrt.dumps(doc)
+    assert tomlrt.dumps(doc) == td("""
+        [[packages]]
+        name = "a"
+        version = "1.0"
+
+        [[packages]]
+        name = "b"
+        """)
 
 
 def test_assign_empty_aot_returns_appendable_view() -> None:
@@ -2249,24 +2276,32 @@ def test_assign_empty_aot_returns_appendable_view() -> None:
     assert tomlrt.dumps(doc) == ""
     aot.append({"host": "localhost"})
     rendered = tomlrt.dumps(doc)
-    assert "[[servers]]" in rendered
-    assert 'host = "localhost"' in rendered
+    assert rendered == td("""
+        [[servers]]
+        host = "localhost"
+        """)
 
 
 def test_assign_aot_overwrites_existing_key() -> None:
     doc = tomlrt.loads("foo = 1\n")
     doc["foo"] = AoT([{"x": 1}])
     rendered = tomlrt.dumps(doc)
-    assert "foo = 1" not in rendered
-    assert "[[foo]]" in rendered
+    assert rendered == td("""
+        [[foo]]
+        x = 1
+        """)
 
 
 def test_assign_aot_nested_path() -> None:
     doc = tomlrt.loads("[product]\n")
     doc.table("product")["variant"] = AoT([{"sku": "X"}])
     rendered = tomlrt.dumps(doc)
-    assert "[[product.variant]]" in rendered
-    assert 'sku = "X"' in rendered
+    assert rendered == td("""
+        [product]
+
+        [[product.variant]]
+        sku = "X"
+        """)
     assert isinstance(doc.table("product").aot("variant"), tomlrt.AoT)
 
 
@@ -2317,8 +2352,13 @@ def test_promote_array_converts_inline_to_aot() -> None:
     assert isinstance(aot, tomlrt.AoT)
     assert len(aot) == 2
     rendered = tomlrt.dumps(doc)
-    assert "packages = [" not in rendered
-    assert rendered.count("[[packages]]") == 2
+    assert rendered == td("""
+        [[packages]]
+        name = "a"
+
+        [[packages]]
+        name = "b"
+        """)
     assert isinstance(doc.aot("packages"), tomlrt.AoT)
 
 
@@ -2380,8 +2420,19 @@ def test_promote_inline_across_aot_entries() -> None:
     for entry in doc.aot("package"):
         entry.promote_inline("dependencies")
     rendered = tomlrt.dumps(doc)
-    assert rendered.count("[package.dependencies]") == 2
-    assert "dependencies = {" not in rendered
+    assert rendered == td("""
+        [[package]]
+        name = "A"
+
+        [package.dependencies]
+        b = "*"
+
+        [[package]]
+        name = "B"
+
+        [package.dependencies]
+        c = "*"
+        """)
     assert tomlrt.loads(rendered).render() == rendered
 
 
@@ -2393,8 +2444,19 @@ def test_promote_array_across_aot_entries() -> None:
     for entry in doc.aot("package"):
         entry.promote_array("tags")
     rendered = tomlrt.dumps(doc)
-    assert rendered.count("[[package.tags]]") == 2
-    assert "tags = [" not in rendered
+    assert rendered == td("""
+        [[package]]
+        name = "A"
+
+        [[package]]
+        name = "B"
+
+        [[package.tags]]
+        k = 1
+
+        [[package.tags]]
+        k = 2
+        """)
     assert tomlrt.loads(rendered).render() == rendered
 
 
@@ -2415,7 +2477,6 @@ def test_install_section_dotted_omits_super_table_headers() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry", Table.section({"name": "x", "version": "0.1"}))
     rendered = tomlrt.dumps(doc)
-    assert "[tool]\n" not in rendered
     assert rendered == td("""
         [tool.poetry]
         name = "x"
@@ -2459,8 +2520,6 @@ def test_install_section_replaces_existing_and_purges_children() -> None:
     )
     doc.install("tool.poetry", Table.section({"version": "2.0"}))
     rendered = tomlrt.dumps(doc)
-    assert "name" not in rendered
-    assert "[tool.poetry.foo]" not in rendered
     assert rendered == '[tool.poetry]\nversion = "2.0"\n'
 
 
@@ -2468,9 +2527,7 @@ def test_install_section_overwrites_inline_value() -> None:
     doc = tomlrt.loads('tool = {poetry = {name = "x"}}\n')
     doc.install("tool.poetry", Table.section({"version": "2.0"}))
     rendered = tomlrt.dumps(doc)
-    assert "name" not in rendered
-    assert "[tool.poetry]" in rendered
-    assert "version" in rendered
+    assert rendered == '[tool.poetry]\nversion = "2.0"\n'
 
 
 def test_install_empty_section() -> None:
@@ -2539,9 +2596,13 @@ def test_install_aot_dotted_path() -> None:
         ),
     )
     rendered = tomlrt.dumps(doc)
-    assert "[tool]" not in rendered
-    assert "[tool.poetry]" not in rendered
-    assert rendered.count("[[tool.poetry.source]]") == 2
+    assert rendered == td("""
+        [[tool.poetry.source]]
+        name = "pypi"
+
+        [[tool.poetry.source]]
+        name = "private"
+        """)
 
 
 def test_install_section_rejects_empty_path() -> None:
@@ -2669,16 +2730,13 @@ def test_install_array_dotted_path_creates_parent_section() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry.authors", Array(["A", "B"], multiline=True))
     rendered = tomlrt.dumps(doc)
-    assert "[tool]\n" not in rendered
-    assert rendered == (
-        td("""
+    assert rendered == td("""
         [tool.poetry]
         authors = [
             "A",
             "B",
         ]
         """)
-    )
 
 
 def test_install_array_dotted_path_uses_existing_section() -> None:
@@ -2803,8 +2861,12 @@ def test_pop_inherited_dotted_key_from_ancestor_section() -> None:
     poetry.pop("name")
     assert "name" not in poetry
     rendered = tomlrt.dumps(doc)
-    assert "poetry.name" not in rendered
-    assert "[tool.poetry.extras]" in rendered
+    assert rendered == td("""
+        [tool]
+
+        [tool.poetry.extras]
+        a = ["one"]
+        """)
 
 
 def test_set_inherited_dotted_key_mutates_in_place() -> None:
@@ -2918,9 +2980,15 @@ def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
     doc = tomlrt.loads(src)
     doc.promote_array("servers")
     rendered = tomlrt.dumps(doc)
-    assert "# header comment" in rendered
-    assert rendered.startswith("# header comment\n")
-    assert "# tail" in rendered
+    assert rendered == td("""
+        # header comment
+
+        [[servers]]
+        name = "a"
+
+        [[servers]]
+        name = "b"  # tail
+        """)
 
 
 def test_aot_insert_at_zero_separates_from_following_entry() -> None:
@@ -3505,16 +3573,21 @@ def test_cross_doc_update_retargets_eol_to_dst() -> None:
     dst.update(src)
     out = tomlrt.dumps(dst)
     # Every newline must be CRLF.
-    assert "\n" not in out.replace("\r\n", "")
-    assert "[project]" in out
-    assert "[build-system]" in out
+    assert out == (
+        "\r\n[tool.black]\r\n"
+        "line-length = 88\r\n\r\n"
+        "[project]\r\n"
+        'name = "foo"\r\n\r\n'
+        "[build-system]\r\n"
+        "requires = []\r\n"
+    )
 
     # Symmetric: CRLF source into LF destination → all LF.
     dst2 = tomlrt.loads("[a]\nx = 1\n")
     src2 = tomlrt.loads("[b]\r\ny = 2\r\n")
     dst2.update(src2)
     out2 = tomlrt.dumps(dst2)
-    assert "\r" not in out2
+    assert out2 == "[a]\nx = 1\n\n[b]\ny = 2\n"
 
 
 def test_cross_doc_array_assignment_retargets_eol() -> None:
@@ -3523,7 +3596,7 @@ def test_cross_doc_array_assignment_retargets_eol() -> None:
     src = tomlrt.loads("a = [\n  2,\n  3,\n]\n")
     dst["a"] = src["a"]
     out = tomlrt.dumps(dst)
-    assert "\n" not in out.replace("\r\n", "")
+    assert out == "a = [\r\n  2,\r\n  3,\r\n]\r\n"
 
 
 def test_mixed_eol_parse_still_roundtrips_byte_exact() -> None:

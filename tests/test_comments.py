@@ -894,9 +894,13 @@ def test_array_set_eol_on_last_item_no_comma_breaks_before_close() -> None:
     arr = doc.array("arr")
     arr.comments[2] = "last"
     out = tomlrt.dumps(doc)
-    # `]` must not be on the same line as the comment.
-    assert "# last\n" in out
-    assert out.rstrip().endswith("]")
+    assert out == td("""
+        arr = [
+            1,
+            2,
+            3, # last
+        ]
+        """)
     re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
@@ -933,8 +937,12 @@ def test_array_replace_existing_eol_comment() -> None:
     arr = doc.array("arr")
     arr.comments[0] = "new"
     out = tomlrt.dumps(doc)
-    assert "# new" in out
-    assert "# old" not in out
+    assert out == td("""
+        arr = [
+          1, # new
+          2,
+        ]
+        """)
 
 
 def test_array_delete_eol_comment() -> None:
@@ -949,7 +957,12 @@ def test_array_delete_eol_comment() -> None:
     arr = doc.array("arr")
     del arr.comments[0]
     out = tomlrt.dumps(doc)
-    assert "# one" not in out
+    assert out == td("""
+        arr = [
+          1,
+          2,
+        ]
+        """)
     re = tomlrt.loads(out)
     assert list(re.array("arr")) == [1, 2]
 
@@ -1027,7 +1040,12 @@ def test_array_delete_leading_comments() -> None:
     arr = doc.array("arr")
     del arr.leading_comments[0]
     out = tomlrt.dumps(doc)
-    assert "# before" not in out
+    assert out == td("""
+        arr = [
+          1,
+          2,
+        ]
+        """)
     re = tomlrt.loads(out)
     assert list(re.array("arr")) == [1, 2]
 
@@ -1138,7 +1156,12 @@ def test_table_array_returns_array() -> None:
     arr = doc.array("xs")
     assert isinstance(arr, tomlrt.Array)
     arr.comments[0] = "first"
-    assert "# first" in tomlrt.dumps(doc)
+    assert tomlrt.dumps(doc) == td("""
+        xs = [
+            1, # first
+            2,
+        ]
+        """)
 
 
 def test_table_table_returns_table() -> None:
@@ -1146,7 +1169,10 @@ def test_table_table_returns_table() -> None:
     tbl = doc.table("server")
     assert isinstance(tbl, tomlrt.Table)
     tbl.header_comment = "production"
-    assert "# production" in tomlrt.dumps(doc)
+    assert tomlrt.dumps(doc) == td("""
+        [server] # production
+        port = 80
+        """)
 
 
 def test_table_aot_returns_aot() -> None:
@@ -1757,8 +1783,12 @@ def test_array_comments_on_last_no_comma_forces_bracket_to_new_line() -> None:
     arr = doc.array("xs")
     arr.comments[1] = "tail"
     out = tomlrt.dumps(doc)
-    # ] must drop to its own line so the EOL comment doesn't swallow it.
-    assert "# tail\n]" in out
+    assert out == td("""
+        xs = [
+            1,
+            2, # tail
+        ]
+        """)
 
 
 def test_leading_comments_setter_rejects_str() -> None:
@@ -1805,10 +1835,18 @@ def test_aot_append_preserves_source_table_comments() -> None:
     dst = tomlrt.loads("[[a]]\nfirst = 0\n")
     dst.aot("a").append(src.aot("a")[0])
     out = tomlrt.dumps(dst)
-    assert "# inner-leading" in out
-    assert "# inner-eol" in out
-    assert "# sub-leading" in out
-    assert "[a.sub]" in out
+    assert out == td("""
+        [[a]]
+        first = 0
+        [[a]]
+        # inner-leading
+        x = 1  # inner-eol
+        y = 2
+
+        [a.sub]
+        # sub-leading
+        z = 3
+        """)
 
 
 def test_aot_insert_preserves_source_table_comments() -> None:
@@ -1822,10 +1860,13 @@ def test_aot_insert_preserves_source_table_comments() -> None:
     dst = tomlrt.loads("[[b]]\nx = 0\n")
     dst.aot("b").insert(0, src.aot("b")[0])
     out = tomlrt.dumps(dst)
-    assert "# top" in out
-    assert "# eol" in out
-    # Original entry survived too
-    assert "x = 0" in out
+    assert out == td("""
+        [[b]]
+        # top
+        q = 1  # eol
+        [[b]]
+        x = 0
+        """)
 
 
 def test_aot_setitem_preserves_source_table_and_slot_leading() -> None:
@@ -1848,10 +1889,12 @@ def test_aot_setitem_preserves_source_table_and_slot_leading() -> None:
     )
     dst.aot("a")[0] = src.aot("a")[0]
     out = tomlrt.dumps(dst)
-    assert "# slot-leading" in out
-    assert "# inner" in out
-    assert "# eol" in out
-    assert "old" not in out
+    assert out == td("""
+        # slot-leading
+        [[a]]
+        # inner
+        x = 1  # eol
+        """)
 
 
 def test_aot_append_same_doc_duplicates_with_comments() -> None:
@@ -1882,8 +1925,14 @@ def test_aot_append_std_section_table_preserves_comments() -> None:
     dst = tomlrt.loads("[[a]]\nx = 0\n")
     dst.aot("a").append(src["s"])
     out = tomlrt.dumps(dst)
-    assert "# leading" in out
-    assert "# eol" in out
+    assert out == td("""
+        [[a]]
+        x = 0
+
+        [a]
+        # leading
+        k = 1  # eol
+        """)
 
 
 def test_aot_entry_assigned_as_std_table_renders_as_table_header() -> None:
@@ -1898,10 +1947,11 @@ def test_aot_entry_assigned_as_std_table_renders_as_table_header() -> None:
     dst = tomlrt.loads("")
     dst["t"] = src.aot("a")[0]
     out = tomlrt.dumps(dst)
-    assert "[t]" in out
-    assert "[[t]]" not in out
-    assert "# c" in out
-    assert "# eol" in out
+    assert out == td("""
+        [t]
+        # c
+        x = 1  # eol
+        """)
 
 
 def test_cross_doc_aot_assignment_preserves_subsections() -> None:
@@ -1923,11 +1973,16 @@ def test_cross_doc_aot_assignment_preserves_subsections() -> None:
     dst = tomlrt.loads("")
     dst["a"] = src.aot("a")
     out = tomlrt.dumps(dst)
-    assert "# leading" in out
-    assert "[a.sub]" in out
-    assert "# nested" in out
-    assert "y = 2" in out
-    assert "z = 3" in out
+    assert out == td("""
+        [[a]]
+        # leading
+        x = 1
+        [a.sub]
+        # nested
+        y = 2
+        [[a]]
+        z = 3
+        """)
 
 
 def test_same_doc_aot_assigned_under_new_key_preserves_subsections() -> None:
@@ -1943,10 +1998,16 @@ def test_same_doc_aot_assigned_under_new_key_preserves_subsections() -> None:
     )
     doc["b"] = doc.aot("a")
     out = tomlrt.dumps(doc)
-    assert "[b.sub]" in out
-    assert "y = 2" in out
-    # Source is unchanged.
-    assert "[a.sub]" in out
+    assert out == td("""
+        [[a]]
+        x = 1
+        [a.sub]
+        y = 2
+        [[b]]
+        x = 1
+        [b.sub]
+        y = 2
+        """)
 
 
 # ---------------------------------------------------------------------------
