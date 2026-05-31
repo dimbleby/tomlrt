@@ -987,6 +987,33 @@ def remove_tail_from_comma_value(
     _normalise_row_breaks(items, cv, nl, multiline=is_multiline)
 
 
+def remove_head_from_comma_value(
+    cv: CommaValue[_CV_ItemT],
+    new_first_above: Trivia,
+) -> None:
+    """Migrate the above-block of the new first item into ``header_trivia``.
+
+    After deleting the original head item(s), the item that is now
+    ``items[0]`` was previously internal; its ``leading`` still
+    carries the inter-item separator plus any above-item comment
+    block that conceptually belonged above it. Under the canonical
+    model ``items[0].leading`` is always empty and the above-block
+    above the first item lives in ``header_trivia``. This helper
+    completes the migration: the caller has already extracted the
+    above-block (before deletion, via :func:`split_item_above` on
+    the soon-to-be-new-first item's leading); we splice it into
+    ``header_trivia`` and reset ``items[0].leading``.
+
+    Shared between :class:`tomlrt._array.Array`'s head-delete and
+    :mod:`tomlrt._inline_ops`'s ``_fix_head_after_delete``.
+    """
+    if not cv.items:
+        return
+    head_pad, _drop = split_above_block(cv.header_trivia)
+    cv.header_trivia = join_above_block(head_pad, new_first_above)
+    cv.items[0].leading = Trivia()
+
+
 __all__ = [
     "CommaStyle",
     "_canon_eol",
@@ -1002,5 +1029,6 @@ __all__ = [
     "format_document_trailing",
     "format_subtree",
     "migrate_bracket_above",
+    "remove_head_from_comma_value",
     "remove_tail_from_comma_value",
 ]

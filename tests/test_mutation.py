@@ -2627,6 +2627,30 @@ def test_inline_append_migrates_above_bracket_comment_to_new_entry() -> None:
     """)
 
 
+def test_inline_delete_head_migrates_above_comment_to_new_head() -> None:
+    # When deleting the head entry, any above-item comment block that
+    # belonged to the next entry (now the new head) must migrate from
+    # that entry's leading into header_trivia — mirror of the existing
+    # inline-array behaviour. Earlier code dropped the comment entirely.
+    src = td("""
+        obj = {
+            a = 1,
+            # comment above b
+            b = 2,
+            c = 3,
+        }
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("obj")["a"]
+    assert tomlrt.dumps(doc) == td("""
+        obj = {
+            # comment above b
+            b = 2,
+            c = 3,
+        }
+    """)
+
+
 def test_inline_delete_dotted_prefix_removes_all_subentries() -> None:
     doc = tomlrt.loads("obj = { a.b = 1, a.c = 2, d = 3 }\n")
     obj = doc.table("obj")
