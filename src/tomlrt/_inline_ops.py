@@ -29,11 +29,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tomlrt._format import (
-    append_to_comma_value,
+from tomlrt._comma_ops import (
     detect_style,
-    remove_owned_from_comma_value,
-    reorder_comma_value_owned,
+    reorder_owned,
+    splice_in,
+    splice_out,
 )
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
@@ -148,7 +148,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         key_path=key_path,
     )
     style = detect_style(iv, multiline_flag=False)
-    append_to_comma_value(iv, new_entry, style, root._doc_newline)  # noqa: SLF001
+    splice_in(iv, new_entry, style, root._doc_newline)  # noqa: SLF001
 
 
 def delete_entry(t: Container, key: str) -> bool:
@@ -171,7 +171,7 @@ def delete_entry(t: Container, key: str) -> bool:
         indices = _find_prefix_entries(iv, full_path)
         if not indices:
             return False
-    remove_owned_from_comma_value(
+    splice_out(
         iv,
         indices,
         root._doc_newline,  # noqa: SLF001
@@ -191,7 +191,7 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     navigator) keep their absolute positions; only owned positions
     are reordered. The actual permutation machinery (positional vs
     entry-attached state) lives in
-    :func:`tomlrt._format.reorder_comma_value_owned`.
+    :func:`tomlrt._format.reorder_owned`.
 
     ``new_key_order`` is trusted to be a permutation of
     ``dict.keys(c)``. Only mutates the CST; dict storage is the
@@ -213,7 +213,7 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
             owned_positions.append(i)
 
     new_owned = [e for k in new_key_order for e in blocks[k]]
-    reorder_comma_value_owned(
+    reorder_owned(
         iv,
         owned_positions,
         new_owned,
