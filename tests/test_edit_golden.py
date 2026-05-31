@@ -3130,32 +3130,47 @@ def test_array_sort_with_leading_comments_follows_items() -> None:
     assert tomlrt.dumps(doc) == expected
 
 
-def test_array_sort_normalises_mismatched_indents() -> None:
-    """``sort`` / ``reverse`` must not leave item 0 carrying the old
-    position-0 indent while items[1..] inherit the canonical one."""
-    src = "x = [\n    'z',\n  # comment\n      'a',\n   'm',\n]\n"
+def test_array_sort_preserves_per_position_indents() -> None:
+    """``sort`` / ``reverse`` honour the library's format-preserving
+    ethos: the structural per-position indent stays at its position,
+    each entry's above-block comment travels with the entry. Earlier
+    code wholesale-restamped pads to a uniform indent on sort, which
+    was inconsistent with the inline-table sort behaviour and
+    discarded user-chosen layout."""
+    src = td("""
+        x = [
+            'z',
+          # comment
+              'a',
+           'm',
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc.array("x").sort()
-    expected = td("""
+    # Sorted order is a, m, z. Each entry lands at the per-position
+    # indent of its new slot (4, 6, 3 respectively). The
+    # ``# comment`` block sits above 'a' in the source and travels
+    # with 'a' to position 0 (keeping its 2-space comment indent).
+    assert tomlrt.dumps(doc) == td("""
         x = [
-              # comment
-              'a',
+          # comment
+            'a',
               'm',
-              'z',
+           'z',
         ]
         """)
-    assert tomlrt.dumps(doc) == expected
     doc = tomlrt.loads(src)
     doc.array("x").reverse()
-    expected_rev = td("""
+    # Reversed order is m, a, z. Each entry sits at its new
+    # position's indent; ``# comment`` still travels with 'a'.
+    assert tomlrt.dumps(doc) == td("""
         x = [
-              'm',
-              # comment
+            'm',
+          # comment
               'a',
-              'z',
+           'z',
         ]
         """)
-    assert tomlrt.dumps(doc) == expected_rev
 
 
 def test_array_sort_leading_comments_travel_with_items() -> None:

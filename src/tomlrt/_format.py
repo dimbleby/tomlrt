@@ -1005,13 +1005,87 @@ def remove_head_from_comma_value(
     ``header_trivia`` and reset ``items[0].leading``.
 
     Shared between :class:`tomlrt._array.Array`'s head-delete and
-    :mod:`tomlrt._inline_ops`'s ``_fix_head_after_delete``.
+    :mod:`tomlrt._inline_ops`'s delete machinery.
     """
     if not cv.items:
         return
     head_pad, _drop = split_above_block(cv.header_trivia)
     cv.header_trivia = join_above_block(head_pad, new_first_above)
     cv.items[0].leading = Trivia()
+
+
+def reorder_comma_value_owned(
+    cv: CommaValue[_CV_ItemT],
+    owned_positions: Sequence[int],
+    new_owned: Sequence[_CV_ItemT],
+    nl: str,
+    *,
+    is_multiline: bool,
+) -> None:
+    """Reorder ``owned_positions`` within ``cv.items`` in place.
+
+    Positional-preserve strategy shared by inline arrays (where every
+    position is owned) and inline tables (where the caller may be a
+    dotted-inner navigator with foreign entries interspersed). The
+    split between positional state (stays at the position) and
+    entry-attached state (travels with the entry) is:
+
+      * **Positional**: structural pad (the part of ``leading`` —
+        or ``header_trivia`` for position 0 — before any above-item
+        comment block), ``has_comma``, ``post_comma_trivia``,
+        ``trailing``.
+      * **Entry-attached**: above-item comment block, row-attached
+        EOL section.
+
+    ``owned_positions`` is a strictly ascending list of indices into
+    ``cv.items`` that are subject to reordering; non-owned positions
+    are left untouched. ``new_owned`` is the permutation: the entry
+    to place at each owned position, in the same order. Both lists
+    must have equal length, and ``new_owned`` must be a permutation
+    of ``cv.items[i]`` for ``i in owned_positions``.
+
+    Bracket trivia (``header_trivia`` / ``final_trivia``) is
+    untouched, so above-bracket comment blocks survive the reorder
+    at their structural position. No-op for fewer than two owned
+    positions.
+    """
+    if len(owned_positions) <= 1:
+        return
+    assert len(owned_positions) == len(new_owned)
+    items = cv.items
+    pos_state: dict[int, tuple[Trivia, bool, Trivia, Trivia]] = {}
+    above_by_entry: dict[int, Trivia] = {}
+    eol_by_entry: dict[int, Trivia] = {}
+    for i in owned_positions:
+        e = items[i]
+        src = cv.header_trivia if i == 0 else e.leading
+        pad, above = split_above_block(src)
+        eol_by_entry[id(e)] = _take_eol(e)
+        pos_state[i] = (pad, e.has_comma, e.post_comma_trivia, e.trailing)
+        above_by_entry[id(e)] = above
+
+    new_items = list(items)
+    for pos, e in zip(owned_positions, new_owned, strict=True):
+        new_items[pos] = e
+    items[:] = new_items
+
+    for pos in owned_positions:
+        e = items[pos]
+        pad, has_comma, post_rest, trail_rest = pos_state[pos]
+        e.has_comma = has_comma
+        e.post_comma_trivia = post_rest
+        e.trailing = trail_rest
+        _put_eol(e, eol_by_entry[id(e)])
+        above = above_by_entry[id(e)]
+        if pos == 0:
+            cv.header_trivia = join_above_block(pad, above)
+            e.leading = Trivia()
+        else:
+            e.leading = join_above_block(pad, above)
+    # Restore the one-row-break-per-row invariant: an EOL section
+    # ends in its own ``\n``, which would otherwise double up with
+    # the structural ``\n`` on the next position's pad.
+    _normalise_row_breaks(items, cv, nl, multiline=is_multiline)
 
 
 __all__ = [
@@ -1031,4 +1105,5 @@ __all__ = [
     "migrate_bracket_above",
     "remove_head_from_comma_value",
     "remove_tail_from_comma_value",
+    "reorder_comma_value_owned",
 ]

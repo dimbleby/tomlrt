@@ -17,7 +17,6 @@ Per-item trivia ownership (canonical model — see ``ArrayValue``):
 
 from __future__ import annotations
 
-import contextlib
 import sys
 from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, TypeVar
@@ -374,65 +373,3 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
     @override
     def __repr__(self) -> str:
         return repr({k: list(v) for k, v in self.items()})
-
-
-# ---------------------------------------------------------------------------
-# Reorder helpers — snapshot/clear/apply so reordering ops can move
-# comments along with their items without losing exact byte spelling.
-# ---------------------------------------------------------------------------
-
-
-def _raw_comment_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
-    return tuple(p.text for p in pieces if isinstance(p, CommentNode))
-
-
-def snapshot_comments(
-    arr: Array,
-) -> tuple[list[tuple[str, ...]], list[str | None]]:
-    """Return per-item (raw-leading-lines, raw-eol-text) snapshots."""
-    value = arr._value  # noqa: SLF001
-    items = value.items
-    leadings = [
-        _raw_comment_lines(list(_above_target(value, i).pieces))
-        for i in range(len(items))
-    ]
-    eols = [_raw_eol_text(items[i]) for i in range(len(items))]
-    return leadings, eols
-
-
-def clear_all_comments(arr: Array) -> None:
-    """Strip per-item comments from all items via the canonical deleters."""
-    n = len(arr._value.items)  # noqa: SLF001
-    leading = ArrayLeadingView(arr)
-    eol = ArrayEolView(arr)
-    for i in range(n):
-        leading._delete(i, allow_missing=True)  # noqa: SLF001
-        with contextlib.suppress(KeyError):
-            del eol[i]
-
-
-def apply_comments(
-    arr: Array,
-    leadings: list[tuple[str, ...]],
-    eols: list[str | None],
-) -> None:
-    """Re-apply per-item comments after a structural reorder.
-
-    Leadings are written before EOLs: setting an EOL strips the
-    structural NL from the next item's leading (or ``final_trivia``
-    for the last item), so writing leadings second would leave
-    above-blocks without an opening NL.
-    """
-    items = arr._value.items  # noqa: SLF001
-    n = len(items)
-    if any(eols) or any(leadings):
-        _ensure_multiline(arr)
-    nl = arr._doc_newline  # noqa: SLF001
-    ind = _slot_indent(arr)
-    for i in range(n):
-        if leadings[i]:
-            _set_above_pieces(arr._value, i, leadings[i], nl, ind)  # noqa: SLF001
-    for i in range(n):
-        eol_i = eols[i]
-        if eol_i is not None:
-            _set_eol_raw(arr, i, eol_i)
