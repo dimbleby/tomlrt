@@ -965,6 +965,28 @@ def test_array_set_leading_on_single_line_promotes_to_multiline() -> None:
     assert dict(re_arr.leading_comments) == {1: ("before two",)}
 
 
+def test_array_set_empty_leading_does_not_promote_to_multiline() -> None:
+    # Assigning an empty sequence means "no leading comments" — a
+    # semantic delete-if-present. Earlier code unconditionally called
+    # _ensure_multiline before the empty-check, so this used to
+    # silently restamp a single-line array as multi-line.
+    doc = tomlrt.loads("arr = [1, 2, 3]\n")
+    arr = doc.array("arr")
+    arr.leading_comments[0] = ()
+    assert tomlrt.dumps(doc) == "arr = [1, 2, 3]\n"
+    # And the same on a multi-line array — should be a no-op when the
+    # item had no leading comments to begin with.
+    src = td("""
+        arr = [
+            1,
+            2,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("arr").leading_comments[0] = ()
+    assert tomlrt.dumps(doc) == src
+
+
 def test_array_set_leading_on_first_item() -> None:
     doc = tomlrt.loads("arr = [1, 2, 3]\n")
     arr = doc.array("arr")
