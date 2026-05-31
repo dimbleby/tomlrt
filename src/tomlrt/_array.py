@@ -17,6 +17,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
 from copy import deepcopy
+from dataclasses import dataclass
 
 from tomlrt import _layout_ops
 from tomlrt._array_comments import (
@@ -665,23 +666,14 @@ class Array(list[Any]):
 # ---------------------------------------------------------------------------
 
 
+@dataclass(slots=True, frozen=True)
 class _ArrayStyle:
     """Inferred separator + trailing-comma policy for an Array."""
 
-    __slots__ = ("inter_separator", "is_multiline", "trailing_comma", "trailing_post")
-
-    def __init__(
-        self,
-        *,
-        is_multiline: bool,
-        inter_separator: Trivia,
-        trailing_comma: bool,
-        trailing_post: Trivia,
-    ) -> None:
-        self.is_multiline = is_multiline
-        self.inter_separator = inter_separator
-        self.trailing_comma = trailing_comma
-        self.trailing_post = trailing_post
+    is_multiline: bool
+    inter_separator: Trivia
+    trailing_comma: bool
+    trailing_post: Trivia
 
 
 def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArrayStyle:
