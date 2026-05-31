@@ -8,7 +8,7 @@ help:
 	@echo "  make test         # run the test suite (excludes slow/fuzz)"
 	@echo "  make fuzz         # run the slow property-based suite"
 	@echo "  make coverage     # tests + branch coverage"
-	@echo "  make lint         # ruff check + mypy --strict"
+	@echo "  make lint         # formatting, typechecking, etc"
 	@echo "  make docs         # build the MkDocs site (strict)"
 	@echo "  make docs-serve   # preview the docs locally"
 	@echo "  make bench        # run the parse-throughput benchmark"
