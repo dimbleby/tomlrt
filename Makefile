@@ -27,7 +27,7 @@ coverage:
 	pytest --cov
 
 .PHONY: lint
-lint: fmt ruff mypy
+lint: fmt ruff ty mypy
 
 .PHONY: fmt
 fmt:
@@ -36,6 +36,10 @@ fmt:
 .PHONY: ruff
 ruff:
 	ruff check .
+
+.PHONY: ty
+ty:
+	ty check
 
 .PHONY: mypy
 mypy:

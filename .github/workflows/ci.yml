@@ -69,6 +69,9 @@ jobs:
       - name: ruff format
         run: ruff format --check .
 
+      - name: ty check
+        run: uvx ty check
+
       - name: Vendor toml-test corpus
         run: git clone --depth 1 https://github.com/toml-lang/toml-test vendor/toml-test
 
