@@ -410,7 +410,6 @@ def _compose_pad(
     return Trivia(pieces)
 
 
-
 def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
     """Bracket-inner padding for a single-line inline value.
 
