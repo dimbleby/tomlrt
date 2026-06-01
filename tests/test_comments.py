@@ -1012,6 +1012,51 @@ def test_array_delete_eol_comment() -> None:
     assert list(re.array("arr")) == [1, 2]
 
 
+def test_array_delete_eol_on_multiline_last_item_no_comma_keeps_break() -> None:
+    """Deleting an EOL on the last item of a multi-line, no-trailing-comma
+    array must keep the structural newline before ``]``.
+
+    Regression: the restore-downstream-NL pass was gated on
+    ``item.has_comma``, so for the no-comma terminal item the
+    structural NL the deleted EOL had been providing was simply
+    dropped — the closing bracket collapsed onto the value's line.
+    """
+    doc = tomlrt.loads(
+        td("""
+        a = [
+            1 # hi
+        ]
+        """)
+    )
+    arr = doc.array("a")
+    del arr.comments[0]
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1
+        ]
+        """)
+
+
+def test_array_delete_eol_on_multiline_last_item_no_comma_multi_item() -> None:
+    """Same fix for a multi-item array whose last item lacks a comma."""
+    doc = tomlrt.loads(
+        td("""
+        a = [
+            1, # one
+            2 # two
+        ]
+        """)
+    )
+    arr = doc.array("a")
+    del arr.comments[1]
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1, # one
+            2
+        ]
+        """)
+
+
 def test_array_set_leading_on_single_line_promotes_to_multiline() -> None:
     doc = tomlrt.loads("arr = [1, 2, 3]\n")
     arr = doc.array("arr")

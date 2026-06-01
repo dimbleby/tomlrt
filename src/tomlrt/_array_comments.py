@@ -236,11 +236,10 @@ class ArrayEolView(_ArrayIntKeyedView[str]):
         if not eol.pieces:
             raise KeyError(key)
         target.pieces = list(rest.pieces)
-        if not item.has_comma:
-            return
         # Canonical model inverse: restore the structural NL onto the
-        # next item's leading (or final_trivia for the last) so the
-        # closing layout still has its row break.
+        # next item's leading (for has-comma non-tail items) or
+        # final_trivia (for the tail item, with or without comma) so
+        # the closing layout still has its row break.
         value = self._arr._value  # noqa: SLF001
         nxt = items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
         nl = self._arr._doc_newline  # noqa: SLF001
