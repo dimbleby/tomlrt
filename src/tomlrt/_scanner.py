@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Final
 from tomlrt._errors import TOMLParseError
 from tomlrt._trivia import (
     CommentNode,
+    EolTrivia,
     NewlineNode,
     Trivia,
     WhitespaceNode,
@@ -329,9 +330,7 @@ class _Scanner:
         self.pos = pos
         return trivia
 
-    def scan_eol(
-        self,
-    ) -> tuple[WhitespaceNode | None, CommentNode | None, NewlineNode | None]:
+    def scan_eol(self) -> EolTrivia:
         """Consume optional trailing-ws + comment + newline (or EOF).
 
         Raises if a non-newline, non-comment, non-EOF character is
@@ -359,7 +358,7 @@ class _Scanner:
         elif pos < end:
             msg = f"expected newline or end of file, got {ch!r}"
             raise self.error(msg)
-        return trailing, comment, newline
+        return EolTrivia(trailing, comment, newline)
 
     # ------------------------------------------------------------------
     # Strings

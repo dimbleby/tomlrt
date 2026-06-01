@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 from tomlrt._scanner import _Scanner
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import EolTrivia, Trivia, split_eol_section
+from tomlrt._trivia import Trivia, split_eol_section
 from tomlrt._validator import _Validator
 from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
 
@@ -128,7 +128,7 @@ class _Parser:
                 raise sc.error(msg)
             sc.advance(1)
 
-        trailing_ws, comment, newline = sc.scan_eol()
+        eol = sc.scan_eol()
         path = tuple([p.value for p in key_parts])
         new_entry = self._validator.enter_header(path, kind, at=sc.pos)
         owner = self._validator.current_owner_aot_entry()
@@ -140,7 +140,7 @@ class _Parser:
             key_seps=key_seps,
             inner_pre=inner_pre,
             inner_post=inner_post,
-            eol=EolTrivia(trailing_ws, comment, newline),
+            eol=eol,
             owner_aot_entry=owner,
             entry=new_entry,
             synthetic=False,
@@ -186,7 +186,7 @@ class _Parser:
         sc.pos = pos + 1
         post_eq = sc.scan_inline_ws_text()
         value = self._parse_value()
-        trailing_ws, comment, newline = sc.scan_eol()
+        eol = sc.scan_eol()
 
         key_path = tuple([p.value for p in key_parts])
         self._validator.record_keyvalue(key_path, value, at=sc.pos)
@@ -200,7 +200,7 @@ class _Parser:
             pre_eq=pre_eq,
             post_eq=post_eq,
             value=value,
-            eol=EolTrivia(trailing_ws, comment, newline),
+            eol=eol,
             owner_aot_entry=owner,
             key=key_path,
         )
