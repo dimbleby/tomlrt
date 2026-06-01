@@ -50,12 +50,16 @@ def _synth_big_aot(rows: int) -> str:
     """Stress array-of-tables parsing: `rows` `[[items]]` entries."""
     lines = []
     for i in range(rows):
-        lines.append("[[items]]\n")
-        lines.append(f'name = "item-{i}"\n')
-        lines.append(f"value = {i}\n")
-        lines.append(f"flag = {'true' if i % 2 == 0 else 'false'}\n")
-        lines.append(f'tags = ["a", "b", "c-{i % 17}"]\n')
-        lines.append("\n")
+        lines.extend(
+            (
+                "[[items]]\n",
+                f'name = "item-{i}"\n',
+                f"value = {i}\n",
+                f"flag = {'true' if i % 2 == 0 else 'false'}\n",
+                f'tags = ["a", "b", "c-{i % 17}"]\n',
+                "\n",
+            )
+        )
     return "".join(lines)
 
 

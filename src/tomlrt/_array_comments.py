@@ -258,9 +258,7 @@ def _render_above_block(
     """
     out: list[TriviaPiece] = []
     for raw in raw_lines:
-        out.append(WhitespaceNode(ind))
-        out.append(CommentNode(raw))
-        out.append(NewlineNode(nl))
+        out.extend((WhitespaceNode(ind), CommentNode(raw), NewlineNode(nl)))
     return out
 
 
