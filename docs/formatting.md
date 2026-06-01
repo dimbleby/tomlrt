@@ -1,7 +1,7 @@
 # Formatting documents
 
 `tomlrt` is format-preserving by design: parsing and dumping a document
-returns exactly the same bytes. When you want to *opt in* to canonical
+returns exactly the same bytes. When you want to _opt in_ to canonical
 formatting — for a single value, a section, or the whole document —
 call `format()`.
 
@@ -45,7 +45,7 @@ x = { a = 1, b = 2 }
 - **Header brackets**: `[  a . b  ]` → `[a.b]`.
 - **Inline arrays and inline tables**: spacing collapses to the
   canonical form (`[1, 2, 3]`, `{ x = 1, y = 2 }`). The array's
-  overall *shape* is preserved — a multi-line array stays multi-line,
+  overall _shape_ is preserved — a multi-line array stays multi-line,
   and a single-line array stays single-line.
 - **Blank lines between sibling KVs** collapse to none.
 - **Blank lines before structural section / array-of-tables headers**
@@ -72,16 +72,14 @@ When `comments=True` (the default), every comment reached by the walk
 is rewritten so that there is exactly one space between `#` and the
 body, and any trailing whitespace inside the comment is stripped:
 
-| Before | After |
-|--------|-------|
-| `#foo` | `# foo` |
-| `#   foo` | `# foo` |
-| `# foo   ` | `# foo` |
-| `#` (empty) | `#` |
+| Before      | After   |
+| ----------- | ------- |
+| `#foo`      | `# foo` |
+| `#   foo`   | `# foo` |
+| `# foo   `  | `# foo` |
+| `#` (empty) | `#`     |
 
-Pass `comments=False` to leave comment text untouched. (Trailing
-whitespace on otherwise-blank lines is still cleaned up — that is a
-formatting fix, not a comment fix.)
+Pass `comments=False` to leave comment text untouched.
 
 ## Detached views
 
@@ -89,6 +87,3 @@ formatting fix, not a comment fix.)
 from a parsed or built `Document`. Calling it on a detached
 `Table.section()` or `Table.inline()` factory raises `TOMLError`:
 there is no document to canonicalise against.
-
-A nested inline `Table` value reached from inside a parsed document
-*is* attached and can be formatted.
