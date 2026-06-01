@@ -2222,6 +2222,74 @@ def test_aot_append_adopts_sibling_kv_indent() -> None:
         """)
 
 
+def test_aot_insert_negative_index_matches_list_semantics() -> None:
+    """``AoT.insert(-1, x)`` inserts BEFORE the last entry, like ``list``.
+
+    Regression: ``insert`` appended the new entry first and then
+    normalised a negative index against the post-append length, landing
+    one slot too high. ``insert(-1, x)`` was silently equivalent to
+    ``append(x)``.
+    """
+    src = td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 3
+        """)
+    doc = tomlrt.loads(src)
+    new = tomlrt.Table()
+    new["x"] = 99
+    doc.aot("a").insert(-1, new)
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 99
+
+        [[a]]
+        x = 3
+        """)
+
+
+def test_aot_insert_negative_two_matches_list_semantics() -> None:
+    """``insert(-2, x)`` lands one slot earlier than ``insert(-1, x)``."""
+    src = td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 3
+        """)
+    doc = tomlrt.loads(src)
+    new = tomlrt.Table()
+    new["x"] = 99
+    doc.aot("a").insert(-2, new)
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 99
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 3
+        """)
+
+
 def test_aot_insert_at_zero_adopts_sibling_kv_indent() -> None:
     """Insert at index 0 also adopts the sibling KV indent."""
     src = td("""
