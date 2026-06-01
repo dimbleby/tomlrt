@@ -4551,3 +4551,26 @@ def test_demote_synthetic_placeholder_transfers_preamble() -> None:
     assert tomlrt.dumps(doc) == (
         "# preamble comment\n[existing]\nx = 1\n\n\n[tool.sub]\nk = 1\n"
     )
+
+
+def test_demote_synthetic_placeholder_clears_stale_body_tail() -> None:
+    """After a synthetic empty placeholder is demoted, subsequent direct
+    KV appends on the (now-implicit) parent must reach the doc stream.
+
+    Regression: demote left ``parent._body_tail`` pointing at the
+    demoted, doc-unlinked header. The next ``parent[k] = scalar`` then
+    spliced the new KV after a detached slot, so it never appeared in
+    the rendered output even though the dict held it.
+    """
+    doc = tomlrt.loads("")
+    doc["tool"] = Table.section({"a": 1})
+    del doc["tool"]["a"]
+    doc["tool"]["poetry"] = tomlrt.AoT([{"x": 1}])
+    doc["tool"]["q"] = 99
+    assert tomlrt.dumps(doc) == td("""
+        [tool]
+        q = 99
+
+        [[tool.poetry]]
+        x = 1
+        """)

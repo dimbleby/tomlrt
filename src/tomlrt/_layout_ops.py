@@ -1602,6 +1602,7 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
             *successor.leading.pieces,
         ]
     parent._header_ref = None  # noqa: SLF001
+    parent._body_tail = None  # noqa: SLF001
     parent._refs = [r for r in parent._refs if r is not hdr_ref]  # noqa: SLF001
     # Also clear it from any prefix container's _refs / _index.
     grand: Container | None = parent._parent  # noqa: SLF001
