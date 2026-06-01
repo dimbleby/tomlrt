@@ -72,12 +72,12 @@ When `comments=True` (the default), every comment reached by the walk
 is rewritten so that there is exactly one space between `#` and the
 body, and any trailing whitespace inside the comment is stripped:
 
-| Before      | After   |
-| ----------- | ------- |
-| `#foo`      | `# foo` |
-| `#   foo`   | `# foo` |
-| `# foo   `  | `# foo` |
-| `#` (empty) | `#`     |
+| Before | After |
+|--------|-------|
+| <code style="white-space: pre">#foo</code> | <code style="white-space: pre"># foo</code> |
+| <code style="white-space: pre">#   foo</code> | <code style="white-space: pre"># foo</code> |
+| <code style="white-space: pre"># foo   </code> | <code style="white-space: pre"># foo</code> |
+| <code style="white-space: pre">#</code> (empty) | <code style="white-space: pre">#</code> |
 
 Pass `comments=False` to leave comment text untouched.
 
