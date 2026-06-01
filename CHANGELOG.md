@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Assorted mutation, comment, and scanner edge-case fixes.
+
 ## [1.7.1] - 2026-05-31
 
 ### Fixed
