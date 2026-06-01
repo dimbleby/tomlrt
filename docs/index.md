@@ -29,5 +29,7 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 - [Editing documents](editing.md) — dotted-path mutation, structural
   assignment, live views, layout control.
 - [Comments](comments.md) — the comment API.
+- [Formatting](formatting.md) — opt-in canonical formatting for values,
+  sections, or whole documents.
 - [Errors](errors.md) — exception types.
 - [API reference](api.md) — full public surface.
