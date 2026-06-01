@@ -1601,21 +1601,14 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
             *header.leading.pieces,
             *successor.leading.pieces,
         ]
-    parent._header_ref = None  # noqa: SLF001
     parent._body_tail = None  # noqa: SLF001
-    parent._refs = [r for r in parent._refs if r is not hdr_ref]  # noqa: SLF001
-    # Also clear it from any prefix container's _refs / _index.
-    grand: Container | None = parent._parent  # noqa: SLF001
-    while grand is not None:
-        kept = [r for r in grand._refs if r.slot is not header]  # noqa: SLF001
-        if len(kept) != len(grand._refs):  # noqa: SLF001
-            grand._refs = kept  # noqa: SLF001
-            new_index: dict[str, list[SlotRef]] = {}
-            for r in kept:
-                if r.local_key is not None:
-                    new_index.setdefault(r.local_key, []).append(r)
-            grand._index = new_index  # noqa: SLF001
-        grand = grand._parent  # noqa: SLF001
+    # Canonical bulk-scrub via the header's back-pointer list: drops
+    # ``hdr_ref`` from ``parent._refs`` (and clears ``parent._header_ref``
+    # as a side effect of ``unfile_ref``'s own-header branch), drops the
+    # binding refs from every ancestor's ``_refs`` / ``_index``, and
+    # empties ``header._refs`` itself so the orphaned slot leaves no
+    # stale back-pointers behind.
+    _scrub_owned_slots_via_backptrs([header])
     # Owner aot-entry, if any, also drops it.
     owner = header.owner_aot_entry
     if owner is not None:

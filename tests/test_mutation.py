@@ -4574,3 +4574,45 @@ def test_demote_synthetic_placeholder_clears_stale_body_tail() -> None:
         [[tool.poetry]]
         x = 1
         """)
+
+
+def test_demote_synthetic_placeholder_then_reassign_parent() -> None:
+    """Demote then ``doc[parent] = ...`` round-trips the new value.
+
+    Exercises the cleanup path after a demote: replacing the parent key
+    must scrub the surviving descendants and rewrite the slot stream
+    without tripping over any residual bookkeeping left by the demoted
+    header.
+    """
+    doc = tomlrt.loads("")
+    doc["tool"] = Table.section({})
+    doc["tool"]["poetry"] = tomlrt.AoT([{"x": 1}])
+    doc["tool"] = Table.section({"y": 2})
+    assert tomlrt.dumps(doc) == td("""
+        [tool]
+        y = 2
+        """)
+
+
+def test_demote_synthetic_placeholder_then_sort_aot() -> None:
+    """Sorting the AoT that triggered the demote round-trips cleanly.
+
+    AoT sort drives ``_scrub_owned_slots_via_backptrs`` over each
+    entry's slots. The demoted header is not in any entry's slot set,
+    but exercising the sort post-demote pins that the cleanup paths
+    operate on a self-consistent slot graph.
+    """
+    doc = tomlrt.loads("")
+    doc["tool"] = Table.section({})
+    doc["tool"]["poetry"] = tomlrt.AoT([{"x": 2}, {"x": 1}, {"x": 3}])
+    doc.aot("tool.poetry").sort(key=lambda t: int(t["x"]))
+    assert tomlrt.dumps(doc) == td("""
+        [[tool.poetry]]
+        x = 1
+
+        [[tool.poetry]]
+        x = 2
+
+        [[tool.poetry]]
+        x = 3
+        """)
