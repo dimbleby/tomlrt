@@ -269,8 +269,7 @@ def _write_leading_block(
             new_pieces.append(NewlineNode(nl))
         else:
             new_pieces.extend(indent)
-            new_pieces.append(CommentNode(_encode_comment(entry)))
-            new_pieces.append(NewlineNode(nl))
+            new_pieces.extend((CommentNode(_encode_comment(entry)), NewlineNode(nl)))
     new_pieces.extend(indent)
     slot.leading.pieces = new_pieces
 
@@ -532,8 +531,7 @@ def _set_attached_block(leading: Trivia, comments: tuple[str, ...], nl: str) -> 
     new_pieces: list[TriviaPiece] = []
     for c in comments:
         new_pieces.extend(indent)
-        new_pieces.append(CommentNode(_encode_comment(c)))
-        new_pieces.append(NewlineNode(nl))
+        new_pieces.extend((CommentNode(_encode_comment(c)), NewlineNode(nl)))
     new_pieces.extend(indent)
     leading.pieces = [*kept, *new_pieces]
 
@@ -565,8 +563,7 @@ def _doc_preamble_set(doc: Document, value: tuple[str, ...]) -> None:
         return
     pieces: list[TriviaPiece] = []
     for c in comments:
-        pieces.append(CommentNode(_encode_comment(c)))
-        pieces.append(NewlineNode(nl))
+        pieces.extend((CommentNode(_encode_comment(c)), NewlineNode(nl)))
     # Append a blank-line separator before the first slot.
     if doc._head is not None:  # noqa: SLF001
         pieces.append(NewlineNode(nl))
@@ -585,8 +582,7 @@ def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
     nl = doc._newline  # noqa: SLF001
     new_pieces: list[TriviaPiece] = []
     for c in comments:
-        new_pieces.append(CommentNode(_encode_comment(c)))
-        new_pieces.append(NewlineNode(nl))
+        new_pieces.extend((CommentNode(_encode_comment(c)), NewlineNode(nl)))
     doc._trailing.pieces = new_pieces  # noqa: SLF001
 
 
