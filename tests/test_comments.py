@@ -925,6 +925,51 @@ def test_array_set_eol_on_last_item_with_trailing_comma() -> None:
     assert dict(re_arr.comments) == {1: "second"}
 
 
+def test_array_set_eol_on_multiline_last_item_no_comma_no_blank_line() -> None:
+    """Setting an EOL on the last item of a multi-line, no-trailing-comma
+    array must not leak a blank line before ``]``.
+
+    Regression: the strip-downstream-NL pass was gated on
+    ``item.has_comma``, so for the no-comma terminal item the
+    structural NL in ``value.final_trivia`` was left in place, ending
+    up alongside the synthesised EOL's own NL.
+    """
+    doc = tomlrt.loads(
+        td("""
+        a = [
+            1
+        ]
+        """)
+    )
+    arr = doc.array("a")
+    arr.comments[0] = "hi"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1 # hi
+        ]
+        """)
+
+
+def test_array_set_eol_on_multiline_last_item_no_comma_multi_item() -> None:
+    """Same fix for a multi-item array whose last item lacks a comma."""
+    doc = tomlrt.loads(
+        td("""
+        a = [
+            1,
+            2
+        ]
+        """)
+    )
+    arr = doc.array("a")
+    arr.comments[1] = "two"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1,
+            2 # two
+        ]
+        """)
+
+
 def test_array_replace_existing_eol_comment() -> None:
     doc = tomlrt.loads(
         td("""

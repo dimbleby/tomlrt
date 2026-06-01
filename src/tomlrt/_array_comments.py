@@ -164,17 +164,24 @@ class _ArrayIntKeyedView(MutableMapping[int, _T]):
 def _set_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
     """Stamp a raw (already-encoded) EOL comment onto item ``idx``.
 
-    Maintains the canonical-model invariant that, when the item bears
-    a comma, the structural newline lives on the *next* item's
-    ``leading`` (or on ``final_trivia`` for the last item). Adding an
-    EOL section carries its own newline, so the downstream NL is
-    stripped to avoid duplication.
+    The synthesised EOL section ends with its own newline, so the
+    structural newline that previously terminated the item's line must
+    be removed to avoid duplication. That structural newline lives in
+    one of three places, depending on layout:
+
+    * inside ``target`` (the item's ``post_comma_trivia`` for
+      has-comma items, or ``trailing`` for no-comma items) — handled
+      by the ``rest`` strip below;
+    * on the next item's ``leading`` — has-comma, non-tail item;
+    * in the value's ``final_trivia`` — tail item (with or without
+      a trailing comma).
     """
     items = arr._value.items  # noqa: SLF001
     item = items[idx]
     nl = arr._doc_newline  # noqa: SLF001
     target = _eol_target(item)
     existing_eol, rest = split_eol_section(target)
+    stripped = False
     if (
         not existing_eol.pieces
         and rest.pieces
@@ -183,13 +190,14 @@ def _set_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
         # Replace the structural newline; our synthesised EOL
         # provides its own.
         rest = Trivia(list(rest.pieces[1:]))
+        stripped = True
     new_eol: list[TriviaPiece] = [
         WhitespaceNode(" "),
         CommentNode(raw_text),
         NewlineNode(nl),
     ]
     target.pieces = [*new_eol, *rest.pieces]
-    if item.has_comma and not existing_eol.pieces:
+    if not existing_eol.pieces and not stripped:
         value = arr._value  # noqa: SLF001
         nxt = items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
         if nxt.pieces and isinstance(nxt.pieces[0], NewlineNode):
