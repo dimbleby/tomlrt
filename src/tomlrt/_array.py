@@ -851,7 +851,7 @@ class AoT(list["Table"]):
         _layout_ops.renormalise_aot_order(self, new_order)
 
     @override
-    def sort(  # type: ignore[override]  # ty: ignore[invalid-method-override]
+    def sort(  # type: ignore[override]
         self,
         *,
         key: Callable[[Table], SupportsRichComparison],
