@@ -757,10 +757,13 @@ class _Scanner:
     @staticmethod
     def _looks_like_datetime(token: str) -> bool:
         # Date: ``YYYY-MM-DD``; local time: ``HH:MM:SS``; datetime
-        # contains both and is detected via the date head.
-        if len(token) >= 5 and token[4] == "-" and token[:4].isdigit():
+        # contains both and is detected via the date head. The grammar
+        # restricts every digit position to ASCII 0-9; ``str.isdigit``
+        # also accepts other Unicode decimal digits, so use the strict
+        # ASCII check.
+        if len(token) >= 5 and token[4] == "-" and _is_ascii_digits(token[:4]):
             return True
-        return bool(len(token) >= 3 and token[2] == ":" and token[:2].isdigit())
+        return bool(len(token) >= 3 and token[2] == ":" and _is_ascii_digits(token[:2]))
 
     @staticmethod
     def _looks_like_float(token: str) -> bool:
@@ -889,7 +892,7 @@ class _Scanner:
             and pos < len(src)
             and src[pos] == " "
             and pos + 3 < len(src)
-            and src[pos + 1].isdigit()
+            and src[pos + 1] in _DEC_DIGITS
             and src[pos + 3] == ":"
         ):
             pos += 1
@@ -920,11 +923,16 @@ class _Scanner:
             msg = f"invalid date/datetime {text!r}"
             raise self.error(msg, at=at)
         date_part = text[:10]
+        year_s, month_s, day_s = date_part[:4], date_part[5:7], date_part[8:10]
+        if not (
+            _is_ascii_digits(year_s)
+            and _is_ascii_digits(month_s)
+            and _is_ascii_digits(day_s)
+        ):
+            msg = f"invalid date {date_part!r}"
+            raise self.error(msg, at=at)
         try:
-            year = int(date_part[:4])
-            month = int(date_part[5:7])
-            day = int(date_part[8:10])
-            d = date(year, month, day)
+            d = date(int(year_s), int(month_s), int(day_s))
         except ValueError as exc:
             msg = f"invalid date {date_part!r}: {exc}"
             raise self.error(msg, at=at) from exc
@@ -963,8 +971,12 @@ class _Scanner:
         if len(text) < 5 or text[2] != ":":
             msg = f"bad time format: {text!r}"
             raise ValueError(msg)
-        hh = int(text[:2])
-        mm = int(text[3:5])
+        hh_s, mm_s = text[:2], text[3:5]
+        if not (_is_ascii_digits(hh_s) and _is_ascii_digits(mm_s)):
+            msg = f"bad time format: {text!r}"
+            raise ValueError(msg)
+        hh = int(hh_s)
+        mm = int(mm_s)
         rest = text[5:]
         if not rest:
             return time(hh, mm, 0, 0)
@@ -974,7 +986,11 @@ class _Scanner:
         if len(rest) < 3:
             msg = f"bad seconds in {text!r}"
             raise ValueError(msg)
-        ss = int(rest[1:3])
+        ss_s = rest[1:3]
+        if not _is_ascii_digits(ss_s):
+            msg = f"bad seconds in {text!r}"
+            raise ValueError(msg)
+        ss = int(ss_s)
         rest = rest[3:]
         usec = 0
         if rest:
@@ -982,7 +998,7 @@ class _Scanner:
                 msg = f"bad fractional seconds in {text!r}"
                 raise ValueError(msg)
             frac = rest[1:]
-            if not frac or not frac.isdigit():
+            if not frac or not _is_ascii_digits(frac):
                 msg = f"bad fractional seconds in {text!r}"
                 raise ValueError(msg)
             digits = (frac + "000000")[:6]
@@ -996,9 +1012,13 @@ class _Scanner:
         if len(text) != 6 or text[0] not in "+-" or text[3] != ":":
             msg = f"bad timezone offset: {text!r}"
             raise ValueError(msg)
+        hh_s, mm_s = text[1:3], text[4:6]
+        if not (_is_ascii_digits(hh_s) and _is_ascii_digits(mm_s)):
+            msg = f"bad timezone offset: {text!r}"
+            raise ValueError(msg)
         sign = 1 if text[0] == "+" else -1
-        hh = int(text[1:3])
-        mm = int(text[4:6])
+        hh = int(hh_s)
+        mm = int(mm_s)
         if hh > 23 or mm > 59:
             msg = f"timezone offset out of range: {text!r}"
             raise ValueError(msg)
