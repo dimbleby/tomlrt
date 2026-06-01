@@ -294,6 +294,20 @@ def test_datetime_values() -> None:
         "t = 12:30:00.\n",
         # Control character U+007F is not allowed in basic strings.
         's = "ab\x7fcd"\n',
+        # TOML grammar restricts every digit position in date/time
+        # literals to ASCII 0-9. ``str.isdigit`` and bare ``int``
+        # accept other Unicode decimal digits (Arabic-Indic,
+        # Devanagari, ...) — they must be rejected.
+        "a = \u0662\u0660\u0662\u0664-01-01\n",  # Arabic-Indic year
+        "a = 2024-\u0660\u0661-01\n",  # Arabic-Indic month
+        "a = 2024-01-\u0660\u0661\n",  # Arabic-Indic day
+        "a = \u0660\u0660:00:00\n",  # Arabic-Indic hour
+        "a = 00:\u0660\u0660:00\n",  # Arabic-Indic minute
+        "a = 00:00:\u0660\u0660\n",  # Arabic-Indic second
+        "a = 00:00:00.\u0660\u0660\u0660\n",  # Arabic-Indic fraction
+        "a = 2024-01-01T00:00:00+\u0660\u0661:00\n",  # offset hour
+        "a = 2024-01-01T00:00:00+01:\u0660\u0660\n",  # offset minute
+        "a = 2024-01-01 \u0660\u0660:00:00\n",  # space-separator look-ahead
     ],
 )
 def test_parse_errors(src: str) -> None:
