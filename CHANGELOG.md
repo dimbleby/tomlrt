@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Array.extend(arr)` / `AoT.extend(aot)` (and the corresponding `+=`
+  forms) no longer hang when extending a sequence with itself.
+- A failed out-of-range `Array.comments[i] = ...` no longer silently
+  promotes a single-line array to multi-line form.
+
 ## [1.7.2] - 2026-06-01
 
 ### Fixed
