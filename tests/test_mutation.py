@@ -491,6 +491,29 @@ def test_array_extend_iadd() -> None:
     assert _reparses(out) == {"xs": [1, 2, 3, 4]}
 
 
+def test_array_extend_self_duplicates_once() -> None:
+    """``arr.extend(arr)`` matches list semantics: duplicate once, no hang.
+
+    Regression: the implementation iterated ``values`` while appending to
+    ``self``. When ``values is self`` the iteration kept seeing the
+    just-appended items and never terminated.
+    """
+    doc = tomlrt.loads("xs = [1, 2]\n")
+    xs = doc.array("xs")
+    xs.extend(xs)
+    assert list(xs) == [1, 2, 1, 2]
+    assert tomlrt.dumps(doc) == "xs = [1, 2, 1, 2]\n"
+
+
+def test_array_iadd_self_duplicates_once() -> None:
+    """``arr += arr`` matches list semantics: duplicate once, no hang."""
+    doc = tomlrt.loads("xs = [1, 2]\n")
+    xs = doc.array("xs")
+    xs += xs
+    assert list(xs) == [1, 2, 1, 2]
+    assert tomlrt.dumps(doc) == "xs = [1, 2, 1, 2]\n"
+
+
 def test_array_sort_reverse() -> None:
     doc = tomlrt.loads("xs = [3, 1, 2]\n")
     xs = doc.array("xs")
@@ -2288,6 +2311,43 @@ def test_aot_insert_negative_two_matches_list_semantics() -> None:
         [[a]]
         x = 3
         """)
+
+
+def test_aot_extend_self_duplicates_once() -> None:
+    """``aot.extend(aot)`` matches list semantics: duplicate once, no hang.
+
+    Regression: the implementation iterated ``values`` while appending
+    to ``self``. When ``values is self`` the iteration kept seeing the
+    just-appended entries and never terminated.
+    """
+    src = td("""
+        [[t]]
+        a = 1
+
+        [[t]]
+        a = 2
+        """)
+    doc = tomlrt.loads(src)
+    aot = doc.aot("t")
+    aot.extend(aot)
+    assert len(aot) == 4
+    assert [t["a"] for t in aot] == [1, 2, 1, 2]
+
+
+def test_aot_iadd_self_duplicates_once() -> None:
+    """``aot += aot`` matches list semantics: duplicate once, no hang."""
+    src = td("""
+        [[t]]
+        a = 1
+
+        [[t]]
+        a = 2
+        """)
+    doc = tomlrt.loads(src)
+    aot = doc.aot("t")
+    aot += aot
+    assert len(aot) == 4
+    assert [t["a"] for t in aot] == [1, 2, 1, 2]
 
 
 def test_aot_insert_at_zero_adopts_sibling_kv_indent() -> None:

@@ -332,7 +332,10 @@ class Array(list[Any]):
 
     @override
     def extend(self, values: Iterable[Any]) -> None:
-        for v in values:
+        # Snapshot first so ``arr.extend(arr)`` (and ``arr += arr``)
+        # match list semantics — duplicate once — rather than
+        # iterating forever as ``self`` grows.
+        for v in list(values):
             self.append(v)
 
     @override
@@ -809,7 +812,10 @@ class AoT(list["Table"]):
 
     @override
     def extend(self, values: Iterable[Table | Mapping[str, TomlInput]]) -> None:
-        for v in values:
+        # Snapshot first so ``aot.extend(aot)`` (and ``aot += aot``)
+        # match list semantics — duplicate once — rather than
+        # iterating forever as ``self`` grows.
+        for v in list(values):
             self.append(v)
 
     @override
