@@ -1210,6 +1210,21 @@ def test_array_comments_out_of_range_raises() -> None:
         del arr.comments[5]
 
 
+def test_array_eol_setitem_out_of_range_does_not_promote_to_multiline() -> None:
+    """A failed EOL assignment must not promote a single-line array.
+
+    Regression: ``ArrayEolView.__setitem__`` called ``_ensure_multiline``
+    before validating the index, so an out-of-range key raised
+    ``KeyError`` *but* still left the array reformatted into multi-line
+    form — a silent round-trip break behind a failed operation.
+    """
+    doc = tomlrt.loads("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(KeyError):
+        arr.comments[5] = "oops"
+    assert tomlrt.dumps(doc) == "xs = [1, 2]\n"
+
+
 def test_array_comment_with_hash_prefix_round_trips() -> None:
     doc = tomlrt.loads("arr = [1, 2]\n")
     arr = doc.array("arr")

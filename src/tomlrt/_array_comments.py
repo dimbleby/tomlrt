@@ -222,8 +222,11 @@ class ArrayEolView(_ArrayIntKeyedView[str]):
     @override
     def __setitem__(self, key: int, value: str) -> None:
         _validate_comment_str(value, "comment text")
-        _ensure_multiline(self._arr)
+        # Validate the index before any structural change: an
+        # out-of-range key must not leave a partially-promoted
+        # single-line array in multi-line form.
         idx = _check_index(self._arr, key)
+        _ensure_multiline(self._arr)
         _set_eol_raw(self._arr, idx, _encode_comment(value))
 
     @override
