@@ -275,6 +275,67 @@ def test_inline_table_rejects_aot_value() -> None:
         obj["bad"] = tomlrt.AoT()
 
 
+def test_inline_replacement_of_out_of_order_subtable() -> None:
+    """Replacing an out-of-order subsection with an inline value must
+    keep the new KV inside its parent's body region.
+
+    ``[foo.bar]`` precedes ``[foo]`` in the source, so the existing
+    primary slot for ``foo['bar']`` sits before ``[foo]``'s own
+    header. Repositioning the synthesised inline KV onto that anchor
+    would land it at top level, silently re-parenting ``bar`` out of
+    ``foo``. The structural-overwrite path must detect this and fall
+    back to delete + reinsert at ``[foo]``'s body tail.
+    """
+    src = td("""
+        [foo.bar]
+        here = true
+
+        [foo]
+        a = 1
+        b = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["foo"]["bar"] = {"x": 1}
+    assert tomlrt.dumps(doc) == td("""
+        [foo]
+        a = 1
+        b = 2
+        bar = { x = 1 }
+        """)
+
+
+def test_inline_replacement_of_subtable_after_foreign_section() -> None:
+    """Same out-of-order hazard, but the subsection sits *after* a
+    foreign sibling header rather than before parent's own header.
+
+    The structural-overwrite walks backward from ``[foo.sub]`` past
+    ``z = 1`` and hits ``[other]`` — a header whose path is not
+    under ``[foo]`` — so the captured anchor is rejected and the
+    new inline lands at ``[foo]``'s body tail instead of after
+    ``[other]`` (where it would silently reparent under ``other``).
+    """
+    src = td("""
+        [foo]
+        a = 1
+
+        [other]
+        z = 1
+
+        [foo.sub]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc["foo"]["sub"] = {"y": 2}
+    assert tomlrt.dumps(doc) == td("""
+        [foo]
+        a = 1
+        sub = { y = 2 }
+
+        [other]
+        z = 1
+        """)
+
+
 # ---------------------------------------------------------------------------
 # Array mutation
 # ---------------------------------------------------------------------------

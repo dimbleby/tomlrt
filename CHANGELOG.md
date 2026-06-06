@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replacing an out-of-order subsection (e.g. `[foo.bar]` defined
+  before `[foo]`) with a dict / inline value no longer emits the
+  new binding outside its parent section.
 - `Array.extend(arr)` / `AoT.extend(aot)` (and the corresponding `+=`
   forms) no longer hang when extending a sequence with itself.
 - A failed out-of-range `Array.comments[i] = ...` no longer silently

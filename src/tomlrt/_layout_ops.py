@@ -112,6 +112,12 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     rewriting the descendant's leading, ``append_direct_kv``'s
     head-of-doc blank-line guard).
 
+    A header-less new binding (scalar / synth-inline) is left where
+    ``_insert_new`` placed it when the captured anchor lies outside
+    ``parent``'s body region — moving it there would silently
+    re-parent it. (A new binding that brings its own header carries
+    its scope with it and is always safe to reposition.)
+
     Precondition: ``key`` is currently bound under ``parent``.
     """
     primary_ref = parent._index[key][0]  # noqa: SLF001
@@ -122,13 +128,24 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     successor_leading = (
         list(successor_slot.leading.pieces) if successor_slot is not None else None
     )
+    # A header-less new binding (scalar / synth-inline) takes its
+    # scope from physical position; check the anchor is in
+    # ``parent``'s body region before del wipes ``old_primary``'s
+    # doc-stream pointers. Same-flavour replacements bring their own
+    # header so the anchor is always safe and the walk is skipped.
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import _is_section  # noqa: PLC0415
+
+    anchor_safe = (
+        isinstance(value, AoT)
+        or _is_section(value)
+        or _primary_in_parent_body_region(parent, old_primary)
+    )
     del parent[key]
     doc = parent._attached_doc  # noqa: SLF001
     with _record_install(doc) as new_slots:
         parent[key] = value
-    if not new_slots:
-        # Slotless binding (e.g. an empty AoT) — no physical region
-        # exists to reposition.
+    if not new_slots or not anchor_safe:
         return
     _move_slots_to_anchor(parent, new_slots, saved_anchor_prev, saved_leading_pieces)
     if (
@@ -147,6 +164,33 @@ def _ancestor_chain(c: Container) -> list[Container]:
         out.append(cur)
         cur = cur._parent  # noqa: SLF001
     return out
+
+
+def _primary_in_parent_body_region(parent: Container, primary: Slot) -> bool:
+    """True iff ``primary`` is physically inside ``parent``'s body region.
+
+    Walks the doc-stream backward from ``primary`` to the enclosing
+    boundary: an explicit section needs its own header; a Document
+    root walking past every header without matching one fails; an
+    implicit container has no contiguous body region and is always
+    accepted.
+    """
+    parent_header_ref = parent._header_ref  # noqa: SLF001
+    if parent_header_ref is None and parent._parent is not None:  # noqa: SLF001
+        return True  # implicit container — accept.
+    parent_header = parent_header_ref.slot if parent_header_ref else None
+    parent_path = parent._path  # noqa: SLF001
+    n = len(parent_path)
+    cur: Slot | None = primary
+    while cur is not None:
+        if cur is parent_header:
+            return True
+        if isinstance(cur, StructuralHeaderSlot) and (
+            parent_header is None or cur.path[:n] != parent_path
+        ):
+            return False
+        cur = cur._prev  # noqa: SLF001
+    return False
 
 
 def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:

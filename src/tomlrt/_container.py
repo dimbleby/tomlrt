@@ -571,26 +571,6 @@ class Container(dict[str, Any]):
         ) and (is_scalar(value) or _is_synth_inline(value)):
             self._inline_typed_replace(key, value)
             return
-        # Header-bearing → non-header-bearing transition at the
-        # document root cannot preserve the original physical
-        # position: a top-level scalar / inline KV must precede any
-        # section headers, but the existing section sits among (or
-        # after) sibling section headers. Skip the position-preserving
-        # structural overwrite and just delete + reinsert so
-        # `_insert_new` places the new KV before all section headers.
-        #
-        # Only doc-root: nested overwrites synthesise a parent header
-        # (e.g. `[foo]` for `doc["foo"]["bar"] = {...}`) and the new
-        # KV legally lives inside that header, so position-preserving
-        # remains correct there.
-        if (
-            isinstance(self, Document)
-            and (_is_section(current) or isinstance(current, AoT))
-            and (is_scalar(value) or _is_synth_inline(value))
-        ):
-            del self[key]
-            self[key] = value
-            return
         # Structural overwrite: capture position + leading of the
         # existing primary, delete the binding (which detaches the old
         # view into a PrivateRoot), then re-enter __setitem__ at the
