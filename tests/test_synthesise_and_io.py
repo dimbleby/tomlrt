@@ -153,6 +153,7 @@ def test_assign_float_scientific_no_dot_added() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = 1e20
     out = tomlrt.dumps(doc)
+    assert out == "x = 1e+20\n"
     re = tomlrt.loads(out)
     assert re["x"] == 1e20
 
@@ -199,6 +200,7 @@ def test_assign_offset_datetime() -> None:
     tz = timezone(timedelta(hours=2))
     doc["x"] = datetime(2024, 7, 4, 12, 0, 0, tzinfo=tz)
     out = tomlrt.dumps(doc)
+    assert out == "x = 2024-07-04T12:00:00+02:00\n"
     re_value = tomlrt.loads(out)["x"]
     assert isinstance(re_value, datetime)
     assert re_value == datetime(2024, 7, 4, 12, 0, 0, tzinfo=tz)
@@ -208,6 +210,7 @@ def test_assign_plain_list_becomes_inline_array() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = [1, 2, 3]
     out = tomlrt.dumps(doc)
+    assert out == "x = [1, 2, 3]\n"
     re = tomlrt.loads(out)
     assert list(re.array("x")) == [1, 2, 3]
 
@@ -216,6 +219,7 @@ def test_assign_plain_dict_becomes_inline_table() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = {"a": 1, "b": "two"}
     out = tomlrt.dumps(doc)
+    assert out == 'x = { a = 1, b = "two" }\n'
     re = tomlrt.loads(out)
     tbl = re.table("x")
     assert tbl["a"] == 1
@@ -234,6 +238,7 @@ def test_assign_mappingproxy_becomes_inline_table() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = MappingProxyType({"a": 1, "b": 2})
     out = tomlrt.dumps(doc)
+    assert out == "x = { a = 1, b = 2 }\n"
     re = tomlrt.loads(out)
     tbl = re.table("x")
     assert tbl["a"] == 1
@@ -250,6 +255,7 @@ def test_assign_nested_dict_in_list() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = [{"a": 1}, {"a": 2}]
     out = tomlrt.dumps(doc)
+    assert out == "x = [{ a = 1 }, { a = 2 }]\n"
     re = tomlrt.loads(out)
     arr = re.array("x")
     assert arr.table(0)["a"] == 1
@@ -356,7 +362,14 @@ def test_assign_aot_over_scalar() -> None:
     )
     dest = tomlrt.loads("dest = 0\n")
     dest["dest"] = src.aot("products")
-    assert tomlrt.loads(tomlrt.dumps(dest)) == {
+    out = tomlrt.dumps(dest)
+    assert out == td("""
+        [[dest]]
+        name = 'a'
+        [[dest]]
+        name = 'b'
+        """)
+    assert tomlrt.loads(out) == {
         "dest": [{"name": "a"}, {"name": "b"}],
     }
 
@@ -381,6 +394,12 @@ def test_document_factory_supports_full_build_and_dump() -> None:
     doc["title"] = "demo"
     doc["server"] = Table.section({"port": 8080})
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        title = "demo"
+
+        [server]
+        port = 8080
+        """)
     parsed = tomlrt.loads(out)
     assert parsed["title"] == "demo"
     server = parsed.table("server")
@@ -403,7 +422,13 @@ def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
         {"package": [{"name": "foo"}, {"name": "bar"}]},
     )
     out = tomlrt.dumps(doc)
-    assert out.count("[[package]]") == 2
+    assert out == td("""
+        [[package]]
+        name = "foo"
+
+        [[package]]
+        name = "bar"
+        """)
     assert tomlrt.loads(out) == {"package": [{"name": "foo"}, {"name": "bar"}]}
 
 
@@ -425,7 +450,12 @@ def test_document_factory_with_data_keeps_top_level_scalars_at_top() -> None:
     doc = Document({"title": "demo", "server": {"port": 8080}})
     out = tomlrt.dumps(doc)
     # Top-level scalar must precede the [server] section header.
-    assert out.index('title = "demo"') < out.index("[server]")
+    assert out == td("""
+        title = "demo"
+
+        [server]
+        port = 8080
+        """)
 
 
 def test_document_factory_with_data_recurses_deeply() -> None:
@@ -458,6 +488,18 @@ def test_document_factory_with_data_aot_with_nested_table() -> None:
     }
     doc = Document(data)
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[package]]
+        name = "foo"
+        version = "1.0"
+
+        [package.dep]
+        x = 1
+
+        [[package]]
+        name = "bar"
+        version = "2.0"
+        """)
     assert tomlrt.loads(out) == data
 
 

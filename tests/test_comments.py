@@ -178,7 +178,9 @@ def test_comment_views_are_idempotent_under_self_assignment() -> None:
     doc = tomlrt.loads(src)
     for key in ("a", "b", "c", "d"):
         doc.comments[key] = doc.comments[key]
-    re = tomlrt.loads(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == src
+    re = tomlrt.loads(out)
     assert dict(re.comments) == dict(doc.comments)
     assert dict(doc.comments) == {
         "a": "plain",
@@ -196,7 +198,9 @@ def test_empty_comment_in_source_round_trips_through_view() -> None:
     assert doc.comments["a"] == ""
     assert "a" in doc.comments
     doc.comments["a"] = doc.comments["a"]
-    assert tomlrt.loads(tomlrt.dumps(doc)).comments["a"] == ""
+    out = tomlrt.dumps(doc)
+    assert out == "a = 1  #\nb = 2\n"
+    assert tomlrt.loads(out).comments["a"] == ""
 
 
 def test_set_eol_comment_rejects_newline() -> None:
@@ -227,6 +231,7 @@ def test_set_eol_comment_allows_tab() -> None:
     doc = tomlrt.loads("a = 1\n")
     doc.comments["a"] = "with\ttab"
     out = tomlrt.dumps(doc)
+    assert out == "a = 1 # with\ttab\n"
     # round-trips cleanly
     assert tomlrt.loads(out)["a"] == 1
 
@@ -883,6 +888,13 @@ def test_array_set_eol_on_single_line_promotes_to_multiline() -> None:
     arr = doc.array("arr")
     arr.comments[1] = "two"
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+            1,
+            2, # two
+            3,
+        ]
+        """)
     re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
@@ -919,6 +931,12 @@ def test_array_set_eol_on_last_item_with_trailing_comma() -> None:
     arr = doc.array("arr")
     arr.comments[1] = "second"
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+          1,
+          2, # second
+        ]
+        """)
     re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2]
@@ -1062,6 +1080,14 @@ def test_array_set_leading_on_single_line_promotes_to_multiline() -> None:
     arr = doc.array("arr")
     arr.leading_comments[1] = ("before two",)
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+            1,
+            # before two
+            2,
+            3,
+        ]
+        """)
     re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
@@ -1095,6 +1121,14 @@ def test_array_set_leading_on_first_item() -> None:
     arr = doc.array("arr")
     arr.leading_comments[0] = ("first",)
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+            # first
+            1,
+            2,
+            3,
+        ]
+        """)
     re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
@@ -1113,6 +1147,14 @@ def test_array_set_multiple_leading_lines() -> None:
     arr = doc.array("arr")
     arr.leading_comments[1] = ("line one", "line two")
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+          1,
+          # line one
+          # line two
+          2,
+        ]
+        """)
     re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert dict(re_arr.leading_comments) == {1: ("line one", "line two")}
@@ -1153,6 +1195,13 @@ def test_array_append_migrates_last_eol_comment() -> None:
     assert dict(arr.comments) == {1: "last"}
     arr.append(3)
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+          1,
+          2, # last
+          3
+        ]
+        """)
     re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
@@ -1229,7 +1278,14 @@ def test_array_comment_with_hash_prefix_round_trips() -> None:
     doc = tomlrt.loads("arr = [1, 2]\n")
     arr = doc.array("arr")
     arr.comments[0] = "#hashtag"
-    re = tomlrt.loads(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+            1, # #hashtag
+            2,
+        ]
+        """)
+    re = tomlrt.loads(out)
     # Content that happens to start with '#' is preserved verbatim.
     assert dict(re.array("arr").comments) == {0: "#hashtag"}
 
@@ -1244,7 +1300,14 @@ def test_array_set_value_via_indexing_preserves_eol_comment() -> None:
     doc = tomlrt.loads(src)
     arr = doc.array("arr")
     arr[0] = 99
-    re = tomlrt.loads(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+          99, # one
+          2, # two
+        ]
+        """)
+    re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [99, 2]
     # Comment ownership shouldn't change.
@@ -1658,7 +1721,14 @@ def test_array_comments_setitem_empty_string_writes_bare_hash() -> None:
     assert arr.comments[1] == "tail"
     arr.comments[1] = ""
     assert arr.comments[1] == ""
-    re = tomlrt.loads(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        xs = [
+          1,
+          2, #
+        ]
+        """)
+    re = tomlrt.loads(out)
     assert re.array("xs").comments[1] == ""
 
 
@@ -1742,6 +1812,13 @@ def test_array_leading_comments_set_on_inline_array_synthesises_indent() -> None
     arr = doc.array("xs")
     arr.leading_comments[1] = ("about two",)
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        xs = [
+            1,
+            # about two
+            2,
+        ]
+        """)
     # Round-trips and the comment is recovered.
     assert tomlrt.loads(out).array("xs").leading_comments[1] == ("about two",)
 
@@ -1838,8 +1915,15 @@ def test_array_eol_comment_del_on_last_no_comma_item() -> None:
     assert arr.comments[1] == "bye"
     del arr.comments[1]
     assert 1 not in arr.comments
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        xs = [
+          1,
+          2
+        ]
+        """)
     # Round-trips through the parser.
-    assert tomlrt.loads(tomlrt.dumps(doc)) == {"xs": [1, 2]}
+    assert tomlrt.loads(out) == {"xs": [1, 2]}
 
 
 def test_array_eol_comment_set_on_internal_item_strips_structural_newline() -> None:
@@ -2016,8 +2100,15 @@ def test_aot_append_same_doc_duplicates_with_comments() -> None:
     )
     doc.aot("a").append(doc.aot("a")[0])
     out = tomlrt.dumps(doc)
-    assert out.count("# c1") == 2
-    assert out.count("# c2") == 2
+    assert out == td("""
+        [[a]]
+        # c1
+        x = 1  # c2
+
+        [[a]]
+        # c1
+        x = 1  # c2
+        """)
 
 
 def test_aot_append_std_section_table_preserves_comments() -> None:
