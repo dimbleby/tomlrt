@@ -1240,11 +1240,9 @@ def install_dotted_kv_slot(
             anc._body_tail = new_slot  # noqa: SLF001
 
     if owner is not None:
-        if body_tail is not None:
-            anchor_idx = owner.entry_slots.index(body_tail)
-            owner.entry_slots.insert(anchor_idx + 1, new_slot)
-        else:
-            owner.entry_slots.append(new_slot)
+        # ``entry_slots`` is membership + header-first order only (doc
+        # order is derived on demand), so a plain append is enough.
+        owner.entry_slots.append(new_slot)
 
 
 def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> None:
@@ -1348,12 +1346,12 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         header_ref_index=0,
     )
 
-    # Maintain the AoT entry's slot list when applicable. anchor_slot is by
-    # invariant filed in entry_slots when owner is set.
+    # Add the synthesised header + KV to the entry's membership list
+    # (order within ``entry_slots`` is not doc-significant; the entry's
+    # own ``[[a]]`` header stays first because it was appended first).
     if owner is not None:
-        anchor_idx = owner.entry_slots.index(anchor_slot)
-        owner.entry_slots.insert(anchor_idx, header_slot)
-        owner.entry_slots.insert(anchor_idx + 1, new_kv)
+        owner.entry_slots.append(header_slot)
+        owner.entry_slots.append(new_kv)
 
 
 def _synthesise_header_then_insert_kv_at_doc_tail(
@@ -1381,9 +1379,9 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     # next sibling [[arr]] header), otherwise a re-parse would
     # attribute it to the next entry. Anchor after the entry's last
     # slot rather than ``doc._tail``.
-    if owner is not None and owner.entry_slots:
-        anchor = owner.entry_slots[-1]
-        insert_after(anchor, header_slot, doc)
+    entry_last = _entry_last_slot(owner, doc) if owner is not None else None
+    if entry_last is not None:
+        insert_after(entry_last, header_slot, doc)
     elif doc._tail is None:  # noqa: SLF001
         doc._head = header_slot  # noqa: SLF001
         doc._tail = header_slot  # noqa: SLF001
@@ -1469,10 +1467,9 @@ def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
     c._body_tail = new_slot  # noqa: SLF001
 
-    # Maintain entry_slots in doc-stream order. The anchor is by invariant
-    # the header_ref slot (no body yet) or a body slot already filed.
-    idx = owner.entry_slots.index(anchor)
-    owner.entry_slots.insert(idx + 1, new_slot)
+    # Add to the entry's membership list (order is not doc-significant;
+    # see ``_entry_last_slot``).
+    owner.entry_slots.append(new_slot)
 
 
 def _ensure_terminator(slot: Slot, doc: Document) -> None:
@@ -2654,7 +2651,25 @@ def _last_aot_slot(aot: AoT, doc: Document) -> Slot | None:
             if id(cur) in owned:
                 return cur
             cur = cur._prev  # noqa: SLF001
-        return e.entry_slots[-1]  # pragma: no cover -- doc-stream/_refs invariant
+        return None  # pragma: no cover -- doc-stream/_refs invariant
+    return None
+
+
+def _entry_last_slot(entry: AoTEntry, doc: Document) -> Slot | None:
+    """Return the entry's own slot with the greatest doc-stream position.
+
+    Derived from the doc-stream (membership of ``entry_slots`` + a
+    backward walk) rather than ``entry_slots[-1]``, so it is correct
+    regardless of the ``entry_slots`` list order — ``entry_slots`` is
+    maintained for membership and header-first order only, not doc
+    order. O(1) amortised when the entry sits at the document tail.
+    """
+    owned = {id(s) for s in entry.entry_slots}
+    cur: Slot | None = doc._tail  # noqa: SLF001
+    while cur is not None:
+        if id(cur) in owned:
+            return cur
+        cur = cur._prev  # noqa: SLF001
     return None
 
 
@@ -3512,14 +3527,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     for cn in chain:
         if cn._body_tail is not None:  # noqa: SLF001
             cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
-
-    # When c sits inside an AoT entry, the splice reordered slots the
-    # entry owns; keep ``entry_slots`` in doc-stream order so anchor
-    # lookups that trust that ordering (e.g. ``_last_aot_slot``) stay
-    # correct.
-    if c_owner is not None:
-        position = _doc_position_map(doc)
-        c_owner.entry_slots.sort(key=lambda s: position.get(id(s), 0))
 
 
 __all__ = [

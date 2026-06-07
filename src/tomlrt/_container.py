@@ -1238,9 +1238,13 @@ class Container(dict[str, Any]):
             last_entry = result[-1]
             entry_record = last_entry._owner_aot_entry  # noqa: SLF001
             if entry_record is not None and entry_record.entry_slots:
-                last_slot = entry_record.entry_slots[-1]
-                if isinstance(last_slot, (KVSlot, StructuralHeaderSlot)) and (
-                    saved_eol.comment is not None and last_slot.eol.comment is None
+                last_slot = _layout_ops._entry_last_slot(  # noqa: SLF001
+                    entry_record, self._attached_doc
+                )
+                if (
+                    isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
+                    and saved_eol.comment is not None
+                    and last_slot.eol.comment is None
                 ):
                     last_slot.eol.comment = saved_eol.comment
                     if saved_eol.trailing_ws is not None:
