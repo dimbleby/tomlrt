@@ -3431,6 +3431,23 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     if not physical_blocks:
         return
 
+    # If the owned blocks already sit in the requested order (c-header
+    # first, then child keys in ``new_key_order``), there is nothing to
+    # splice. Returning here keeps a legitimately non-contiguous layout
+    # — a child key whose slots live in a different physical region than
+    # a sibling (e.g. a dotted leaf hosted by an ancestor header and a
+    # sub-section of the same key) — intact, instead of dragging foreign
+    # slots to the region head to force contiguity that the order does
+    # not require. The caller still re-syncs dict storage to the order.
+    header_in_phys = [None] if phys_idx_of_header is not None else []
+    phys_order = header_in_phys + sorted(
+        phys_idx_of_key, key=phys_idx_of_key.__getitem__
+    )
+    target_order: list[str | None] = [None] if header_slot is not None else []
+    target_order += [k for k in new_key_order if key_blocks[k]]
+    if phys_order == target_order:
+        return
+
     earliest_owned = physical_blocks[0][0]
 
     # A foreign slot (one belonging to an outer scope) interleaved

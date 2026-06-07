@@ -1547,6 +1547,48 @@ def test_append_to_empty_nested_aot_under_dotted_key_clears_host_body() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_sort_after_rematerialising_a_subsection_at_a_new_position() -> None:
+    """Sorting must not drag a foreign section to the region head when a
+    container's owned slots are already in the requested order but sit in
+    different physical regions.
+
+    Regression: deleting a sub-section's content then re-adding it
+    materialises its ``[tbl.a.b]`` header at the doc tail (after a
+    sibling ``[tbl.x]``), while the parent's dict order still lists the
+    sub-section key first — stale relative to the new physical order. A
+    subsequent ``sort`` therefore asked ``reorder_container`` to reorder
+    an already-correct layout, and its foreign-slot hoisting moved
+    ``[tbl.x]`` ahead of the dotted leaf ``a.k45 = ""``, capturing the
+    leaf into ``[tbl.x]`` on re-parse. ``reorder_container`` now no-ops
+    when the owned blocks already sit in the requested order.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [tbl]
+            a.b.c = 1
+            a.k45 = ""
+
+            [tbl.x]
+            y = 1
+            """)
+    )
+    del doc["tbl"]["a"]["b"]["c"]
+    doc["tbl"]["a"]["b"]["k14"] = True
+    doc["tbl"]["a"].sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [tbl]
+        a.k45 = ""
+
+        [tbl.x]
+        y = 1
+
+        [tbl.a.b]
+        k14 = true
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_aot_reverse_carries_nested_aot_blocks() -> None:
     """Reversing an AoT must move each entry's nested ``[[t.sub]]`` blocks
     with it.
