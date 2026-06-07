@@ -3256,9 +3256,11 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     Non-contiguous keys (e.g. ``[a]; [other]; [a.sub]`` where 'a'
     has two runs at root) are handled by collecting both runs and
-    splicing them together. Foreign slots interleaved in the owned
-    span are pushed out of the way to wherever the splice leaves
-    them — typically just after the reordered region.
+    splicing them together. A foreign slot (one belonging to an outer
+    scope) interleaved in the owned span is first hoisted to the region
+    head — gathering owned blocks across it would shove it past a
+    header and silently change its re-parse scope — which both keeps it
+    correctly bound and lets the owned span be spliced contiguously.
 
     If ``c`` owns an explicit (non-synthetic) ``[c]`` header, that
     header is spliced in at the start of the reordered region — it
@@ -3364,6 +3366,36 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         return
 
     earliest_owned = physical_blocks[0][0]
+
+    # A foreign slot (one belonging to an outer scope) interleaved
+    # between this container's slots cannot be gathered across: the
+    # splice below would shove it past a header and silently change its
+    # re-parse scope. Normalise the out-of-order layout first by
+    # hoisting every such slot, in order, to the region head — they
+    # already sat in the leaf region governed by the scope just above
+    # ``c``, so moving them there preserves their binding while making
+    # the owned span contiguous for the ordinary splice.
+    owned_ids = {id(s) for blk in physical_blocks for s in blk}
+    foreign: list[Slot] = []
+    seen = 1  # earliest_owned itself
+    scan: Slot | None = earliest_owned._next  # noqa: SLF001
+    while scan is not None and seen < len(owned_ids):
+        if id(scan) in owned_ids:
+            seen += 1
+        else:
+            foreign.append(scan)
+        scan = scan._next  # noqa: SLF001
+    if foreign:
+        head_structural, head_remainder = _split_leading_for_reorder(
+            doc, earliest_owned
+        )
+        earliest_owned.leading = Trivia(list(head_remainder.pieces))
+        for f in foreign:
+            unlink_slot(f, doc, strip_new_head_leading=False)
+            insert_before(earliest_owned, f, doc)
+        foreign[0].leading = Trivia(
+            list(head_structural.pieces) + list(foreign[0].leading.pieces)
+        )
 
     # 3. Snapshot region-external structural from the doc-stream-
     # earliest owned slot. After reorder this becomes c-header's
