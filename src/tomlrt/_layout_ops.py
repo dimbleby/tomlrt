@@ -1301,11 +1301,10 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     anchor_slot = c._refs[0].slot  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
 
-    # Build the synthetic header. Adopt the descendant's existing
-    # leading (so any preamble / inter-section separator that used
-    # to land on the descendant lands on the synthetic header
-    # instead) and give the descendant a fresh inter-section leading
-    # in the doc's current style (compact / blank-separated).
+    # Build the synthetic header, moving the descendant's existing
+    # leading onto it (so the descendant's preamble / inter-section
+    # separator now precedes the header) and giving the descendant a
+    # fresh inter-section leading in the doc's current style.
     adopted_leading = anchor_slot.leading
     new_descendant_leading = _build_section_leading(doc)
     header_slot = _new_section_header(
@@ -1317,23 +1316,16 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     insert_before(anchor_slot, header_slot, doc)
     anchor_slot.leading = new_descendant_leading
 
-    # File the new header's refs:
-    #   * own-header ref on c (local_key=None);
-    #   * binding refs on every ancestor along c._path.
-    # Walk ancestor chain (excluding c) top-down so we can name
-    # local_keys correctly.
+    # File a binding ref for the new header on every ancestor along
+    # c._path. The ancestor d levels above c is keyed by c._path[-d].
     ancestors = _ancestor_chain(c)
-    # ancestors[0] = c._parent, ..., ancestors[-1] = doc root.
-    # local_key on each ancestor is c._path[-(distance from c)] —
-    # for ancestor at distance d from c, local_key = c._path[-d].
     for d, anc in enumerate(ancestors, start=1):
         local_key = c._path[-d]  # noqa: SLF001
         binding_ref = SlotRef(slot=header_slot, container=anc)
         anchor_idx_anc = _find_ref_index_by_slot(anc, anchor_slot)
         anc._refs.insert(anchor_idx_anc, binding_ref)  # noqa: SLF001
-        # Rebuild _index[local_key] to preserve doc-stream order
-        # (binding_ref now sits before the descendant's existing
-        # binding ref, so it becomes the primary).
+        # Rebuild rather than append: the new ref sits before the
+        # descendant's existing binding ref, so it becomes the primary.
         _rebuild_index_for_key(anc, local_key)
 
     new_kv = _file_synthetic_header_and_kv(
@@ -1399,15 +1391,11 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         header_slot.leading = Trivia()
 
     ancestors = _ancestor_chain(c)
-    # When ``c`` lives inside an AoT entry and was anchored after
-    # ``owner.entry_slots[-1]`` above, the synthesised header sits
-    # in the middle of the doc-stream (between this entry's last
-    # slot and the next sibling [[arr]] entry). Each ancestor's
-    # ``_refs`` is doc-stream-ordered, so we must INSERT the binding
-    # ref at the right position rather than appending. Use the set
-    # of slots already known to belong to this entry as the marker:
-    # find the position just after the last ref whose slot is in
-    # that set, then insert there.
+    # When ``c`` lives inside an AoT entry, the synthesised header sits
+    # mid-doc-stream (between this entry's last slot and the next
+    # sibling ``[[arr]]`` entry). Each ancestor's ``_refs`` is
+    # doc-stream-ordered, so insert the binding ref after the entry's
+    # last owned ref rather than appending.
     entry_slot_set: set[Slot] | None = None
     if owner is not None and owner.entry_slots:
         entry_slot_set = set(owner.entry_slots)

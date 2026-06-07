@@ -57,10 +57,9 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
 # ---------------------------------------------------------------------------
 
 
-# Cache primitives are imported from _layout_ops: ``record_ref`` builds
-# a SlotRef and files it; ``maybe_advance_body_tail`` updates the body-
-# tail cache for body-region KVs. They are shared with mutation-time
-# paths so the cache-maintenance invariant has one canonical source.
+# ``record_ref`` and ``maybe_advance_body_tail`` are imported from
+# _layout_ops and shared with the mutation paths, so cache maintenance
+# has one canonical source.
 
 
 # ---------------------------------------------------------------------------
