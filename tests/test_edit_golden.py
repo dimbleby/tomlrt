@@ -2448,16 +2448,17 @@ def test_promote_array_across_aot_entries() -> None:
         [[package]]
         name = "A"
 
-        [[package]]
-        name = "B"
-
         [[package.tags]]
         k = 1
+
+        [[package]]
+        name = "B"
 
         [[package.tags]]
         k = 2
         """)
     assert tomlrt.loads(rendered).render() == rendered
+    assert _reparses(rendered) == doc.to_dict()
 
 
 # ---------------------------------------------------------------------------

@@ -1364,7 +1364,7 @@ def test_append_aot_entry_after_sorting_an_entrys_keys() -> None:
 
     Regression: ``reorder_container`` permuted the entry's KV slots in
     the doc-stream but left ``AoTEntry.entry_slots`` in its old order.
-    ``_last_aot_slot`` trusts ``entry_slots[-1]`` as the append anchor,
+    ``_aot_append_anchor`` trusts ``entry_slots[-1]`` as the append anchor,
     so the new ``[[p]]`` header was spliced *inside* the reordered
     entry, splitting it and re-parenting the trailing key on re-parse.
     """
@@ -1407,7 +1407,7 @@ def test_append_aot_entry_when_last_entry_owns_nested_aot() -> None:
     """Appending a new ``[[p]]`` must anchor after the last entry's whole
     subtree, including a nested ``[[p.sub]]`` it owns.
 
-    Regression: ``_last_aot_slot`` returned ``entry_slots[-1]``, which
+    Regression: ``_aot_append_anchor`` returned ``entry_slots[-1]``, which
     excludes slots owned by nested AoT entries, so the new ``[[p]]``
     header was spliced *before* the nested ``[[p.sub]]`` block — which
     re-parse then attributed to the new entry.
@@ -1465,6 +1465,84 @@ def test_append_aot_entry_when_nested_aot_is_non_contiguous() -> None:
 
         [[p]]
         new = true
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_append_to_empty_nested_aot_anchors_within_parent_entry() -> None:
+    """The first entry materialised in an *empty* nested AoT must land
+    inside its owning parent entry, not at the document tail.
+
+    Regression: when a nested ``[[p.sub]]`` AoT held no entries, the
+    append anchor fell through to the document tail. With a later
+    sibling ``[[p]]`` present, the new ``[[p.sub]]`` header was spliced
+    after it, so a re-parse attributed the nested block to the wrong
+    parent entry. The append anchor now falls back to the parent
+    entry's subtree tail.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [[fruits]]
+            name = "apple"
+
+            [[fruits]]
+            name = "banana"
+
+            [[fruits.varieties]]
+            name = "plantain"
+            """)
+    )
+    doc["fruits"][1]["varieties"].pop(0)
+    doc["fruits"].append({"new": True})
+    doc["fruits"][1]["varieties"].append({"new": -7})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[fruits]]
+        name = "apple"
+
+        [[fruits]]
+        name = "banana"
+
+        [[fruits.varieties]]
+        new = -7
+
+        [[fruits]]
+        new = true
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_append_to_empty_nested_aot_under_dotted_key_clears_host_body() -> None:
+    """An empty nested AoT whose logical parent is a *dotted* (header-less)
+    container anchors after its host section's whole body, so a direct
+    KV of that section is not captured by the new sub-section.
+
+    Regression: the empty-AoT fallback anchored at the immediate
+    (dotted-inner) parent's tail, which sat *before* a sibling direct
+    KV of the enclosing ``[fruit]`` section; the new ``[[fruit.apple.seeds]]``
+    header then captured that KV on re-parse. The anchor now walks up to
+    the host header.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [fruit]
+            apple.color = "red"
+
+            [[fruit.apple.seeds]]
+            size = 2
+            """)
+    )
+    doc["fruit"]["apple"]["seeds"].pop(0)
+    doc["fruit"]["k23"] = 1
+    doc["fruit"]["apple"]["seeds"].append({"new": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [fruit]
+        apple.color = "red"
+        k23 = 1
+
+        [[fruit.apple.seeds]]
+        new = 1
         """)
     assert _reparses(out) == doc.to_dict()
 

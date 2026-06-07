@@ -1880,7 +1880,7 @@ def add_aot_entry(
 
     # Splice header after the last existing AoT-owned slot if any,
     # else at end-of-doc.
-    anchor = _last_aot_slot(aot, doc)
+    anchor = _aot_append_anchor(aot, doc)
     if anchor is None:
         _splice_at_end(header, doc)
     else:
@@ -2060,7 +2060,7 @@ def _install_cloned_aot_entry(
         owner=new_entry,
         cloned_header=cloned_header,
         cloned_slots=cloned_slots,
-        anchor=_last_aot_slot(aot, doc),
+        anchor=_aot_append_anchor(aot, doc),
     )
 
     list.append(aot, entry_table)
@@ -2625,21 +2625,27 @@ def _subtree_membership(c: Container) -> set[int]:
     return owned
 
 
-def _last_aot_slot(aot: AoT, doc: Document) -> Slot | None:
-    """Return the last doc-stream slot owned by ``aot``'s last entry.
+def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
+    """Return the slot a newly-appended ``[[path]]`` entry splices after.
 
-    This is the anchor a newly-appended ``[[a]]`` entry is spliced
-    after, so it must be the last *physical* slot of the last entry's
-    whole subtree — including slots owned by nested ``[[a.sub]]`` AoT
-    entries, which ``entry_slots`` deliberately excludes.
+    For a non-empty AoT this is the last *physical* slot of the last
+    entry's whole subtree — including slots owned by nested ``[[a.sub]]``
+    AoT entries, which ``entry_slots`` deliberately excludes.
 
     Derived from the doc-stream rather than ``entry_slots[-1]`` so it is
     correct regardless of ``entry_slots`` ordering and works when the
     entry's subtree is physically non-contiguous (e.g. a ``[[a.sub]]``
     separated from its parent entry by an unrelated ``[other]``).
-    Membership comes from ``_collect_subtree`` (``_refs`` + recursion);
+    Membership comes from ``_subtree_membership`` (``_refs`` + recursion);
     order comes from a backward walk of the doc-stream — O(1) in the
     common case where the AoT sits at the document tail.
+
+    For an empty AoT (no entries, or all entries slot-less) the anchor
+    is the parent container's subtree tail, so the first materialised
+    header lands inside the owning section / AoT entry rather than at
+    the document tail — where a re-parse would bind it to whichever
+    sibling currently sits last. ``None`` (append at doc end) is
+    returned only for an empty AoT whose parent has no slots of its own.
     """
     for entry_table in reversed(aot):
         e = entry_table._owner_aot_entry  # noqa: SLF001
@@ -2652,7 +2658,19 @@ def _last_aot_slot(aot: AoT, doc: Document) -> Slot | None:
                 return cur
             cur = cur._prev  # noqa: SLF001
         return None  # pragma: no cover -- doc-stream/_refs invariant
-    return None
+    parent = aot._parent  # noqa: SLF001
+    if parent is None:  # pragma: no cover -- attached AoT always has a parent
+        return None
+    # The first materialised header is a sub-section of its host — the
+    # nearest header-bearing ancestor (or the document root). Anchoring
+    # at the host's whole-subtree tail keeps every direct / dotted KV of
+    # that header ahead of the new sub-section, where a re-parse would
+    # otherwise capture them. When ``parent`` itself bears a header (a
+    # section or AoT-entry table) the host is ``parent``.
+    host = parent
+    while host._header_ref is None and host._parent is not None:  # noqa: SLF001
+        host = host._parent  # noqa: SLF001
+    return _parent_subtree_tail(host)
 
 
 def _entry_last_slot(entry: AoTEntry, doc: Document) -> Slot | None:
