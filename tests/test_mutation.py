@@ -157,26 +157,49 @@ def test_overwrite_non_last_key_in_aot_entry_with_section() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_overwrite_dotted_intermediate_promotes_without_capturing_root_keys() -> None:
+def test_overwrite_dotted_intermediate_keeps_dotted_form() -> None:
     """Overwriting a dotted intermediate (whose value is a subtable) with a
-    scalar promotes the implicit table to a header; that header must not be
-    repositioned ahead of unrelated root keys.
+    scalar keeps the dotted form rather than promoting to an ``[a]`` header.
 
-    Regression: the promotion synthesised an ``[a]`` header and
-    ``reposition_install`` moved it back to the overwritten key's old
-    slot — ahead of the trailing root key ``k = 2``, which re-parse then
-    attributed to ``a``. The replacement value is a *scalar*, so a
-    value-type test misses it; the header arrives from promoting the
-    implicit parent.
+    ``a.b.c = 1`` is written with dotted keys, so replacing ``a.b`` with a
+    scalar should stay dotted — ``a.b = "str"`` — preserving both the
+    style and the position, instead of synthesising a section header
+    (which also used to re-parent the trailing root key ``k``).
     """
     doc = tomlrt.loads("a.b.c = 1\nk = 2\n")
     doc["a"]["b"] = "str"
     out = tomlrt.dumps(doc)
     assert out == td("""
+        a.b = "str"
         k = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
 
-        [a]
-        b = "str"
+
+def test_overwrite_header_intermediate_keeps_header_form() -> None:
+    """The mirror case: an intermediate written with a header keeps a header.
+
+    ``[foo.bar.baz]`` uses header form, so replacing ``foo.bar`` with a
+    scalar synthesises a ``[foo]`` header (not a dotted ``foo.bar``) and
+    leaves it in place, after the sibling ``[other]`` section.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [other]
+            z = 3
+
+            [foo.bar.baz]
+            quux = 1
+            """)
+    )
+    doc["foo"]["bar"] = 7
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [other]
+        z = 3
+
+        [foo]
+        bar = 7
         """)
     assert _reparses(out) == doc.to_dict()
 
