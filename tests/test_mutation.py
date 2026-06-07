@@ -105,6 +105,35 @@ def test_set_overwrites_dotted_prefix() -> None:
     assert _reparses(out) == {"a": {"b": 2}}
 
 
+def test_inline_overwrite_intermediate_dotted_node_keeps_view_linked() -> None:
+    """Overwriting an intermediate dotted node of an inline table with a
+    scalar must keep the logical view in sync with the rendered CST.
+
+    Regression: the overwrite did ``del self[key]; self[key] = value``.
+    The ``del`` emptied the navigator momentarily, so its empty-prefix
+    cleanup unlinked the navigator (and detached ancestors) from the
+    parent dict chain. The re-add fixed the CST but not those dict
+    links, so ``to_dict()`` collapsed the whole branch to ``{}`` even
+    though the rendered output was correct.
+    """
+    doc = tomlrt.loads("t = {a.b.c = 1, a.b.d = 2}\n")
+    doc["t"]["a"]["b"] = 7
+    out = tomlrt.dumps(doc)
+    assert out == "t = {a.b = 7}\n"
+    assert doc.to_dict() == {"t": {"a": {"b": 7}}}
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_inline_overwrite_deep_intermediate_dotted_node() -> None:
+    """Same fix across multiple detached navigator levels."""
+    doc = tomlrt.loads("t = {a.b.c.d = 1, a.b.c.e = 2}\n")
+    doc["t"]["a"]["b"]["c"] = 9
+    out = tomlrt.dumps(doc)
+    assert out == "t = {a.b.c = 9}\n"
+    assert doc.to_dict() == {"t": {"a": {"b": {"c": 9}}}}
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_set_overwrites_implicit_child_table() -> None:
     src = "[a.b]\nx = 1\n"
     doc = tomlrt.loads(src)
