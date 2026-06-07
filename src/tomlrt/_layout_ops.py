@@ -1710,15 +1710,20 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     assert isinstance(layout_root, Document)
     doc = layout_root
     # Remove the header from the doc stream and from all caches.
-    # Hand the demoted header's leading trivia (which carries the
-    # file preamble when it sits at doc head) off to the successor
-    # so comments aren't silently dropped on promotion to implicit.
+    # Hand the demoted header's leading trivia (its separation-from-above,
+    # plus the file preamble / comments it carries when it sits at doc
+    # head) off to the successor so nothing is silently dropped on
+    # promotion to implicit. The successor's own leading was a separator
+    # *from the header* — now redundant — so strip it first, otherwise
+    # the transfer stacks a second blank line before the successor.
     unlink_slot(header, doc, strip_new_head_leading=True)
-    if successor is not None and header.leading.pieces:
-        successor.leading.pieces = [
-            *header.leading.pieces,
-            *successor.leading.pieces,
-        ]
+    if successor is not None:
+        _strip_leading_blank_lines(successor)
+        if header.leading.pieces:
+            successor.leading.pieces = [
+                *header.leading.pieces,
+                *successor.leading.pieces,
+            ]
     parent._body_tail = None  # noqa: SLF001
     # Canonical bulk-scrub via the header's back-pointer list: drops
     # ``hdr_ref`` from ``parent._refs`` (and clears ``parent._header_ref``
