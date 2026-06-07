@@ -2925,25 +2925,26 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         return
     doc = aot._attached_doc  # noqa: SLF001
 
-    # Collect every entry's owned slots, in current logical order
-    # (which equals physical doc-stream order for AoT entries).
-    current_entries = list(aot)
-    per_entry_slots: list[list[Slot]] = []
-    for entry_table in current_entries:
-        e = entry_table._owner_aot_entry  # noqa: SLF001
-        assert e is not None
-        per_entry_slots.append(list(e.entry_slots))
-
-    # Filter empties: slotless entries have no CST representation and
-    # don't participate in physical layout. Build the parallel index
-    # from each surviving Table identity back to its physical block.
+    # Collect every non-empty entry's full physical block, in current
+    # logical order (which equals physical doc-stream order for AoT
+    # entries), and map each surviving Table identity back to its
+    # block. Slotless entries have no CST representation and don't
+    # participate in physical layout, so they're skipped.
+    #
+    # A block spans the entry's whole subtree, not just its own
+    # header + KV slots: a nested ``[[a.x]]`` lives in its own
+    # AoTEntry (outside the parent's ``entry_slots``) and must travel
+    # with its parent entry, so that reordering doesn't strand it and
+    # re-parent it onto whichever entry lands at its old position.
     physical_blocks: list[list[Slot]] = []
     phys_idx_by_id: dict[int, int] = {}
-    for i, slots in enumerate(per_entry_slots):
-        if not slots:
+    for entry_table in aot:
+        e = entry_table._owner_aot_entry  # noqa: SLF001
+        assert e is not None
+        if not e.entry_slots:
             continue
-        phys_idx_by_id[id(current_entries[i])] = len(physical_blocks)
-        physical_blocks.append(slots)
+        phys_idx_by_id[id(entry_table)] = len(physical_blocks)
+        physical_blocks.append(_gather_subtree_slots(entry_table))
 
     if physical_blocks:
         # Peer-block model: every entry header is a comparable block.
