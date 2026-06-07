@@ -867,11 +867,20 @@ class Container(dict[str, Any]):
         if self._inline:
             new_order = sorted(current, key=key, reverse=reverse)
         else:
-            leaves = [k for k in current if not self.has_header(k)]
-            sections = [k for k in current if self.has_header(k)]
-            leaves.sort(key=key, reverse=reverse)
-            sections.sort(key=key, reverse=reverse)
-            new_order = leaves + sections
+            # A key's *leaf* content (a bare or dotted ``key = value``)
+            # must precede every section header, so partition into three
+            # groups — pure leaves, "mixed" keys that own both a leaf and
+            # a sub-section, and pure sections — and keep the mixed group
+            # between them: its leaf part stays ahead of all sections,
+            # and its own header stays ahead of the pure sections.
+            pure_leaves = [
+                k for k in current if self._has_leaf(k) and not self.has_header(k)
+            ]
+            mixed = [k for k in current if self._has_leaf(k) and self.has_header(k)]
+            pure_sections = [k for k in current if not self._has_leaf(k)]
+            for group in (pure_leaves, mixed, pure_sections):
+                group.sort(key=key, reverse=reverse)
+            new_order = pure_leaves + mixed + pure_sections
         if new_order == current:
             return
         if self._inline:
@@ -893,6 +902,16 @@ class Container(dict[str, Any]):
         """
         refs = self._index.get(key, ())
         return any(isinstance(r.slot, StructuralHeaderSlot) for r in refs)
+
+    def _has_leaf(self, key: str) -> bool:
+        """Whether ``key``'s block contains a leaf ``key = value`` slot.
+
+        True for a bare or dotted KV (``k = 1`` / ``k.x = 1``); a key can
+        have *both* a leaf and a sub-section header (``z.k = 1`` plus
+        ``[z.m]``), in which case both this and `has_header` return True.
+        """
+        refs = self._index.get(key, ())
+        return any(isinstance(r.slot, KVSlot) for r in refs)
 
     @override
     def __ior__(  # type: ignore[override]

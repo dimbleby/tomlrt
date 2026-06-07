@@ -4248,6 +4248,39 @@ def test_sort_reverse_keeps_sections_last() -> None:
     assert _reparses(tomlrt.dumps(doc))
 
 
+def test_sort_keeps_mixed_key_leaf_ahead_of_a_sorted_section() -> None:
+    """A key that owns both a leaf and a sub-section keeps its leaf ahead
+    of every section header when sorting.
+
+    Regression: ``z`` owns a dotted leaf (``z.k``) and a sub-section
+    (``[z.m]``). ``sort`` classified it wholly as a section (it has a
+    header), so it sorted after the array-of-tables ``x`` — placing
+    ``z.k`` after ``[[x]]``, which a re-parse captured into the AoT
+    entry. ``z``'s leaf part now sorts into the leaf region.
+    """
+    doc = tomlrt.loads(
+        td("""
+            z.k = 7
+
+            [[x]]
+
+            [z.m]
+            n = 1
+            """)
+    )
+    doc.sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        z.k = 7
+
+        [[x]]
+
+        [z.m]
+        n = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_sort_smart_key_leaves_before_sections() -> None:
     doc = tomlrt.loads(
         td("""
