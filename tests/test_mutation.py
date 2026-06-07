@@ -1200,6 +1200,83 @@ def test_aot_reverse_preserves_owned_subtables() -> None:
     ]
 
 
+def test_aot_reverse_carries_nested_aot_blocks() -> None:
+    """Reversing an AoT must move each entry's nested ``[[t.sub]]`` blocks
+    with it.
+
+    Regression: ``renormalise_aot_order`` gathered each entry's
+    physical block from ``AoTEntry.entry_slots``, which holds only the
+    entry's *own* header + KV slots. A nested ``[[t.sub]]`` lives in
+    its own ``AoTEntry``, so its slots were left physically behind and
+    re-parented onto whichever entry landed at the old position —
+    silently corrupting the data on round-trip.
+    """
+    src = td("""
+        [[t]]
+        name = "a"
+
+          [[t.sub]]
+          y = 1
+
+        [[t]]
+        name = "b"
+
+          [[t.sub]]
+          y = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("t").reverse()
+    assert tomlrt.dumps(doc) == (
+        td("""
+            [[t]]
+            name = "b"
+
+              [[t.sub]]
+              y = 2
+
+            [[t]]
+            name = "a"
+
+              [[t.sub]]
+              y = 1
+            """)
+    )
+
+
+def test_aot_sort_carries_nested_aot_blocks() -> None:
+    """Sorting an AoT must move each entry's nested ``[[t.sub]]`` blocks."""
+    src = td("""
+        [[t]]
+        x = 2
+
+          [[t.sub]]
+          y = 20
+
+        [[t]]
+        x = 1
+
+          [[t.sub]]
+          y = 10
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("t").sort(key=lambda e: e["x"])
+    assert tomlrt.dumps(doc) == (
+        td("""
+            [[t]]
+            x = 1
+
+              [[t.sub]]
+              y = 10
+
+            [[t]]
+            x = 2
+
+              [[t.sub]]
+              y = 20
+            """)
+    )
+
+
 def test_aot_reverse_moves_leading_comments_with_entries() -> None:
     src = td("""
         # A
