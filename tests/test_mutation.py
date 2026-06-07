@@ -102,6 +102,10 @@ def test_set_overwrites_dotted_prefix() -> None:
     a = doc.table("a")
     a["b"] = 2
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        b = 2
+        """)
     assert _reparses(out) == {"a": {"b": 2}}
 
 
@@ -228,6 +232,14 @@ def test_overwrite_key_with_inline_when_subsection_follows() -> None:
     )
     doc["t"]["varieties"] = {"a": 1}
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [t]
+        a = 1
+        varieties = { a = 1 }
+
+        [t.physical]
+        color = "red"
+        """)
     assert _reparses(out) == doc.to_dict()
     assert doc.to_dict() == {
         "t": {"a": 1, "physical": {"color": "red"}, "varieties": {"a": 1}}
@@ -268,6 +280,7 @@ def test_set_overwrites_implicit_child_table() -> None:
     doc = tomlrt.loads(src)
     doc["a"] = 5
     out = tomlrt.dumps(doc)
+    assert out == "a = 5\n"
     assert _reparses(out) == {"a": 5}
 
 
@@ -286,6 +299,13 @@ def test_quoted_key_escapes_special_chars() -> None:
     doc["c\\d"] = 2
     doc["e\tf"] = 3  # tab is a control char (U+0009)
     out = tomlrt.dumps(doc)
+    assert out == td(
+        r"""
+        "a\"b" = 1
+        "c\\d" = 2
+        "e\u0009f" = 3
+        """
+    )
     assert _reparses(out) == {'a"b': 1, "c\\d": 2, "e\tf": 3}
     # Round-trip confirms the emitted form is parseable.
     assert tomlrt.loads(out) == doc
@@ -348,6 +368,7 @@ def test_inline_table_delete_last_clears_trailing_comma() -> None:
     obj = doc.table("obj")
     del obj["b"]
     out = tomlrt.dumps(doc)
+    assert out == "obj = { a = 1 }\n"
     assert _reparses(out) == {"obj": {"a": 1}}
 
 
@@ -416,6 +437,14 @@ def test_inline_table_accepts_standalone_array_with_live_attach() -> None:
     assert obj["xs"] is arr
     arr.append(4)
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        obj = { a = 1, xs = [
+            1,
+            2,
+            3,
+            4,
+        ] }
+        """)
     assert _reparses(out) == {"obj": {"a": 1, "xs": [1, 2, 3, 4]}}
 
 
@@ -506,6 +535,7 @@ def test_array_append() -> None:
     xs.append(4)
     assert list(xs) == [1, 2, 3, 4]
     out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 2, 3, 4]\n"
     assert _reparses(out) == {"xs": [1, 2, 3, 4]}
 
 
@@ -526,6 +556,7 @@ def test_array_pop() -> None:
     assert v == 30
     assert list(xs) == [10, 20]
     out = tomlrt.dumps(doc)
+    assert out == "xs = [10, 20]\n"
     assert _reparses(out) == {"xs": [10, 20]}
 
 
@@ -571,6 +602,7 @@ def test_array_setitem_int() -> None:
     xs = doc.array("xs")
     xs[1] = 22
     out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 22, 3]\n"
     assert _reparses(out) == {"xs": [1, 22, 3]}
 
 
@@ -579,6 +611,7 @@ def test_array_setitem_slice() -> None:
     xs = doc.array("xs")
     xs[1:3] = [22, 33, 44]
     out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 22, 33, 44, 4]\n"
     assert _reparses(out) == {"xs": [1, 22, 33, 44, 4]}
 
 
@@ -619,6 +652,7 @@ def test_array_delitem_slice() -> None:
     xs = doc.array("xs")
     del xs[1:3]
     out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 4]\n"
     assert _reparses(out) == {"xs": [1, 4]}
 
 
@@ -698,6 +732,7 @@ def test_array_clear_and_append() -> None:
     xs.clear()
     xs.append("hi")
     out = tomlrt.dumps(doc)
+    assert out == 'xs = ["hi"]\n'
     assert _reparses(out) == {"xs": ["hi"]}
 
 
@@ -707,6 +742,7 @@ def test_array_extend_iadd() -> None:
     xs.extend([1, 2])
     xs += [3, 4]
     out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 2, 3, 4]\n"
     assert _reparses(out) == {"xs": [1, 2, 3, 4]}
 
 
@@ -740,6 +776,7 @@ def test_array_sort_reverse() -> None:
     assert list(xs) == [1, 2, 3]
     xs.reverse()
     out = tomlrt.dumps(doc)
+    assert out == "xs = [3, 2, 1]\n"
     assert _reparses(out) == {"xs": [3, 2, 1]}
 
 
@@ -748,6 +785,7 @@ def test_array_imul() -> None:
     xs = doc.array("xs")
     xs *= 3
     out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 2, 1, 2, 1, 2]\n"
     assert _reparses(out) == {"xs": [1, 2, 1, 2, 1, 2]}
 
 
@@ -766,6 +804,7 @@ def test_array_remove() -> None:
     xs = doc.array("xs")
     xs.remove(2)
     out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 3, 2]\n"
     assert _reparses(out) == {"xs": [1, 3, 2]}
 
 
@@ -774,6 +813,7 @@ def test_array_insert() -> None:
     xs = doc.array("xs")
     xs.insert(1, 2)
     out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 2, 3]\n"
     assert _reparses(out) == {"xs": [1, 2, 3]}
 
 
@@ -937,6 +977,10 @@ def test_assigning_array_deep_clones() -> None:
     assert list(src_arr) == [1, 2, 3]
     assert list(dst) == [1, 2, 3, 99]
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        src = [1, 2, 3]
+        dst = [1, 2, 3, 99]
+        """)
     parsed = _reparses(out)
     assert parsed == {"src": [1, 2, 3], "dst": [1, 2, 3, 99]}
 
@@ -945,6 +989,7 @@ def test_assigning_dict_creates_inline_table() -> None:
     doc = tomlrt.loads("")
     doc["obj"] = {"a": 1, "b": "two"}
     out = tomlrt.dumps(doc)
+    assert out == 'obj = { a = 1, b = "two" }\n'
     assert _reparses(out) == {"obj": {"a": 1, "b": "two"}}
 
 
@@ -952,6 +997,7 @@ def test_assigning_list_creates_inline_array() -> None:
     doc = tomlrt.loads("")
     doc["nums"] = [1, 2, 3]
     out = tomlrt.dumps(doc)
+    assert out == "nums = [1, 2, 3]\n"
     assert _reparses(out) == {"nums": [1, 2, 3]}
 
 
@@ -959,6 +1005,7 @@ def test_replace_scalar_with_array() -> None:
     doc = tomlrt.loads("x = 1\n")
     doc["x"] = [True, False]
     out = tomlrt.dumps(doc)
+    assert out == "x = [true, false]\n"
     assert _reparses(out) == {"x": [True, False]}
 
 
@@ -984,6 +1031,16 @@ def test_aot_pop_default_removes_last_entry_and_owned_subsections() -> None:
     assert popped["name"] == "c"
     assert len(aot) == 2
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "a"
+
+        [pkg.dep]
+        x = 1
+
+        [[pkg]]
+        name = "b"
+        """)
     assert _reparses(out) == {
         "pkg": [
             {"name": "a", "dep": {"x": 1}},
@@ -1013,7 +1070,18 @@ def test_aot_pop_negative_index() -> None:
     aot = doc.aot("pkg")
     popped = aot.pop(-2)
     assert popped["name"] == "b"
-    assert _reparses(tomlrt.dumps(doc)) == {
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "a"
+
+        [pkg.dep]
+        x = 1
+
+        [[pkg]]
+        name = "c"
+        """)
+    assert _reparses(out) == {
         "pkg": [{"name": "a", "dep": {"x": 1}}, {"name": "c"}],
     }
 
@@ -1043,7 +1111,16 @@ def test_aot_pop_returns_held_entry_object_and_remains_mutable() -> None:
     assert popped["extra"] == 99
     new_doc = tomlrt.loads("")
     new_doc["pkg"] = popped
-    assert _reparses(tomlrt.dumps(new_doc))["pkg"]["extra"] == 99
+    out = tomlrt.dumps(new_doc)
+    assert out == td("""
+        [pkg]
+        name = "a"
+        extra = 99
+
+        [pkg.dep]
+        x = 1
+        """)
+    assert _reparses(out)["pkg"]["extra"] == 99
 
 
 def test_aot_clear_removes_all_entries_and_owned_subsections() -> None:
@@ -1060,7 +1137,18 @@ def test_aot_delitem_index_pops_one() -> None:
     doc = _aot_doc()
     aot = doc.aot("pkg")
     del aot[1]
-    assert _reparses(tomlrt.dumps(doc)) == {
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "a"
+
+        [pkg.dep]
+        x = 1
+
+        [[pkg]]
+        name = "c"
+        """)
+    assert _reparses(out) == {
         "pkg": [{"name": "a", "dep": {"x": 1}}, {"name": "c"}],
     }
 
@@ -1069,7 +1157,15 @@ def test_aot_delitem_slice_removes_range() -> None:
     doc = _aot_doc()
     aot = doc.aot("pkg")
     del aot[1:]
-    assert _reparses(tomlrt.dumps(doc)) == {"pkg": [{"name": "a", "dep": {"x": 1}}]}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "a"
+
+        [pkg.dep]
+        x = 1
+        """)
+    assert _reparses(out) == {"pkg": [{"name": "a", "dep": {"x": 1}}]}
 
 
 def test_aot_delitem_slice_with_step() -> None:
@@ -1087,7 +1183,14 @@ def test_aot_delitem_slice_with_step() -> None:
     )
     aot = doc.aot("p")
     del aot[::2]
-    assert _reparses(tomlrt.dumps(doc)) == {"p": [{"n": 2}, {"n": 4}]}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[p]]
+        n=2
+        [[p]]
+        n=4
+        """)
+    assert _reparses(out) == {"p": [{"n": 2}, {"n": 4}]}
 
 
 def test_aot_setitem_replaces_entry() -> None:
@@ -1095,6 +1198,16 @@ def test_aot_setitem_replaces_entry() -> None:
     aot = doc.aot("pkg")
     aot[0] = {"new": True}
     rendered = tomlrt.dumps(doc)
+    assert rendered == td("""
+        [[pkg]]
+        new = true
+
+        [[pkg]]
+        name = "b"
+
+        [[pkg]]
+        name = "c"
+        """)
     assert _reparses(rendered)["pkg"][0] == {"new": True}
     assert len(doc.aot("pkg")) == 3
 
@@ -1104,6 +1217,19 @@ def test_aot_setitem_negative_index() -> None:
     aot = doc.aot("pkg")
     aot[-1] = {"replaced": True}
     rendered = tomlrt.dumps(doc)
+    assert rendered == td("""
+        [[pkg]]
+        name = "a"
+
+        [pkg.dep]
+        x = 1
+
+        [[pkg]]
+        name = "b"
+
+        [[pkg]]
+        replaced = true
+        """)
     assert _reparses(rendered)["pkg"][-1] == {"replaced": True}
 
 
@@ -1128,6 +1254,25 @@ def test_aot_iadd_appends_entries_to_cst() -> None:
     aot = doc.aot("pkg")
     aot += [{"name": "d"}, {"name": "e"}]
     rendered = tomlrt.dumps(doc)
+    assert rendered == td("""
+        [[pkg]]
+        name = "a"
+
+        [pkg.dep]
+        x = 1
+
+        [[pkg]]
+        name = "b"
+
+        [[pkg]]
+        name = "c"
+
+        [[pkg]]
+        name = "d"
+
+        [[pkg]]
+        name = "e"
+        """)
     assert _reparses(rendered)["pkg"] == [
         {"name": "a", "dep": {"x": 1}},
         {"name": "b"},
@@ -1149,6 +1294,20 @@ def test_aot_imul_replicates_entries_in_cst() -> None:
     aot = doc.aot("t")
     aot *= 3
     rendered = tomlrt.dumps(doc)
+    assert rendered == td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        """)
     assert _reparses(rendered)["t"] == [
         {"x": 1},
         {"x": 2},
@@ -1170,7 +1329,9 @@ def test_aot_imul_zero_clears() -> None:
     )
     aot = doc.aot("t")
     aot *= 0
-    assert "t" not in tomlrt.loads(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == ""
+    assert "t" not in tomlrt.loads(out)
 
 
 def test_aot_imul_detached_replicates_entries() -> None:
@@ -1235,7 +1396,16 @@ def test_aot_reverse_reorders_cst() -> None:
     )
     aot = doc.aot("t")
     aot.reverse()
-    assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 3}, {"x": 2}, {"x": 1}]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[t]]
+        x = 3
+        [[t]]
+        x = 2
+        [[t]]
+        x = 1
+        """)
+    assert _reparses(out)["t"] == [{"x": 3}, {"x": 2}, {"x": 1}]
 
 
 def test_aot_sort_reorders_cst() -> None:
@@ -1251,7 +1421,16 @@ def test_aot_sort_reorders_cst() -> None:
     )
     aot = doc.aot("t")
     aot.sort(key=lambda e: e["x"])
-    assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 1}, {"x": 2}, {"x": 3}]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        [[t]]
+        x = 3
+        """)
+    assert _reparses(out)["t"] == [{"x": 1}, {"x": 2}, {"x": 3}]
 
 
 def test_aot_imul_preserves_inter_entry_separator() -> None:
@@ -1351,7 +1530,18 @@ def test_aot_reverse_preserves_owned_subtables() -> None:
     )
     aot = doc.aot("t")
     aot.reverse()
-    parsed = _reparses(tomlrt.dumps(doc))["t"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[t]]
+        name = "b"
+        [t.sub]
+        y = 2
+        [[t]]
+        name = "a"
+        [t.sub]
+        y = 1
+        """)
+    parsed = _reparses(out)["t"]
     assert parsed == [
         {"name": "b", "sub": {"y": 2}},
         {"name": "a", "sub": {"y": 1}},
@@ -1954,7 +2144,14 @@ def test_aot_remove_drops_first_matching_entry_from_cst() -> None:
     )
     aot = doc.aot("t")
     aot.remove(aot[1])
-    assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 1}, {"x": 3}]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 3
+        """)
+    assert _reparses(out)["t"] == [{"x": 1}, {"x": 3}]
 
 
 def test_aot_remove_missing_raises_value_error() -> None:
@@ -1983,7 +2180,18 @@ def test_aot_slice_replace_contiguous() -> None:
         tomlrt.Table.inline({"name": "C"}),
     ]
     assert [t["name"] for t in items] == ["a", "B", "C"]
-    assert _reparses(tomlrt.dumps(doc))["items"] == [
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        name = "a"
+
+        [[items]]
+        name = "B"
+
+        [[items]]
+        name = "C"
+        """)
+    assert _reparses(out)["items"] == [
         {"name": "a"},
         {"name": "B"},
         {"name": "C"},
@@ -2054,7 +2262,9 @@ def test_array_sort_with_key_callable() -> None:
     doc = tomlrt.loads('xs = ["bb", "a", "ccc"]\n')
     xs = doc.array("xs")
     xs.sort(key=lambda v: len(str(v)))
-    assert _reparses(tomlrt.dumps(doc)) == {"xs": ["a", "bb", "ccc"]}
+    out = tomlrt.dumps(doc)
+    assert out == 'xs = ["a", "bb", "ccc"]\n'
+    assert _reparses(out) == {"xs": ["a", "bb", "ccc"]}
 
 
 def test_array_imul_zero_clears() -> None:
@@ -2062,7 +2272,9 @@ def test_array_imul_zero_clears() -> None:
     xs = doc.array("xs")
     xs *= 0
     assert list(xs) == []
-    assert _reparses(tomlrt.dumps(doc)) == {"xs": []}
+    out = tomlrt.dumps(doc)
+    assert out == "xs = []\n"
+    assert _reparses(out) == {"xs": []}
 
 
 def test_array_imul_negative_clears() -> None:
@@ -2076,7 +2288,9 @@ def test_array_imul_repeats_items() -> None:
     doc = tomlrt.loads("xs = [1, 2]\n")
     xs = doc.array("xs")
     xs *= 3
-    assert _reparses(tomlrt.dumps(doc)) == {"xs": [1, 2, 1, 2, 1, 2]}
+    out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 2, 1, 2, 1, 2]\n"
+    assert _reparses(out) == {"xs": [1, 2, 1, 2, 1, 2]}
 
 
 def test_array_imul_preserves_no_trailing_comma() -> None:
@@ -2312,7 +2526,12 @@ def test_aot_add_returns_new_table_view() -> None:
     pkg = aot.add({"name": "foo"})
     assert isinstance(pkg, tomlrt.Table)
     assert pkg["name"] == "foo"
-    assert _reparses(tomlrt.dumps(doc)) == {"pkg": [{"name": "foo"}]}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "foo"
+        """)
+    assert _reparses(out) == {"pkg": [{"name": "foo"}]}
 
 
 def test_aot_add_default_empty_returns_blank_entry_for_population() -> None:
@@ -2323,7 +2542,15 @@ def test_aot_add_default_empty_returns_blank_entry_for_population() -> None:
     assert dict(pkg) == {}
     pkg["name"] = "bar"
     pkg["dep"] = Table.section({"x": 1})
-    assert _reparses(tomlrt.dumps(doc)) == {
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "bar"
+
+        [pkg.dep]
+        x = 1
+        """)
+    assert _reparses(out) == {
         "pkg": [{"name": "bar", "dep": {"x": 1}}],
     }
 
@@ -2337,7 +2564,19 @@ def test_aot_add_returned_view_stays_live_across_subsequent_adds() -> None:
     aot.add({"name": "c"})
     # The handle returned earlier still refers to the right entry.
     first["version"] = "1.0"
-    assert _reparses(tomlrt.dumps(doc)) == {
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "a"
+        version = "1.0"
+
+        [[pkg]]
+        name = "b"
+
+        [[pkg]]
+        name = "c"
+        """)
+    assert _reparses(out) == {
         "pkg": [
             {"name": "a", "version": "1.0"},
             {"name": "b"},
@@ -2382,7 +2621,9 @@ def test_array_append_list_synthesises_inline_array() -> None:
     doc = tomlrt.loads("xs = []\n")
     arr = doc.array("xs")
     arr.append([1, 2, 3])
-    parsed = _reparses(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == "xs = [[1, 2, 3]]\n"
+    parsed = _reparses(out)
     assert parsed == {"xs": [[1, 2, 3]]}
 
 
@@ -2390,7 +2631,9 @@ def test_array_extend_mixed_python_containers() -> None:
     doc = tomlrt.loads("xs = []\n")
     arr = doc.array("xs")
     arr.extend([{"a": 1}, [1, 2], "three"])
-    parsed = _reparses(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == 'xs = [{ a = 1 }, [1, 2], "three"]\n'
+    parsed = _reparses(out)
     assert parsed == {"xs": [{"a": 1}, [1, 2], "three"]}
 
 
@@ -2398,7 +2641,9 @@ def test_array_insert_dict() -> None:
     doc = tomlrt.loads("xs = [1, 3]\n")
     arr = doc.array("xs")
     arr.insert(1, {"k": "v"})
-    parsed = _reparses(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == 'xs = [1, { k = "v" }, 3]\n'
+    parsed = _reparses(out)
     assert parsed == {"xs": [1, {"k": "v"}, 3]}
 
 
@@ -2406,7 +2651,9 @@ def test_array_setitem_replaces_with_dict() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3]\n")
     arr = doc.array("xs")
     arr[1] = {"k": "v"}
-    parsed = _reparses(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == 'xs = [1, { k = "v" }, 3]\n'
+    parsed = _reparses(out)
     assert parsed == {"xs": [1, {"k": "v"}, 3]}
 
 
@@ -3297,6 +3544,7 @@ def test_clear_inline_table_empties_and_round_trips() -> None:
     obj.clear()
     assert dict(obj) == {}
     out = tomlrt.dumps(doc)
+    assert out == "obj = { }\n"
     assert _reparses(out) == {"obj": {}}
 
 
@@ -3328,6 +3576,11 @@ def test_clear_dotted_subtable_drops_only_its_subtree() -> None:
     assert "x" not in sub
     assert doc["s"]["d"] == 4
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        a.c = 3
+        d = 4
+        """)
     assert _reparses(out) == {"s": {"a": {"c": 3}, "d": 4}}
 
 
@@ -3430,6 +3683,11 @@ def test_inline_append_does_not_steal_eol_comment_in_multiline() -> None:
     obj = doc.table("obj")
     obj["b"] = 2
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        obj = { a = 1, # eol-on-a
+            b = 2
+          }
+        """)
     assert out.index("# eol-on-a") < out.index("b = 2")
     assert tomlrt.loads(out).table("obj").to_dict() == {"a": 1, "b": 2}
 
@@ -3501,7 +3759,9 @@ def test_inline_delete_dotted_prefix_removes_all_subentries() -> None:
     del obj["a"]
     assert "a" not in obj
     assert obj["d"] == 3
-    assert tomlrt.loads(tomlrt.dumps(doc)).table("obj").to_dict() == {"d": 3}
+    out = tomlrt.dumps(doc)
+    assert out == "obj = { d = 3 }\n"
+    assert tomlrt.loads(out).table("obj").to_dict() == {"d": 3}
 
 
 def test_inline_delete_dotted_leaf_cleans_empty_prefix_container() -> None:
@@ -3512,7 +3772,9 @@ def test_inline_delete_dotted_leaf_cleans_empty_prefix_container() -> None:
     # Synthetic prefix container `a` is now empty and has no entry in
     # the backing InlineTableValue; outer dict view should drop it.
     assert "a" not in obj
-    assert tomlrt.loads(tomlrt.dumps(doc)).table("obj").to_dict() == {}
+    out = tomlrt.dumps(doc)
+    assert out == "obj = { }\n"
+    assert tomlrt.loads(out).table("obj").to_dict() == {}
 
 
 def test_insert_into_comment_only_doc_migrates_preamble() -> None:
@@ -3672,7 +3934,12 @@ def test_delete_inserted_top_level_kv_round_trips() -> None:
     doc["new"] = 1
     del doc["new"]
     # Blank-line residue is acceptable; reparse is what matters.
-    assert tomlrt.loads(tomlrt.dumps(doc)).to_dict() == {"s": {"x": 1}}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        x = 1
+        """)
+    assert tomlrt.loads(out).to_dict() == {"s": {"x": 1}}
 
 
 def test_structural_only_implicit_promotes_to_section() -> None:
@@ -3788,7 +4055,15 @@ def test_unattached_aot_then_attach_preserves_contents() -> None:
     aot[1] = {"name": "b"}
     doc = tomlrt.loads("")
     doc["pkg"] = aot
-    assert _reparses(tomlrt.dumps(doc)) == {"pkg": [{"name": "z"}, {"name": "b"}]}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "z"
+
+        [[pkg]]
+        name = "b"
+        """)
+    assert _reparses(out) == {"pkg": [{"name": "z"}, {"name": "b"}]}
 
 
 # ---------------------------------------------------------------------------
@@ -3866,7 +4141,17 @@ def test_aot_entry_with_dotted_key_clones() -> None:
     # Re-attach into a new AoT key — exercises clone path with dotted KVs.
     doc["dst"] = AoT()
     doc.aot("dst").append(src_entry)
-    assert _reparses(tomlrt.dumps(doc)) == {
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[arr]]
+        a.b = 1
+        a.c = 2
+
+        [[dst]]
+        a.b = 1
+        a.c = 2
+        """)
+    assert _reparses(out) == {
         "arr": [{"a": {"b": 1, "c": 2}}],
         "dst": [{"a": {"b": 1, "c": 2}}],
     }
@@ -4804,6 +5089,13 @@ def test_sort_super_table_with_aot_preserves_explicit_header() -> None:
 
     a.sort(key=key)
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        date = "2019"
+        name = "Bob"
+        [[a.hello]]
+        x = 1
+        """)
     assert _reparses(out)
     reparsed = tomlrt.loads(out)
     assert reparsed.table("a")["date"] == "2019"
