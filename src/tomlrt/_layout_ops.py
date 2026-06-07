@@ -1847,7 +1847,7 @@ def add_aot_entry(
 
     # Splice header after the last existing AoT-owned slot if any,
     # else at end-of-doc.
-    anchor = _last_aot_slot(aot)
+    anchor = _last_aot_slot(aot, doc)
     if anchor is None:
         _splice_at_end(header, doc)
     else:
@@ -2027,7 +2027,7 @@ def _install_cloned_aot_entry(
         owner=new_entry,
         cloned_header=cloned_header,
         cloned_slots=cloned_slots,
-        anchor=_last_aot_slot(aot),
+        anchor=_last_aot_slot(aot, doc),
     )
 
     list.append(aot, entry_table)
@@ -2581,19 +2581,44 @@ def _items_for_synth(source: Mapping[str, Any] | Container) -> list[tuple[str, o
     return list(source.items())
 
 
-def _last_aot_slot(aot: AoT) -> Slot | None:
-    """Return the last doc-stream slot owned by any entry of ``aot``.
+def _subtree_membership(c: Container) -> set[int]:
+    """Set of ``id(slot)`` for every slot owned by ``c``'s subtree.
 
-    AoT entries are stored in document order and each entry's
-    `entry_slots` list is also in document order, so the answer is
-    the last slot of the last entry that has any slots. Walks
-    backwards to keep this O(1) in the common case.
+    Membership only (order-independent): ``c``'s own slots plus those
+    of every nested section and nested AoT entry.
+    """
+    owned: set[int] = set()
+    _collect_subtree(c, [], [], lambda s: owned.add(id(s)))
+    return owned
+
+
+def _last_aot_slot(aot: AoT, doc: Document) -> Slot | None:
+    """Return the last doc-stream slot owned by ``aot``'s last entry.
+
+    This is the anchor a newly-appended ``[[a]]`` entry is spliced
+    after, so it must be the last *physical* slot of the last entry's
+    whole subtree — including slots owned by nested ``[[a.sub]]`` AoT
+    entries, which ``entry_slots`` deliberately excludes.
+
+    Derived from the doc-stream rather than ``entry_slots[-1]`` so it is
+    correct regardless of ``entry_slots`` ordering and works when the
+    entry's subtree is physically non-contiguous (e.g. a ``[[a.sub]]``
+    separated from its parent entry by an unrelated ``[other]``).
+    Membership comes from ``_collect_subtree`` (``_refs`` + recursion);
+    order comes from a backward walk of the doc-stream — O(1) in the
+    common case where the AoT sits at the document tail.
     """
     for entry_table in reversed(aot):
         e = entry_table._owner_aot_entry  # noqa: SLF001
         if e is None or not e.entry_slots:
             continue
-        return e.entry_slots[-1]
+        owned = _subtree_membership(entry_table)
+        cur: Slot | None = doc._tail  # noqa: SLF001
+        while cur is not None:
+            if id(cur) in owned:
+                return cur
+            cur = cur._prev  # noqa: SLF001
+        return e.entry_slots[-1]  # pragma: no cover -- doc-stream/_refs invariant
     return None
 
 
@@ -2989,8 +3014,8 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     _resort_refs_by_doc_order(chain, doc)
 
 
-def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> None:
-    """Resort each container's ``_refs`` and ``_index[k]`` by linked-list position."""
+def _doc_position_map(doc: Document) -> dict[int, int]:
+    """Map ``id(slot)`` to its index in ``doc``'s doc-stream linked list."""
     position: dict[int, int] = {}
     cur = doc._head  # noqa: SLF001
     idx = 0
@@ -2998,6 +3023,12 @@ def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> Non
         position[id(cur)] = idx
         idx += 1
         cur = cur._next  # noqa: SLF001
+    return position
+
+
+def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> None:
+    """Resort each container's ``_refs`` and ``_index[k]`` by linked-list position."""
+    position = _doc_position_map(doc)
     for c in containers:
         c._refs.sort(key=lambda r: position.get(id(r.slot), 0))  # noqa: SLF001
         for refs in c._index.values():  # noqa: SLF001
@@ -3400,6 +3431,14 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     for cn in chain:
         if cn._body_tail is not None:  # noqa: SLF001
             cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
+
+    # When c sits inside an AoT entry, the splice reordered slots the
+    # entry owns; keep ``entry_slots`` in doc-stream order so anchor
+    # lookups that trust that ordering (e.g. ``_last_aot_slot``) stay
+    # correct.
+    if c_owner is not None:
+        position = _doc_position_map(doc)
+        c_owner.entry_slots.sort(key=lambda s: position.get(id(s), 0))
 
 
 __all__ = [

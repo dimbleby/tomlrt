@@ -1229,6 +1229,117 @@ def test_aot_reverse_preserves_owned_subtables() -> None:
     ]
 
 
+def test_append_aot_entry_after_sorting_an_entrys_keys() -> None:
+    """Appending an AoT entry after reordering a prior entry's keys must
+    anchor the new entry after the entry's true last slot.
+
+    Regression: ``reorder_container`` permuted the entry's KV slots in
+    the doc-stream but left ``AoTEntry.entry_slots`` in its old order.
+    ``_last_aot_slot`` trusts ``entry_slots[-1]`` as the append anchor,
+    so the new ``[[p]]`` header was spliced *inside* the reordered
+    entry, splitting it and re-parenting the trailing key on re-parse.
+    """
+    doc = tomlrt.loads("[[p]]\nb = 2\na = 1\n")
+    doc["p"][0].sort()
+    doc["p"].append({"new": True})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[p]]
+        a = 1
+        b = 2
+
+        [[p]]
+        new = true
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_insert_aot_entry_at_end_after_sorting_an_entrys_keys() -> None:
+    """Same fix via ``insert`` at the tail rather than ``append``."""
+    doc = tomlrt.loads("[[p]]\nx = 0\n\n[[p]]\nb = 2\na = 1\n")
+    doc["p"][1].sort()
+    doc["p"].insert(2, {"new": True})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[p]]
+        x = 0
+
+        [[p]]
+        a = 1
+        b = 2
+
+        [[p]]
+        new = true
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_append_aot_entry_when_last_entry_owns_nested_aot() -> None:
+    """Appending a new ``[[p]]`` must anchor after the last entry's whole
+    subtree, including a nested ``[[p.sub]]`` it owns.
+
+    Regression: ``_last_aot_slot`` returned ``entry_slots[-1]``, which
+    excludes slots owned by nested AoT entries, so the new ``[[p]]``
+    header was spliced *before* the nested ``[[p.sub]]`` block — which
+    re-parse then attributed to the new entry.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [[p]]
+            a = 1
+
+              [[p.sub]]
+              x = 1
+            """)
+    )
+    doc["p"].append({"new": True})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[p]]
+        a = 1
+
+          [[p.sub]]
+          x = 1
+
+        [[p]]
+        new = true
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_append_aot_entry_when_nested_aot_is_non_contiguous() -> None:
+    """The append anchor must follow a nested ``[[p.sub]]`` even when an
+    unrelated ``[other]`` physically separates it from its parent entry."""
+    doc = tomlrt.loads(
+        td("""
+            [[p]]
+            x = 1
+
+            [other]
+            y = 1
+
+            [[p.sub]]
+            z = 1
+            """)
+    )
+    doc["p"].append({"new": True})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[p]]
+        x = 1
+
+        [other]
+        y = 1
+
+        [[p.sub]]
+        z = 1
+
+        [[p]]
+        new = true
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_aot_reverse_carries_nested_aot_blocks() -> None:
     """Reversing an AoT must move each entry's nested ``[[t.sub]]`` blocks
     with it.
