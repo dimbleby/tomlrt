@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
+    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
         CommaItem,
         CommaValue,
@@ -1354,6 +1355,7 @@ class Document(Container):
     """
 
     __slots__ = (
+        "_displaced_recorder",
         "_head",
         "_install_recorder",
         "_is_private",
@@ -1387,6 +1389,9 @@ class Document(Container):
         self._prelude: str = ""
         self._is_private: bool = False
         self._install_recorder: list[Slot] | None = None
+        self._displaced_recorder: (
+            list[tuple[Slot, list[TriviaPiece], Slot | None]] | None
+        ) = None
         self._layout_root = self
         if data is not None:
             validated = _validate_mapping(data, label="Document data argument")

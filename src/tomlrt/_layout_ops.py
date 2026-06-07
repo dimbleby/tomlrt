@@ -107,20 +107,68 @@ def _record_new_slot(doc: Document, slot: Slot) -> None:
         recorder.append(slot)
 
 
+@contextlib.contextmanager
+def _record_displacements(
+    doc: Document,
+) -> Iterator[list[tuple[Slot, list[TriviaPiece], Slot | None]]]:
+    """Capture each pre-existing slot whose ``leading`` the install rewrote.
+
+    ``_synthesise_header_then_insert_kv`` rewrites the leading of the
+    descendant it inserts a synthetic header before — a sibling it does
+    not own — on the premise that the header now precedes it. When that
+    install happens inside ``reposition_install`` the synthesised block
+    is then relocated, which can break the premise. Each rewrite records
+    ``(slot, original_leading_pieces, original_predecessor)`` so the
+    leading can be restored iff the move left ``slot`` back beside its
+    original predecessor. Companion to ``_record_install``; re-entrancy
+    stacks the same way.
+    """
+    prev = doc._displaced_recorder  # noqa: SLF001
+    recorder: list[tuple[Slot, list[TriviaPiece], Slot | None]] = []
+    doc._displaced_recorder = recorder  # noqa: SLF001
+    try:
+        yield recorder
+    finally:
+        doc._displaced_recorder = prev  # noqa: SLF001
+
+
+def _record_displacement(doc: Document, slot: Slot, original_pred: Slot | None) -> None:
+    """Snapshot ``slot``'s leading + original predecessor for later restore."""
+    recorder = doc._displaced_recorder  # noqa: SLF001
+    if recorder is not None:
+        recorder.append((slot, list(slot.leading.pieces), original_pred))
+
+
 def reposition_install(parent: Container, key: str, value: Any) -> None:
     """Replace ``parent[key]`` while preserving its physical position.
 
     Snapshots the bound region's anchor, leading, and successor leading;
     deletes the binding; reinstalls via ``parent[key] = value``;
-    captures the freshly-built slots through ``_record_install``;
-    moves them back to the saved anchor; and restores the successor's
-    leading if the moved block still sits immediately before it.
+    captures the freshly-built slots through ``_record_install`` (and any
+    displaced siblings through ``_record_displacements``); moves them back
+    to the saved anchor; and restores perturbed neighbour leadings.
 
-    The successor restore covers leading perturbations from both the
-    delete side (``unlink_slot`` stripping a new doc-head's blank
-    lines) and the install side (``_synthesise_header_then_insert_kv``
-    rewriting the descendant's leading, ``append_direct_kv``'s
-    head-of-doc blank-line guard).
+    Neighbour-leading restore obeys a single rule: **a surviving
+    neighbour keeps its pre-op leading iff, after the move, it sits
+    immediately after the slot that legitimately precedes it.** Two kinds
+    of neighbour feed that rule, differing only in *which* slot that is:
+
+    * the region's *successor* — the slot after the binding's landing
+      site, whose rightful predecessor is the relocated block's tail
+      (``new_slots[-1]``). This covers delete-side perturbations
+      (``unlink_slot`` stripping a new doc-head's blank lines), the
+      install-side head-of-doc guard, and the case where synthesis lands
+      the block back in front of it (restoring the user's exact gap in
+      place of synthesis's canonical separator);
+    * a *displaced sibling* — a slot ``_synthesise_header_then_insert_kv``
+      transiently shoved a synthetic header in front of, whose rightful
+      predecessor is its own *original* predecessor ``R``; restored when
+      the move relocated the block away from it.
+
+    A neighbour's expected predecessor is unique (the block tail and a
+    sibling's original ``R`` are distinct slots), so the rule resolves
+    each neighbour to at most one restore even when the successor and a
+    displaced sibling are the same slot.
 
     A header-less new binding (scalar / synth-inline) is left where
     ``_insert_new`` placed it when the captured anchor lies outside
@@ -153,7 +201,7 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     doc = parent._attached_doc  # noqa: SLF001
     token = _reinstall_as_dotted.set(reinstall_as_dotted)
     try:
-        with _record_install(doc) as new_slots:
+        with _record_install(doc) as new_slots, _record_displacements(doc) as displaced:
             parent[key] = value
     finally:
         _reinstall_as_dotted.reset(token)
@@ -180,12 +228,15 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     if not anchor_safe:
         return
     _move_slots_to_anchor(parent, new_slots, saved_anchor_prev, saved_leading_pieces)
-    if (
-        successor_slot is not None
-        and successor_leading is not None
-        and new_slots[-1]._next is successor_slot  # noqa: SLF001
-    ):
-        successor_slot.leading.pieces = list(successor_leading)
+    # Unified neighbour-leading restore (see docstring): restore each
+    # perturbed neighbour's pre-op leading iff the move left it directly
+    # after the predecessor that makes that leading correct.
+    restores: list[tuple[Slot, list[TriviaPiece], Slot | None]] = list(displaced)
+    if successor_slot is not None and successor_leading is not None:
+        restores.append((successor_slot, successor_leading, new_slots[-1]))
+    for slot, original, expected_pred in restores:
+        if slot._prev is expected_pred:  # noqa: SLF001
+            slot.leading.pieces = list(original)
 
 
 def _ancestor_chain(c: Container) -> list[Container]:
@@ -1306,6 +1357,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     # separator now precedes the header) and giving the descendant a
     # fresh inter-section leading in the doc's current style.
     adopted_leading = anchor_slot.leading
+    original_pred = anchor_slot._prev  # noqa: SLF001
     new_descendant_leading = _build_section_leading(doc)
     header_slot = _new_section_header(
         c._path,  # noqa: SLF001
@@ -1314,6 +1366,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         owner_aot_entry=owner,
     )
     insert_before(anchor_slot, header_slot, doc)
+    _record_displacement(doc, anchor_slot, original_pred)
     anchor_slot.leading = new_descendant_leading
 
     # File a binding ref for the new header on every ancestor along

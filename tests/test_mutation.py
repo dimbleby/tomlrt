@@ -1709,7 +1709,6 @@ def test_sort_container_with_synthetic_header_binding_dotted_kv() -> None:
     doc["fruit"].sort()
     out = tomlrt.dumps(doc)
     assert out == td("""
-
         [fruit]
         orange = { deep = { v = 1 } }
         [fruit.apple]
@@ -1718,7 +1717,53 @@ def test_sort_container_with_synthetic_header_binding_dotted_kv() -> None:
     assert doc.to_dict() == {"fruit": {"apple": {}, "orange": {"deep": {"v": 1}}}}
 
 
-def test_sort_container_hoists_interleaved_foreign_key() -> None:
+def test_overwrite_section_with_value_preserves_neighbour_leading() -> None:
+    """Overwriting a section with a value synthesises a ``[fruit]`` header
+    and relocates it back to the replaced binding's position. The
+    untouched sibling section it was momentarily synthesised in front of
+    must keep its original leading — no spurious inter-section blank line
+    injected before it (and none stranded at the top of the file)."""
+    doc = tomlrt.loads(
+        td("""
+            z = 0
+            [fruit.apple]
+            [fruit.orange]
+            """)
+    )
+    doc["fruit"]["orange"] = {"deep": {"v": 1}}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        z = 0
+        [fruit.apple]
+        [fruit]
+        orange = { deep = { v = 1 } }
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_first_section_with_value_successor_is_synth_anchor() -> None:
+    """The replaced binding is the *first* descendant, so its captured
+    successor (``[fruit.apple]``) is the very sibling synthesis displaces.
+    The successor-restore and the displaced-restore target the same slot
+    but are mutually exclusive (block-before vs block-not-before), so the
+    blank line the user wrote between the two sections survives exactly
+    once and ``[fruit.apple]`` is otherwise untouched."""
+    doc = tomlrt.loads(
+        td("""
+            [fruit.orange]
+
+            [fruit.apple]
+            """)
+    )
+    doc["fruit"]["orange"] = {"deep": {"v": 1}}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [fruit]
+        orange = { deep = { v = 1 } }
+
+        [fruit.apple]
+        """)
+    assert _reparses(out) == doc.to_dict()
     """Sorting a container whose owned span has an interleaved foreign
     (outer-scope) key must not push that key into a sub-section's scope.
 
