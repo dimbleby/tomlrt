@@ -76,7 +76,9 @@ def _deep_eq(a: object, b: object) -> bool:
     if isinstance(a, float) and isinstance(b, float):
         return (math.isnan(a) and math.isnan(b)) or a == b
     if isinstance(a, dict) and isinstance(b, dict):
-        return a.keys() == b.keys() and all(_deep_eq(a[k], b[k]) for k in a)
+        am: dict[Any, Any] = a
+        bm: dict[Any, Any] = b
+        return am.keys() == bm.keys() and all(_deep_eq(v, bm[k]) for k, v in am.items())
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(
             _deep_eq(x, y) for x, y in zip(a, b, strict=True)
