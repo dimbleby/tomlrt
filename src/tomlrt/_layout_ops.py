@@ -3381,9 +3381,19 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         cur = cur._next  # noqa: SLF001
 
     # 2. Reject orders that would re-bind a leaf KV under a structural
-    # section header. Slotless keys (empty AoT bindings) don't
-    # participate in physical layout, so skip them in the check.
-    def _is_structural(slots: list[Slot]) -> bool:
+    # section header. A block with *any* leaf KV (a bare or dotted
+    # ``key = value``) must not follow a structural block — including a
+    # "mixed" key that owns both a leaf and a sub-section, whose leaf
+    # part would be captured. Slotless keys (empty AoT bindings) don't
+    # participate in physical layout, so skip them.
+    def _has_leaf(slots: list[Slot]) -> bool:
+        # Only a KV hosted directly by ``c`` (a bare or dotted leaf of
+        # ``c``) can be captured by a preceding header; a KV under the
+        # block's own section header (``host_path`` deeper than ``c``)
+        # is correctly scoped and does not count.
+        return any(isinstance(s, KVSlot) and s.host_path == c_path for s in slots)
+
+    def _has_structural(slots: list[Slot]) -> bool:
         return any(isinstance(s, StructuralHeaderSlot) for s in slots)
 
     seen_structural = False
@@ -3391,14 +3401,14 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         block = key_blocks[k]
         if not block:
             continue
-        if _is_structural(block):
-            seen_structural = True
-        elif seen_structural:
+        if _has_leaf(block) and seen_structural:
             msg = (
-                f"reorder: leaf key {k!r} cannot follow a structural "
-                f"section/AoT key (would rebind it as nested)"
+                f"reorder: key {k!r} has leaf content that cannot follow a "
+                f"structural section/AoT key (would rebind it as nested)"
             )
             raise ValueError(msg)
+        if _has_structural(block):
+            seen_structural = True
 
     if not physical_blocks:
         return
