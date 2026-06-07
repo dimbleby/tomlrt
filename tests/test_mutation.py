@@ -5705,9 +5705,14 @@ def test_demote_synthetic_placeholder_transfers_preamble() -> None:
     doc = tomlrt.loads("# preamble comment\n[existing]\nx = 1\n")
     doc["tool"] = Table.section()
     doc["tool"]["sub"] = Table.section({"k": 1})
-    assert tomlrt.dumps(doc) == (
-        "# preamble comment\n[existing]\nx = 1\n\n\n[tool.sub]\nk = 1\n"
-    )
+    assert tomlrt.dumps(doc) == td("""
+        # preamble comment
+        [existing]
+        x = 1
+
+        [tool.sub]
+        k = 1
+        """)
 
 
 def test_demote_synthetic_placeholder_clears_stale_body_tail() -> None:
