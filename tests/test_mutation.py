@@ -1566,6 +1566,41 @@ def test_sort_container_with_synthetic_header_binding_dotted_kv() -> None:
     assert doc.to_dict() == {"fruit": {"apple": {}, "orange": {"deep": {"v": 1}}}}
 
 
+def test_sort_container_hoists_interleaved_foreign_key() -> None:
+    """Sorting a container whose owned span has an interleaved foreign
+    (outer-scope) key must not push that key into a sub-section's scope.
+
+    Regression: ``reorder_container`` gathered the non-contiguous
+    ``many.dots`` runs across the root key ``kfor``, shoving ``kfor``
+    after ``[many.dots.sub]`` — re-parse then bound it under
+    ``many.dots.sub``. The foreign key is now hoisted to the region
+    head and ``many`` is gathered contiguously.
+    """
+    doc = tomlrt.loads(
+        td("""
+            many.dots.a = 1
+            many.k = 2
+            kfor = 99
+            [many.dots.sub]
+            x = 1
+            """)
+    )
+    doc["many"].sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        kfor = 99
+        many.k = 2
+        many.dots.a = 1
+        [many.dots.sub]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {
+        "many": {"k": 2, "dots": {"a": 1, "sub": {"x": 1}}},
+        "kfor": 99,
+    }
+
+
 def test_aot_reverse_moves_leading_comments_with_entries() -> None:
     src = td("""
         # A
