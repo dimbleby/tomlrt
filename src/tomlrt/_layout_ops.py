@@ -128,11 +128,11 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     successor_leading = (
         list(successor_slot.leading.pieces) if successor_slot is not None else None
     )
-    # The header-less safety check reads ``old_primary``'s doc-stream
-    # pointers, so evaluate it before ``del`` wipes them. The
-    # header-bearing check is done after install, against the actual
-    # installed slots.
-    in_body = _primary_in_parent_body_region(parent, old_primary)
+    # The header-less safety check reads the doc-stream around the
+    # captured anchor, so evaluate it before ``del`` perturbs the
+    # links. The header-bearing check is done after install, against
+    # the actual installed slots.
+    in_body = _anchor_in_parent_direct_body(parent, saved_anchor_prev)
     del parent[key]
     doc = parent._attached_doc  # noqa: SLF001
     with _record_install(doc) as new_slots:
@@ -178,31 +178,32 @@ def _ancestor_chain(c: Container) -> list[Container]:
     return out
 
 
-def _primary_in_parent_body_region(parent: Container, primary: Slot) -> bool:
-    """True iff ``primary`` is physically inside ``parent``'s body region.
+def _anchor_in_parent_direct_body(parent: Container, anchor_prev: Slot | None) -> bool:
+    """True iff a direct KV spliced after ``anchor_prev`` would belong to ``parent``.
 
-    Walks the doc-stream backward from ``primary`` to the enclosing
-    boundary: an explicit section needs its own header; a Document
-    root walking past every header without matching one fails; an
-    implicit container has no contiguous body region and is always
-    accepted.
+    A re-parser attributes a bare ``key = value`` line to whatever
+    header is open at its position — the most recent header at or
+    before it. So walking the doc-stream backward from ``anchor_prev``,
+    the first header encountered must be ``parent``'s own header (or, at
+    the document root, none before the stream start). A descendant
+    sub-header (``[parent.sub]``) or a foreign header would capture the
+    KV instead, so the reposition is unsafe and the binding is left at
+    ``parent``'s body tail.
+
+    Implicit (header-less, non-root) containers have no contiguous body
+    region to reason about and are always accepted.
     """
     parent_header_ref = parent._header_ref  # noqa: SLF001
     if parent_header_ref is None and parent._parent is not None:  # noqa: SLF001
         return True  # implicit container — accept.
     parent_header = parent_header_ref.slot if parent_header_ref else None
-    parent_path = parent._path  # noqa: SLF001
-    n = len(parent_path)
-    cur: Slot | None = primary
+    cur: Slot | None = anchor_prev
     while cur is not None:
-        if cur is parent_header:
-            return True
-        if isinstance(cur, StructuralHeaderSlot) and (
-            parent_header is None or cur.path[:n] != parent_path
-        ):
-            return False
+        if isinstance(cur, StructuralHeaderSlot):
+            return cur is parent_header
         cur = cur._prev  # noqa: SLF001
-    return False
+    # Reached the stream start without a header → document-root scope.
+    return parent_header is None
 
 
 def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:
