@@ -32,6 +32,7 @@ uv run pytest -q                 # run the test suite (~10s)
 uv run pytest --cov              # tests + branch coverage
 uv run pytest -m slow            # property + bytes-level fuzz suite
 uv run mypy                      # strict type-check src/ and tests/
+uvx ty check                     # second (Astral) type-checker
 uv run ruff check .              # lint
 uv run ruff format .             # apply formatting
 uv run ruff format --check .     # CI-style format check
@@ -41,8 +42,11 @@ A `Makefile` wraps the most common invocations (`make test`, `make
 fuzz`, `make coverage`, `make lint`, `make docs`, `make docs-serve`,
 `make bench`, `make clean`); use it if you prefer.
 
-All four checks (`pytest`, `mypy`, `ruff check`, `ruff format --check`)
-must pass before any commit. CI runs the same set on Python 3.10–3.14.
+All five checks (`pytest`, `mypy`, `ty check`, `ruff check`, `ruff
+format --check`) must pass before any commit. CI runs the same set on
+Python 3.10–3.14. `ty` is a second, independent type-checker (run via
+`uvx`; it is not a declared dev dependency) — it sometimes flags things
+`mypy` does not, so keep both green.
 
 ## Coding standards
 
@@ -286,6 +290,14 @@ wrong.
   (unregisters). AoT removal uses it to scrub refs in O(depth) per
   slot instead of O(siblings) per container — don't bypass it
   with ad-hoc walks of ancestor `_index` buckets.
+- **`AoTEntry.entry_slots`** is a **membership** list, not a
+  doc-ordered one: it records which slots belong to the entry (with
+  its `[[a]]` header kept first because it is appended first), but
+  its order is *not* the doc-stream order. Anything that needs the
+  entry's doc-stream-latest slot must **derive** it by walking the
+  doc-stream (`_entry_last_slot`, `_aot_append_anchor`), never read
+  `entry_slots[-1]`. Reversed-unlink and clone slicing, in turn, rely
+  on the append-order (header first), not on doc order.
 - **Container shape** is named explicitly by the `_Kind` enum in
   `_kind.py` and surfaced as `Container._kind`. The six kinds —
   `DOCUMENT`, `SECTION`, `IMPLICIT_SECTION`, `INLINE_ROOT`,
@@ -319,6 +331,16 @@ wrong.
   parser arbitrary / near-valid input and asserts it either raises
   `TOMLParseError` or accepts and round-trips byte-exactly. Marked
   `slow`, so it is only picked up by `pytest -m slow` (`make fuzz`).
+- `tests/test_fuzz_mutation.py` — mutation fuzzer over the vendored
+  `toml-test` corpus: runs random edit programs (set / delete /
+  overwrite / sort / array + AoT ops) over each parsed document and
+  asserts the model stays self-consistent — valid TOML out, a
+  dump→load→dump fixed point, and (the important oracle)
+  `tomllib.loads(dumps(doc))` matching `doc.to_dict()`, which catches a
+  mutation that places a slot where a re-parse attributes it to a
+  different owner than the logical view says. Draws **fresh random
+  seeds** each run and reports the failing seed for reproduction.
+  Marked `slow`; skips if the corpus is not vendored.
 - `tests/test_mutation.py` — the dict/list mutation API.
 - `tests/test_format.py` — the `Container.format()` /
   `Array.format()` canonicaliser.
