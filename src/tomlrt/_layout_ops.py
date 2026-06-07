@@ -128,24 +128,36 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     successor_leading = (
         list(successor_slot.leading.pieces) if successor_slot is not None else None
     )
-    # A header-less new binding (scalar / synth-inline) takes its
-    # scope from physical position; check the anchor is in
-    # ``parent``'s body region before del wipes ``old_primary``'s
-    # doc-stream pointers. Same-flavour replacements bring their own
-    # header so the anchor is always safe and the walk is skipped.
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import _is_section  # noqa: PLC0415
-
-    anchor_safe = (
-        isinstance(value, AoT)
-        or _is_section(value)
-        or _primary_in_parent_body_region(parent, old_primary)
-    )
+    # The header-less safety check reads ``old_primary``'s doc-stream
+    # pointers, so evaluate it before ``del`` wipes them. The
+    # header-bearing check is done after install, against the actual
+    # installed slots.
+    in_body = _primary_in_parent_body_region(parent, old_primary)
     del parent[key]
     doc = parent._attached_doc  # noqa: SLF001
     with _record_install(doc) as new_slots:
         parent[key] = value
-    if not new_slots or not anchor_safe:
+    if not new_slots:
+        return
+    # A header-less new binding (scalar / synth-inline) takes its scope
+    # from physical position, so it only needs its anchor inside
+    # ``parent``'s body region. A binding that brings a structural
+    # header — an explicit section / AoT value, *or* a scalar that
+    # promoted an implicit ``parent`` to a section — must not be
+    # repositioned ahead of a KV it does not own: re-parse would
+    # capture that KV under the new header. The block lands after
+    # ``saved_anchor_prev``; if the slot that would follow it is a KV
+    # outside the block, leave the block where ``_insert_new`` placed
+    # it (end of the body) instead.
+    if any(isinstance(s, StructuralHeaderSlot) for s in new_slots):
+        new_ids = {id(s) for s in new_slots}
+        succ = saved_anchor_prev._next if saved_anchor_prev is not None else doc._head  # noqa: SLF001
+        while succ is not None and id(succ) in new_ids:
+            succ = succ._next  # noqa: SLF001
+        anchor_safe = not isinstance(succ, KVSlot)
+    else:
+        anchor_safe = in_body
+    if not anchor_safe:
         return
     _move_slots_to_anchor(parent, new_slots, saved_anchor_prev, saved_leading_pieces)
     if (
