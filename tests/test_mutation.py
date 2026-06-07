@@ -105,6 +105,82 @@ def test_set_overwrites_dotted_prefix() -> None:
     assert _reparses(out) == {"a": {"b": 2}}
 
 
+def test_overwrite_non_last_key_with_section_keeps_following_kvs() -> None:
+    """Replacing a non-last key with a section must place the new header
+    *after* the table's remaining direct KVs, not at the old key's slot.
+
+    Regression: ``reposition_install`` always repositioned a
+    header-bearing replacement to the overwritten key's old position. If
+    that key was not last, the new ``[a]`` header landed ahead of the
+    sibling KVs (``b = 2``), which re-parse then attributed to ``a``.
+    """
+    doc = tomlrt.loads("a = 1\nb = 2\n")
+    doc["a"] = Table.section({"x": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        b = 2
+
+        [a]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_non_last_key_with_aot_keeps_following_kvs() -> None:
+    """Same fix when the replacement is an array-of-tables."""
+    doc = tomlrt.loads("[t]\na = 1\nb = 2\n")
+    doc["t"]["a"] = AoT([{"x": 1}])
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [t]
+        b = 2
+
+        [[t.a]]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_non_last_key_in_aot_entry_with_section() -> None:
+    """The same hazard inside an AoT entry: the new sub-section header
+    must follow the entry's remaining direct KVs."""
+    doc = tomlrt.loads("[[p]]\na = 1\nb = 2\n")
+    doc["p"][0]["a"] = Table.section({"x": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[p]]
+        b = 2
+
+        [p.a]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_dotted_intermediate_promotes_without_capturing_root_keys() -> None:
+    """Overwriting a dotted intermediate (whose value is a subtable) with a
+    scalar promotes the implicit table to a header; that header must not be
+    repositioned ahead of unrelated root keys.
+
+    Regression: the promotion synthesised an ``[a]`` header and
+    ``reposition_install`` moved it back to the overwritten key's old
+    slot — ahead of the trailing root key ``k = 2``, which re-parse then
+    attributed to ``a``. The replacement value is a *scalar*, so a
+    value-type test misses it; the header arrives from promoting the
+    implicit parent.
+    """
+    doc = tomlrt.loads("a.b.c = 1\nk = 2\n")
+    doc["a"]["b"] = "str"
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        k = 2
+
+        [a]
+        b = "str"
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_inline_overwrite_intermediate_dotted_node_keeps_view_linked() -> None:
     """Overwriting an intermediate dotted node of an inline table with a
     scalar must keep the logical view in sync with the rendered CST.
