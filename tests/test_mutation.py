@@ -1686,6 +1686,12 @@ def test_sort_container_with_synthetic_header_binding_keeps_kv_in_scope() -> Non
     doc["fruit"]["orange"] = [1, 2]
     doc["fruit"].sort()
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [animal]
+        [fruit]
+        orange = [1, 2]
+        [fruit.apple]
+        """)
     assert _reparses(out) == doc.to_dict()
     assert doc.to_dict() == {
         "fruit": {"apple": {}, "orange": [1, 2]},
@@ -1705,6 +1711,12 @@ def test_sort_container_with_synthetic_header_binding_dotted_kv() -> None:
     doc["fruit"]["orange"] = {"deep": {"v": 1}}
     doc["fruit"].sort()
     out = tomlrt.dumps(doc)
+    assert out == td("""
+
+        [fruit]
+        orange = { deep = { v = 1 } }
+        [fruit.apple]
+        """)
     assert _reparses(out) == doc.to_dict()
     assert doc.to_dict() == {"fruit": {"apple": {}, "orange": {"deep": {"v": 1}}}}
 
