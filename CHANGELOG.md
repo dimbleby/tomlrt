@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sorting or reordering a table whose header was synthesised by a
+  prior mutation (e.g. an `[a]` promoted by overwriting `a.b`) no
+  longer hoists its body keys above every header and rebinds them to
+  the document root.
+- Sorting or reordering a container with a foreign (outer-scope) key
+  interleaved between two runs of one of its keys no longer pushes
+  that foreign key into a sub-section's scope.
 - Reversing or sorting an array-of-tables whose entries own nested
   `[[a.sub]]` array-of-tables no longer strands the nested blocks,
   which previously corrupted the data on the next re-parse.
