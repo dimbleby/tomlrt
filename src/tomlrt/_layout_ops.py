@@ -3298,7 +3298,20 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     header_ref = c._header_ref  # noqa: SLF001
     if header_ref is not None:
         assert isinstance(header_ref.slot, StructuralHeaderSlot)
-        if not header_ref.slot.synthetic:
+        # A non-synthetic header is always the region marker. A
+        # synthetic one is the marker only when it currently binds a
+        # body (its next slot is a KV) — otherwise it is an elidable
+        # empty placeholder that should not anchor the region. This
+        # mirrors `_maybe_demote_synthetic_empty_header`: reorder
+        # preserves a synthetic header exactly when demotion would
+        # keep it. Without this, a synthetic header that binds direct
+        # or dotted KVs (e.g. an `[a]` promoted by overwriting `a.b`)
+        # is skipped, and its body KVs are spliced ahead of every
+        # header — re-parse then rebinds them to the document root.
+        if not header_ref.slot.synthetic or isinstance(
+            header_ref.slot._next,  # noqa: SLF001
+            KVSlot,
+        ):
             header_slot = header_ref.slot
 
     # 1. Walk the doc once, building blocks in physical doc-stream

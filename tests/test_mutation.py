@@ -1523,6 +1523,49 @@ def test_aot_sort_carries_nested_aot_blocks() -> None:
     )
 
 
+def test_sort_container_with_synthetic_header_binding_keeps_kv_in_scope() -> None:
+    """Sorting a table whose header is synthetic (promoted by an overwrite)
+    must keep the synthetic header as the region marker so its body KV
+    stays bound to it.
+
+    Regression: ``reorder_container`` skipped synthetic headers when
+    choosing the region marker, so the direct KV the synthetic ``[fruit]``
+    header binds was spliced ahead of every header — re-parse then
+    rebound it to the document root.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [fruit.apple]
+            [animal]
+            [fruit.orange]
+            """)
+    )
+    doc["fruit"]["orange"] = [1, 2]
+    doc["fruit"].sort()
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {
+        "fruit": {"apple": {}, "orange": [1, 2]},
+        "animal": {},
+    }
+
+
+def test_sort_container_with_synthetic_header_binding_dotted_kv() -> None:
+    """Same fix when the synthetic header binds a *dotted* body KV — the
+    header is non-elidable and must stay the region marker."""
+    doc = tomlrt.loads(
+        td("""
+            [fruit.apple]
+            [fruit.orange]
+            """)
+    )
+    doc["fruit"]["orange"] = {"deep": {"v": 1}}
+    doc["fruit"].sort()
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {"fruit": {"apple": {}, "orange": {"deep": {"v": 1}}}}
+
+
 def test_aot_reverse_moves_leading_comments_with_entries() -> None:
     src = td("""
         # A
