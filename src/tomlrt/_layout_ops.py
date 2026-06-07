@@ -28,6 +28,7 @@ Design notes:
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import copy
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -59,6 +60,15 @@ if TYPE_CHECKING:
     from tomlrt._slots import Slot
     from tomlrt._trivia import TriviaPiece
     from tomlrt._values import Value
+
+
+# Set by ``reposition_install`` while it reinstalls a binding that is
+# *replacing a dotted key* (rather than a header). ``append_direct_kv``
+# reads it to keep the dotted form on an emptied implicit container
+# instead of promoting it to an explicit ``[c]`` header.
+_reinstall_as_dotted: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_reinstall_as_dotted", default=False
+)
 
 
 # ---------------------------------------------------------------------------
@@ -133,10 +143,20 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     # links. The header-bearing check is done after install, against
     # the actual installed slots.
     in_body = _anchor_in_parent_direct_body(parent, saved_anchor_prev)
+    # If the binding being replaced was itself a dotted key (its primary
+    # slot is a KVSlot, not a header), keep the dotted form when the new
+    # value re-emits into an emptied implicit container — replacing
+    # ``a.b.c = 1`` with a scalar should yield ``a.b = "str"``, not a new
+    # ``[a]`` header. A binding whose primary was a header keeps a header.
+    reinstall_as_dotted = isinstance(old_primary, KVSlot)
     del parent[key]
     doc = parent._attached_doc  # noqa: SLF001
-    with _record_install(doc) as new_slots:
-        parent[key] = value
+    token = _reinstall_as_dotted.set(reinstall_as_dotted)
+    try:
+        with _record_install(doc) as new_slots:
+            parent[key] = value
+    finally:
+        _reinstall_as_dotted.reset(token)
     if not new_slots:
         return
     # A header-less new binding (scalar / synth-inline) takes its scope
@@ -184,26 +204,29 @@ def _anchor_in_parent_direct_body(parent: Container, anchor_prev: Slot | None) -
     A re-parser attributes a bare ``key = value`` line to whatever
     header is open at its position — the most recent header at or
     before it. So walking the doc-stream backward from ``anchor_prev``,
-    the first header encountered must be ``parent``'s own header (or, at
-    the document root, none before the stream start). A descendant
-    sub-header (``[parent.sub]``) or a foreign header would capture the
+    the first header encountered must be the binding's host header (or,
+    at the document root, none before the stream start). A descendant
+    sub-header (``[host.sub]``) or a foreign header would capture the
     KV instead, so the reposition is unsafe and the binding is left at
-    ``parent``'s body tail.
+    its body tail.
 
-    Implicit (header-less, non-root) containers have no contiguous body
-    region to reason about and are always accepted.
+    For an implicit (header-less, non-root) container the binding is
+    emitted as a dotted key hosted by the nearest header-bearing
+    ancestor, so its scope is that host's — check against the host
+    header, not the implicit container itself.
     """
-    parent_header_ref = parent._header_ref  # noqa: SLF001
-    if parent_header_ref is None and parent._parent is not None:  # noqa: SLF001
-        return True  # implicit container — accept.
-    parent_header = parent_header_ref.slot if parent_header_ref else None
+    host = parent
+    while host._header_ref is None and host._parent is not None:  # noqa: SLF001
+        host = host._parent  # noqa: SLF001
+    host_header_ref = host._header_ref  # noqa: SLF001
+    host_header = host_header_ref.slot if host_header_ref else None
     cur: Slot | None = anchor_prev
     while cur is not None:
         if isinstance(cur, StructuralHeaderSlot):
-            return cur is parent_header
+            return cur is host_header
         cur = cur._prev  # noqa: SLF001
     # Reached the stream start without a header → document-root scope.
-    return parent_header is None
+    return host_header is None
 
 
 def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:
@@ -534,13 +557,15 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         # the previous header (or the doc root) established, not in
         # ``c``'s logical scope — semantic mismatch. Insert via a
         # dotted KV under the nearest header-bearing ancestor instead.
-        if c._body_tail is None:  # noqa: SLF001
-            # Implicit ``c`` whose only contributors are descendant
-            # headers (e.g. ``[a.b]\ny = 1`` then mutating
-            # ``doc.table('a')['x']``). Promote ``c`` to an explicit
-            # section by synthesising a ``[c._path]`` header before
-            # the first descendant slot, then insert the KV directly
-            # under it.
+        if c._body_tail is None and not _reinstall_as_dotted.get():  # noqa: SLF001
+            # ``c`` has no dotted body to anchor a dotted KV. Promote it
+            # to an explicit ``[c]`` header: before its first descendant
+            # header when it has one (``[a.b]`` ⇒ synthesise ``[a]``), or
+            # as a fresh header when fully empty. The exception is a
+            # structural overwrite that is *replacing a dotted binding*
+            # (``_reinstall_as_dotted``) — there the original form was
+            # dotted, so we keep it dotted rather than introduce a
+            # header (see ``reposition_install``).
             _synthesise_header_then_insert_kv(c, key, value)
             return
         _append_dotted_kv_under_implicit(c, key, value)
@@ -1227,16 +1252,14 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
 
     Thin wrapper over :func:`install_dotted_kv_slot` that derives the
     host and leaf keypath from ``c``. Routes through the nearest
-    header-bearing ancestor (or the doc root).
+    header-bearing ancestor (or the doc root). Handles both a ``c`` with
+    an existing dotted body and a fully-empty ``c`` (no anchor of its
+    own — ``install_dotted_kv_slot`` falls back to the host's anchor).
 
     Pre-conditions (checked by caller):
       * ``c._path`` is non-empty (c is not the doc root)
       * ``c._header_ref is None`` (c is implicit-headerless)
-      * ``c._body_tail is not None`` (c has at least one dotted-KV
-        contributor — anchors the new slot)
     """
-    assert c._body_tail is not None  # noqa: SLF001
-
     host: Container = c
     while host._parent is not None and host._header_ref is None:  # noqa: SLF001
         host = host._parent  # noqa: SLF001
