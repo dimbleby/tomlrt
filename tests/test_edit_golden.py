@@ -253,6 +253,13 @@ def test_aot_append_entry_via_dict() -> None:
     users = doc.aot("users")
     users.append({"name": "bob"})
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[users]]
+        name = "alice"
+
+        [[users]]
+        name = "bob"
+        """)
     assert _reparses(out) == {"users": [{"name": "alice"}, {"name": "bob"}]}
 
 
@@ -543,6 +550,16 @@ def test_cross_doc_table_assign_deep_clones() -> None:
     a_srv["port"] = 9999
     out_a = tomlrt.dumps(a)
     out_b = tomlrt.dumps(b)
+    assert out_a == td("""
+        [srv]
+        host = "a.example"
+        port = 9999
+        """)
+    assert out_b == td("""
+        [srv]
+        host = "a.example"
+        port = 80
+        """)
     assert _reparses(out_a) == {"srv": {"host": "a.example", "port": 9999}}
     assert _reparses(out_b) == {"srv": {"host": "a.example", "port": 80}}
 
@@ -560,8 +577,22 @@ def test_cross_doc_aot_assign_deep_clones() -> None:
     b["users"] = a["users"]
     a_users = a.aot("users")
     a_users[0]["name"] = "MUT"
-    assert _reparses(tomlrt.dumps(a))["users"][0]["name"] == "MUT"
-    assert _reparses(tomlrt.dumps(b))["users"][0]["name"] == "alice"
+    out_a = tomlrt.dumps(a)
+    out_b = tomlrt.dumps(b)
+    assert out_a == td("""
+        [[users]]
+        name = "MUT"
+        [[users]]
+        name = "bob"
+        """)
+    assert out_b == td("""
+        [[users]]
+        name = "alice"
+        [[users]]
+        name = "bob"
+        """)
+    assert _reparses(out_a)["users"][0]["name"] == "MUT"
+    assert _reparses(out_b)["users"][0]["name"] == "alice"
 
 
 def test_cross_doc_array_assign_deep_clones() -> None:
@@ -572,8 +603,12 @@ def test_cross_doc_array_assign_deep_clones() -> None:
     b["ports"] = a["ports"]
     a_ports = a.array("ports")
     a_ports.append(8080)
-    assert _reparses(tomlrt.dumps(a))["ports"] == [80, 443, 8080]
-    assert _reparses(tomlrt.dumps(b))["ports"] == [80, 443]
+    out_a = tomlrt.dumps(a)
+    out_b = tomlrt.dumps(b)
+    assert out_a == "ports = [80, 443, 8080]\n"
+    assert out_b == "ports = [80, 443]\n"
+    assert _reparses(out_a)["ports"] == [80, 443, 8080]
+    assert _reparses(out_b)["ports"] == [80, 443]
 
 
 def test_cross_doc_table_assign_with_nested_aot() -> None:
@@ -628,6 +663,19 @@ def test_aot_append_entry_preserves_nested_aot() -> None:
     dst = tomlrt.loads("[[outer]]\nv = 10\n")
     dst["outer"].append(src["outer"][0])
     out = dst.render()
+    assert out == td("""
+        [[outer]]
+        v = 10
+
+        [[outer]]
+        v = 1
+        [outer.sub]
+        s = 2
+        [[outer.aot]]
+        q = 3
+        [[outer.aot]]
+        q = 4
+        """)
     reparsed = _reparses(out)
     assert reparsed["outer"][1] == {
         "v": 1,
@@ -652,6 +700,16 @@ def test_aot_replace_entry_preserves_nested_aot() -> None:
     dst = tomlrt.loads("[[outer]]\nv = 99\n")
     dst["outer"][0] = src["outer"][0]
     out = dst.render()
+    assert out == td("""
+        [[outer]]
+        v = 1
+        [outer.sub]
+        s = 2
+        [[outer.aot]]
+        q = 3
+        [[outer.aot]]
+        q = 4
+        """)
     reparsed = _reparses(out)
     assert reparsed["outer"][0] == {
         "v": 1,
@@ -679,8 +737,17 @@ def test_cross_doc_assign_repeats_subsection_under_distinct_aot_entries() -> Non
     assert dict(entries[0]) == {"y": 1, "sub": {"z": 1}}
     assert dict(entries[1]) == {"y": 2, "sub": {"z": 2}}
     dst["a"]["x"][0]["sub"]["z"] = 99
-    assert "z = 99" in dst.render()
-    assert "z = 2" in dst.render()
+    assert dst.render() == td("""
+        [a]
+        [[a.x]]
+        y = 1
+        [a.x.sub]
+        z = 99
+        [[a.x]]
+        y = 2
+        [a.x.sub]
+        z = 2
+        """)
 
 
 def test_cross_doc_table_assign_preserves_header_leading_comments() -> None:
@@ -860,6 +927,10 @@ def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
     inner = a["a"].table("b")
     b["x"] = inner
     out = tomlrt.dumps(b)
+    assert out == td("""
+        x.c = 1
+        x.d = 2
+        """)
     assert _reparses(out) == {"x": {"c": 1, "d": 2}}
 
 
@@ -881,6 +952,12 @@ def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
     b = Document()
     b["k"] = a
     out = tomlrt.dumps(b)
+    assert out == td("""
+        k.pre = 1
+
+        [k.k]
+        x = 2
+        """)
     assert _reparses(out) == {"k": {"pre": 1, "k": {"x": 2}}}
 
 
@@ -1555,7 +1632,39 @@ def test_section_subkey_across_aot_entries_keeps_values_separate() -> None:
 
     # Round-trip parses the same way: each [package.source] stays
     # attached to its own [[package]] entry.
-    parsed = tomlrt.loads(tomlrt.dumps(doc))
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[package]]
+        n = "git1"
+
+        [package.source]
+        type = "git"
+        url = "g1"
+        ref = "develop"
+
+        [[package]]
+        n = "git2"
+
+        [package.source]
+        type = "git"
+        url = "g2"
+        subdir = "s"
+
+        [[package]]
+        n = "url1"
+
+        [package.source]
+        type = "url"
+        url = "u1"
+
+        [[package]]
+        n = "url2"
+
+        [package.source]
+        type = "url"
+        url = "u2"
+        """)
+    parsed = tomlrt.loads(out)
     for i, want in enumerate(expected_sources):
         assert dict(parsed["package"][i]["source"]) == want
 
@@ -1679,7 +1788,12 @@ def test_install_attached_aot_is_independent_of_source() -> None:
     b = tomlrt.loads("")
     b.install("y", a["t"])
     a["t"][0]["name"] = "MUT"
-    assert _reparses(tomlrt.dumps(b))["y"][0]["name"] == "alice"
+    out = tomlrt.dumps(b)
+    assert out == td("""
+        [[y]]
+        name = "alice"
+        """)
+    assert _reparses(out)["y"][0]["name"] == "alice"
 
 
 # ---------------------------------------------------------------------------
@@ -1746,6 +1860,11 @@ def test_set_value_overwriting_dotted_subtree() -> None:
     a = doc.table("a")
     a["b"] = 99
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        b = 99
+        x = 9
+        """)
     assert _reparses(out) == {"a": {"x": 9, "b": 99}}
 
 
@@ -1759,6 +1878,11 @@ def test_set_value_overwriting_top_level_table() -> None:
     doc = tomlrt.loads(src)
     doc["a"] = 99
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = 99
+        [b]
+        y = 2
+        """)
     assert _reparses(out) == {"a": 99, "b": {"y": 2}}
 
 
@@ -1777,6 +1901,12 @@ def test_del_subtable() -> None:
     a = doc.table("a")
     del a["b"]
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        x = 1
+        [other]
+        q = 1
+        """)
     assert _reparses(out) == {"a": {"x": 1}, "other": {"q": 1}}
 
 
@@ -1793,6 +1923,10 @@ def test_del_aot() -> None:
     a = doc.table("a")
     del a["items"]
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        x = 1
+        """)
     assert _reparses(out) == {"a": {"x": 1}}
 
 
@@ -1807,6 +1941,10 @@ def test_del_dotted_subtree() -> None:
     a = doc.table("a")
     del a["b"]
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        x = 9
+        """)
     assert _reparses(out) == {"a": {"x": 9}}
 
 
@@ -1830,7 +1968,12 @@ def test_pop_returns_subtable_snapshot() -> None:
     a = doc.table("a")
     popped = a.pop("b")
     assert popped == {"y": 2, "c": {"z": 3}}
-    assert _reparses(tomlrt.dumps(doc)) == {"a": {"x": 1}}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        x = 1
+        """)
+    assert _reparses(out) == {"a": {"x": 1}}
 
 
 def test_pop_returns_aot_snapshot() -> None:
@@ -1864,7 +2007,9 @@ def test_popitem_is_lifo() -> None:
     )
     assert doc.popitem() == ("c", 3)
     assert doc.popitem() == ("b", 2)
-    assert _reparses(tomlrt.dumps(doc)) == {"a": 1}
+    out = tomlrt.dumps(doc)
+    assert out == "a = 1\n"
+    assert _reparses(out) == {"a": 1}
 
 
 def test_popitem_empty_raises() -> None:
@@ -1880,6 +2025,13 @@ def test_setitem_into_implicit_parent() -> None:
     a = doc.table("a")
     a["new"] = 1
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        new = 1
+
+        [a.b]
+        y = 2
+        """)
     assert _reparses(out) == {"a": {"new": 1, "b": {"y": 2}}}
 
 
@@ -1889,6 +2041,13 @@ def test_setitem_into_implicit_grandparent() -> None:
     ab = doc.table("a").table("b")
     ab["new"] = 1
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a.b]
+        new = 1
+
+        [a.b.c]
+        z = 3
+        """)
     assert _reparses(out) == {"a": {"b": {"new": 1, "c": {"z": 3}}}}
 
 
@@ -1898,6 +2057,7 @@ def test_inline_table_setitem_overwrites_dotted_group() -> None:
     config = doc.table("config")
     config["server"] = "newval"
     out = tomlrt.dumps(doc)
+    assert out == 'config = { name = "y", server = "newval" }\n'
     assert _reparses(out) == {"config": {"name": "y", "server": "newval"}}
 
 
@@ -1907,6 +2067,7 @@ def test_inline_table_delitem_removes_dotted_group() -> None:
     config = doc.table("config")
     del config["server"]
     out = tomlrt.dumps(doc)
+    assert out == 'config = { name = "y" }\n'
     assert _reparses(out) == {"config": {"name": "y"}}
 
 
@@ -1945,6 +2106,14 @@ def test_aot_entry_owned_scope_isolates_sibling_sub_sections() -> None:
     s0["x"] = 100
     assert s1["x"] == 2  # unchanged
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[arr]]
+        [arr.sub]
+        x = 100
+        [[arr]]
+        [arr.sub]
+        x = 2
+        """)
     assert _reparses(out) == {"arr": [{"sub": {"x": 100}}, {"sub": {"x": 2}}]}
 
 
@@ -2627,7 +2796,11 @@ def test_install_scalar_at_dotted_path() -> None:
     # the existing [tool.poetry] section rather than create a new one.
     doc.install(("tool", "poetry", "name"), "x")
     rendered = tomlrt.dumps(doc)
-    assert rendered.count("[tool.poetry]") == 1
+    assert rendered == td("""
+        [tool.poetry]
+        version = "0.1.0"
+        name = "x"
+        """)
 
 
 def test_install_scalar_at_literal_dot_segment() -> None:
@@ -2897,18 +3070,53 @@ def test_preamble_set_on_empty_doc_renders_before_added_content() -> None:
 
 
 def test_preamble_migration_for_install_section_and_aot() -> None:
-    cases: list[tuple[str, Callable[[tomlrt.Document], object]]] = [
-        ("install_section", lambda d: d.install("a", Table.section({"k": 1}))),
-        ("install_aot", lambda d: d.install("a", AoT([{"k": 1}]))),
-        ("inline_mapping", lambda d: d.__setitem__("a", {"b": 1})),
-        ("nested_install_section", lambda d: d.install("a.b", Table.section({"k": 1}))),
+    cases: list[tuple[str, Callable[[tomlrt.Document], object], str]] = [
+        (
+            "install_section",
+            lambda d: d.install("a", Table.section({"k": 1})),
+            td("""
+                # Top
+
+                [a]
+                k = 1
+                """),
+        ),
+        (
+            "install_aot",
+            lambda d: d.install("a", AoT([{"k": 1}])),
+            td("""
+                # Top
+
+                [[a]]
+                k = 1
+                """),
+        ),
+        (
+            "inline_mapping",
+            lambda d: d.__setitem__("a", {"b": 1}),
+            td("""
+                # Top
+
+                a = { b = 1 }
+                """),
+        ),
+        (
+            "nested_install_section",
+            lambda d: d.install("a.b", Table.section({"k": 1})),
+            td("""
+                # Top
+
+                [a.b]
+                k = 1
+                """),
+        ),
     ]
-    for op_name, build in cases:
+    for op_name, build, expected in cases:
         doc = Document()
         doc.preamble = ("Top",)
         build(doc)
         rendered = tomlrt.dumps(doc)
-        assert rendered.startswith("# Top\n\n"), (op_name, rendered)
+        assert rendered == expected, (op_name, rendered)
         assert tomlrt.loads(rendered).preamble == ("Top",), op_name
 
 
@@ -2958,13 +3166,12 @@ def test_aot_insert_on_empty_doc_migrates_preamble() -> None:
     aot = doc["products"]
     aot.insert(0, {"name": "x"})
     rendered = tomlrt.dumps(doc)
-    assert rendered.startswith(
-        td("""
+    assert rendered == td("""
         # Copyright
 
         [[products]]
+        name = "x"
         """)
-    ), rendered
     assert tomlrt.loads(rendered).preamble == ("Copyright",)
 
 
