@@ -9,32 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Sorting or reordering a table whose header was synthesised by a
-  prior mutation (e.g. an `[a]` promoted by overwriting `a.b`) no
-  longer hoists its body keys above every header and rebinds them to
-  the document root.
-- Sorting or reordering a container with a foreign (outer-scope) key
-  interleaved between two runs of one of its keys no longer pushes
-  that foreign key into a sub-section's scope.
-- Reversing or sorting an array-of-tables whose entries own nested
-  `[[a.sub]]` array-of-tables no longer strands the nested blocks,
-  which previously corrupted the data on the next re-parse.
-- Overwriting an intermediate dotted node of an inline table with a
-  scalar (e.g. `doc["t"]["a"]["b"] = 7` over `t = {a.b.c = 1}`) no
-  longer collapses the logical view out of sync with the rendered
-  output.
-- Appending or inserting an array-of-tables entry now anchors the new
-  `[[a]]` after the last entry's whole subtree — including nested
-  `[[a.sub]]` blocks and after a prior key reorder — instead of
-  splicing it mid-entry.
-- Overwriting a non-last key with a section / array-of-tables value
-  (or a scalar that promotes an implicit parent to a section) no
-  longer repositions the new header ahead of sibling keys, which had
-  re-parented them under the new header.
-- Replacing a key whose old value was a sub-section / nested
-  array-of-tables with an inline-table or scalar value now keeps the
-  new key ahead of the parent's sub-section headers instead of being
-  captured by them.
+- Various in-place edits — `sort`, overwriting a key, and appending,
+  inserting, reversing or sorting array-of-tables entries — could
+  place a value where re-reading the file would attribute it to the
+  wrong table, silently corrupting the document or desyncing it from
+  the rendered output. These cases (covering nested arrays-of-tables,
+  dotted keys, inline tables, and out-of-order or auto-promoted
+  section headers) are fixed.
 - Replacing an out-of-order subsection (e.g. `[foo.bar]` defined
   before `[foo]`) with a dict / inline value no longer emits the
   new binding outside its parent section.
