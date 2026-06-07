@@ -3431,53 +3431,41 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     if not physical_blocks:
         return
 
-    # If the owned blocks already sit in the requested order (c-header
-    # first, then child keys in ``new_key_order``), there is nothing to
-    # splice. Returning here keeps a legitimately non-contiguous layout
-    # — a child key whose slots live in a different physical region than
-    # a sibling (e.g. a dotted leaf hosted by an ancestor header and a
-    # sub-section of the same key) — intact, instead of dragging foreign
-    # slots to the region head to force contiguity that the order does
-    # not require. The caller still re-syncs dict storage to the order.
-    header_in_phys = [None] if phys_idx_of_header is not None else []
-    phys_order = header_in_phys + sorted(
-        phys_idx_of_key, key=phys_idx_of_key.__getitem__
-    )
-    target_order: list[str | None] = [None] if header_slot is not None else []
-    target_order += [k for k in new_key_order if key_blocks[k]]
-    if phys_order == target_order:
-        return
-
     earliest_owned = physical_blocks[0][0]
 
-    # A foreign slot (one belonging to an outer scope) interleaved
-    # between this container's slots cannot be gathered across: the
-    # splice below would shove it past a header and silently change its
-    # re-parse scope. Normalise the out-of-order layout first by
-    # hoisting every such slot, in order, to the region head — they
-    # already sat in the leaf region governed by the scope just above
-    # ``c``, so moving them there preserves their binding while making
-    # the owned span contiguous for the ordinary splice.
+    # Foreign slots (belonging to an outer scope) interleaved in c's
+    # owned span must keep their re-parse scope across the gather below.
+    # A foreign slot in c's *containing* scope — a bare/dotted KV that
+    # appears before any foreign header in the span — must stay in that
+    # scope, so hoist it to the region head (ahead of the gathered run,
+    # where the containing scope is still open). A foreign *header*, and
+    # everything after it (its own body), establishes an independent
+    # scope: the ordinary gather leaves it after the reordered owned
+    # run, where it re-parses unchanged. Hoisting such a header instead
+    # would pull it ahead of c's dotted leaves and capture them — so we
+    # stop hoisting at the first foreign header.
     owned_ids = {id(s) for blk in physical_blocks for s in blk}
-    foreign: list[Slot] = []
+    front_foreign: list[Slot] = []
     seen = 1  # earliest_owned itself
     scan: Slot | None = earliest_owned._next  # noqa: SLF001
     while scan is not None and seen < len(owned_ids):
         if id(scan) in owned_ids:
             seen += 1
+        elif isinstance(scan, StructuralHeaderSlot):
+            break
         else:
-            foreign.append(scan)
+            front_foreign.append(scan)
         scan = scan._next  # noqa: SLF001
-    if foreign:
+    if front_foreign:
         head_structural, head_remainder = _split_leading_for_reorder(
             doc, earliest_owned
         )
         earliest_owned.leading = Trivia(list(head_remainder.pieces))
-        for f in foreign:
+        for f in front_foreign:
             unlink_slot(f, doc, strip_new_head_leading=False)
             insert_before(earliest_owned, f, doc)
-        foreign[0].leading = Trivia(
-            list(head_structural.pieces) + list(foreign[0].leading.pieces)
+        front_foreign[0].leading = Trivia(
+            list(head_structural.pieces) + list(front_foreign[0].leading.pieces)
         )
 
     # 3. Snapshot region-external structural from the doc-stream-

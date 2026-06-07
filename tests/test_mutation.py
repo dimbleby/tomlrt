@@ -1548,19 +1548,16 @@ def test_append_to_empty_nested_aot_under_dotted_key_clears_host_body() -> None:
 
 
 def test_sort_after_rematerialising_a_subsection_at_a_new_position() -> None:
-    """Sorting must not drag a foreign section to the region head when a
-    container's owned slots are already in the requested order but sit in
-    different physical regions.
+    """Sorting a container whose owned slots straddle a foreign section
+    must keep every dotted leaf in scope.
 
     Regression: deleting a sub-section's content then re-adding it
-    materialises its ``[tbl.a.b]`` header at the doc tail (after a
-    sibling ``[tbl.x]``), while the parent's dict order still lists the
-    sub-section key first — stale relative to the new physical order. A
-    subsequent ``sort`` therefore asked ``reorder_container`` to reorder
-    an already-correct layout, and its foreign-slot hoisting moved
-    ``[tbl.x]`` ahead of the dotted leaf ``a.k45 = ""``, capturing the
-    leaf into ``[tbl.x]`` on re-parse. ``reorder_container`` now no-ops
-    when the owned blocks already sit in the requested order.
+    materialises its ``[tbl.a.b]`` header at the doc tail, after a
+    sibling ``[tbl.x]``. Sorting ``tbl.a`` then gathered its content
+    (the dotted leaf ``a.k45`` and the sub-section) contiguously; the
+    interleaved foreign header ``[tbl.x]`` is sunk past that run rather
+    than hoisted ahead of it, so ``a.k45`` is not captured under
+    ``[tbl.x]`` on re-parse.
     """
     doc = tomlrt.loads(
         td("""
@@ -1580,11 +1577,11 @@ def test_sort_after_rematerialising_a_subsection_at_a_new_position() -> None:
         [tbl]
         a.k45 = ""
 
-        [tbl.x]
-        y = 1
-
         [tbl.a.b]
         k14 = true
+
+        [tbl.x]
+        y = 1
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -1687,10 +1684,10 @@ def test_sort_container_with_synthetic_header_binding_keeps_kv_in_scope() -> Non
     doc["fruit"].sort()
     out = tomlrt.dumps(doc)
     assert out == td("""
-        [animal]
         [fruit]
         orange = [1, 2]
         [fruit.apple]
+        [animal]
         """)
     assert _reparses(out) == doc.to_dict()
     assert doc.to_dict() == {
@@ -1753,6 +1750,51 @@ def test_sort_container_hoists_interleaved_foreign_key() -> None:
     assert doc.to_dict() == {
         "many": {"k": 2, "dots": {"a": 1, "sub": {"x": 1}}},
         "kfor": 99,
+    }
+
+
+def test_sort_container_sinks_interleaved_foreign_header() -> None:
+    """An interleaved foreign *header* must sink past the reordered run,
+    not hoist ahead of it.
+
+    A foreign KV in c's containing scope hoists to the region head to
+    keep its scope (see the ``kfor`` test). A foreign *header*
+    establishes its own scope and must instead stay after the run: a
+    genuine reorder of ``tbl.a``'s two dotted leaves, with ``[tbl.x]``
+    sitting between the leaves and ``tbl.a``'s own sub-section, must
+    move ``[tbl.x]`` to the back. Hoisting it to the front (the old
+    blanket rule) pulled it ahead of the dotted leaves ``a.k45`` /
+    ``a.k46``, which a re-parse then captured under ``[tbl.x]``.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [tbl]
+            a.k46 = 1
+            a.k45 = 2
+
+            [tbl.x]
+            y = 9
+
+            [tbl.a.b]
+            k14 = true
+            """)
+    )
+    doc["tbl"]["a"].sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [tbl]
+        a.k45 = 2
+        a.k46 = 1
+
+        [tbl.a.b]
+        k14 = true
+
+        [tbl.x]
+        y = 9
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {
+        "tbl": {"a": {"k45": 2, "k46": 1, "b": {"k14": True}}, "x": {"y": 9}},
     }
 
 
