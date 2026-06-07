@@ -181,6 +181,36 @@ def test_overwrite_dotted_intermediate_promotes_without_capturing_root_keys() ->
     assert _reparses(out) == doc.to_dict()
 
 
+def test_overwrite_key_with_inline_when_subsection_follows() -> None:
+    """Overwriting a key whose old value was a sub-section / nested AoT
+    with an inline value must keep the new direct KV ahead of the
+    parent's sub-section headers.
+
+    Regression: the header-less reposition check treated any position
+    inside the parent's whole subtree as safe, so the inline KV was
+    repositioned to the old binding's slot — *after* a sibling
+    ``[t.physical]`` sub-header — which re-parse then captured.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [t]
+            a = 1
+
+            [t.physical]
+            color = "red"
+
+            [[t.varieties]]
+            name = "x"
+            """)
+    )
+    doc["t"]["varieties"] = {"a": 1}
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {
+        "t": {"a": 1, "physical": {"color": "red"}, "varieties": {"a": 1}}
+    }
+
+
 def test_inline_overwrite_intermediate_dotted_node_keeps_view_linked() -> None:
     """Overwriting an intermediate dotted node of an inline table with a
     scalar must keep the logical view in sync with the rendered CST.
