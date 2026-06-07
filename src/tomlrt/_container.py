@@ -919,18 +919,9 @@ class Container(dict[str, Any]):
     def _inline_setitem(self, key: str, value: Any) -> None:
         # ``__setitem__`` has already rejected ``AoT`` / section values
         # for inline hosts. Non-coerceable types (``set``, custom
-        # classes, …) fall through to ``_synth_value`` below, which
-        # raises the canonical ``TypeError: Cannot convert ... to a
-        # TOML value`` — same message the regular-table path produces.
-        if key in self and isinstance(dict.__getitem__(self, key), Container):
-            # Overwriting a dotted-prefix sub-table (e.g. `server`
-            # in `{server.host = "x", server.port = 80}`) with a
-            # scalar / inline value: delete every `server.*` entry
-            # via the canonical delete path, then re-enter to add
-            # `server = value` as a fresh single-keypart entry.
-            del self[key]
-            self[key] = value
-            return
+        # classes, …) reach ``_synth_value``, which raises the canonical
+        # ``TypeError: Cannot convert ... to a TOML value`` — same
+        # message the regular-table path produces.
         if is_scalar(value):
             cst: Value = coerce_scalar(value)
             decoded: object = value
@@ -942,7 +933,17 @@ class Container(dict[str, Any]):
                 path=(*self._path, key),
                 owner=self._owner_aot_entry,
             )
-        if key in self:
+        if key in self and isinstance(dict.__getitem__(self, key), Container):
+            # Overwriting a dotted-prefix sub-table (e.g. `server` in
+            # `{server.host = "x", server.port = 80}`) with a scalar /
+            # inline value: drop every `server.*` entry and add a fresh
+            # single-keypart `server` entry. Stay on the CST side and
+            # overwrite the dict entry in place below — a dict-level
+            # ``del self[key]`` would momentarily empty this navigator
+            # and prune it (and its ancestors) from the parent chain.
+            _inline_ops.delete_entry(self, key)
+            _inline_ops.append_entry(self, key, cst)
+        elif key in self:
             ok = _inline_ops.replace_entry_value(self, key, cst)
             if not ok:  # pragma: no cover  -- view/CST drift invariant guard
                 msg = (
