@@ -74,30 +74,32 @@ _CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
 # ---------------------------------------------------------------------------
 
 
-def _item_has_eol(item: CommaItem) -> bool:
-    """True if the item carries an inline EOL comment.
+def _eol_in_post_comma(item: CommaItem) -> bool:
+    """Which channel owns the item's row-attached EOL section.
 
-    When the item has a comma, the EOL section lives in
-    ``post_comma_trivia``; otherwise it lives in ``trailing``.
+    Canonically the EOL section lives in ``post_comma_trivia`` once the
+    item has a comma — but a comma-first layout parks it in ``trailing``
+    *before* the comma even with ``has_comma`` set, so ``trailing`` wins
+    whenever it carries one.
     """
-    target = item.post_comma_trivia if item.has_comma else item.trailing
-    eol, _rest = split_eol_section(target)
-    return bool(eol.pieces)
+    return item.has_comma and not split_eol_section(item.trailing)[0].pieces
+
+
+def _item_has_eol(item: CommaItem) -> bool:
+    """True if the item carries an inline EOL comment."""
+    channel = item.post_comma_trivia if _eol_in_post_comma(item) else item.trailing
+    return bool(split_eol_section(channel)[0].pieces)
 
 
 def _take_eol(item: CommaItem) -> Trivia:
     """Split out and return the item's row-attached EOL section.
 
-    The EOL section lives in ``post_comma_trivia`` when the item has
-    a comma, and in ``trailing`` otherwise. On return the item holds
-    only the structural rest in that channel.
+    On return the item holds only the structural rest in that channel.
     """
-    if item.has_comma:
-        eol, rest = split_eol_section(item.post_comma_trivia)
-        item.post_comma_trivia = rest
+    if _eol_in_post_comma(item):
+        eol, item.post_comma_trivia = split_eol_section(item.post_comma_trivia)
     else:
-        eol, rest = split_eol_section(item.trailing)
-        item.trailing = rest
+        eol, item.trailing = split_eol_section(item.trailing)
     return eol
 
 
