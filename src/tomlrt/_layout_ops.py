@@ -3431,14 +3431,22 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     # own physical position; child keys appear as blocks at the
     # position where they're first seen.
     #
-    # `membership` is the set of slots owned by c's subtree — c's own
+    # A non-AoT container owns a unique table per path, so any slot a
+    # bind-key below matches is necessarily within c's subtree — no
+    # membership test is needed (and we skip the O(subtree) walk). An
+    # AoT entry, by contrast, shares its path with sibling entries, so
+    # restrict to c's own subtree: `_subtree_membership` is c's own
     # slots plus those of every nested section and nested AoT entry,
-    # but not sibling AoT entries (a different Table, outside c's
-    # subtree). Gating on it is what lets a nested-AoT child — owned by
-    # its *own* entry rather than by c's — travel with its key, while
-    # keeping sibling entries' content out. This mirrors how
-    # `renormalise_aot_order` blocks an entry by its whole subtree.
-    membership = _subtree_membership(c)
+    # but not sibling entries (a different Table, outside the subtree).
+    # That is what lets a nested-AoT child — owned by its *own* entry
+    # rather than by c's — travel with its key while keeping sibling
+    # content out, mirroring how `renormalise_aot_order` blocks an
+    # entry by its whole subtree.
+    membership = (
+        _subtree_membership(c)
+        if c._owner_aot_entry is not None  # noqa: SLF001
+        else None
+    )
 
     key_blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
     physical_blocks: list[list[Slot]] = []
@@ -3449,7 +3457,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     while cur is not None:
         is_header = cur is header_slot
         bind_key = None if is_header else _direct_child_key(cur, c_path, c_plen)
-        in_scope = id(cur) in membership
+        in_scope = membership is None or id(cur) in membership
         if is_header:
             phys_idx_of_header = len(physical_blocks)
             physical_blocks.append([cur])
