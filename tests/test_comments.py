@@ -1030,6 +1030,86 @@ def test_array_delete_eol_comment() -> None:
     assert list(re.array("arr")) == [1, 2]
 
 
+def test_array_comma_first_eol_comment_read() -> None:
+    # A comma-first item carries has_comma=True but parks its EOL comment
+    # in `trailing`, before the comma. The view must still find it.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1 # comma is on the next line
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    assert dict(arr.comments) == {0: "comma is on the next line"}
+
+
+def test_array_comma_first_eol_comment_replace_keeps_layout() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1 # comma is on the next line
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    arr.comments[0] = "changed"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1 # changed
+             ,2
+            ]
+        """)
+
+
+def test_array_comma_first_eol_comment_add_to_uncommented_row() -> None:
+    # A comma-first row with no comment still parks its row break in
+    # `trailing`, before the comma. Adding a comment must attach it to the
+    # value's row there, not after the comma.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    arr.comments[0] = "added"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1 # added
+             ,2
+            ]
+        """)
+
+
+def test_array_comma_first_eol_comment_delete_keeps_layout() -> None:
+    # Deleting a comma-first EOL must keep the row break (which lives in
+    # the item's own trailing, ahead of the comma) rather than reflowing
+    # the comma and the following item.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1 # comma is on the next line
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    del arr.comments[0]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [
+              1
+             ,2
+            ]
+        """)
+    assert list(tomlrt.loads(out).array("a")) == [1, 2]
+
+
 def test_array_delete_eol_on_multiline_last_item_no_comma_keeps_break() -> None:
     """Deleting an EOL on the last item of a multi-line, no-trailing-comma
     array must keep the structural newline before ``]``.

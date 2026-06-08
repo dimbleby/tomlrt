@@ -40,6 +40,7 @@ from tomlrt._trivia import (
     split_above_block,
     split_eol_section,
     split_item_above,
+    trivia_has_newline,
 )
 
 if TYPE_CHECKING:
@@ -70,7 +71,25 @@ def _check_index(arr: Array, key: object) -> int:
 
 
 def _eol_target(item: ArrayItem) -> Trivia:
+    # The EOL comment lives on the value's physical row, ahead of that
+    # row's break. A comma-first layout parks the row break (a newline)
+    # in `trailing`, before the comma, so the comment belongs there; in
+    # the canonical layout the break follows the comma and the comment
+    # sits in `post_comma_trivia`.
+    if trivia_has_newline(item.trailing):
+        return item.trailing
     return item.post_comma_trivia if item.has_comma else item.trailing
+
+
+def _downstream_break_holder(value: ArrayValue, idx: int) -> Trivia:
+    """Return the trivia that owns item ``idx``'s row break.
+
+    When the item's own row carries no EOL section the break lives in the
+    next item's ``leading``, or—for the tail item—the value's
+    ``final_trivia``.
+    """
+    items = value.items
+    return items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
 
 
 def _raw_eol_text(item: ArrayItem) -> str | None:
@@ -198,8 +217,7 @@ def _set_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
     ]
     target.pieces = [*new_eol, *rest.pieces]
     if not existing_eol.pieces and not stripped:
-        value = arr._value  # noqa: SLF001
-        nxt = items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
+        nxt = _downstream_break_holder(arr._value, idx)  # noqa: SLF001
         if nxt.pieces and isinstance(nxt.pieces[0], NewlineNode):
             nxt.pieces = list(nxt.pieces[1:])
 
@@ -238,14 +256,18 @@ class ArrayEolView(_ArrayIntKeyedView[str]):
         eol, rest = split_eol_section(target)
         if not eol.pieces:
             raise KeyError(key)
+        nl = self._arr._doc_newline  # noqa: SLF001
+        if item.has_comma and trivia_has_newline(item.trailing):
+            # Comma-first: the eol section's terminating newline is this
+            # row's break and the comma follows it. Keep the break (drop
+            # only the whitespace + comment) and leave the next item alone.
+            item.trailing = Trivia([NewlineNode(nl), *rest.pieces])
+            return
         target.pieces = list(rest.pieces)
         # Canonical model inverse: restore the structural NL onto the
-        # next item's leading (for has-comma non-tail items) or
-        # final_trivia (for the tail item, with or without comma) so
-        # the closing layout still has its row break.
-        value = self._arr._value  # noqa: SLF001
-        nxt = items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
-        nl = self._arr._doc_newline  # noqa: SLF001
+        # downstream holder (next item's leading, or final_trivia for the
+        # tail item) so the closing layout still has its row break.
+        nxt = _downstream_break_holder(self._arr._value, idx)  # noqa: SLF001
         if not (nxt.pieces and isinstance(nxt.pieces[0], NewlineNode)):
             nxt.pieces = [NewlineNode(nl), *nxt.pieces]
 
