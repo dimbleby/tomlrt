@@ -373,6 +373,8 @@ def test_parse_error_is_value_error() -> None:
             "[[a.b]]\n[a]\nb.c = 1\n",
             r"cannot extend array-of-tables 'a\.b' via dotted keys",
         ),
+        # Datetime / time value errors.
+        ("t = 07:32:00x\n", r"bad fractional seconds"),
         # Inline-table key conflicts.
         ("t = { x = 1, x = 2 }\n", r"duplicate key 'x' in inline table"),
         (
