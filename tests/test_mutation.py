@@ -1907,6 +1907,72 @@ def test_sort_container_with_synthetic_header_binding_dotted_kv() -> None:
     assert doc.to_dict() == {"fruit": {"apple": {}, "orange": {"deep": {"v": 1}}}}
 
 
+def test_sort_aot_entry_with_nested_aot_child_reorders_physically() -> None:
+    """Sorting an AoT entry whose children include a *nested AoT* must
+    reorder the physical CST, not just dict storage.
+
+    Regression: ``reorder_container`` gated membership on
+    ``owner_aot_entry is c_owner``, which excludes a nested-AoT child
+    (owned by its own entry). The child's block was left in place while
+    dict storage was reordered, so the logical key order diverged from
+    the re-parsed order. Membership is now bounded by the entry's
+    physical extent, so nested descendants move with their key while
+    sibling entries stay excluded.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [[a]]
+            [a.c]
+            y = 2
+            [[a.b]]
+            x = 1
+            """)
+    )
+    doc["a"][0].sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[a]]
+        [[a.b]]
+        x = 1
+        [a.c]
+        y = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert list(doc["a"][0].keys()) == list(tomlrt.loads(out)["a"][0].keys())
+
+
+def test_sort_aot_entry_excludes_sibling_entries() -> None:
+    """The physical-extent bound must still exclude *sibling* AoT entries:
+    sorting entry 0 reorders only its own children and leaves later
+    entries of the same array untouched."""
+    doc = tomlrt.loads(
+        td("""
+            [[a]]
+            [a.c]
+            y = 2
+            [[a.b]]
+            x = 1
+            [[a]]
+            [a.z]
+            w = 9
+            """)
+    )
+    doc["a"][0].sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[a]]
+        [[a.b]]
+        x = 1
+        [a.c]
+        y = 2
+        [[a]]
+        [a.z]
+        w = 9
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert list(doc["a"][1].keys()) == ["z"]
+
+
 def test_overwrite_section_with_value_preserves_neighbour_leading() -> None:
     """Overwriting a section with a value synthesises a ``[fruit]`` header
     and relocates it back to the replaced binding's position. The
