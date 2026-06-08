@@ -54,12 +54,9 @@ def float_lexeme(v: float) -> str:
         return "nan"
     if math.isinf(v):
         return "-inf" if v < 0 else "inf"
-    s = repr(v)
-    # Python may emit "1e10" — TOML requires a fractional component or an
-    # exponent; keep the repr() output as is (TOML accepts both).
-    if "." not in s and "e" not in s and "E" not in s and "n" not in s:
-        s += ".0"
-    return s
+    # repr() of any finite float always carries a fractional component or
+    # an exponent (e.g. "1.0", "1e+16"), both of which TOML accepts as-is.
+    return repr(v)
 
 
 def basic_string_lexeme(v: str) -> str:
