@@ -34,7 +34,7 @@ paths that need them.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from tomlrt._trivia import (
     NewlineNode,
@@ -47,6 +47,7 @@ from tomlrt._trivia import (
     split_eol_section,
     split_item_above,
     strip_trailing_indent,
+    trivia_has_newline,
 )
 from tomlrt._values import (
     inter_item_separator,
@@ -56,6 +57,7 @@ from tomlrt._values import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
         ArrayValue,
         CommaItem,
@@ -136,16 +138,19 @@ def _normalise_row_breaks(
     """
     if not multiline:
         return
-    # Inter-item: items[i].leading must start with NL iff items[i-1]
-    # carries no EOL.
+    # A comma-first layout parks the row break in items[i].trailing,
+    # before the comma; that boundary already breaks, so don't inject a
+    # second newline there (it would strand the comma on its own line).
     for i in range(1, len(items)):
         pred = items[i - 1]
+        if trivia_has_newline(pred.trailing):
+            continue
         pieces = items[i].leading.pieces
         has_nl = bool(pieces) and isinstance(pieces[0], NewlineNode)
         if _item_has_eol(pred) and has_nl:
             items[i].leading = Trivia(pieces[1:])
         elif not _item_has_eol(pred) and not has_nl:
-            items[i].leading = Trivia([NewlineNode(text=nl), *pieces])
+            items[i].leading = Trivia([*_row_break(value, pieces), *pieces])
     # Closing-bracket gap: final_trivia must start with NL iff the
     # last item carries no EOL.
     if not items:
@@ -229,10 +234,9 @@ def detect_style(
 ) -> CommaStyle:
     """Infer a :class:`CommaStyle` for ``value`` (or for a fresh value).
 
-    For a single-item multi-line value we synthesise the inter-item
-    separator from the bracket-pad indent (no peer to sample from);
-    otherwise the separator is the structural pad portion of
-    ``items[1].leading``.
+    The inter-item separator is sampled from ``items[1].leading``; a
+    multi-line value that can't (single item, or a comma-first peer with
+    an empty leading) falls back to :func:`_canonical_separator`.
     """
     if value is None:
         return CommaStyle(
@@ -243,23 +247,9 @@ def detect_style(
         )
     items = value.items
     is_multiline = multiline_flag or value_is_multiline(value)
-    if is_multiline and len(items) < 2:
-        nl_text = "\n"
-        for p in value.header_trivia.pieces:
-            if isinstance(p, NewlineNode):
-                nl_text = p.text
-                break
-        else:
-            for p in value.final_trivia.pieces:
-                if isinstance(p, NewlineNode):
-                    nl_text = p.text
-                    break
-        indent = _first_indent_after_newline(value.header_trivia)
-        if not indent:
-            indent = indent_from_final_trivia(value.final_trivia) or "    "
-        inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text=indent)])
-    else:
-        inter_sep = inter_item_separator(items)
+    inter_sep = inter_item_separator(items)
+    if is_multiline and not trivia_has_newline(inter_sep):
+        inter_sep = _canonical_separator(value)
     trailing_comma = items[-1].has_comma if items else is_multiline
     pad_ft, _above_ft = split_above_block(value.final_trivia)
     trailing_post = pad_ft if pad_ft.pieces else value.final_trivia.copy()
@@ -284,6 +274,35 @@ def _first_indent_after_newline(trivia: Trivia) -> str:
         ):
             return str(pieces[i + 1].text)
     return ""
+
+
+def _value_newline(value: CommaValue[Any]) -> str:
+    """The newline text ``value`` uses (sampled from its bracket pads)."""
+    for trivia in (value.header_trivia, value.final_trivia):
+        for p in trivia.pieces:
+            if isinstance(p, NewlineNode):
+                return str(p.text)
+    return "\n"
+
+
+def _canonical_separator(value: CommaValue[Any]) -> Trivia:
+    """Fallback inter-item separator: a newline + the value's own indent."""
+    indent = (
+        _first_indent_after_newline(value.header_trivia)
+        or indent_from_final_trivia(value.final_trivia)
+        or "    "
+    )
+    nl = NewlineNode(text=_value_newline(value))
+    return Trivia([nl, WhitespaceNode(text=indent)])
+
+
+def _row_break(
+    value: CommaValue[Any], existing: Sequence[TriviaPiece]
+) -> list[TriviaPiece]:
+    """Row break to prepend to ``existing``; adds indent only if it has none."""
+    if existing and isinstance(existing[0], WhitespaceNode):
+        return [NewlineNode(text=_value_newline(value))]
+    return list(_canonical_separator(value).pieces)
 
 
 def migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, Trivia]:

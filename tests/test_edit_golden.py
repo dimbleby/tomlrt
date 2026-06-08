@@ -2418,6 +2418,54 @@ def test_append_preserves_leading_comment_in_single_item_array() -> None:
         """)
 
 
+def test_append_preserves_comma_first_boundary_in_array() -> None:
+    # A comma-first multiline array parks its row break *before* the
+    # comma (in the previous item's trailing), leaving the following
+    # item's leading empty. Appending used to renormalise that
+    # already-broken boundary, injecting a second newline that
+    # stranded the comma on its own line and dropped items to column
+    # zero. The existing ",2" row is now left untouched; only the new
+    # item is laid out (in the default comma-attached style).
+    src = td("""
+        a = [
+              1 # comma is on the next line
+             ,2
+            ]
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.array("a").append(99)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1 # comma is on the next line
+             ,2,
+              99
+            ]
+        """)
+
+
+def test_assign_preserves_comma_first_boundary_in_inline_table() -> None:
+    # Comma-first inline tables share the row-break logic with arrays
+    # (via _comma_ops), so the existing comma-first entry boundary is
+    # preserved the same way.
+    src = td("""
+        t = {
+              a = 1 # comma is on the next line
+             ,b = 2
+            }
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.table("t")["c"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+              a = 1 # comma is on the next line
+             ,b = 2,
+              c = 3
+            }
+        """)
+
+
 # ---------------------------------------------------------------------------
 # AoT assignment / Table.promote_array
 # ---------------------------------------------------------------------------
