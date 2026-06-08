@@ -1030,6 +1030,32 @@ def test_array_delete_eol_comment() -> None:
     assert list(re.array("arr")) == [1, 2]
 
 
+def test_array_leading_and_trailing_comma_on_one_line_round_trips() -> None:
+    # The physical line ``,2,`` carries item 0's comma (a comma-first
+    # predecessor breaks before it) *and* item 1's own trailing comma.
+    # The two belong to different items, so the dense line needs no
+    # special handling.
+    src = td("""
+        a = [
+          1
+          ,2, # two
+          3
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    arr = doc.array("a")
+    assert dict(arr.comments) == {1: "two"}
+    arr.comments[0] = "one"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1 # one
+          ,2, # two
+          3
+        ]
+        """)
+
+
 def test_array_comma_first_eol_comment_read() -> None:
     # A comma-first item carries has_comma=True but parks its EOL comment
     # in `trailing`, before the comma. The view must still find it.
