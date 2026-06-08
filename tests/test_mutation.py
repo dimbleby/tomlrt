@@ -606,6 +606,24 @@ def test_array_setitem_int() -> None:
     assert _reparses(out) == {"xs": [1, 22, 3]}
 
 
+def test_array_setitem_int_negative_index() -> None:
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
+    xs = doc.array("xs")
+    xs[-1] = 33
+    out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 2, 33]\n"
+    assert _reparses(out) == {"xs": [1, 2, 33]}
+
+
+def test_array_setitem_slice_extended_matching_length() -> None:
+    doc = tomlrt.loads("xs = [1, 2, 3, 4, 5]\n")
+    xs = doc.array("xs")
+    xs[::2] = [10, 30, 50]
+    out = tomlrt.dumps(doc)
+    assert out == "xs = [10, 2, 30, 4, 50]\n"
+    assert _reparses(out) == {"xs": [10, 2, 30, 4, 50]}
+
+
 def test_array_setitem_slice() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3, 4]\n")
     xs = doc.array("xs")
@@ -5629,6 +5647,12 @@ def test_inline_setitem_non_coerceable_matches_regular_table() -> None:
     inline = doc.table("t")
     with pytest.raises(TypeError, match="Cannot convert set"):
         inline["x"] = {1, 2, 3}
+
+
+def test_insert_new_key_non_coerceable_type_raises() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="Cannot convert set"):
+        doc["b"] = {1, 2, 3}
 
 
 # ---------------------------------------------------------------------------
