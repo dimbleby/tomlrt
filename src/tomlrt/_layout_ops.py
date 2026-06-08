@@ -3373,10 +3373,11 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     document root.
 
     When ``c`` is an AoT entry (``c._owner_aot_entry is not None``),
-    only slots owned by that entry participate: sibling entries with
-    the same path are excluded so their content is not merged in.
-    Nested AoT children of ``c`` (owned by their own entry) are
-    likewise excluded — they keep their physical position.
+    only slots within ``c``'s own subtree participate (see
+    :func:`_subtree_membership`): sibling entries with the same path
+    are excluded so their content is not merged in, but nested
+    descendants — including nested AoT children, which are owned by
+    their *own* entry — do participate and move with their key.
 
     Only mutates the CST; dict storage is the caller's responsibility.
 
@@ -3389,7 +3390,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     c_path = c._path  # noqa: SLF001
     c_plen = len(c_path)
-    c_owner = c._owner_aot_entry  # noqa: SLF001
 
     # c's own explicit header (if any) travels with the splice so
     # that direct KVs of c keep their binding after re-parse. The
@@ -3402,28 +3402,44 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     header_ref = c._header_ref  # noqa: SLF001
     if header_ref is not None:
         assert isinstance(header_ref.slot, StructuralHeaderSlot)
-        # A non-synthetic header is always the region marker. A
-        # synthetic one is the marker only when it currently binds a
-        # body (its next slot is a KV) — otherwise it is an elidable
-        # empty placeholder that should not anchor the region. This
-        # mirrors `_maybe_demote_synthetic_empty_header`: reorder
-        # preserves a synthetic header exactly when demotion would
-        # keep it. Without this, a synthetic header that binds direct
-        # or dotted KVs (e.g. an `[a]` promoted by overwriting `a.b`)
-        # is skipped, and its body KVs are spliced ahead of every
-        # header — re-parse then rebinds them to the document root.
-        if not header_ref.slot.synthetic or isinstance(
-            header_ref.slot._next,  # noqa: SLF001
-            KVSlot,
+        # A non-synthetic header is always the region marker. An
+        # aot-entry header is too: it defines the entry's existence
+        # and can never be an elidable placeholder. A synthetic table
+        # header is the marker only when it currently binds a body
+        # (its next slot is a KV) — otherwise it is an elidable empty
+        # placeholder that should not anchor the region. This mirrors
+        # `_maybe_demote_synthetic_empty_header` exactly (same
+        # `synthetic AND kind == "table" AND empty` skip condition):
+        # reorder preserves a synthetic header exactly when demotion
+        # would keep it. Without this, a synthetic header that binds
+        # direct or dotted KVs (e.g. an `[a]` promoted by overwriting
+        # `a.b`) is skipped, and its body KVs are spliced ahead of
+        # every header — re-parse then rebinds them to the document
+        # root.
+        if (
+            header_ref.slot.kind != "table"
+            or not header_ref.slot.synthetic
+            or isinstance(
+                header_ref.slot._next,  # noqa: SLF001
+                KVSlot,
+            )
         ):
             header_slot = header_ref.slot
 
     # 1. Walk the doc once, building blocks in physical doc-stream
     # order. The c-header (if any) appears as a one-slot block at its
     # own physical position; child keys appear as blocks at the
-    # position where they're first seen. When c is an AoT entry,
-    # restrict to slots owned by that entry (sibling entries and
-    # nested-AoT children are excluded).
+    # position where they're first seen.
+    #
+    # `membership` is the set of slots owned by c's subtree — c's own
+    # slots plus those of every nested section and nested AoT entry,
+    # but not sibling AoT entries (a different Table, outside c's
+    # subtree). Gating on it is what lets a nested-AoT child — owned by
+    # its *own* entry rather than by c's — travel with its key, while
+    # keeping sibling entries' content out. This mirrors how
+    # `renormalise_aot_order` blocks an entry by its whole subtree.
+    membership = _subtree_membership(c)
+
     key_blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
     physical_blocks: list[list[Slot]] = []
     phys_idx_of_header: int | None = None
@@ -3433,7 +3449,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     while cur is not None:
         is_header = cur is header_slot
         bind_key = None if is_header else _direct_child_key(cur, c_path, c_plen)
-        in_scope = c_owner is None or cur.owner_aot_entry is c_owner
+        in_scope = id(cur) in membership
         if is_header:
             phys_idx_of_header = len(physical_blocks)
             physical_blocks.append([cur])
