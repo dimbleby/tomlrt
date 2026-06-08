@@ -173,6 +173,40 @@ def test_multiline_array_preserved_shape() -> None:
     """)
 
 
+def test_comma_first_array_keeps_comment() -> None:
+    # A comma-first layout parks the item's EOL comment in ``trailing``
+    # *before* the comma, even though ``has_comma`` is set. format()
+    # used to look only in ``post_comma_trivia`` and drop the comment;
+    # it is now migrated to the canonical post-comma position.
+    src = td("""
+        a = [
+              1 # comma is on the next line
+             ,2
+            ]
+    """)
+    assert _roundtrip(src) == td("""
+        a = [
+          1, # comma is on the next line
+          2,
+        ]
+    """)
+
+
+def test_comma_first_inline_table_keeps_comment() -> None:
+    src = td("""
+        t = {
+              a = 1 # comma is on the next line
+             ,b = 2
+            }
+    """)
+    assert _roundtrip(src) == td("""
+        t = {
+          a = 1, # comma is on the next line
+          b = 2,
+        }
+    """)
+
+
 def test_nested_multiline_array_indents_per_depth() -> None:
     src = td("""
         outer = [
