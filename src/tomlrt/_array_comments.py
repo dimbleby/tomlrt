@@ -40,8 +40,8 @@ from tomlrt._trivia import (
     split_above_block,
     split_eol_section,
     split_item_above,
-    trivia_has_newline,
 )
+from tomlrt._values import item_breaks_before_comma, item_eol_channel
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -70,22 +70,6 @@ def _check_index(arr: Array, key: object) -> int:
     return idx
 
 
-def _is_comma_first(item: ArrayItem) -> bool:
-    """True iff ``item`` is laid out comma-first.
-
-    Such an item parks its row break (and any EOL comment) in
-    ``trailing`` ahead of its comma, not in ``post_comma_trivia`` after
-    it. This is the canonical place the comma-first layout is named.
-    """
-    return item.has_comma and trivia_has_newline(item.trailing)
-
-
-def _eol_target(item: ArrayItem) -> Trivia:
-    if _is_comma_first(item):
-        return item.trailing
-    return item.post_comma_trivia if item.has_comma else item.trailing
-
-
 def _downstream_break_holder(value: ArrayValue, idx: int) -> Trivia:
     """Return the trivia that owns item ``idx``'s row break.
 
@@ -99,7 +83,7 @@ def _downstream_break_holder(value: ArrayValue, idx: int) -> Trivia:
 
 def _raw_eol_text(item: ArrayItem) -> str | None:
     """Return the raw (still-encoded) EOL comment text on ``item`` or None."""
-    for p in _eol_target(item).pieces:
+    for p in item_eol_channel(item).pieces:
         if isinstance(p, NewlineNode):
             return None
         if isinstance(p, CommentNode):
@@ -127,7 +111,7 @@ def _above_owner(value: ArrayValue, i: int) -> tuple[Trivia, int]:
     if i == 0:
         return value.header_trivia, 0
     prev = value.items[i - 1]
-    if _is_comma_first(prev):
+    if item_breaks_before_comma(prev):
         eol, _rest = split_eol_section(prev.trailing)
         return prev.trailing, len(eol.pieces)
     return value.items[i].leading, 0
@@ -138,26 +122,19 @@ def _comments_from_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
 
 
 def _slot_indent(arr: Array) -> str:
-    """Best-effort indent string for this array's items."""
+    """Best-effort indent string for this array's items.
+
+    The per-item value-indent is the ``tail`` of its above-frame, which
+    :func:`_split_above_frame` already resolves uniformly across the
+    bracket pad (item 0), conventional, and comma-first layouts. Return
+    the first one found.
+    """
     value = arr._value  # noqa: SLF001
-    items = value.items
-    sources: list[Trivia] = []
-    if items and _is_comma_first(items[0]):
-        # Comma-first per-item ``leading`` holds the post-comma gap, not
-        # the line indent; that lives in header_trivia / item trailings.
-        sources.append(value.header_trivia)
-        sources.extend(it.trailing for it in items if _is_comma_first(it))
-    else:
-        if len(items) >= 2:
-            sources.append(items[1].leading)
-        sources.append(value.header_trivia)
-        sources.extend(it.leading for it in items[2:])
-    for src in sources:
-        for p in reversed(src.pieces):
+    for i in range(len(value.items)):
+        _owner, _prefix, _head, tail = _split_above_frame(value, i)
+        for p in reversed(tail.pieces):
             if isinstance(p, WhitespaceNode):
                 return p.text
-            if isinstance(p, NewlineNode):
-                break
     return "  "
 
 
@@ -218,7 +195,7 @@ def _set_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
     items = arr._value.items  # noqa: SLF001
     item = items[idx]
     nl = arr._doc_newline  # noqa: SLF001
-    target = _eol_target(item)
+    target = item_eol_channel(item)
     existing_eol, rest = split_eol_section(target)
     stripped = False
     if (
@@ -272,12 +249,12 @@ class ArrayEolView(_ArrayIntKeyedView[str]):
         idx = _check_index(self._arr, key)
         items = self._arr._value.items  # noqa: SLF001
         item = items[idx]
-        target = _eol_target(item)
+        target = item_eol_channel(item)
         eol, rest = split_eol_section(target)
         if not eol.pieces:
             raise KeyError(key)
         nl = self._arr._doc_newline  # noqa: SLF001
-        if _is_comma_first(item):
+        if item_breaks_before_comma(item):
             # The eol section's terminating newline is this row's break
             # and the comma follows it. Keep the break (drop only the
             # whitespace + comment) and leave the next item alone.
