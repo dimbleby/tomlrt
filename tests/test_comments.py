@@ -1136,6 +1136,159 @@ def test_array_comma_first_eol_comment_delete_keeps_layout() -> None:
     assert list(tomlrt.loads(out).array("a")) == [1, 2]
 
 
+def test_array_comma_first_leading_comment_read() -> None:
+    # A comma-first predecessor parks the next item's above-block in its
+    # own `trailing`, after the row break and ahead of the comma. The
+    # leading-comment view must still attribute it to the following item.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1
+            # above two
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    assert dict(arr.leading_comments) == {1: ("above two",)}
+
+
+def test_array_comma_first_leading_comment_add_to_uncommented_row() -> None:
+    # Adding a leading comment to a comma-first item must place it on its
+    # own line ahead of the comma, not reflow the comma onto a new line.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    arr.leading_comments[1] = ["above two"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [
+              1
+              # above two
+             ,2
+            ]
+        """)
+    assert list(tomlrt.loads(out).array("a")) == [1, 2]
+
+
+def test_array_comma_first_leading_comment_replace_keeps_layout() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1
+            # above two
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    arr.leading_comments[1] = ["changed"]
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1
+              # changed
+             ,2
+            ]
+        """)
+
+
+def test_array_comma_first_leading_comment_delete_keeps_layout() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1
+            # above two
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    del arr.leading_comments[1]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [
+              1
+             ,2
+            ]
+        """)
+    assert list(tomlrt.loads(out).array("a")) == [1, 2]
+
+
+def test_array_comma_first_leading_comment_coexists_with_eol() -> None:
+    # The predecessor's own EOL comment and the next item's above-block
+    # share the predecessor's trailing; adding the latter must not
+    # disturb the former.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+              1 # eol one
+             ,2
+            ]
+        """)
+    )
+    arr = doc.array("a")
+    arr.leading_comments[1] = ["above two"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [
+              1 # eol one
+              # above two
+             ,2
+            ]
+        """)
+    reparsed = tomlrt.loads(out).array("a")
+    assert dict(reparsed.comments) == {0: "eol one"}
+    assert dict(reparsed.leading_comments) == {1: ("above two",)}
+
+
+def test_array_comma_first_leading_comment_eol_predecessor_no_indent() -> None:
+    # Predecessor carries an EOL comment and the comma sits at column zero,
+    # so the next item's above-region is empty and its only line break is
+    # the EOL section's own terminating newline. Adding the above-block must
+    # reuse that break, not stack a second one.
+    doc = tomlrt.loads("a = [\n      1 # eol\n,2\n]\n")
+    arr = doc.array("a")
+    arr.leading_comments[1] = ["above"]
+    out = tomlrt.dumps(doc)
+    assert out == "a = [\n      1 # eol\n      # above\n      ,2\n]\n"
+    reparsed = tomlrt.loads(out).array("a")
+    assert dict(reparsed.comments) == {0: "eol"}
+    assert dict(reparsed.leading_comments) == {1: ("above",)}
+
+
+def test_array_comma_first_leading_comment_first_item_on_open_line() -> None:
+    # The first value shares the opening-bracket line, so header_trivia is
+    # empty and the indent must be recovered from the comma-first items'
+    # own (newline-only, unindented) trailings — exercising the indent
+    # fallback.
+    doc = tomlrt.loads("a = [1\n,2\n,3]\n")
+    arr = doc.array("a")
+    arr.leading_comments[1] = ["above"]
+    out = tomlrt.dumps(doc)
+    assert out == "a = [1\n  # above\n,2\n,3]\n"
+    assert list(tomlrt.loads(out).array("a")) == [1, 2, 3]
+
+
+def test_array_leading_comment_on_first_item_sharing_open_line() -> None:
+    # Item 0 sits on the opening-bracket line, so its above-region
+    # (header_trivia) is empty. A leading comment must be framed onto its
+    # own line above the value, not glued to ``[`` as a bracket EOL.
+    doc = tomlrt.loads("a = [1\n,2\n]\n")
+    arr = doc.array("a")
+    arr.leading_comments[0] = ["first"]
+    out = tomlrt.dumps(doc)
+    assert out == "a = [\n  # first\n  1\n,2\n]\n"
+    reparsed = tomlrt.loads(out).array("a")
+    assert list(reparsed) == [1, 2]
+    assert dict(reparsed.leading_comments) == {0: ("first",)}
+
+
 def test_array_delete_eol_on_multiline_last_item_no_comma_keeps_break() -> None:
     """Deleting an EOL on the last item of a multi-line, no-trailing-comma
     array must keep the structural newline before ``]``.
