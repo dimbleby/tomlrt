@@ -301,6 +301,27 @@ Value = (
 )
 
 
+def item_breaks_before_comma(item: CommaItem) -> bool:
+    """True iff the row break (and any EOL comment) precedes the comma.
+
+    The single canonical test for the comma-first / leading-comma
+    layout.
+    """
+    return item.has_comma and trivia_has_newline(item.trailing)
+
+
+def item_eol_channel(item: CommaItem) -> Trivia:
+    """The trivia run that owns the item's row-attached EOL section.
+
+    ``trailing`` for a comma-first or comma-less item, else
+    ``post_comma_trivia``. Picking the channel here lets callers read,
+    write, and normalise the EOL without branching on the comma.
+    """
+    if item_breaks_before_comma(item):
+        return item.trailing
+    return item.post_comma_trivia if item.has_comma else item.trailing
+
+
 def inter_item_separator(items: Sequence[CommaItem]) -> Trivia:
     """Structural-pad portion of ``items[1].leading``; ``" "`` if ``len < 2``.
 
@@ -371,6 +392,8 @@ __all__ = [
     "StringValue",
     "Value",
     "inter_item_separator",
+    "item_breaks_before_comma",
+    "item_eol_channel",
     "retarget_value_newlines",
     "value_is_multiline",
 ]

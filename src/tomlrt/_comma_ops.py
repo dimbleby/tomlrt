@@ -51,6 +51,7 @@ from tomlrt._trivia import (
 )
 from tomlrt._values import (
     inter_item_separator,
+    item_eol_channel,
     value_is_multiline,
 )
 
@@ -74,21 +75,13 @@ _CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
 # ---------------------------------------------------------------------------
 
 
-def _eol_in_post_comma(item: CommaItem) -> bool:
-    """Which channel owns the item's row-attached EOL section.
+def _row_terminated(item: CommaItem) -> bool:
+    """True if the item's own row already carries its terminating newline.
 
-    Canonically the EOL section lives in ``post_comma_trivia`` once the
-    item has a comma — but a comma-first layout parks it in ``trailing``
-    *before* the comma even with ``has_comma`` set, so ``trailing`` wins
-    whenever it carries one.
+    Otherwise the break is downstream, in the next item's leading (or
+    ``final_trivia`` for the tail). Comma placement never enters into it.
     """
-    return item.has_comma and not split_eol_section(item.trailing)[0].pieces
-
-
-def _item_has_eol(item: CommaItem) -> bool:
-    """True if the item carries an inline EOL comment."""
-    channel = item.post_comma_trivia if _eol_in_post_comma(item) else item.trailing
-    return bool(split_eol_section(channel)[0].pieces)
+    return trivia_has_newline(item_eol_channel(item))
 
 
 def _take_eol(item: CommaItem) -> Trivia:
@@ -96,10 +89,12 @@ def _take_eol(item: CommaItem) -> Trivia:
 
     On return the item holds only the structural rest in that channel.
     """
-    if _eol_in_post_comma(item):
-        eol, item.post_comma_trivia = split_eol_section(item.post_comma_trivia)
+    channel = item_eol_channel(item)
+    eol, rest = split_eol_section(channel)
+    if channel is item.post_comma_trivia:
+        item.post_comma_trivia = rest
     else:
-        eol, item.trailing = split_eol_section(item.trailing)
+        item.trailing = rest
     return eol
 
 
@@ -129,10 +124,10 @@ def _normalise_row_breaks(
 
     In a multi-line inline value each item occupies one physical row;
     each row needs exactly one terminating newline. That newline lives
-    either in the row's EOL section (``items[i].post_comma_trivia`` or
-    ``items[i].trailing``) — or in the next row's leading region
-    (``items[i+1].leading`` for inter-item gaps, ``value.final_trivia``
-    for the gap before the closing bracket).
+    either in the row's own EOL channel (see :func:`_row_terminated`) or
+    downstream in the next row's leading region (``items[i+1].leading``
+    for inter-item gaps, ``value.final_trivia`` before the closing
+    bracket).
 
     This helper restores the invariant after a mutation has touched
     item count, comma state, or EOL state — call it once at the end.
@@ -140,29 +135,28 @@ def _normalise_row_breaks(
     """
     if not multiline:
         return
-    # A comma-first layout parks the row break in items[i].trailing,
-    # before the comma; that boundary already breaks, so don't inject a
-    # second newline there (it would strand the comma on its own line).
+    # Each boundary needs exactly one break: it sits downstream, in the
+    # next item's leading, iff the predecessor's own row is not already
+    # terminated. Whether that termination is before or after the comma
+    # is irrelevant here.
     for i in range(1, len(items)):
         pred = items[i - 1]
-        if trivia_has_newline(pred.trailing):
-            continue
         pieces = items[i].leading.pieces
         has_nl = bool(pieces) and isinstance(pieces[0], NewlineNode)
-        if _item_has_eol(pred) and has_nl:
+        if _row_terminated(pred) and has_nl:
             items[i].leading = Trivia(pieces[1:])
-        elif not _item_has_eol(pred) and not has_nl:
+        elif not _row_terminated(pred) and not has_nl:
             items[i].leading = Trivia([*_row_break(value, pieces), *pieces])
-    # Closing-bracket gap: final_trivia must start with NL iff the
-    # last item carries no EOL.
+    # Closing-bracket gap: final_trivia carries the break iff the last
+    # item's own row is not already terminated.
     if not items:
         return
     ft = value.final_trivia
     has_nl = bool(ft.pieces) and isinstance(ft.pieces[0], NewlineNode)
-    last_has_eol = _item_has_eol(items[-1])
-    if last_has_eol and has_nl:
+    last_terminated = _row_terminated(items[-1])
+    if last_terminated and has_nl:
         ft.pieces = list(ft.pieces[1:])
-    elif not last_has_eol and not has_nl:
+    elif not last_terminated and not has_nl:
         ft.pieces = [NewlineNode(text=nl), *ft.pieces]
 
 
