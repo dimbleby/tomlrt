@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.4] - 2026-06-09
+
 ### Fixed
 
 - Sorting an array-of-tables entry that has a nested array-of-tables
   child no longer leaves the rendered order out of sync with the
   logical key order.
+- Formatting fixes when dealing with arrays whose elements use leading rather
+  than trailing commas
 
 ## [1.7.3] - 2026-06-01
 
