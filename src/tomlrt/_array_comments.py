@@ -70,13 +70,18 @@ def _check_index(arr: Array, key: object) -> int:
     return idx
 
 
+def _is_comma_first(item: ArrayItem) -> bool:
+    """True iff ``item`` is laid out comma-first.
+
+    Such an item parks its row break (and any EOL comment) in
+    ``trailing`` ahead of its comma, not in ``post_comma_trivia`` after
+    it. This is the canonical place the comma-first layout is named.
+    """
+    return item.has_comma and trivia_has_newline(item.trailing)
+
+
 def _eol_target(item: ArrayItem) -> Trivia:
-    # The EOL comment lives on the value's physical row, ahead of that
-    # row's break. A comma-first layout parks the row break (a newline)
-    # in `trailing`, before the comma, so the comment belongs there; in
-    # the canonical layout the break follows the comma and the comment
-    # sits in `post_comma_trivia`.
-    if trivia_has_newline(item.trailing):
+    if _is_comma_first(item):
         return item.trailing
     return item.post_comma_trivia if item.has_comma else item.trailing
 
@@ -112,8 +117,20 @@ def _ensure_multiline(arr: Array) -> None:
         arr.set_multiline(multiline=True)
 
 
-def _above_target(value: ArrayValue, i: int) -> Trivia:
-    return value.header_trivia if i == 0 else value.items[i].leading
+def _above_owner(value: ArrayValue, i: int) -> tuple[Trivia, int]:
+    """Return ``(owner, prefix_len)`` for item ``i``'s above-region.
+
+    ``owner`` carries item ``i``'s above-block; its first ``prefix_len``
+    pieces precede the region and must be preserved. Comma-first parks
+    the block in ``items[i-1].trailing`` after that item's EOL section.
+    """
+    if i == 0:
+        return value.header_trivia, 0
+    prev = value.items[i - 1]
+    if _is_comma_first(prev):
+        eol, _rest = split_eol_section(prev.trailing)
+        return prev.trailing, len(eol.pieces)
+    return value.items[i].leading, 0
 
 
 def _comments_from_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
@@ -124,14 +141,17 @@ def _slot_indent(arr: Array) -> str:
     """Best-effort indent string for this array's items."""
     value = arr._value  # noqa: SLF001
     items = value.items
-    # Prefer the indent immediately before items[1]'s value (the
-    # canonical inter-item separator under the new model), then fall
-    # back to header_trivia, then to a reasonable default.
     sources: list[Trivia] = []
-    if len(items) >= 2:
-        sources.append(items[1].leading)
-    sources.append(value.header_trivia)
-    sources.extend(it.leading for it in items[2:])
+    if items and _is_comma_first(items[0]):
+        # Comma-first per-item ``leading`` holds the post-comma gap, not
+        # the line indent; that lives in header_trivia / item trailings.
+        sources.append(value.header_trivia)
+        sources.extend(it.trailing for it in items if _is_comma_first(it))
+    else:
+        if len(items) >= 2:
+            sources.append(items[1].leading)
+        sources.append(value.header_trivia)
+        sources.extend(it.leading for it in items[2:])
     for src in sources:
         for p in reversed(src.pieces):
             if isinstance(p, WhitespaceNode):
@@ -257,10 +277,10 @@ class ArrayEolView(_ArrayIntKeyedView[str]):
         if not eol.pieces:
             raise KeyError(key)
         nl = self._arr._doc_newline  # noqa: SLF001
-        if item.has_comma and trivia_has_newline(item.trailing):
-            # Comma-first: the eol section's terminating newline is this
-            # row's break and the comma follows it. Keep the break (drop
-            # only the whitespace + comment) and leave the next item alone.
+        if _is_comma_first(item):
+            # The eol section's terminating newline is this row's break
+            # and the comma follows it. Keep the break (drop only the
+            # whitespace + comment) and leave the next item alone.
             item.trailing = Trivia([NewlineNode(nl), *rest.pieces])
             return
         target.pieces = list(rest.pieces)
@@ -294,31 +314,35 @@ def _render_above_block(
     return out
 
 
-def _split_above_frame(value: ArrayValue, i: int) -> tuple[Trivia, Trivia]:
-    """Split item ``i``'s above-region into framing ``(head, tail)``.
+def _split_above_frame(
+    value: ArrayValue, i: int
+) -> tuple[Trivia, Trivia, Trivia, Trivia]:
+    """Decompose item ``i``'s above-region into ``(owner, prefix, head, tail)``.
 
-    Any current above-block is discarded; mutators that want to
-    preserve it must use the underlying splitter directly.
-
-    For ``i == 0`` the target is ``header_trivia`` (bracket-pad
-    context): a pre-NL comment is an EOL on ``[`` and stays in
-    ``head``. For ``i >= 1`` the target is ``items[i].leading``:
-    a pre-NL comment is the item's above-block, possibly hoisted
-    from item ``i-1``'s EOL onto its ``post_comma_trivia``.
+    Rewrites assign ``owner.pieces``; the existing comment block is
+    discarded. ``prefix`` precedes the region and is re-emitted verbatim
+    (a comma-first predecessor's EOL section, else empty); ``head`` /
+    ``tail`` are the framing NL / value-indent. For ``i == 0`` the owner
+    is the bracket pad, where a pre-NL comment is a ``[``-EOL kept in
+    ``head`` rather than an above-block.
     """
-    target = _above_target(value, i)
-    if i >= 1:
-        head, _drop, tail = split_item_above(target)
-        return head, tail
-    pad, _drop = split_above_block(target)
-    pieces = list(pad.pieces)
-    nl_idx = next(
-        (k for k, p in enumerate(pieces) if isinstance(p, NewlineNode)),
-        -1,
-    )
-    if nl_idx < 0:
-        return Trivia(pieces), Trivia()
-    return Trivia(pieces[: nl_idx + 1]), Trivia(pieces[nl_idx + 1 :])
+    if i == 0:
+        owner = value.header_trivia
+        pad, _drop = split_above_block(owner)
+        pieces = list(pad.pieces)
+        nl_idx = next(
+            (k for k, p in enumerate(pieces) if isinstance(p, NewlineNode)),
+            -1,
+        )
+        if nl_idx < 0:
+            return owner, Trivia(), Trivia(pieces), Trivia()
+        head = Trivia(pieces[: nl_idx + 1])
+        tail = Trivia(pieces[nl_idx + 1 :])
+        return owner, Trivia(), head, tail
+    owner, prefix_len = _above_owner(value, i)
+    prefix = Trivia(list(owner.pieces[:prefix_len]))
+    head, _drop, tail = split_item_above(Trivia(list(owner.pieces[prefix_len:])))
+    return owner, prefix, head, tail
 
 
 def _set_above_pieces(
@@ -330,31 +354,34 @@ def _set_above_pieces(
 ) -> None:
     """Replace the comment block in item ``i``'s above-region.
 
-    Preserves any structural framing already present (leading NL,
-    trailing value-indent WS) and only rewrites the comment block
-    between.
+    Preserves any structural framing already present (preserved
+    prefix, leading NL, trailing value-indent WS) and only rewrites
+    the comment block between.
     """
-    head, tail = _split_above_frame(value, i)
+    owner, prefix, head, tail = _split_above_frame(value, i)
     if not head.pieces and not tail.pieces:
-        head = Trivia([NewlineNode(nl)])
+        # An empty region needs its own framing. When `prefix` already
+        # ends in a row break (the comma-first layout) reuse it rather
+        # than stacking a second newline.
+        has_break = bool(prefix.pieces) and isinstance(prefix.pieces[-1], NewlineNode)
+        head = Trivia([] if has_break else [NewlineNode(nl)])
         tail = Trivia([WhitespaceNode(ind)])
     above = _render_above_block(raw_lines, nl, ind)
-    _above_target(value, i).pieces = [*head.pieces, *above, *tail.pieces]
+    owner.pieces = [*prefix.pieces, *head.pieces, *above, *tail.pieces]
 
 
 def _clear_above_pieces(value: ArrayValue, i: int) -> None:
     """Strip the comment block from item ``i``'s above-region; keep framing."""
-    head, tail = _split_above_frame(value, i)
-    _above_target(value, i).pieces = [*head.pieces, *tail.pieces]
+    owner, prefix, head, tail = _split_above_frame(value, i)
+    owner.pieces = [*prefix.pieces, *head.pieces, *tail.pieces]
 
 
 class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
     __slots__ = ()
 
     def _read(self, idx: int) -> tuple[str, ...]:
-        return _comments_from_lines(
-            list(_above_target(self._arr._value, idx).pieces)  # noqa: SLF001
-        )
+        owner, prefix_len = _above_owner(self._arr._value, idx)  # noqa: SLF001
+        return _comments_from_lines(list(owner.pieces[prefix_len:]))
 
     @override
     def _present(self, idx: int) -> bool:
