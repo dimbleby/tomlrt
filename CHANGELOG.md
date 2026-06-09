@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Formatting fixes when dealing with arrays whose elements use leading rather
   than trailing commas
 
-## [1.7.3] - 2026-06-01
+## [1.7.3] - 2026-06-07
 
 ### Fixed
 
