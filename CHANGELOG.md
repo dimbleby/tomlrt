@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Overwriting a section or array-of-tables and then re-using an entry read
+  from the displaced value no longer silently drops the entry's body.
+
 ## [1.7.4] - 2026-06-09
 
 ### Fixed
