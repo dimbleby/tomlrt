@@ -803,6 +803,20 @@ def delete_key(c: Container, key: str) -> None:
     surviving_aot_entries = (
         _surviving_aot_entries(doc, candidate_owners) if candidate_owners else set()
     )
+    # Capture doc-stream order *before* the unlink loop severs ``_next``
+    # links. ``owned_slots`` is in collection order (every ref bound under
+    # ``key`` in ``c`` first — which front-loads nested headers — then the
+    # subtree body), not doc-stream order; transplanting in that order
+    # would corrupt the orphan's linked list. ``owned_slots[0]`` is the
+    # binding's primary slot (``c._index[key][0]``), i.e. the owned set's
+    # doc-stream-first slot, from which the forward walk recovers true
+    # physical order (skipping any interleaved foreign slots).
+    transplanting = bool(subtree_containers or subtree_aots)
+    ordered_for_transplant = (
+        _owned_slots_in_doc_order(owned_slots[0], owned_ids)
+        if transplanting and owned_slots
+        else owned_slots
+    )
     for slot in owned_slots:
         owner = slot.owner_aot_entry
         if (
@@ -814,13 +828,13 @@ def delete_key(c: Container, key: str) -> None:
                 owner.entry_slots.remove(slot)
         unlink_slot(slot, doc)
 
-    if subtree_containers or subtree_aots:
+    if transplanting:
         from tomlrt._container import Document  # noqa: PLC0415
 
         orphan = Document()
         orphan._newline = doc._newline  # noqa: SLF001
         orphan._is_private = True  # noqa: SLF001
-        for slot in owned_slots:
+        for slot in ordered_for_transplant:
             _splice_at_end(slot, orphan)
         for sc in subtree_containers:
             sc._layout_root = orphan  # noqa: SLF001
@@ -907,6 +921,29 @@ def _collect_subtree(
         aots_out.append(val)
         for entry in val:
             _collect_subtree(entry, containers_out, aots_out, add_slot)
+
+
+def _owned_slots_in_doc_order(start: Slot, owned_ids: set[int]) -> list[Slot]:
+    """Walk the doc-stream forward from ``start``, collecting owned slots.
+
+    ``start`` must be the doc-stream-first slot of the owned set; the walk
+    follows ``_next``, gathering slots in ``owned_ids`` in physical order
+    and skipping past any interleaved foreign slots (a binding's slots
+    need not be contiguous — ``[[a]] … [b] … [[a]]`` is legal TOML). It
+    stops once every owned slot has been seen. Shared by
+    :func:`_gather_subtree_slots` and the ``delete_key`` orphan
+    transplant, both of which need a subtree's slots in physical order
+    rather than collection order.
+    """
+    out: list[Slot] = []
+    seen: set[int] = set()
+    cur: Slot | None = start
+    while cur is not None and len(seen) < len(owned_ids):
+        if id(cur) in owned_ids and id(cur) not in seen:
+            out.append(cur)
+            seen.add(id(cur))
+        cur = cur._next  # noqa: SLF001
+    return out
 
 
 def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
@@ -2208,15 +2245,7 @@ def _gather_subtree_slots(src_table: Container) -> list[Slot]:
     _collect_subtree(src_table, containers_out, aots_out, _add_slot)
 
     head_slot: Slot = src_table._header_ref.slot  # noqa: SLF001
-    out: list[Slot] = [head_slot]
-    seen_slots: set[int] = {id(head_slot)}
-    cur: Slot | None = head_slot._next  # noqa: SLF001
-    while cur is not None and id(cur) in owned:
-        if id(cur) not in seen_slots:
-            out.append(cur)
-            seen_slots.add(id(cur))
-        cur = cur._next  # noqa: SLF001
-    return out
+    return _owned_slots_in_doc_order(head_slot, owned)
 
 
 def clone_table_as_aot_entry(

@@ -1152,3 +1152,74 @@ def test_clone_dotted_to_top_level_before_existing_section() -> None:
         [a]
         y = 2
         """)
+
+
+def test_append_aot_entry_from_overwritten_section_keeps_body() -> None:
+    """Regression for #166: an AoT entry read from a just-overwritten
+    section must keep its body when appended elsewhere.
+
+    Overwriting a section that held an AoT (preceded by a scalar key)
+    transplanted the detached old subtree to its orphan document in the
+    wrong order — the nested ``[[demo.items]]`` header landed ahead of
+    the section's ``name`` KV instead of after it. That left the entry
+    header's ``_next`` pointing at ``name`` rather than the entry's own
+    body, so cloning the entry gathered only the header and silently
+    dropped the body.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [demo]
+        name = "widget"
+        [[demo.items]]
+        id = "KEEP-ME"
+        """)
+    )
+    old = doc["demo"]
+    doc["demo"] = "gadget"  # overwrite detaches the old section
+    doc["dst"] = tomlrt.AoT()
+    doc["dst"].append(old["items"][0])
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        demo = "gadget"
+
+        [[dst]]
+        id = "KEEP-ME"
+        """)
+    assert _reparses(out) == {"demo": "gadget", "dst": [{"id": "KEEP-ME"}]}
+
+
+def test_append_aot_entry_from_overwritten_noncontiguous_section() -> None:
+    """Regression for #166 (non-contiguous variant): a binding's slots
+    need not be contiguous in the doc-stream — ``[demo] … [other] …
+    [[demo.items]]`` is legal TOML. Transplanting the overwritten
+    section must still gather every owned slot across the foreign
+    ``[other]`` gap, so the post-gap entry body survives an append.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [demo]
+        name = "widget"
+        [other]
+        y = 1
+        [[demo.items]]
+        id = "KEEP-ME"
+        """)
+    )
+    old = doc["demo"]
+    doc["demo"] = "gadget"
+    doc["dst"] = tomlrt.AoT()
+    doc["dst"].append(old["items"][0])
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        demo = "gadget"
+        [other]
+        y = 1
+
+        [[dst]]
+        id = "KEEP-ME"
+        """)
+    assert _reparses(out) == {
+        "demo": "gadget",
+        "other": {"y": 1},
+        "dst": [{"id": "KEEP-ME"}],
+    }
