@@ -300,7 +300,7 @@ def test_inline_overwrite_intermediate_dotted_node_keeps_view_linked() -> None:
     doc = tomlrt.loads("t = {a.b.c = 1, a.b.d = 2}\n")
     doc["t"]["a"]["b"] = 7
     out = tomlrt.dumps(doc)
-    assert out == "t = { a.b = 7 }\n"
+    assert out == "t = {a.b = 7}\n"
     assert doc.to_dict() == {"t": {"a": {"b": 7}}}
     assert _reparses(out) == doc.to_dict()
 
@@ -310,8 +310,23 @@ def test_inline_overwrite_deep_intermediate_dotted_node() -> None:
     doc = tomlrt.loads("t = {a.b.c.d = 1, a.b.c.e = 2}\n")
     doc["t"]["a"]["b"]["c"] = 9
     out = tomlrt.dumps(doc)
-    assert out == "t = { a.b.c = 9 }\n"
+    assert out == "t = {a.b.c = 9}\n"
     assert doc.to_dict() == {"t": {"a": {"b": {"c": 9}}}}
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_inline_overwrite_sole_prefix_preserves_bracket_pad() -> None:
+    """Overwriting a table's sole-content dotted prefix keeps its pad.
+
+    The outer table is only transiently emptied while the old prefix
+    entries are dropped, so an authored padded ``{ … }`` must stay
+    padded (and a tight one stays tight) rather than being re-stamped
+    to the canonical first-insert padding.
+    """
+    doc = tomlrt.loads("t = { a.b.c.d = 1 }\n")
+    doc["t"]["a"]["b"]["c"] = 9
+    out = tomlrt.dumps(doc)
+    assert out == "t = { a.b.c = 9 }\n"
     assert _reparses(out) == doc.to_dict()
 
 
