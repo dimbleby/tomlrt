@@ -161,6 +161,46 @@ def test_overwrite_non_last_key_in_aot_entry_with_section() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_overwrite_section_with_aot_only_section_does_not_wipe_doc() -> None:
+    """Overwriting an existing key with a detached body-less section.
+
+    Regression: replacing ``[tool.example]`` with a ``Table.section``
+    whose only child is an array-of-tables (no direct KVs) made
+    ``reposition_install`` record the synthetic ``[tool.example]``
+    header in ``new_slots``; ``_maybe_demote_synthetic_empty_header``
+    then unlinked that header (its body is the AoT, so it has no direct
+    KV). The orphaned slot stayed in ``new_slots``, and
+    ``_move_slots_to_anchor`` spliced an unlinked slot back in — setting
+    ``doc._head`` to ``None`` and rendering the whole document empty.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [project]
+        name = "demo"
+
+        [[tool.example.items]]
+        key = "existing"
+        """)
+    )
+    doc2 = tomlrt.loads('[[items]]\nkey = "template"\n')
+    new_section = Table.section(doc2)
+    for entry in doc["tool"]["example"]["items"]:
+        new_section["items"].append(entry)
+    doc["tool"]["example"] = new_section
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [project]
+        name = "demo"
+
+        [[tool.example.items]]
+        key = "template"
+
+        [[tool.example.items]]
+        key = "existing"
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_overwrite_dotted_intermediate_keeps_dotted_form() -> None:
     """Overwriting a dotted intermediate (whose value is a subtable) with a
     scalar keeps the dotted form rather than promoting to an ``[a]`` header.

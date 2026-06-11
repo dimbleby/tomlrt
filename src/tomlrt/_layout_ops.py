@@ -205,6 +205,16 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
             parent[key] = value
     finally:
         _reinstall_as_dotted.reset(token)
+    # An install can record a slot and then unlink it again before the
+    # block ends (e.g. a synthetic placeholder header demoted by
+    # ``_maybe_demote_synthetic_empty_header``). Drop those orphans:
+    # moving one would corrupt the linked list. ``unlink_slot`` repairs
+    # the chain, so the survivors stay contiguous.
+    new_slots = [
+        s
+        for s in new_slots
+        if s is doc._head or s._prev is not None or s._next is not None  # noqa: SLF001
+    ]
     if not new_slots:
         return
     # A header-less new binding (scalar / synth-inline) takes its scope
