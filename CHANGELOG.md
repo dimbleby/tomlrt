@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Overwriting a key with a body-less section (one whose only child is an
+  array-of-tables) no longer wipes the whole document on dump.
 - Overwriting a section or array-of-tables and then re-using an entry read
   from the displaced value no longer silently drops the entry's body.
 
