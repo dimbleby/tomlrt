@@ -300,7 +300,7 @@ def test_inline_overwrite_intermediate_dotted_node_keeps_view_linked() -> None:
     doc = tomlrt.loads("t = {a.b.c = 1, a.b.d = 2}\n")
     doc["t"]["a"]["b"] = 7
     out = tomlrt.dumps(doc)
-    assert out == "t = {a.b = 7}\n"
+    assert out == "t = { a.b = 7 }\n"
     assert doc.to_dict() == {"t": {"a": {"b": 7}}}
     assert _reparses(out) == doc.to_dict()
 
@@ -310,7 +310,7 @@ def test_inline_overwrite_deep_intermediate_dotted_node() -> None:
     doc = tomlrt.loads("t = {a.b.c.d = 1, a.b.c.e = 2}\n")
     doc["t"]["a"]["b"]["c"] = 9
     out = tomlrt.dumps(doc)
-    assert out == "t = {a.b.c = 9}\n"
+    assert out == "t = { a.b.c = 9 }\n"
     assert doc.to_dict() == {"t": {"a": {"b": {"c": 9}}}}
     assert _reparses(out) == doc.to_dict()
 
@@ -1800,7 +1800,7 @@ def test_sort_after_rematerialising_a_subsection_at_a_new_position() -> None:
 
     Deleting ``a.b``'s only content then re-adding under it
     re-materialises ``a.b`` as an inline table in place (``a.b = {}`` →
-    ``a.b = {k14 = true}``). Because the inline binding never moves, no
+    ``a.b = { k14 = true }``). Because the inline binding never moves, no
     foreign section is straddled and sorting ``tbl.a`` simply orders its
     dotted leaves.
     """
@@ -1820,7 +1820,7 @@ def test_sort_after_rematerialising_a_subsection_at_a_new_position() -> None:
     out = tomlrt.dumps(doc)
     assert out == td("""
         [tbl]
-        a.b = {k14 = true}
+        a.b = { k14 = true }
         a.k45 = ""
 
         [tbl.x]
@@ -4162,7 +4162,7 @@ def test_readd_into_emptied_aot_implicit_anchors_inside_entry() -> None:
     out = tomlrt.dumps(doc)
     assert out == td("""
         [[arr]]
-        foo = {new = 1}
+        foo = { new = 1 }
 
         [[arr]]
         name = 2

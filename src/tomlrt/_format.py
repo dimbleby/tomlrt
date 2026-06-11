@@ -418,8 +418,8 @@ def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
     produces a fresh ``Trivia`` so callers can assign it to
     ``header_trivia`` and ``final_trivia`` independently.
     """
-    if isinstance(v, InlineTableValue) and v.items:
-        return Trivia([WhitespaceNode(" ")])
+    if v.items and v._single_line_pad:  # noqa: SLF001
+        return Trivia([WhitespaceNode(v._single_line_pad)])  # noqa: SLF001
     return Trivia()
 
 

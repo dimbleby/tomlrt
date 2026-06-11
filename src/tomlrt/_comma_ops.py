@@ -336,7 +336,9 @@ def splice_in(
     appropriate ``style`` (typically via :func:`detect_style`).
 
     Empty case: reframes the bracket pad so the new item sits on its
-    own canonical row, then flips it to terminal-per-style.
+    own canonical row, stamping the value's canonical single-line pad
+    (one space for inline tables, none for arrays) when no pad survives,
+    then flips it to terminal-per-style.
 
     Non-empty case: migrates any above-bracket comment block onto the
     new item's leading, flips the previous-last to internal, appends,
@@ -345,9 +347,11 @@ def splice_in(
     """
     items = cv.items
     if not items:
-        cv.header_trivia, cv.final_trivia = restamp_bracket_pad_for_first(
-            cv.final_trivia
-        )
+        header, final = restamp_bracket_pad_for_first(cv.final_trivia)
+        if cv._single_line_pad and not header.pieces and not final.pieces:  # noqa: SLF001
+            header = Trivia([WhitespaceNode(text=cv._single_line_pad)])  # noqa: SLF001
+            final = Trivia([WhitespaceNode(text=cv._single_line_pad)])  # noqa: SLF001
+        cv.header_trivia, cv.final_trivia = header, final
         items.append(new_item)
         flip_to_terminal(new_item, style)
         return
