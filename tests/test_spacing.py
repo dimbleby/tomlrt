@@ -386,10 +386,13 @@ def test_inline_table_insert_into_empty_padded() -> None:
     assert tomlrt.dumps(doc) == "x = { a = 1 }\n"
 
 
-def test_inline_table_insert_into_empty_flush() -> None:
+def test_inline_table_insert_into_empty_pads() -> None:
+    # An empty ``{}`` carries no populated-style signal (it is just the
+    # conventional spelling of "empty"), so inserting the first key
+    # adopts the canonical inline-table padding rather than staying tight.
     doc = tomlrt.loads("x = {}\n")
     doc.table("x")["a"] = 1
-    assert tomlrt.dumps(doc) == "x = {a = 1}\n"
+    assert tomlrt.dumps(doc) == "x = { a = 1 }\n"
 
 
 def test_inline_table_delete_last_preserves_padding() -> None:

@@ -266,6 +266,11 @@ class CommaValue(Generic[_ItemT]):
     _open: ClassVar[str] = ""
     _close: ClassVar[str] = ""
 
+    # Canonical inner bracket padding for the single-line form: one
+    # space for inline tables (``{ a = 1 }``), none for inline arrays
+    # (``[1, 2]``). An empty value carries no padding regardless.
+    _single_line_pad: ClassVar[str] = ""
+
     def render(self) -> str:
         body = "".join([it.render() for it in self.items])
         return (
@@ -288,6 +293,7 @@ class InlineTableValue(CommaValue[InlineTableEntry]):
 
     _open: ClassVar[str] = "{"
     _close: ClassVar[str] = "}"
+    _single_line_pad: ClassVar[str] = " "
 
 
 Value = (

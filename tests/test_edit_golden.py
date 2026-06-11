@@ -3814,7 +3814,7 @@ def test_inline_table_rejects_section_table_value() -> None:
     nd2 = tomlrt.loads("")
     nd2["a"] = {}
     nd2["a"]["b"] = inner_src["inner"]
-    assert tomlrt.dumps(nd2) == "a = {b = { x = 1 }}\n"
+    assert tomlrt.dumps(nd2) == "a = { b = { x = 1 } }\n"
 
 
 def test_cross_doc_update_retargets_eol_to_dst() -> None:

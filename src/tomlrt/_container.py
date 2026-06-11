@@ -1962,8 +1962,9 @@ def _populate_inline_table(
         val.items.append(entry)
         dict.__setitem__(table, k, sub_dec)
     if items:
-        val.header_trivia = Trivia([WhitespaceNode(text=" ")])
-        val.final_trivia = Trivia([WhitespaceNode(text=" ")])
+        pad = Trivia([WhitespaceNode(text=val._single_line_pad)])  # noqa: SLF001
+        val.header_trivia = pad.copy()
+        val.final_trivia = pad
     return val, table
 
 
