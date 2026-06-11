@@ -7,22 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Deleting the only content of an implicit table no longer makes the emptied
+  table vanish from the output.
+- Synthesising a section header no longer captures a trailing sibling key under
+  the wrong table.
+- Filling a previously-empty inline table now pads the braces (`{ a = 1 }`) to
+  match synthesis and `.format()`.
+
 ## [1.7.5] - 2026-06-11
 
 ### Fixed
 
 - Overwriting a key with a body-less section (one whose only child is an
   array-of-tables) no longer wipes the whole document on dump.
-- Overwriting a section or array-of-tables and then re-using an entry read
-  from the displaced value no longer silently drops the entry's body.
+- Overwriting a section or array-of-tables and then re-using an entry read from
+  the displaced value no longer silently drops the entry's body.
 
 ## [1.7.4] - 2026-06-09
 
 ### Fixed
 
-- Sorting an array-of-tables entry that has a nested array-of-tables
-  child no longer leaves the rendered order out of sync with the
-  logical key order.
+- Sorting an array-of-tables entry that has a nested array-of-tables child no
+  longer leaves the rendered order out of sync with the logical key order.
 - Formatting fixes when dealing with arrays whose elements use leading rather
   than trailing commas
 
@@ -30,20 +38,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Various in-place edits — `sort`, overwriting a key, and appending,
-  inserting, reversing or sorting array-of-tables entries — could
-  place a value where re-reading the file would attribute it to the
-  wrong table, silently corrupting the document or desyncing it from
-  the rendered output. These cases (covering nested arrays-of-tables,
-  dotted keys, inline tables, and out-of-order or auto-promoted
-  section headers) are fixed.
-- Replacing an out-of-order subsection (e.g. `[foo.bar]` defined
-  before `[foo]`) with a dict / inline value no longer emits the
-  new binding outside its parent section.
-- `Array.extend(arr)` / `AoT.extend(aot)` (and the corresponding `+=`
-  forms) no longer hang when extending a sequence with itself.
-- A failed out-of-range `Array.comments[i] = ...` no longer silently
-  promotes a single-line array to multi-line form.
+- Various in-place edits — `sort`, overwriting a key, and appending, inserting,
+  reversing or sorting array-of-tables entries — could place a value where
+  re-reading the file would attribute it to the wrong table, silently corrupting
+  the document or desyncing it from the rendered output.
+  These cases (covering nested arrays-of-tables, dotted keys, inline tables, and
+  out-of-order or auto-promoted section headers) are fixed.
+- Replacing an out-of-order subsection (e.g.
+  `[foo.bar]` defined before `[foo]`) with a dict / inline value no longer emits
+  the new binding outside its parent section.
+- `Array.extend(arr)` / `AoT.extend(aot)` (and the corresponding `+=` forms) no
+  longer hang when extending a sequence with itself.
+- A failed out-of-range `Array.comments[i] = ...` no longer silently promotes a
+  single-line array to multi-line form.
 
 ## [1.7.2] - 2026-06-01
 
@@ -55,39 +62,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Appending to, or deleting the tail of, a multi-line inline value
-  whose last item carries an EOL comment no longer mangles the
-  closing bracket layout.
-- Reordering or deleting the last entry of a multi-line inline table no
-  longer swaps EOL comments between entries.
+- Appending to, or deleting the tail of, a multi-line inline value whose last
+  item carries an EOL comment no longer mangles the closing bracket layout.
+- Reordering or deleting the last entry of a multi-line inline table no longer
+  swaps EOL comments between entries.
 - Assigning `Array.multiline` to its current value is now a no-op.
-- `Array.format` / `Container.format` and `Array.set_multiline(True)` no
-  longer drop a row-attached comment on the opening `[` / `{` line.
-- `Array.set_multiline(True)` on an empty array no longer drops a
-  bracket-line comment and now aligns the closing `]` to the outer
-  indent.
-- `Table.format()` on an AoT entry no longer reformats sibling
-  entries of the same array.
-- `format()` on a multi-line inline value no longer inserts a
-  spurious blank line after an item that carries an EOL comment.
-- Deleting the first KV, section, or AoT entry no longer drops
-  the document preamble.
-- Deleting all items from a multi-line inline array or inline
-  table no longer leaves a stray indent line.
-- Slice-assigning to a multi-line inline array no longer leaves a
-  stray indent inside the brackets when emptied, drops bracket-EOL
-  comments, or wipes above-block comments on surviving items.
-- Adding an entry to an empty multi-line inline table now restores
-  the canonical indent and trailing comma.
-- Emptying then re-adding to a bracketed value with a bracket-EOL
-  comment no longer drops the comment or leaves a blank line.
-- Inline-table mutation (append / delete / sort) no longer drops
-  above-bracket and above-entry comment blocks; `Array.sort()` and
-  `Array.reverse()` now preserve per-position indents and above-`]`
-  comments rather than wholesale-restamping them.
-- `Array.leading_comments[i] = ()` no longer silently promotes a
-  single-line array to multi-line (the empty assignment is a
-  semantic delete-if-present).
+- `Array.format` / `Container.format` and `Array.set_multiline(True)` no longer
+  drop a row-attached comment on the opening `[` / `{` line.
+- `Array.set_multiline(True)` on an empty array no longer drops a bracket-line
+  comment and now aligns the closing `]` to the outer indent.
+- `Table.format()` on an AoT entry no longer reformats sibling entries of the
+  same array.
+- `format()` on a multi-line inline value no longer inserts a spurious blank
+  line after an item that carries an EOL comment.
+- Deleting the first KV, section, or AoT entry no longer drops the document
+  preamble.
+- Deleting all items from a multi-line inline array or inline table no longer
+  leaves a stray indent line.
+- Slice-assigning to a multi-line inline array no longer leaves a stray indent
+  inside the brackets when emptied, drops bracket-EOL comments, or wipes
+  above-block comments on surviving items.
+- Adding an entry to an empty multi-line inline table now restores the canonical
+  indent and trailing comma.
+- Emptying then re-adding to a bracketed value with a bracket-EOL comment no
+  longer drops the comment or leaves a blank line.
+- Inline-table mutation (append / delete / sort) no longer drops above-bracket
+  and above-entry comment blocks; `Array.sort()` and `Array.reverse()` now
+  preserve per-position indents and above-`]` comments rather than
+  wholesale-restamping them.
+- `Array.leading_comments[i] = ()` no longer silently promotes a single-line
+  array to multi-line (the empty assignment is a semantic delete-if-present).
 
 ## [1.7.0] - 2026-05-25
 
@@ -98,145 +102,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `Table.header_comment` and `Table.header_leading_comments` getters
-  return `None` / `()` on headerless containers (implicit sections,
-  document root) instead of raising.
+- `Table.header_comment` and `Table.header_leading_comments` getters return
+  `None` / `()` on headerless containers (implicit sections, document root)
+  instead of raising.
 
 ### Fixed
 
-- `Container.sort()` no longer fabricates a leading blank line when a
-  nested AoT child appeared before its explicit parent header in source.
-- `format()` no longer strips the indent of full-line comments inside
-  multi-line inline arrays / inline tables.
-- `Array.set_multiline(multiline=True, ...)` no longer drops the last
-  element's EOL comment when synthesising a trailing comma, and no
-  longer inserts a blank line before the closing bracket when the
-  last item carries an EOL comment.
-- `Document.format()` now canonicalises the document epilogue as well
-  as the body.
+- `Container.sort()` no longer fabricates a leading blank line when a nested AoT
+  child appeared before its explicit parent header in source.
+- `format()` no longer strips the indent of full-line comments inside multi-line
+  inline arrays / inline tables.
+- `Array.set_multiline(multiline=True, ...)` no longer drops the last element's
+  EOL comment when synthesising a trailing comma, and no longer inserts a blank
+  line before the closing bracket when the last item carries an EOL comment.
+- `Document.format()` now canonicalises the document epilogue as well as the
+  body.
 
 ## [1.6.1] - 2026-05-25
 
 ### Changed
 
-- `Container.sort` now keeps sections and arrays-of-tables after bare
-  keys instead of raising `ValueError`.
+- `Container.sort` now keeps sections and arrays-of-tables after bare keys
+  instead of raising `ValueError`.
 
 ## [1.6.0] - 2026-05-25
 
 ### Added
 
-- `Container.format(*, comments: bool = True)` and
-  `Array.format(*, comments: bool = True)` reformat a section,
-  document, table, or inline array in place. See
-  [docs/formatting.md](docs/formatting.md) for details.
+- `Container.format(*, comments: bool = True)` and `Array.format(*, comments:
+bool = True)` reformat a section, document, table, or inline array in place.
+  See [docs/formatting.md](docs/formatting.md) for details.
 
 ## [1.5.0] - 2026-05-24
 
 ### Added
 
-- `Container.sort(*, key=None, reverse=False)` reorders a section,
-  document, table, or inline table's direct child keys in place,
-  preserving per-key trivia. Mirrors `list.sort` / `AoT.sort`.
-- `Container.leading_block` and `Table.header_leading_block` expose the
-  full leading-trivia region (including blank-line-separated "orphan"
-  comments) as a tuple of `str | None`, where `None` is a blank line.
+- `Container.sort(*, key=None, reverse=False)` reorders a section, document,
+  table, or inline table's direct child keys in place, preserving per-key
+  trivia.
+  Mirrors `list.sort` / `AoT.sort`.
+- `Container.leading_block` and `Table.header_leading_block` expose the full
+  leading-trivia region (including blank-line-separated "orphan" comments) as a
+  tuple of `str | None`, where `None` is a blank line.
 - `Table.is_inline` property to distinguish inline `{...}` tables from
   `[section]` blocks when walking a parsed document.
 
 ### Fixed
 
-- Mutating `comments`, `leading_comments`, or `leading_block` on a
-  detached `Table.section()` / `Table.inline()` now raises a clear
-  `TOMLError` pointing at the attach-first workaround instead of a
-  misleading `KeyError("key '...' not in container")`.
-- `Container.leading_block` and `Table.header_leading_block` no longer
-  overlap with `Document.preamble` at the document head slot.
-  Round-tripping or reordering sections no longer migrates the
-  preamble into a section body.
-- Per-key clone of a sub-table that came from dotted-key form
-  (e.g. `dst["x"]["v"] = src["x"]["v"]` where the source was
-  `[x]\nv.w = 1`) now preserves the dotted form on the destination
-  instead of silently promoting it to an explicit `[x.v]` header.
-- Cross-document `dst["k"] = src["k"]` now preserves the source
-  section header's indent even when no leading comment is attached.
-- Multi-component `install("a.b", value)` where the implicit parent
-  must be synthesised now preserves source header trivia (leading
-  comments) on the installed child, by routing through the standard
-  `__setitem__` clone dispatch rather than the synthesis fallback.
-  Same fix applies to cross-document `dst["a"] = src["a"]` when the
-  source has only implicit parents.
-- Cross-document `dst[k] = src[k]`, `aot.append(entry)` and
-  `aot[i] = entry` now preserve nested arrays-of-tables inside the
-  cloned subtree.
-- Cross-document `dst[k] = src[k]` now preserves the source table
-  header's leading comment block.
+- Mutating `comments`, `leading_comments`, or `leading_block` on a detached
+  `Table.section()` / `Table.inline()` now raises a clear `TOMLError` pointing
+  at the attach-first workaround instead of a misleading `KeyError("key '...'
+not in container")`.
+- `Container.leading_block` and `Table.header_leading_block` no longer overlap
+  with `Document.preamble` at the document head slot.
+  Round-tripping or reordering sections no longer migrates the preamble into a
+  section body.
+- Per-key clone of a sub-table that came from dotted-key form (e.g.
+  `dst["x"]["v"] = src["x"]["v"]` where the source was `[x]\nv.w = 1`) now
+  preserves the dotted form on the destination instead of silently promoting it to
+  an explicit `[x.v]` header.
+- Cross-document `dst["k"] = src["k"]` now preserves the source section header's
+  indent even when no leading comment is attached.
+- Multi-component `install("a.b", value)` where the implicit parent must be
+  synthesised now preserves source header trivia (leading comments) on the
+  installed child, by routing through the standard `__setitem__` clone dispatch
+  rather than the synthesis fallback.
+  Same fix applies to cross-document `dst["a"] = src["a"]` when the source has
+  only implicit parents.
+- Cross-document `dst[k] = src[k]`, `aot.append(entry)` and `aot[i] = entry` now
+  preserve nested arrays-of-tables inside the cloned subtree.
+- Cross-document `dst[k] = src[k]` now preserves the source table header's
+  leading comment block.
 - Adding a sub-section to an empty placeholder section no longer clears
   `Document.preamble`.
-- `Array.sort` / `Array.reverse` now keep per-item leading comments with
-  their items and stop the closing `]` from gluing to the new last item.
-- Cross-document `dst[k] = src_section` under an empty placeholder
-  parent now demotes the parent to an implicit super-table instead
-  of leaving a stray bare `[parent]` header line.
-- Assigning a section table or `AoT` as a value of an inline table
-  now consistently raises `TOMLError` with a clear message, including
-  for detached `Table.inline()` factories (previously: silently
-  accepted, then `NotImplementedError` at attach time).
-- Comments on dotted-key entries are now reachable through the
-  dotted-parent container (`project["urls"].comments["homepage"]`).
-- `Array.sort()` / `Array.reverse()` no longer leave the new item 0
-  carrying the old position-0 indent in multi-line arrays.
-- Cross-document `dst[k] = src[k]` and `AoT.sort()` no longer drag the
-  source document's preamble onto the destination or surviving entries.
-- `Array.leading_comments` del/pop/clear at non-zero indices, and
-  insert/append next to items carrying EOL comments, no longer
-  misattribute or duplicate adjacent comments on re-render.
+- `Array.sort` / `Array.reverse` now keep per-item leading comments with their
+  items and stop the closing `]` from gluing to the new last item.
+- Cross-document `dst[k] = src_section` under an empty placeholder parent now
+  demotes the parent to an implicit super-table instead of leaving a stray bare
+  `[parent]` header line.
+- Assigning a section table or `AoT` as a value of an inline table now
+  consistently raises `TOMLError` with a clear message, including for detached
+  `Table.inline()` factories (previously: silently accepted, then
+  `NotImplementedError` at attach time).
+- Comments on dotted-key entries are now reachable through the dotted-parent
+  container (`project["urls"].comments["homepage"]`).
+- `Array.sort()` / `Array.reverse()` no longer leave the new item 0 carrying the
+  old position-0 indent in multi-line arrays.
+- Cross-document `dst[k] = src[k]` and `AoT.sort()` no longer drag the source
+  document's preamble onto the destination or surviving entries.
+- `Array.leading_comments` del/pop/clear at non-zero indices, and insert/append
+  next to items carrying EOL comments, no longer misattribute or duplicate
+  adjacent comments on re-render.
 
 ## [1.4.3] - 2026-05-24
 
 ### Fixed
 
-- Overwriting an implicit table with a scalar or inline value now
-  preserves the original position in the document instead of moving
-  the binding to the end.
-- Mutations to inline tables and arrays nested inside an `Array` are
-  now rendered.
-- `Array.set_multiline` no longer inserts `\n` newlines into a CRLF
-  document.
-- `Array.__imul__` (`arr *= n`) now keeps replicated inline tables and
-  arrays live: mutations through the copies render.
-- `Document.install` / `Document.ensure_table` now accept any
-  `Sequence[str]` (e.g. `collections.deque`), matching the documented
-  contract and the public type signature.
-- Detached `AoT.append` / `AoT.insert` / `AoT[idx] = ...` now accept
-  any `Mapping` (e.g. `MappingProxyType`), matching their declared
-  type signature and the attached paths.
-- `Document(data=...)` no longer coerces a user-supplied `Array` of
-  mappings into an `AoT`; the caller's explicit inline-array choice
-  is preserved.
-- `Table.section(mapping)` and `AoT(entries)` now reject non-string
-  keys at construction with a clear `TypeError`, matching `Table.inline`
-  and `Document(data=...)`. Attached `AoT.append` / `.add` / `.insert`
-  and inline-table synthesis from a plain `dict` now produce the same
-  unified `"TOML keys must be str"` error instead of crashing deep in
-  the layout pipeline.
-- `copy.copy` / `copy.deepcopy` of an inline `Table` now returns an
-  inline `Table` instead of silently converting to a section table.
+- Overwriting an implicit table with a scalar or inline value now preserves the
+  original position in the document instead of moving the binding to the end.
+- Mutations to inline tables and arrays nested inside an `Array` are now
+  rendered.
+- `Array.set_multiline` no longer inserts `\n` newlines into a CRLF document.
+- `Array.__imul__` (`arr *= n`) now keeps replicated inline tables and arrays
+  live: mutations through the copies render.
+- `Document.install` / `Document.ensure_table` now accept any `Sequence[str]`
+  (e.g.
+  `collections.deque`), matching the documented contract and the public type
+  signature.
+- Detached `AoT.append` / `AoT.insert` / `AoT[idx] = ...` now accept any
+  `Mapping` (e.g.
+  `MappingProxyType`), matching their declared type signature and the attached
+  paths.
+- `Document(data=...)` no longer coerces a user-supplied `Array` of mappings
+  into an `AoT`; the caller's explicit inline-array choice is preserved.
+- `Table.section(mapping)` and `AoT(entries)` now reject non-string keys at
+  construction with a clear `TypeError`, matching `Table.inline` and
+  `Document(data=...)`.
+  Attached `AoT.append` / `.add` / `.insert` and inline-table synthesis from a
+  plain `dict` now produce the same unified `"TOML keys must be str"` error
+  instead of crashing deep in the layout pipeline.
+- `copy.copy` / `copy.deepcopy` of an inline `Table` now returns an inline
+  `Table` instead of silently converting to a section table.
 
 ## [1.4.2] - 2026-05-10
 
 ### Fixed
 
-- Live-attaching an `Array` into a document with a different line
-  ending no longer produces mixed `\n` / `\r\n` newlines.
+- Live-attaching an `Array` into a document with a different line ending no
+  longer produces mixed `\n` / `\r\n` newlines.
 
 ## [1.4.1] - 2026-05-09
 
 ### Fixed
 
-- Mutating an implicit table whose only descendants were created via
-  chained `ensure_table` / nested AoT attaches no longer trips an
-  internal anchor-not-found assertion.
+- Mutating an implicit table whose only descendants were created via chained
+  `ensure_table` / nested AoT attaches no longer trips an internal
+  anchor-not-found assertion.
 
 ## [1.4.0] - 2026-05-08
 
@@ -255,10 +256,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Adding a dotted key to a section now respects the section's indent
-  and blank-line policy, and inserts a separating newline when needed.
-- Reject float literals with a misplaced underscore between the
-  exponent sign and its digits (e.g. `1e+_1`).
+- Adding a dotted key to a section now respects the section's indent and
+  blank-line policy, and inserts a separating newline when needed.
+- Reject float literals with a misplaced underscore between the exponent sign
+  and its digits (e.g.
+  `1e+_1`).
 
 ## [1.3.0] - 2026-05-02
 
@@ -268,8 +270,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The typed accessors (`table`, `array`, `aot`, and their `get_*`
-  variants) now accept a `Sequence[str]` as well as a dotted string.
+- The typed accessors (`table`, `array`, `aot`, and their `get_*` variants) now
+  accept a `Sequence[str]` as well as a dotted string.
 
 ## [1.2.0] - 2026-05-02
 
