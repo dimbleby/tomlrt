@@ -2823,7 +2823,12 @@ def attach_section_at(
         header=header,
     )
 
-    _splice_block_after([header], _parent_subtree_tail(parent), doc)
+    # Anchor past the whole subtree of the nearest header-bearing
+    # ancestor: a header re-parents everything after it, so landing it
+    # mid-section would capture that host's trailing KVs (e.g. a ``d = 4``
+    # sibling of an implicit ``parent``) under the new header on re-parse.
+    anchor = _parent_subtree_tail(_nearest_header_host(parent))
+    _splice_block_after([header], anchor, doc)
     if owner is not None:
         # Own the new header on the AoT entry so a later delete of the
         # entry takes the promoted section with it.
