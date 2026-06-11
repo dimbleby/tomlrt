@@ -1796,16 +1796,13 @@ def test_append_to_empty_nested_aot_under_dotted_key_clears_host_body() -> None:
 
 
 def test_sort_after_rematerialising_a_subsection_at_a_new_position() -> None:
-    """Sorting a container whose owned slots straddle a foreign section
-    must keep every dotted leaf in scope.
+    """Sorting a container after a dotted leaf re-materialises in place.
 
-    Regression: deleting a sub-section's content then re-adding it
-    materialises its ``[tbl.a.b]`` header at the doc tail, after a
-    sibling ``[tbl.x]``. Sorting ``tbl.a`` then gathered its content
-    (the dotted leaf ``a.k45`` and the sub-section) contiguously; the
-    interleaved foreign header ``[tbl.x]`` is sunk past that run rather
-    than hoisted ahead of it, so ``a.k45`` is not captured under
-    ``[tbl.x]`` on re-parse.
+    Deleting ``a.b``'s only content then re-adding under it
+    re-materialises ``a.b`` as an inline table in place (``a.b = {}`` →
+    ``a.b = {k14 = true}``). Because the inline binding never moves, no
+    foreign section is straddled and sorting ``tbl.a`` simply orders its
+    dotted leaves.
     """
     doc = tomlrt.loads(
         td("""
@@ -1823,10 +1820,8 @@ def test_sort_after_rematerialising_a_subsection_at_a_new_position() -> None:
     out = tomlrt.dumps(doc)
     assert out == td("""
         [tbl]
+        a.b = {k14 = true}
         a.k45 = ""
-
-        [tbl.a.b]
-        k14 = true
 
         [tbl.x]
         y = 1
@@ -3700,12 +3695,16 @@ def test_clear_dotted_subtable_drops_only_its_subtree() -> None:
     assert "x" not in sub
     assert doc["s"]["d"] == 4
     out = tomlrt.dumps(doc)
+    # ``s.a.b`` is now empty but still a live key; its dotted origin
+    # re-materialises it as an inline table ``a.b = {}`` in place — an
+    # inline binding re-parents nothing, so it stays among ``[s]``'s KVs.
     assert out == td("""
         [s]
+        a.b = {}
         a.c = 3
         d = 4
         """)
-    assert _reparses(out) == {"s": {"a": {"c": 3}, "d": 4}}
+    assert _reparses(out) == {"s": {"a": {"b": {}, "c": 3}, "d": 4}}
 
 
 def test_clear_empty_table_is_noop() -> None:
@@ -3949,16 +3948,17 @@ def test_insert_into_implicit_grandparent() -> None:
 
 
 def test_delete_only_subsection_keeps_implicit_parent() -> None:
-    # `a` is implicit (no [a] header). Deleting its only [a.b]
-    # leaves `a` reachable as an empty implicit table — Python-dict
-    # semantics: `del` removes only the named key.
+    # `a` is implicit (no [a] header). Deleting its only [a.b] empties
+    # `a`, which survives as a live key — Python-dict semantics: `del`
+    # removes only the named key. The now-empty `a` re-materialises its
+    # own `[a]` header so the surviving table still renders.
     src = td("""
         [a.b]
         x = 1
     """)
     doc = tomlrt.loads(src)
     del doc.table("a")["b"]
-    assert tomlrt.dumps(doc) == ""
+    assert tomlrt.dumps(doc) == "[a]\n"
     assert "a" in doc
     assert dict(doc.table("a")) == {}
 
@@ -3978,22 +3978,144 @@ def test_delete_one_of_two_implicit_subsections_keeps_parent() -> None:
     """)
 
 
+def test_emptied_implicit_header_materialises_in_place() -> None:
+    # The re-materialised header stays at the emptied descendant's old
+    # position rather than being shoved to end-of-doc.
+    src = td("""
+        [a.b]
+        x = 1
+
+        [c.d]
+        y = 2
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("a")["b"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+
+        [c.d]
+        y = 2
+    """)
+    assert _reparses(out) == {"a": {}, "c": {"d": {"y": 2}}}
+
+
+def test_emptied_implicit_header_keeps_leading_comment() -> None:
+    # A comment on the emptied descendant's leading carries onto the
+    # re-materialised header.
+    src = td("""
+        # keep me
+        [a.b]
+        x = 1
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("a")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        # keep me
+        [a]
+    """)
+
+
+def test_emptied_implicit_header_keeps_eol_comment() -> None:
+    # An end-of-line comment on the emptied descendant's header line
+    # carries onto the re-materialised (shorter) header.
+    src = td("""
+        [a.b]  # note
+        x = 1
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("a")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        [a]  # note
+    """)
+
+
+def test_emptied_implicit_deep_header_materialises_in_place() -> None:
+    # The descendant's anchor is a deep header `[a.b.c.d]`; emptying `a`
+    # materialises `[a]` at that header's old position, carrying its
+    # leading separator.
+    src = td("""
+        z = 0
+
+        [a.b.c.d]
+        x = 1
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("a")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        z = 0
+
+        [a]
+    """)
+    assert _reparses(tomlrt.dumps(doc)) == {"z": 0, "a": {}}
+
+
+def test_emptied_aot_header_origin_materialises_table_header() -> None:
+    # The emptied implicit table's only anchor was an AoT header
+    # (`[[a.b]]`). A plain `[a]` table header must be materialised (not
+    # `[[a]]`), matching the surviving table model.
+    doc = tomlrt.loads("[[a.b]]\nx = 1\n")
+    del doc.table("a")["b"]
+    out = tomlrt.dumps(doc)
+    assert out == "[a]\n"
+    assert _reparses(out) == {"a": {}}
+
+
+def test_emptied_at_head_dotted_stays_in_place_as_inline() -> None:
+    # The emptied binding was the doc head. Its dotted origin
+    # re-materialises it as an inline table ``a = {}`` in place — it stays
+    # at the head, so the following blank-line separator is undisturbed.
+    src = td("""
+        a.b = 1
+
+        c = 2
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("a")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        a = {}
+
+        c = 2
+    """)
+
+
+def test_emptied_dotted_stays_in_place_among_sibling_kvs() -> None:
+    # The deleted dotted subtree's KVs are interleaved with surviving
+    # sibling KVs. The inline ``a = {}`` re-parents nothing, so it stays
+    # exactly where the dotted binding was rather than moving past siblings.
+    src = td("""
+        a.b.x = 1
+        c = 2
+        a.b.y = 3
+        d = 4
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("a")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        a = {}
+        c = 2
+        d = 4
+    """)
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {}, "c": 2, "d": 4}
+
+
 def test_delete_deep_implicit_inside_aot_keeps_implicit_chain() -> None:
-    # Implicit ancestors (`foo`, `bar`) inside an AoT entry stay as
-    # empty `Table` views — they have no rendering presence.
+    # Emptying an AoT-owned implicit table (`foo`) re-materialises it as
+    # an inline table `foo = {}` inside the owning entry's slot region, so
+    # the surviving empty table still renders and round-trips.
     doc = tomlrt.loads("[[arr]]\nfoo.bar.baz = 1\n")
     del doc.aot("arr")[0].table("foo")["bar"]
-    assert tomlrt.dumps(doc) == "[[arr]]\n"
+    assert tomlrt.dumps(doc) == "[[arr]]\nfoo = {}\n"
     assert doc.to_dict() == {"arr": [{"foo": {}}]}
 
 
 def test_delete_deep_non_aot_implicit_keeps_chain() -> None:
-    # `[a.b.c.d]\nx=1` → a, b, c are all implicit. Deleting `d`
-    # removes only `d`; the implicit chain `a.b.c` survives as
-    # nested empty `Table` views with no rendering presence.
+    # `[a.b.c.d]\nx=1` → a, b, c are all implicit. Deleting `d` empties
+    # `c`; the surviving empty `c` re-materialises as `[a.b.c]` (a, b
+    # stay implicit, carried by the dotted header path).
     doc = tomlrt.loads("[a.b.c.d]\nx = 1\n")
     del doc.table("a").table("b").table("c")["d"]
-    assert tomlrt.dumps(doc) == ""
+    assert tomlrt.dumps(doc) == "[a.b.c]\n"
     assert "a" in doc
     assert dict(doc.table("a").table("b").table("c")) == {}
 
@@ -4006,8 +4128,8 @@ def test_delete_header_only_section() -> None:
 
 def test_readd_into_emptied_aot_implicit_anchors_inside_entry() -> None:
     # After deleting the only descendant of an AoT-owned implicit
-    # chain, re-adding under that chain must synthesise the
-    # [arr.foo] header inside the owning entry's slot region.
+    # chain, re-adding under that chain mutates the in-place inline
+    # table inside the owning entry's slot region.
     doc = tomlrt.loads("[[arr]]\nfoo.bar.baz = 1\n\n[[arr]]\nname = 2\n")
     foo = doc.aot("arr")[0].table("foo")
     del foo["bar"]
@@ -4015,8 +4137,7 @@ def test_readd_into_emptied_aot_implicit_anchors_inside_entry() -> None:
     out = tomlrt.dumps(doc)
     assert out == td("""
         [[arr]]
-        [arr.foo]
-        new = 1
+        foo = {new = 1}
 
         [[arr]]
         name = 2

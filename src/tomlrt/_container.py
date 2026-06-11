@@ -644,7 +644,7 @@ class Container(dict[str, Any]):
         src_root = value._layout_root  # noqa: SLF001
         if src_root is not None and not src_root._is_private:  # noqa: SLF001
             if key in self:
-                del self[key]
+                _layout_ops.delete_key(self, key)
             _layout_ops.clone_aot(self, key, value)
             return
         # Snapshot existing entry tables. If their `_owner_aot_entry`
@@ -706,7 +706,7 @@ class Container(dict[str, Any]):
         live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
         if live_source:
             if key in self:
-                del self[key]
+                _layout_ops.delete_key(self, key)
             if value._owner_aot_entry is not None and self._layout_root is not None:
                 _layout_ops.clone_aot_entry_as_table(self, key, value)
             elif value._header_ref is not None:
@@ -780,7 +780,7 @@ class Container(dict[str, Any]):
         if self._inline:
             self._inline_delitem(key)
             return
-        _layout_ops.delete_key(self, key)
+        _layout_ops.delete_key(self, key, materialise_empty=True)
 
     # ------------------------------------------------------------------
     # Dict-method overrides — route through ``__setitem__`` /
@@ -1057,7 +1057,7 @@ class Container(dict[str, Any]):
                 if tail and tail[0] in inline_holder:
                     del inline_holder[tail[0]]
                     if len(inline_holder) == 0:
-                        del cur[parts[i]]
+                        _layout_ops.delete_key(cur, parts[i])
             # Overwrite-existing path: leaf already present, fall through
             # to direct __setitem__ on the deepest existing container.
             if i == len(parts) - 1:
@@ -1167,7 +1167,7 @@ class Container(dict[str, Any]):
         saved_leading = old_slot.leading if old_slot is not None else None
         saved_eol = old_slot.eol if old_slot is not None else None
         snapshot = cur.to_dict()
-        del self[key]
+        _layout_ops.delete_key(self, key)
         self[key] = Table.section(snapshot)
         result = dict.__getitem__(self, key)
         assert isinstance(result, Table)
@@ -1235,7 +1235,7 @@ class Container(dict[str, Any]):
         old_slot = _direct_kv_slot(self, key)
         saved_leading = old_slot.leading if old_slot is not None else None
         saved_eol = old_slot.eol if old_slot is not None else None
-        del self[key]
+        _layout_ops.delete_key(self, key)
         self[key] = AoT(snapshot)
         result = dict.__getitem__(self, key)
         assert isinstance(result, AoT)
