@@ -961,8 +961,7 @@ class Container(dict[str, Any]):
             # overwrite the dict entry in place below — a dict-level
             # ``del self[key]`` would momentarily empty this navigator
             # and prune it (and its ancestors) from the parent chain.
-            _inline_ops.delete_entry(self, key)
-            _inline_ops.append_entry(self, key, cst)
+            _inline_ops.overwrite_entry(self, key, cst)
         elif key in self:
             ok = _inline_ops.replace_entry_value(self, key, cst)
             if not ok:  # pragma: no cover  -- view/CST drift invariant guard

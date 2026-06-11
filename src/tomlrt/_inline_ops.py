@@ -151,6 +151,30 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     splice_in(iv, new_entry, style, root._doc_newline)  # noqa: SLF001
 
 
+def overwrite_entry(t: Container, key: str, new_value: Value) -> None:
+    """Replace a dotted-prefix sub-table with a single fresh entry.
+
+    Drops every ``key.*`` entry then re-adds a single ``key`` entry.
+    The outer table is only *transiently* emptied while the old prefix
+    entries are removed (it always ends up holding ``key``), so its
+    authored single-line bracket pad must survive the delete + re-add —
+    otherwise overwriting a sole-content prefix would canonicalise a
+    tight ``{...}`` to padded ``{ ... }``. Multi-line pads are left to
+    ``splice_in`` to recompute per-row.
+    """
+    iv = _outermost_inline(t)._value  # noqa: SLF001
+    assert iv is not None
+    keep_pad = (
+        None
+        if value_is_multiline(iv)
+        else (iv.header_trivia.copy(), iv.final_trivia.copy())
+    )
+    delete_entry(t, key)
+    append_entry(t, key, new_value)
+    if keep_pad is not None:
+        iv.header_trivia, iv.final_trivia = keep_pad
+
+
 def delete_entry(t: Container, key: str) -> bool:
     """Remove the entry (or all dotted-prefix entries) matching `key`.
 
