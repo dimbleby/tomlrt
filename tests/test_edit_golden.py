@@ -1712,8 +1712,10 @@ def test_del_after_emptying_descendant_succeeds() -> None:
     Holding ``bar = group['bar']`` and then ``del bar['dependencies']``
     leaves ``bar`` reachable through ``group`` as an empty table — same
     as plain Python dict semantics — and ``del group['bar']`` (or
-    ``group.pop('bar')``) must succeed rather than raising ``KeyError``
-    because the underlying CST chain is already gone.
+    ``group.pop('bar')``) must succeed rather than raising ``KeyError``.
+    Emptying ``bar`` re-materialises its header so the surviving empty
+    table still renders; deleting it then empties ``group``, which in
+    turn re-materialises ``[tool.poetry.group]``.
     """
     doc = tomlrt.loads('[tool.poetry.group.bar.dependencies]\nfoo = "1"\n')
     bar = doc["tool"]["poetry"]["group"]["bar"]
@@ -1721,9 +1723,10 @@ def test_del_after_emptying_descendant_succeeds() -> None:
     group = doc["tool"]["poetry"]["group"]
     assert "bar" in group
     assert dict(group["bar"]) == {}
+    assert tomlrt.dumps(doc) == "[tool.poetry.group.bar]\n"
     del group["bar"]
     assert "bar" not in group
-    assert tomlrt.dumps(doc) == ""
+    assert tomlrt.dumps(doc) == "[tool.poetry.group]\n"
 
     # ``pop`` is the same code path; verify it too returns the empty view.
     doc2 = tomlrt.loads('[tool.poetry.group.bar.dependencies]\nfoo = "1"\n')

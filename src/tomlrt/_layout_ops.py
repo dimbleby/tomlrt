@@ -50,7 +50,7 @@ from tomlrt._trivia import (
     WhitespaceNode,
     line_has_comment,
 )
-from tomlrt._values import make_keyparts
+from tomlrt._values import InlineTableValue, make_keyparts
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -197,7 +197,7 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     # ``a.b.c = 1`` with a scalar should yield ``a.b = "str"``, not a new
     # ``[a]`` header. A binding whose primary was a header keeps a header.
     reinstall_as_dotted = isinstance(old_primary, KVSlot)
-    del parent[key]
+    delete_key(parent, key)
     doc = parent._attached_doc  # noqa: SLF001
     token = _reinstall_as_dotted.set(reinstall_as_dotted)
     try:
@@ -276,9 +276,7 @@ def _anchor_in_parent_direct_body(parent: Container, anchor_prev: Slot | None) -
     ancestor, so its scope is that host's — check against the host
     header, not the implicit container itself.
     """
-    host = parent
-    while host._header_ref is None and host._parent is not None:  # noqa: SLF001
-        host = host._parent  # noqa: SLF001
+    host = _nearest_header_host(parent)
     host_header_ref = host._header_ref  # noqa: SLF001
     host_header = host_header_ref.slot if host_header_ref else None
     cur: Slot | None = anchor_prev
@@ -722,7 +720,148 @@ def _invalidate_body_tail_chain(
         cur = cur._parent  # noqa: SLF001
 
 
-def delete_key(c: Container, key: str) -> None:
+def _nearest_header_host(c: Container) -> Container:
+    """The closest ancestor (or ``c``) owning a header, else the doc root."""
+    host = c
+    while host._parent is not None and host._header_ref is None:  # noqa: SLF001
+        host = host._parent  # noqa: SLF001
+    return host
+
+
+def _dotted_chain(host: Container, leaf: Container) -> list[Container]:
+    """The container chain ``[host, ..., leaf]`` in doc-stream order."""
+    chain: list[Container] = []
+    cur: Container | None = leaf
+    while cur is not host:
+        assert cur is not None
+        chain.append(cur)
+        cur = cur._parent  # noqa: SLF001
+    chain.append(host)
+    chain.reverse()
+    return chain
+
+
+def _replace_primary_in_place(
+    new_slot: KVSlot | StructuralHeaderSlot,
+    primary: KVSlot | StructuralHeaderSlot,
+    doc: Document,
+) -> None:
+    """Splice ``new_slot`` into the doc-stream where ``primary`` sits.
+
+    The caller is materialising a replacement for an about-to-be-deleted
+    binding whose doc-stream-first slot is ``primary``. ``new_slot`` takes
+    ``primary``'s position — inheriting its leading and eol — and is
+    inserted *before* it, so the later unlink of ``primary`` leaves
+    ``new_slot`` exactly where ``primary`` was. Because ``new_slot`` is in
+    place before the unlink, head-occupancy is preserved for free: if
+    ``primary`` was the doc head, ``new_slot`` becomes the head and the
+    unlink never strips the following separator.
+    """
+    new_slot.leading.pieces = list(primary.leading.pieces)
+    new_slot.eol = primary.eol
+    if primary._prev is None:  # noqa: SLF001
+        insert_before_head(new_slot, doc)
+    else:
+        insert_after(primary._prev, new_slot, doc)  # noqa: SLF001
+
+
+def _materialise_empty_section_header(
+    c: Container,
+    primary: StructuralHeaderSlot,
+    doc: Document,
+) -> None:
+    """Re-materialise a header for a now-empty header-origin section.
+
+    The emptied section's physical presence was a descendant *header*
+    (``a`` in ``[a.b]`` once ``b`` is removed). A ``[c._path]`` header
+    replaces it in place: a header re-parents the KVs that follow it, but
+    everything after ``primary`` up to the next header belonged to the
+    deleted descendant, so nothing survives there to be wrongly
+    re-parented. The empty section therefore keeps rendering — as ``[a]``
+    — exactly where the descendant header was.
+    """
+    parent = c._parent  # noqa: SLF001
+    assert parent is not None
+    owner = c._owner_aot_entry  # noqa: SLF001
+    header = _new_section_header(
+        c._path,  # noqa: SLF001
+        leading=_build_section_leading(doc),
+        doc=doc,
+        owner_aot_entry=owner,
+    )
+    own_ref = SlotRef(slot=header, container=c)
+    c._refs.append(own_ref)  # noqa: SLF001
+    c._header_ref = own_ref  # noqa: SLF001
+    _replace_primary_in_place(header, primary, doc)
+    if owner is not None:
+        owner.entry_slots.append(header)
+    _file_header_binding_chain(parent, header)
+    c._body_tail = header  # noqa: SLF001
+
+
+def _materialise_empty_inline_table(
+    c: Container,
+    primary: KVSlot,
+    doc: Document,
+) -> None:
+    """Re-materialise an empty inline table for a now-empty dotted section.
+
+    The emptied section's physical presence was a descendant dotted *KV*
+    (``a`` in ``a.b.x = 1`` once ``b`` is removed). Unlike a header, an
+    inline-table binding re-parents nothing, so it can take ``primary``'s
+    exact position even when sibling KVs survive around it — the section
+    stays put and renders as ``a = {}`` (or, under an implicit ancestor,
+    the dotted ``a.b = {}``). ``c`` flips from an implicit section to an
+    inline-root table backed by the new (empty) ``InlineTableValue``.
+
+    Must run *before* the scrub: the new binding's chain refs are filed
+    immediately ahead of ``primary``'s own refs (which the scrub then
+    removes), so they inherit ``primary``'s doc-stream position in each
+    ancestor's ``_refs``.
+    """
+    parent = c._parent  # noqa: SLF001
+    assert parent is not None
+    owner = c._owner_aot_entry  # noqa: SLF001
+
+    host = _nearest_header_host(c)
+    key_path = c._path[len(host._path) :]  # noqa: SLF001
+
+    val = InlineTableValue()
+    kv = _new_kv_slot(
+        host_path=host._path,  # noqa: SLF001
+        key=key_path,
+        value=val,
+        doc=doc,
+        owner=owner,
+        leading=Trivia(),
+    )
+    _replace_primary_in_place(kv, primary, doc)
+
+    # File the binding chain ``[host, ..., parent]``, slipping each new
+    # ref in just before ``primary``'s ref so it lands at ``primary``'s
+    # doc-stream position; the scrub removes ``primary``'s refs next.
+    chain = _dotted_chain(host, parent)
+    for i, anc in enumerate(chain):
+        idx = _find_ref_index_by_slot(anc, primary)
+        anc._refs.insert(idx, SlotRef(slot=kv, container=anc))  # noqa: SLF001
+        _rebuild_index_for_key(anc, key_path[i])
+
+    # ``c`` becomes an inline-root table, which keeps no ``_refs`` /
+    # ``_index`` of its own (the binding lives on the parent chain, and
+    # entries live in ``val.items``). Unfile its remaining
+    # descendant-binding refs first — this also unregisters their slot
+    # back-pointers, so the later scrub no longer reaches ``c``.
+    for ref in list(c._refs):  # noqa: SLF001
+        unfile_ref(ref)
+    c._inline = True  # noqa: SLF001
+    c._value = val  # noqa: SLF001
+    c._body_tail = None  # noqa: SLF001
+
+    if owner is not None:
+        owner.entry_slots.append(kv)
+
+
+def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> None:
     """Delete ``key`` from ``c`` — scalar, inline, section, AoT, or dotted-subtree.
 
     Steps:
@@ -745,8 +884,16 @@ def delete_key(c: Container, key: str) -> None:
     Cascade-prune is intentionally *not* performed: ``del c[k]``
     follows Python-dict semantics, removing exactly ``k`` and leaving
     any now-emptied implicit ancestor chain reachable as nested empty
-    ``Table`` views. Such slotless implicit tables have no rendering
-    presence (no header_ref, no refs), so dumps stay byte-correct.
+    ``Table`` views.
+
+    ``materialise_empty`` is opt-in for the public delete API: if the
+    removal leaves ``c`` itself an empty, header-less section (its only
+    physical presence was the deleted descendant, as for ``a`` in
+    ``[a.b]`` once ``b`` goes), a synthetic ``[c._path]`` header is
+    materialised so an empty-but-live table still renders. Internal
+    delete-then-reinstall callers leave it ``False`` — the container is
+    repopulated immediately, so a transient empty state must not grow a
+    spurious header.
 
     Held views of the deleted subtree retain stale ``_layout_root`` /
     ``_path``; structural mutation through them raises
@@ -756,6 +903,29 @@ def delete_key(c: Container, key: str) -> None:
         raise KeyError(key)
     val = dict.__getitem__(c, key)
     doc = c._attached_doc  # noqa: SLF001
+
+    # Re-materialisation bookkeeping for the public delete API. When the
+    # removal empties ``c`` into a live, header-less, non-inline section,
+    # that section must still render, so a ``[c._path]`` header is
+    # synthesised by ``_materialise_empty_section_header`` (below, before
+    # the unlink loop, while the descendant's primary slot is still in
+    # place). ``len(c) == 1`` with ``key in c`` means ``c`` empties to
+    # zero keys.
+    will_materialise = (
+        materialise_empty
+        and bool(c._path)  # noqa: SLF001
+        and not c._inline  # noqa: SLF001
+        and c._header_ref is None  # noqa: SLF001
+        and len(c) == 1
+    )
+    mat_primary: KVSlot | StructuralHeaderSlot | None = None
+    if will_materialise:
+        # ``_index[key]`` is scrubbed below; grab the removed descendant's
+        # doc-stream-first slot now (its trivia / position is read at
+        # materialise time, while it is still linked).
+        primary = c._index[key][0].slot  # noqa: SLF001
+        assert isinstance(primary, (KVSlot, StructuralHeaderSlot))
+        mat_primary = primary
 
     # 1. Owned-slot identity set + retained slot objects (for unlink).
     owned_ids: set[int] = set()
@@ -774,6 +944,20 @@ def delete_key(c: Container, key: str) -> None:
     subtree_containers: list[Container] = []
     subtree_aots: list[AoT] = []
     _collect_subtree(val, subtree_containers, subtree_aots, _add_slot)
+
+    # Synthesise the now-empty section's physical presence while the
+    # descendant's primary slot is still linked, so the replacement takes
+    # its position in place. The descendant's *origin* picks the form: a
+    # header-origin section (``[a.b]``) re-materialises as a header
+    # ``[a]``; a dotted-origin section (``a.b.x = 1``) re-materialises as
+    # an inline table ``a = {}``, which — unlike a header — re-parents
+    # nothing and so can sit among surviving sibling KVs untouched.
+    if will_materialise:
+        assert mat_primary is not None
+        if isinstance(mat_primary, StructuralHeaderSlot):
+            _materialise_empty_section_header(c, mat_primary, doc)
+        else:
+            _materialise_empty_inline_table(c, mat_primary, doc)
 
     # 3. Slot-driven scrub via back-pointers, *skipping* subtree
     # containers — those are about to be orphaned to a fresh
@@ -1257,14 +1441,7 @@ def install_dotted_kv_slot(
     doc = host._attached_doc  # noqa: SLF001
 
     # Build chain [host, ..., leaf_parent] via _parent walk + reverse.
-    chain: list[Container] = []
-    cur: Container | None = leaf_parent
-    while cur is not host:
-        assert cur is not None
-        chain.append(cur)
-        cur = cur._parent  # noqa: SLF001
-    chain.append(host)
-    chain.reverse()
+    chain = _dotted_chain(host, leaf_parent)
     assert len(chain) == len(leaf_keypath)
 
     body_tail = leaf_parent._body_tail or host._body_tail  # noqa: SLF001
@@ -1356,9 +1533,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
       * ``c._path`` is non-empty (c is not the doc root)
       * ``c._header_ref is None`` (c is implicit-headerless)
     """
-    host: Container = c
-    while host._parent is not None and host._header_ref is None:  # noqa: SLF001
-        host = host._parent  # noqa: SLF001
+    host = _nearest_header_host(c)
 
     install_dotted_kv_slot(
         host,
@@ -2752,9 +2927,7 @@ def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
     # that header ahead of the new sub-section, where a re-parse would
     # otherwise capture them. When ``parent`` itself bears a header (a
     # section or AoT-entry table) the host is ``parent``.
-    host = parent
-    while host._header_ref is None and host._parent is not None:  # noqa: SLF001
-        host = host._parent  # noqa: SLF001
+    host = _nearest_header_host(parent)
     return _parent_subtree_tail(host)
 
 
