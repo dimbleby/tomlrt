@@ -2554,6 +2554,31 @@ def test_ensure_table_accepts_list_path() -> None:
     assert tomlrt.dumps(doc) == "[tool.ruff]\nline-length = 88\n"
 
 
+def test_ensure_table_under_implicit_parent_lands_after_section_body() -> None:
+    # ``ensure_table(("s","a","b"))`` synthesises ``[s.a.b]``. ``a`` is
+    # implicit, with its dotted KV ``a.c`` interleaved among ``[s]``'s
+    # other KVs (``d``). The header re-parents everything after it, so it
+    # must land after ``[s]``'s whole body (``d = 4``), not between the
+    # dotted-key siblings — otherwise ``d`` is captured under ``[s.a.b]``.
+    doc = tomlrt.loads(
+        td("""
+            [s]
+            a.c = 3
+            d = 4
+            """)
+    )
+    doc.ensure_table(("s", "a", "b"))
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        a.c = 3
+        d = 4
+
+        [s.a.b]
+        """)
+    assert _reparses(out) == doc.to_dict() == {"s": {"a": {"c": 3, "b": {}}, "d": 4}}
+
+
 def test_insert_into_implicit_parent_after_chained_ensure_table() -> None:
     doc = tomlrt.Document()
     doc.ensure_table("t").ensure_table("u")["k"] = 1
