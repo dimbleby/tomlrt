@@ -596,6 +596,68 @@ def _strip_leading_blank_lines(slot: Slot) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _splice_body_slot(
+    new_slot: Slot,
+    *,
+    anchor_body_tail: Slot | None,
+    anchor_header_ref: SlotRef | None,
+    doc: Document,
+) -> bool:
+    """Splice ``new_slot`` into the doc-stream at the canonical body anchor.
+
+    Anchor preference: body tail > header > head-of-doc seam > empty doc.
+    Shared by the direct-KV and dotted-KV insert paths. Returns ``True``
+    iff ``new_slot`` became the new doc head ahead of an existing head
+    (the seam case), where ancestor refs must go at index 0.
+    """
+    if anchor_body_tail is not None:
+        insert_after(anchor_body_tail, new_slot, doc)
+        return False
+    if anchor_header_ref is not None:
+        insert_after(anchor_header_ref.slot, new_slot, doc)
+        return False
+    if doc._head is not None:  # noqa: SLF001
+        # Section-only doc: splice before the first slot, separating it.
+        old_head = doc._head  # noqa: SLF001
+        insert_before_head(new_slot, doc)
+        _ensure_leading_blank_line(old_head, doc)
+        return True
+    # Empty doc: splice in as head, hoisting any preamble trivia.
+    insert_before_head(new_slot, doc)
+    _promote_trailing_to_preamble(new_slot, doc)
+    return False
+
+
+def _file_body_ref(
+    anc: Container,
+    new_slot: Slot,
+    *,
+    anchor_slot: Slot | None,
+    inserted_at_head: bool,
+    local_key: str,
+) -> SlotRef:
+    """File a ref to ``new_slot`` on ``anc`` at its doc-stream position.
+
+    After ``anchor_slot``'s ref when ``anc`` holds one; else index 0 for a
+    head-of-doc insert; else the tail. Rebuilds ``anc._index[local_key]``
+    rather than appending, which would misorder a key with later refs
+    (e.g. ``a.x = 1`` then ``[a.b]``).
+    """
+    new_ref = SlotRef(slot=new_slot, container=anc)
+    if anchor_slot is not None and any(
+        r.slot is anchor_slot
+        for r in anc._refs  # noqa: SLF001
+    ):
+        anchor_idx = _find_ref_index_by_slot(anc, anchor_slot)
+        anc._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
+    elif inserted_at_head and anc._refs:  # noqa: SLF001
+        anc._refs.insert(0, new_ref)  # noqa: SLF001
+    else:
+        anc._refs.append(new_ref)  # noqa: SLF001
+    _rebuild_index_for_key(anc, local_key)
+    return new_ref
+
+
 def append_direct_kv(c: Container, key: str, value: Value) -> None:
     """Append a fresh direct (non-dotted) KV to ``c``.
 
@@ -646,44 +708,22 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
 
     new_slot = _build_kv_slot(c, key, value, doc)
 
-    if body_tail is not None:
-        insert_after(body_tail, new_slot, doc)
-    elif header_ref is not None:
-        # Header-only container: anchor at the header itself.
-        insert_after(header_ref.slot, new_slot, doc)
-    elif doc._head is not None:  # noqa: SLF001
-        # Section-only doc: insert the new KV at the head of the doc
-        # stream, before the first existing slot. Ensure a blank-line
-        # separator on what is about to become the second slot, so the
-        # new KV does not visually collide with `[s]`.
-        old_head = doc._head  # noqa: SLF001
-        insert_before_head(new_slot, doc)
-        _ensure_leading_blank_line(old_head, doc)
-    else:
-        # Empty doc (slotless): splice the new KV in as the head and
-        # hoist any pre-existing preamble trivia (from
-        # `Document.preamble`, or a parsed comment-only source) onto
-        # its leading.
-        insert_before_head(new_slot, doc)
-        _promote_trailing_to_preamble(new_slot, doc)
-
-    new_ref = SlotRef(slot=new_slot, container=c)
-    # The new ref's correct position in ``c._refs`` is immediately
-    # after the anchor ref (the previous body_tail's ref). With no
-    # anchor: head-of-doc insert (3d-5) → index 0, so the ref
-    # ordering matches doc-stream (existing section-header refs come
-    # after); header-only / empty-doc → end (no preceding refs to
-    # order against).
-    if body_tail is not None:
-        anchor_idx = _find_ref_index_by_slot(c, body_tail)
-        c._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
-    elif header_ref is None and doc._head is new_slot:  # noqa: SLF001
-        # Head-of-doc insert: the new ref must precede any existing
-        # section-header refs in c._refs to keep doc-stream order.
-        c._refs.insert(0, new_ref)  # noqa: SLF001
-    else:
-        c._refs.append(new_ref)  # noqa: SLF001
-    c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
+    inserted_at_head = _splice_body_slot(
+        new_slot,
+        anchor_body_tail=body_tail,
+        anchor_header_ref=header_ref,
+        doc=doc,
+    )
+    anchor_slot: Slot | None = body_tail or (
+        header_ref.slot if header_ref is not None else None
+    )
+    _file_body_ref(
+        c,
+        new_slot,
+        anchor_slot=anchor_slot,
+        inserted_at_head=inserted_at_head,
+        local_key=key,
+    )
     c._body_tail = new_slot  # noqa: SLF001
 
 
@@ -1459,52 +1499,26 @@ def install_dotted_kv_slot(
         leading=_kv_leading_after(_last_kv(host, lambda s: _is_host_kv(host, s)), doc),
     )
 
-    # Splice into the doc-stream linked list. Anchor preference:
-    # host's body_tail > host's header > head-of-doc seam > empty doc.
-    inserted_at_head = False
-    if body_tail is not None:
-        insert_after(body_tail, new_slot, doc)
-    elif header_ref is not None:
-        insert_after(header_ref.slot, new_slot, doc)
-    elif doc._head is not None:  # noqa: SLF001
-        old_head = doc._head  # noqa: SLF001
-        insert_before_head(new_slot, doc)
-        _ensure_leading_blank_line(old_head, doc)
-        inserted_at_head = True
-    else:
-        insert_before_head(new_slot, doc)
-        _promote_trailing_to_preamble(new_slot, doc)
+    inserted_at_head = _splice_body_slot(
+        new_slot,
+        anchor_body_tail=body_tail,
+        anchor_header_ref=header_ref,
+        doc=doc,
+    )
 
-    # File refs on every chain ancestor. ``_refs`` is the doc-stream
-    # subset; ``_index`` preserves "primary at index 0 + all
-    # contributors". The anchor for host is body_tail or its header;
-    # implicit intermediates we created are fresh with empty ``_refs``
-    # so any append is equivalent to insert-at-0.
+    # File a ref on every chain ancestor, anchored at host's body_tail
+    # or header (fresh implicit intermediates have empty ``_refs``).
     anchor_slot: Slot | None = body_tail or (
         header_ref.slot if header_ref is not None else None
     )
     for i, anc in enumerate(chain):
-        new_ref = SlotRef(slot=new_slot, container=anc)
-        if anchor_slot is not None and any(
-            r.slot is anchor_slot
-            for r in anc._refs  # noqa: SLF001
-        ):
-            anchor_idx = _find_ref_index_by_slot(anc, anchor_slot)
-            anc._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
-        elif inserted_at_head and anc._refs:  # noqa: SLF001
-            # New slot is the new doc head; its ref must precede any
-            # existing refs (e.g. section-header refs on the doc root)
-            # to keep ``_refs`` in doc-stream order.
-            anc._refs.insert(0, new_ref)  # noqa: SLF001
-        else:
-            anc._refs.append(new_ref)  # noqa: SLF001
-        # Rebuild ``_index[local_key]`` rather than blindly appending —
-        # appending is only correct when the new ref is also the last
-        # with its key in ``_refs``, which fails when the ancestor has
-        # later refs under the same key (e.g. ``a.x = 1`` then
-        # ``[a.b]`` — the new ``a.z`` slot sits before the ``[a.b]``
-        # header in ``_index['a']``, not at the end).
-        _rebuild_index_for_key(anc, leaf_keypath[i])
+        _file_body_ref(
+            anc,
+            new_slot,
+            anchor_slot=anchor_slot,
+            inserted_at_head=inserted_at_head,
+            local_key=leaf_keypath[i],
+        )
         if anc._body_tail is body_tail or anc._body_tail is None:  # noqa: SLF001
             # Propagate the body_tail bump up the chain. ``is body_tail``
             # is the old-path case (every chain ancestor of an implicit
