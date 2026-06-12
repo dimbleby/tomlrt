@@ -1,11 +1,8 @@
 """Logical container layer.
 
-`Container(dict)` is the dict-typed base for both `Document` (the
-root) and `Table` (sections + inline tables). Reads come straight
-from dict storage populated in doc-stream first-occurrence order;
-mutations write to the slot stream via the per-container caches
-(`_index`, `_refs`, `_header_ref`, `_body_tail`) and refresh the
-dict from there.
+`Container(dict)` backs `Document` and `Table`. Dict storage follows
+doc-stream first-occurrence order; mutations update the slot stream
+through `_index`, `_refs`, `_header_ref`, and `_body_tail`.
 """
 
 from __future__ import annotations
@@ -95,12 +92,10 @@ _MISSING: Any = object()
 class Container(dict[str, Any]):
     """Dict-typed base for `Document` and `Table` views.
 
-    Reads are pure dict operations. Mutation paths use the per-container
-    cache (`_index` / `_refs` / `_header_ref` / `_body_tail`)
-    maintained alongside the dict storage. For inline tables
-    (`_inline=True`) the slot-stream caches stay empty and `_value`
-    points at the backing `InlineTableValue` instead — inline mutation
-    lives in a separate code path.
+    Reads are pure dict operations. Section mutations use the
+    per-container cache (`_index`, `_refs`, `_header_ref`,
+    `_body_tail`). Inline tables keep those caches empty and mutate
+    the backing `InlineTableValue` in `_value`.
     """
 
     __slots__ = (
@@ -160,8 +155,8 @@ class Container(dict[str, Any]):
         """Mapping view of leading-comment blocks on this container's direct keys.
 
         Returns only the *attached* comment run immediately above each key
-        (no blank line between).  For the full block — including any
-        above-blank groups and the blank-line structure between them — see
+        (no blank line between). For the full block, including any
+        above-blank groups and the blank-line structure between them, see
         [`leading_block`][tomlrt.Table.leading_block].
 
         Mutating the view requires the container to be attached to a
@@ -179,9 +174,6 @@ class Container(dict[str, Any]):
         Each entry is a ``tuple[str | None, ...]`` of comment strings
         interleaved with ``None`` (one per blank line), in source order;
         the slot's own column indent is implicit and re-applied on write.
-        Full-fidelity peer of
-        [`leading_comments`][tomlrt.Table.leading_comments], which exposes
-        only the trailing attached run.
 
         At the document's head slot,
         [`Document.preamble`][tomlrt.Document.preamble] is disjoint from
@@ -200,11 +192,10 @@ class Container(dict[str, Any]):
     def header_comment(self) -> str | None:
         """The EOL comment on this container's section header, or None.
 
-        Returns ``None`` for containers that have no header line
-        (the document root, implicit sections opened only by a
-        nested ``[a.b]`` header).  Setting on such a container
-        raises [`TOMLError`][tomlrt.TOMLError]; raises on inline
-        tables.
+        Containers without a header line (the document root, or implicit
+        sections opened only by a nested ``[a.b]`` header) read as
+        ``None``. Setting on such a container raises
+        [`TOMLError`][tomlrt.TOMLError]; inline tables also raise.
         """
         return _header_comment_get(self)
 
@@ -220,11 +211,10 @@ class Container(dict[str, Any]):
     def header_leading_comments(self) -> tuple[str, ...]:
         """The attached comment block immediately above this container's header.
 
-        Returns ``()`` for containers that have no header line
-        (the document root, implicit sections opened only by a
-        nested ``[a.b]`` header).  Setting on such a container
-        raises [`TOMLError`][tomlrt.TOMLError]; raises on inline
-        tables.
+        Containers without a header line (the document root, or implicit
+        sections opened only by a nested ``[a.b]`` header) read as ``()``.
+        Setting on such a container raises [`TOMLError`][tomlrt.TOMLError];
+        inline tables also raise.
 
         Excludes any above-blank groups — those are visible via
         [`header_leading_block`][tomlrt.Table.header_leading_block].
@@ -244,16 +234,11 @@ class Container(dict[str, Any]):
         """The full leading-trivia block above this container's header.
 
         A ``tuple[str | None, ...]`` of comment strings interleaved with
-        ``None`` (one per blank line), in source order.  Full-fidelity
-        peer of
-        [`header_leading_comments`][tomlrt.Table.header_leading_comments],
-        which exposes only the trailing attached run.
-
-        Returns ``()`` for containers that have no header line
-        (the document root, implicit sections opened only by a
-        nested ``[a.b]`` header).  Setting on such a container
-        raises [`TOMLError`][tomlrt.TOMLError]; raises on inline
-        tables.
+        ``None`` (one per blank line), in source order. Containers without
+        a header line (the document root, or implicit sections opened only
+        by a nested ``[a.b]`` header) read as ``()``. Setting on such a
+        container raises [`TOMLError`][tomlrt.TOMLError]; inline tables
+        also raise.
 
         For the first section in a document,
         [`Document.preamble`][tomlrt.Document.preamble] is disjoint from
@@ -279,29 +264,23 @@ class Container(dict[str, Any]):
     def format(self, *, comments: bool = True) -> None:
         """Canonicalise this container's formatting in place.
 
-        Rewrites whitespace, indentation, separators, and newlines to a
-        canonical layout for every slot in this container's subtree:
+        Rewrites this subtree to the canonical layout:
 
         * Keys, ``=`` spacing, and header brackets use canonical
           whitespace.
-        * Blank lines between sibling key/value slots collapse to none;
-          structural section / array-of-tables headers are preceded by
-          exactly one blank line.
+        * Sibling key/value slots have no blank line between them;
+          section / array-of-tables headers get one.
         * Orphan comment blocks above slots are preserved verbatim.
-        * Inline arrays and inline tables are reformatted in place
-          while preserving their overall shape (single-line stays
-          single-line, multi-line stays multi-line).
-        * All newline characters are retargeted to the owning
-          document's newline style.
+        * Inline values keep their shape (single-line stays single-line,
+          multi-line stays multi-line).
+        * Newlines use the owning document's style.
 
-        When ``comments`` is true (the default), comment text is also
-        normalised: ``#foo`` and ``#   foo`` both become ``# foo``, and
-        trailing whitespace inside comments is stripped.
+        With ``comments=True``, ``#foo`` and ``#   foo`` both become
+        ``# foo`` and trailing comment whitespace is stripped.
 
         Detached factory-style containers (``Table.section()`` /
-        ``Table.inline()`` not yet assigned anywhere) and inline
-        dotted-navigator views are not supported; calling
-        ``format()`` on one raises `TOMLError`.
+        ``Table.inline()`` not yet assigned anywhere) and inline dotted
+        navigators are unsupported and raise `TOMLError`.
         """
         kind = self._kind
         nl = self._doc_newline
@@ -339,10 +318,8 @@ class Container(dict[str, Any]):
             )
             return
 
-        # IMPLICIT_SECTION: slots are not contiguous in the doc stream,
-        # so we cannot do a subtree walk with inter-slot blank-line
-        # collapse.  Just canonicalise each owned slot's content and
-        # recurse into nested views via dict storage.
+        # IMPLICIT_SECTION slots are not contiguous, so canonicalise each
+        # owned slot and recurse through dict storage.
         if not self._attached:
             msg = "format() requires the container to be attached to a Document"
             raise TOMLError(msg)
@@ -364,11 +341,9 @@ class Container(dict[str, Any]):
     def _attached(self) -> bool:
         """True iff this container is attached to a live document root.
 
-        A container is "attached" when its layout root is a real,
-        user-visible document — not ``None`` (factory mode) and not a
-        private orphan root used to hold a recently-displaced subtree.
-        Mirrors :attr:`Array._attached` so cross-document live-attach
-        dispatch can read one predicate over both view kinds.
+        Attached means the layout root is a user-visible document: not
+        ``None`` (factory mode) and not a private orphan root. Mirrors
+        :attr:`Array._attached` for cross-document live-attach dispatch.
         """
         lr = self._layout_root
         return lr is not None and not lr._is_private  # noqa: SLF001
@@ -377,13 +352,9 @@ class Container(dict[str, Any]):
     def _attached_doc(self) -> Document:
         """The owning ``Document``, asserting the container is attached.
 
-        Most ``_layout_ops`` mutation primitives only run when the
-        target container is already wired into a document — they
-        operate on the doc-stream linked list, allocate slots, etc.
-        Reading ``_layout_root`` directly returns ``Document | None``;
-        this accessor narrows the type (and asserts in debug builds)
-        so call sites don't all need ``layout_root = c._layout_root;
-        assert layout_root is not None; doc = layout_root``.
+        Most ``_layout_ops`` primitives require an attached target
+        because they mutate the doc-stream linked list. This accessor
+        narrows ``_layout_root`` from ``Document | None``.
         """
         lr = self._layout_root
         assert lr is not None, "container is not attached to a document"
@@ -508,26 +479,20 @@ class Container(dict[str, Any]):
 
     @override
     def __setitem__(self, key: str, value: Any) -> None:
-        # Reject non-str keys explicitly: TOML keys are strings, and
-        # without this guard a mistyped key (e.g. ``obj[a, b] = v``,
-        # which is Python sugar for a tuple key) propagates deep into
-        # the layout pipeline before crashing in ``make_keypart``
-        # with an opaque TypeError.
+        # Reject non-str keys before they reach the layout pipeline and
+        # fail later with an opaque TypeError.
         _validate_key(key)
         if key in self and self[key] is value:
             return
-        # Reject types we explicitly do not coerce (clear error rather
-        # than a confusing NIE later in the dispatch).
+        # Reject types we explicitly do not coerce.
         if isinstance(value, tuple):
             msg = f"cannot assign tuple to TOML key {key!r}; use a list"
             raise TypeError(msg)
         if isinstance(value, (bytes, bytearray)):
             msg = f"cannot assign bytes to TOML key {key!r}; use a string"
             raise TypeError(msg)
-        # Inline tables can't host sections / AoTs as values; check
-        # eagerly so the error fires at the actual point of mistake
-        # rather than deferring to the synth-path at attach time. Runs
-        # for both attached and detached inline factories.
+        # Inline tables cannot host section-shaped values; fail at the
+        # assignment site, for both attached and detached factories.
         if self._inline:
             if isinstance(value, AoT):
                 msg = "Cannot store an array-of-tables inside an inline table"
@@ -535,7 +500,7 @@ class Container(dict[str, Any]):
             if _is_section(value):
                 msg = "Cannot store a section-style table inside an inline-style table"
                 raise TOMLError(msg)
-        # Unattached factory mode: dict-only storage, transplant on attach.
+        # Unattached factory mode: dict-only storage until attach.
         if self._layout_root is None:
             dict.__setitem__(self, key, value)
             return
@@ -550,12 +515,9 @@ class Container(dict[str, Any]):
     def _overwrite_existing(self, key: str, value: Any) -> None:
         """Replace the value at an already-bound key.
 
-        Tries cheap in-place strategies first (scalar swap, single-slot
-        typed replace) and falls through to the structural-overwrite
-        delete + reinsert + move-to-anchor path when the new value is
-        a different flavour — or the same flavour but section-shaped
-        (where in-place mutation would lose Python identity semantics
-        for the new view).
+        Uses in-place swaps when the existing binding is a single KV.
+        Structural values take the delete + reinsert + move-to-anchor
+        path so the new view's Python identity becomes the live one.
         """
         current = dict.__getitem__(self, key)
         # Fast-path: pure scalar → scalar (cheap, no synth alloc).
@@ -572,16 +534,8 @@ class Container(dict[str, Any]):
         ) and (is_scalar(value) or _is_synth_inline(value)):
             self._inline_typed_replace(key, value)
             return
-        # Structural overwrite: capture position + leading of the
-        # existing primary, delete the binding (which detaches the old
-        # view into a PrivateRoot), then re-enter __setitem__ at the
-        # new-key path. After the new value is installed (at end-of-doc
-        # by default), move its slot block back to the captured
-        # position with the saved leading.
-        #
-        # Same-flavour structural (header-bearing section ← Mapping,
-        # AoT ← AoT/list) also falls through here so the old view's
-        # user references stop reaching the live doc.
+        # Structural overwrite keeps the doc-stream anchor but detaches
+        # old user references from the live doc.
         if (
             is_scalar(value)
             or _is_synth_inline(value)
@@ -625,8 +579,7 @@ class Container(dict[str, Any]):
         if _is_section(value):
             self._attach_section(key, value)
             return
-        # Reach here only for unsupported types (tuple, bytes, set, …):
-        # raise the canonical TypeError with the type name.
+        # Unsupported types get the canonical TypeError.
         msg = f"Cannot convert {type(value).__name__} to a TOML value"
         raise TypeError(msg)
 
@@ -635,27 +588,20 @@ class Container(dict[str, Any]):
 
         Live-attached sources or private orphans with intact entry
         slots route through :func:`clone_aot` to preserve per-entry
-        trivia + nested sub-sections (the ``to_list()`` snapshot path
-        drops both). Detached AoTs without preserved slots are
-        rehomed entry-by-entry.
+        trivia and nested sub-sections. Detached AoTs without preserved
+        slots are rehomed entry-by-entry.
         """
-        # If `value` is attached to a live doc, route through clone_aot
-        # to preserve per-entry trivia + nested sub-sections.
         src_root = value._layout_root  # noqa: SLF001
         if src_root is not None and not src_root._is_private:  # noqa: SLF001
             if key in self:
                 _layout_ops.delete_key(self, key)
             _layout_ops.clone_aot(self, key, value)
             return
-        # Snapshot existing entry tables. If their `_owner_aot_entry`
-        # records still hold intact `entry_slots` (e.g. the user just
-        # deleted the old binding via the structural-overwrite
-        # `del+set` path, which preserves slots into a private orphan),
-        # capture them so we can deep-clone the CST into the rehomed
-        # AoT — preserving per-KV trivia, nested sub-section slots,
-        # and inter-entry separator style. The generic
-        # `add_aot_entry(rehome=)` path is lossy: it rebuilds slots
-        # from dict storage and drops all of that.
+        # Private orphans may still own intact entry_slots from a
+        # structural-overwrite detach; clone those to keep per-KV
+        # trivia, nested sub-sections, and inter-entry separators.
+        # The generic add_aot_entry(rehome=) path rebuilds from dict
+        # storage and drops that CST.
         existing_entries: list[Table] = list(value)
         preserved_entries: list[AoTEntry | None] = [
             et._owner_aot_entry  # noqa: SLF001
@@ -676,10 +622,8 @@ class Container(dict[str, Any]):
         attached = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, attached)
         if can_clone:
-            # Deep-clone CST from intact orphan slots. Sacrifices
-            # per-entry-table Python identity (the rehomed AoT
-            # holds fresh entry tables) in exchange for trivia
-            # preservation. AoT object identity is still preserved.
+            # Clone CST from intact orphan slots. Entry-table identities
+            # are replaced; the AoT object's identity is preserved.
             for src_entry in preserved_entries:
                 assert src_entry is not None
                 _layout_ops.clone_aot_entry(
@@ -692,15 +636,11 @@ class Container(dict[str, Any]):
     def _attach_section(self, key: str, value: Container) -> None:
         """Install ``value`` (a section-flavoured Table) under ``key``.
 
-        Routing:
-          * AoT-entry source → entry-cloner with ``head_kind="table"``
-            so trivia survives and the head normalises from ``[[..]]``
-            to ``[..]``.
-          * Cross-doc / same-doc attached header-bearing source →
-            deep-clone slots via ``clone_section_as_section``.
-          * Implicit attached source → recursive walk via
-            ``_install_attached_subtree``.
-          * Detached / private source → rehome in place.
+        AoT-entry sources clone as a table so trivia survives and the
+        head normalises from ``[[..]]`` to ``[..]``. Attached
+        header-bearing sections clone slots; attached implicit sources
+        recurse via ``_install_attached_subtree``; detached/private
+        sources rehome in place.
         """
         src_root = value._layout_root
         live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
@@ -712,11 +652,8 @@ class Container(dict[str, Any]):
             elif value._header_ref is not None:
                 _layout_ops.clone_section_as_section(self, key, value)
             else:
-                # Implicit source / whole-Document: walk recursively
-                # and re-install each structural child via tuple-path
-                # ``install``, preserving sections / AoTs as such (no
-                # flatten-to-inline) and keeping implicit chains
-                # implicit when there are no direct KVs to host.
+                # Implicit source / whole Document: tuple-path install
+                # preserves structural children and implicit chains.
                 _install_attached_subtree(self, (key,), value)
             return
         if src_root is not None and src_root._is_private:  # noqa: SLF001
@@ -844,23 +781,20 @@ class Container(dict[str, Any]):
     ) -> None:
         """Sort direct child keys in place, preserving per-key trivia.
 
-        Mirrors ``list.sort``: keyword-only ``key`` / ``reverse``, stable,
-        in-place. The sort is **TOML-aware**: structural keys (children
-        bound to an ``AoT`` or to a section ``Table``, i.e. one rendered
-        with a ``[header]``) are always placed after bare keys, since a
-        bare key that followed a section header would re-bind as nested
-        under it. ``key`` and ``reverse`` apply *within* the bare-key and
-        section partitions; they never interleave the two. Implicit
-        sections built from dotted keys (e.g. ``a.x = 1``) are physically
-        bare-key slots and sort as bare keys.
+        Mirrors ``list.sort``: keyword-only ``key`` / ``reverse``,
+        stable, in-place. Structural keys (children bound to an ``AoT``
+        or to a section ``Table``, i.e. one rendered with a ``[header]``)
+        are always placed after bare keys; otherwise a bare key after a
+        section header would re-bind under it. ``key`` and ``reverse``
+        apply within, never across, the partitions. Implicit sections
+        built from dotted keys (e.g. ``a.x = 1``) sort as bare keys.
 
         Inline containers have no structural children, so the partition
-        is a no-op there and ``key`` / ``reverse`` behave as on a plain
-        dict.
+        is a no-op and ``key`` / ``reverse`` behave as on a plain dict.
 
         See [`has_header`][tomlrt.Table.has_header] for the predicate
-        that defines the partition; a custom ``key`` function can call
-        it to decide which side of the split a given child sits on.
+        that defines the partition; a custom ``key`` function can call it
+        to decide which side of the split a given child sits on.
         """
         current = list(dict.keys(self))
         if len(current) <= 1:
@@ -868,12 +802,9 @@ class Container(dict[str, Any]):
         if self._inline:
             new_order = sorted(current, key=key, reverse=reverse)
         else:
-            # A key's *leaf* content (a bare or dotted ``key = value``)
-            # must precede every section header, so partition into three
-            # groups — pure leaves, "mixed" keys that own both a leaf and
-            # a sub-section, and pure sections — and keep the mixed group
-            # between them: its leaf part stays ahead of all sections,
-            # and its own header stays ahead of the pure sections.
+            # A key's leaf content must precede every section header.
+            # Keep mixed keys between pure leaves and pure sections so
+            # their leaf part stays ahead of all sections.
             pure_leaves = [
                 k for k in current if self._has_leaf(k) and not self.has_header(k)
             ]
@@ -896,10 +827,9 @@ class Container(dict[str, Any]):
         Returns ``True`` when this container's block for ``key`` contains
         a structural header slot — i.e. a ``[header]`` section or a
         ``[[header]]`` array-of-tables entry. Returns ``False`` for bare
-        ``key = value`` leaves, inline tables, and implicit sections
-        built entirely from dotted keys (e.g. ``a.x = 1``, where ``a``
-        has no header line of its own). Returns ``False`` for keys not
-        present.
+        ``key = value`` leaves, inline tables, implicit sections built
+        entirely from dotted keys (e.g. ``a.x = 1``, where ``a`` has no
+        header line of its own), and missing keys.
         """
         refs = self._index.get(key, ())
         return any(isinstance(r.slot, StructuralHeaderSlot) for r in refs)
@@ -907,9 +837,8 @@ class Container(dict[str, Any]):
     def _has_leaf(self, key: str) -> bool:
         """Whether ``key``'s block contains a leaf ``key = value`` slot.
 
-        True for a bare or dotted KV (``k = 1`` / ``k.x = 1``); a key can
-        have *both* a leaf and a sub-section header (``z.k = 1`` plus
-        ``[z.m]``), in which case both this and `has_header` return True.
+        A key can have both a leaf and a sub-section header, in which
+        case both this and `has_header` return True.
         """
         refs = self._index.get(key, ())
         return any(isinstance(r.slot, KVSlot) for r in refs)
@@ -939,9 +868,7 @@ class Container(dict[str, Any]):
     def _inline_setitem(self, key: str, value: Any) -> None:
         # ``__setitem__`` has already rejected ``AoT`` / section values
         # for inline hosts. Non-coerceable types (``set``, custom
-        # classes, …) reach ``_synth_value``, which raises the canonical
-        # ``TypeError: Cannot convert ... to a TOML value`` — same
-        # message the regular-table path produces.
+        # classes, …) reach ``_synth_value`` for the canonical TypeError.
         if is_scalar(value):
             cst: Value = coerce_scalar(value)
             decoded: object = value
@@ -954,13 +881,8 @@ class Container(dict[str, Any]):
                 owner=self._owner_aot_entry,
             )
         if key in self and isinstance(dict.__getitem__(self, key), Container):
-            # Overwriting a dotted-prefix sub-table (e.g. `server` in
-            # `{server.host = "x", server.port = 80}`) with a scalar /
-            # inline value: drop every `server.*` entry and add a fresh
-            # single-keypart `server` entry. Stay on the CST side and
-            # overwrite the dict entry in place below — a dict-level
-            # ``del self[key]`` would momentarily empty this navigator
-            # and prune it (and its ancestors) from the parent chain.
+            # Stay on the CST side when replacing a dotted-prefix
+            # navigator; dict-level delete would prune the parent chain.
             _inline_ops.overwrite_entry(self, key, cst)
         elif key in self:
             ok = _inline_ops.replace_entry_value(self, key, cst)
@@ -985,10 +907,8 @@ class Container(dict[str, Any]):
             )
             raise AssertionError(msg)
         dict.__delitem__(self, key)
-        # Clean up: a synthetic dotted-prefix sub-table that is now
-        # empty has no representation in the backing
-        # `InlineTableValue` either, so drop it from the parent's
-        # dict view as well — and propagate up the chain.
+        # Empty dotted-prefix navigators have no backing CST entry; prune
+        # them from the dict chain too.
         cur: Container | None = self
         while (
             cur is not None
@@ -1013,10 +933,8 @@ class Container(dict[str, Any]):
         if self._inline and len(parts) > 1:
             msg = "cannot install dotted path into an inline-style table"
             raise TOMLError(msg)
-        # If the value is a section-flavoured Table or an AoT, route
-        # straight to the multi-component attach path so intermediate
-        # path components stay implicit (no [tool] header for
-        # `install("tool.poetry", Table.section())`).
+        # Section / AoT values need the multi-component attach path so
+        # intermediate components stay implicit.
         is_section = isinstance(value, Table) and not value._inline  # noqa: SLF001
         is_aot = isinstance(value, AoT)
         if (is_section or is_aot) and len(parts) > 1 and self._layout_root is not None:
@@ -1039,10 +957,8 @@ class Container(dict[str, Any]):
                     break
                 cur = nxt
                 i += 1
-            # If we stopped at an inline-table prefix containing the
-            # remaining tail, drop the conflicting tail key from the
-            # inline so attach_section_at can install the section
-            # without leaving a stale `name = "x"` shadow.
+            # Drop conflicting inline-tail keys before installing the
+            # section, or a stale inline value would shadow it.
             if (
                 i < len(parts) - 1
                 and parts[i] in cur
@@ -1050,28 +966,18 @@ class Container(dict[str, Any]):
                 and dict.__getitem__(cur, parts[i])._inline  # noqa: SLF001
             ):
                 inline_holder: Container = dict.__getitem__(cur, parts[i])
-                # Walk inline entries looking for the next path
-                # component(s); delete each in order.
+                # Delete the next inline path component in order.
                 tail = parts[i + 1 :]
                 if tail and tail[0] in inline_holder:
                     del inline_holder[tail[0]]
                     if len(inline_holder) == 0:
                         _layout_ops.delete_key(cur, parts[i])
-            # Overwrite-existing path: leaf already present, fall through
-            # to direct __setitem__ on the deepest existing container.
+            # Leaf already present: use normal overwrite dispatch.
             if i == len(parts) - 1:
                 cur[parts[-1]] = value
                 return cur[parts[-1]]
-            # Build the implicit-table intermediates, then dispatch the
-            # final binding via __setitem__ so it flows through the
-            # standard Container dispatchers (_install_section /
-            # _attach_aot). Those already pick the right path for
-            # every source state — attached header-bearing sections
-            # clone via clone_section_as_section, attached implicit
-            # sources recurse via _install_attached_subtree, attached
-            # AoTs clone via clone_aot, detached / private values
-            # synthesise — so we don't need to second-guess the
-            # source state here.
+            # Then use normal Container dispatch; it already handles
+            # attached, detached, section, and AoT source states.
             anchor = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
             anchor[parts[-1]] = value
             return anchor[parts[-1]]
@@ -1160,8 +1066,7 @@ class Container(dict[str, Any]):
                 f"comments that would be lost"
             )
             raise TOMLError(msg)
-        # Capture leading + eol from the existing KV slot so we can
-        # transfer them onto the new section header.
+        # Transfer the existing KV slot's leading + eol to the header.
         old_slot = _direct_kv_slot(self, key)
         saved_leading = old_slot.leading if old_slot is not None else None
         saved_eol = old_slot.eol if old_slot is not None else None
@@ -1176,10 +1081,8 @@ class Container(dict[str, Any]):
                 new_header.leading = saved_leading
             if saved_eol is not None:
                 new_header.eol = saved_eol
-            # Seam: ensure a blank line separates the parent's direct
-            # entries from the promoted child header. promote_inline
-            # turns a KV (originally inline, no separator) into a
-            # section header (deserves visual separation).
+            # A promoted KV becomes a section header and needs a visual
+            # separator from the parent's direct entries.
             if (
                 self._body_tail is not None
                 and new_header._prev is self._body_tail  # noqa: SLF001
@@ -1228,9 +1131,7 @@ class Container(dict[str, Any]):
                     )
                     raise TOMLError(msg)
         snapshot = cur.to_list()
-        # Capture the original KV slot's leading + eol so we can carry
-        # them onto the first new ``[[..]]`` header and the last
-        # entry's tail.
+        # Carry the original KV slot's leading/eol onto the promoted AoT.
         old_slot = _direct_kv_slot(self, key)
         saved_leading = old_slot.leading if old_slot is not None else None
         saved_eol = old_slot.eol if old_slot is not None else None
@@ -1238,17 +1139,15 @@ class Container(dict[str, Any]):
         self[key] = AoT(snapshot)
         result = dict.__getitem__(self, key)
         assert isinstance(result, AoT)
-        # Apply saved leading to the first entry's header; saved eol
-        # to the last entry's last slot.
+        # Apply saved leading to the first entry header and saved eol to
+        # the last entry's last slot.
         if saved_leading is not None and len(result) > 0:
             first_entry = result[0]
             entry_record = first_entry._owner_aot_entry  # noqa: SLF001
             if entry_record is not None and entry_record.entry_slots:
                 first_slot = entry_record.entry_slots[0]
                 if isinstance(first_slot, StructuralHeaderSlot):
-                    # Prepend saved leading pieces in front of any
-                    # leading already on the header (e.g. blank-line
-                    # separator from `_build_section_leading`).
+                    # Preserve any separator already placed on the header.
                     first_slot.leading.pieces = [
                         *saved_leading.pieces,
                         *first_slot.leading.pieces,
@@ -1318,7 +1217,7 @@ class Table(Container):
     def section(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:
         """Return a standard-section table, optionally populated from ``mapping``.
 
-        Use from an assignment site to install a ``[k]`` block:
+        Assign the result to install a ``[k]`` block:
 
             doc[k] = Table.section({"x": 1})
         """
@@ -1332,7 +1231,7 @@ class Table(Container):
     def inline(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:
         """Return an inline table, optionally populated from ``mapping``.
 
-        Use from an assignment site to install a ``{x = 1}`` value:
+        Assign the result to install a ``{x = 1}`` value:
 
             doc[k] = Table.inline({"x": 1})
         """
@@ -1348,9 +1247,8 @@ class Document(Container):
     """Top-level TOML document.
 
     A [`Document`][tomlrt.Document] is the root of a parsed TOML
-    file. It is a `dict` subclass, so ``isinstance(doc, dict)``
-    holds and it can be passed wherever a `dict` or `Mapping` is
-    expected.
+    file. It is a `dict` subclass and can be passed wherever a
+    `dict` or `Mapping` is expected.
     """
 
     __slots__ = (
@@ -1368,7 +1266,7 @@ class Document(Container):
     def __init__(self, data: Mapping[str, Any] | None = None) -> None:
         """Return a fresh empty document, optionally populated from ``data``.
 
-        With a mapping, recursively populates the document so that:
+        With a mapping:
 
         * nested mappings become standard ``[section]`` blocks (not
           inline tables);
@@ -1414,23 +1312,21 @@ class Document(Container):
         """Comment block at the top of the document.
 
         A "preamble" is the run of ``# …`` lines that opens the file
-        and is blank-line-separated from anything below. Comments that
-        sit directly above the first key (no blank line) are *not*
-        preamble — they are the leading comments of that key, accessed
-        via `leading_comments`. In a document with no structural
-        content, the entire opening comment block is treated as
-        preamble.
+        and is blank-line-separated from anything below. Comments
+        directly above the first key (no blank line) are that key's
+        `leading_comments`. With no structural content, the opening
+        comment block is preamble.
 
         Setter accepts a sequence of bare comment texts (without the
         leading ``#``) and replaces the current preamble; assign ``()``
         to remove. Newlines inside any line are rejected.
 
-        On a document whose first slot is a section header or bare key, the
+        When the first slot is a section header or bare key, the
         preamble is stored as the above-blank prefix of that slot's
         leading trivia — the same storage that
         [`Table.header_leading_block`][tomlrt.Table.header_leading_block] /
         [`Document.leading_block`][tomlrt.Document.leading_block] expose
-        for the first slot.  Writes through either path are visible
+        for the first slot. Writes through either path are visible
         through the other.
         """
         return _doc_preamble_get(self)
@@ -1448,8 +1344,8 @@ class Document(Container):
         """Comment block at the very end of the document.
 
         Returns the trailing run of ``# …`` lines that follows all
-        structural content. Empty when the document has no structural
-        content (in that case everything is `preamble`).
+        structural content; with no structural content everything is
+        `preamble`.
 
         Setter accepts a sequence of bare comment texts and replaces
         the current epilogue. Assign ``()`` to remove.
@@ -1515,13 +1411,10 @@ def _deep_clone(c: Container) -> Container:
     """Build a detached deep clone of ``c`` as a lossy snapshot.
 
     The clone preserves the source's inline vs section shape (so a
-    deepcopy of an inline table returns an inline view), and recurses
-    into nested ``Container`` and ``AoT`` values so their shape is
-    preserved too. Render-level formatting (trivia, comments,
-    per-item layout) is not preserved — the result is a dict-style
-    snapshot, and a fresh CST is built on re-installation. For
-    byte-exact preservation of an entire document, use ``Document``'s
-    own ``__deepcopy__`` (which round-trips via ``loads(render())``).
+    deepcopy of an inline table returns an inline view) and recurses
+    into nested ``Container`` / ``AoT`` values. Render-level formatting
+    is not preserved; for byte-exact preservation of an entire document,
+    use ``Document``'s ``__deepcopy__``.
     """
     out = Table.inline() if c._inline else Table.section()  # noqa: SLF001
     for k, v in c.items():
@@ -1542,14 +1435,10 @@ def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
     / `_refs` / `_index` / `_header_ref` / `_body_tail` so the
     standard attach path treats `t` as if freshly constructed.
 
-    With ``recurse=True``, walks dict values and resets nested
-    non-inline ``Container`` / ``AoT`` children whose
-    ``_layout_root`` matches the root's previous layout root (i.e.
-    they belong to the same detached subtree). Children pointing
-    at a different doc are left alone — they're an "alien" live
-    view that the standard cross-doc clone path will handle.
-    Recursion is opt-in because most rehome callers operate on a
-    single freshly-detached Table and don't pay the subtree walk.
+    With ``recurse=True``, also resets nested non-inline ``Container`` /
+    ``AoT`` children from the same detached subtree. Children pointing
+    at a different doc are left for the cross-doc clone path. Recursion
+    is opt-in so single-table rehomes avoid a subtree walk.
 
     Used when re-installing a held view that was detached into a
     private orphan ``Document``.
@@ -1606,19 +1495,15 @@ def _install_attached_subtree(
 ) -> None:
     """Recursively install an attached implicit / Document source.
 
-    Walks ``src_table.items()`` and re-installs each entry under
-    ``dst_parent``. Section / AoT children clone via tuple-path
-    :meth:`Container.install` (so attached sections preserve their
-    headers and AoTs clone slot-for-slot). Direct (non-structural)
-    entries at this implicit level are written as dotted KVs hosted
-    by ``dst_parent``'s nearest header-bearing ancestor, so the
-    source's dotted form is preserved on per-key clone.
+    Section / AoT children clone via tuple-path :meth:`Container.install`
+    so headers and slots survive. Direct entries at this implicit level
+    are written as dotted KVs hosted by ``dst_parent``'s nearest
+    header-bearing ancestor, preserving dotted form per key.
 
     Note: bucketing into directs vs structurals can reorder relative
     to ``src_table.items()`` — at a given implicit level all dotted
-    leaves emit before any subsection. TOML is structurally
-    insensitive to that order; the dotted-form preservation is the
-    win.
+    leaves emit before any subsection. TOML is insensitive to that
+    order; the dotted-form preservation is the win.
     """
     direct_kvs: list[tuple[str, object]] = []
     structural: list[tuple[str, object]] = []
@@ -1650,9 +1535,8 @@ def _install_dotted_direct_kvs(
 
     ``host`` is the nearest header-bearing ancestor at-or-above
     ``dst_parent`` (or the doc / AoT-entry root). Creates implicit
-    intermediates between host and the leaf as needed. Each value is
-    deep-cloned via ``_to_python`` + ``_synth_value`` so the source's
-    CST is not disturbed.
+    intermediates as needed. Values are deep-cloned through
+    ``_to_python`` + ``_synth_value`` so the source CST is not disturbed.
     """
     host: Container = dst_parent
     while host._header_ref is None and host._parent is not None:  # noqa: SLF001
@@ -1749,10 +1633,11 @@ TomlInput: TypeAlias = (
     | Mapping[str, Any]
     | list[Any]
 )
-"""What you can pass *in* to mutators and factories: any
-[`Table`][tomlrt.Table], [`Array`][tomlrt.Array], or
+"""Values accepted by mutators and factories.
+
+Includes [`Table`][tomlrt.Table], [`Array`][tomlrt.Array],
 [`AoT`][tomlrt.AoT], any TOML scalar (`str`, `int`, `float`, `bool`,
-`datetime`, `date`, `time`), or any plain `Mapping[str, Any]` /
+`datetime`, `date`, `time`), and plain `Mapping[str, Any]` /
 `list[Any]`.
 
 The nested `list` / `Mapping` arms intentionally use `Any` for
@@ -1772,10 +1657,8 @@ def _is_synth_inline(v: object) -> bool:
     """True iff ``v`` is a value we can synthesise to an inline TOML value.
 
     Accepts:
-    - any ``Mapping`` (dict, MappingProxyType, …) — including our own
-      inline ``Container`` views (deep-copy semantics)
-    - ``list`` — including our own ``Array`` views (deep-copy semantics)
-    - inline ``Container`` and ``Array`` views from another document
+    - any ``Mapping`` or inline ``Container`` view (deep-copy semantics)
+    - ``list`` or ``Array`` views (deep-copy semantics)
 
     Rejects everything else (tuple, bytes, sets, AoT, section
     Container, …) so the caller can route to a stronger error.
@@ -1805,16 +1688,11 @@ def _synth_value(
 ) -> tuple[Value, object]:
     """Synthesise a (CST value, decoded view) pair from ``v``.
 
-    The CST value goes into the host slot's ``value`` field; the
-    decoded view is what gets stored in the parent dict (and is the
-    object the user retrieves via ``[]``).
-
     Plain ``dict`` / ``Mapping`` → ``InlineTableValue`` + inline ``Table``.
     ``list`` / ``Array`` view → ``ArrayValue`` + ``Array``.
     Section ``Container`` / ``AoT`` raise ``TOMLError`` — those can't
-    live as inline values.
-    Anything else raises ``TypeError`` (mentioning the type name and
-    the prefix ``"Cannot convert"``).
+    live as inline values. Anything else raises the canonical
+    ``TypeError``.
     """
     if is_scalar(v):
         return coerce_scalar(v), v
@@ -1824,12 +1702,8 @@ def _synth_value(
     if _is_section(v):
         msg = "Cannot store a section-style table inside an inline-style table"
         raise TOMLError(msg)
-    # Unattached inline Container or Array — live-attach: rehome the
-    # existing object (so the user's reference stays the document's
-    # view) instead of synthesising a fresh one. Inline tables that
-    # were previously attached and then displaced into a private root
-    # need a small reset before the inline-attach path treats them
-    # as freshly-constructed; arrays carry no such heavy state.
+    # Live-attach unattached inline values so user identity is preserved.
+    # Displaced inline tables need a reset before reattach; arrays do not.
     if (_is_inline_table(v) or isinstance(v, Array)) and not v._attached:  # noqa: SLF001
         if isinstance(v, Array):
             _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
@@ -1845,10 +1719,8 @@ def _synth_value(
             path=path,
             owner=owner,
         )
-    # Cross-document (or same-doc live) inline value — deep-clone the
-    # CST so the destination preserves the source's formatting rather
-    # than being re-synthesised. Plain Mapping / list inputs have no
-    # CST to clone and fall through to the synth paths below.
+    # Cross-document / same-doc live inline values clone CST so source
+    # formatting survives. Plain Mapping / list inputs have no CST.
     if _is_inline_table(v) or isinstance(v, Array):
         from tomlrt._build import _decode_value  # noqa: PLC0415
 
@@ -1881,11 +1753,9 @@ def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
     r"""Retarget ``val``'s baked-in newlines to ``layout_root``'s line ending.
 
     Called whenever pre-existing inline CST is dragged into a
-    destination doc — both the deep-clone path (cross-document graft
-    of an attached value) and the live-attach path for an unattached
-    ``Array(multiline=True)`` factory whose constructor hard-codes
-    ``\n``. Without this the destination dump ends up with mixed
-    ``\n`` / ``\r\n`` newlines.
+    destination doc. Without this, cross-document grafts and unattached
+    ``Array(multiline=True)`` factories can dump mixed ``\n`` /
+    ``\r\n`` newlines.
     """
     if layout_root is not None:
         retarget_value_newlines(val, layout_root._newline)  # noqa: SLF001
@@ -1923,11 +1793,9 @@ def _populate_inline_table(
 ) -> tuple[InlineTableValue, Container]:
     """Wire ``table`` as an inline view and populate its entries.
 
-    Two callers: the live-attach path (passes a user-supplied
-    ``Table.inline()`` so identity is preserved) and the plain-Mapping
-    synth path (passes a fresh ``Table()``). Each entry is laid out as
-    ``" k = v"`` with comma-then-space separators except after the
-    last entry, and a single trailing space when non-empty.
+    The live-attach path passes a user-supplied ``Table.inline()`` so
+    identity is preserved; the plain-Mapping synth path passes a fresh
+    ``Table()``. Entries use canonical single-line spacing.
     """
     val = InlineTableValue()
     table._wire(  # noqa: SLF001

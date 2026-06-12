@@ -1,11 +1,8 @@
 """Initial logical-container build.
 
-Single linear pass over a `ParseResult`'s slot stream that
-constructs the `Document` body and all nested `Table` / `Array` /
-`AoT` views, populating dict storage in doc-stream-first-occurrence
-order. This is the *one* place that derives implicit containers from
-slot paths; the parser does not build logical containers and
-`_container.py` does not duplicate the derivation.
+Builds `Document`, `Table`, `Array`, and `AoT` views from a parsed
+slot stream in doc-stream first-occurrence order. This is the one place
+that derives implicit containers from slot paths.
 """
 
 from __future__ import annotations
@@ -35,9 +32,8 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
     """Walk the slot stream and populate ``doc`` and its descendants.
 
     Threads the current header's host container through the loop so
-    each KV skips the doc-root re-walk in ``_resolve_chain``. The
-    validator guarantees ``slot.host_path`` equals the most recent
-    header's ``path`` (or ``()`` if none) — asserted below.
+    each KV skips a doc-root re-walk. The validator guarantees
+    ``slot.host_path`` equals the most recent header path (or ``()``).
     """
     current_host: Container = doc
     for slot in slots:
@@ -57,9 +53,8 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
 # ---------------------------------------------------------------------------
 
 
-# ``record_ref`` and ``maybe_advance_body_tail`` are imported from
-# _layout_ops and shared with the mutation paths, so cache maintenance
-# has one canonical source.
+# ``record_ref`` and ``maybe_advance_body_tail`` are shared with
+# mutation paths, keeping cache maintenance in one place.
 
 
 # ---------------------------------------------------------------------------
@@ -77,10 +72,8 @@ def _apply_header(doc: Document, slot: StructuralHeaderSlot) -> Table:
 def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
     """Open ``[a.b.c]`` — return the `Table` view for ``path``.
 
-    Walks (and creates as needed) all implicit ancestors. Raises if an
-    intermediate name is bound to a non-table value (the validator
-    should have already rejected this; the assertion guards against
-    drift).
+    Creates implicit ancestors as needed. A non-table intermediate is
+    validator drift and raises.
     """
     path = header.path
     parent_chain = _resolve_chain(doc, path[:-1])
@@ -141,9 +134,9 @@ def _open_aot_entry(
 def _resolve_chain(doc: Document, prefix: tuple[str, ...]) -> list[Container]:
     """Return the container chain ``[doc, doc.a, doc.a.b, ...]`` for prefix.
 
-    Creates implicit containers as needed (these are reachable from
-    later headers). For an AoT prefix, descends into the most recent
-    entry. The returned list always has length ``len(prefix) + 1``.
+    Creates implicit containers as needed. For an AoT prefix, descends
+    into the most recent entry. The returned list always has length
+    ``len(prefix) + 1``.
     """
     chain: list[Container] = [doc]
     cur: Container = doc
@@ -191,19 +184,15 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
     """Bind a `key = value` slot into its host container.
 
     Refs propagate **only** along the slot's logical path starting at
-    the host container `H`, NOT from the document root. So a KV with
-    `host_path = ("a",)` and `key = ("x",)` generates exactly one ref,
-    in `a._index["x"]`; it does NOT contribute a ref to
-    `doc._index["a"]`.
+    the host container, not from the document root. A KV under ``[a]``
+    contributes to ``a._index["x"]``, not ``doc._index["a"]``.
 
     ``host`` is the pre-resolved container for ``slot.host_path``,
-    threaded by ``build_initial_containers`` from the most recent
-    header. Everything else (layout root for dotted intermediates,
-    decoded value attachment) cascades through ``host._layout_root``.
+    threaded from the most recent header; decoded value attachment
+    cascades through ``host._layout_root``.
     """
     decoded = slot.key
-    # Logical container chain along the dotted-KV intermediate steps:
-    # host -> host.k0 -> host.k0.k1 -> ... -> host.k[:-1].
+    # Logical chain for dotted-KV intermediates: host -> ... -> leaf parent.
     leaf_chain: list[Container] = [host]
     cur = host
     for step in decoded[:-1]:
@@ -319,9 +308,7 @@ def _decode_inline_table(
                     owner=owner,
                 )
                 inner._inline = True  # noqa: SLF001
-                # Inner inline-tables created from a dotted inline-table
-                # entry don't have their own backing InlineTableValue;
-                # `_value` stays None.
+                # Dotted inline-table navigators have no backing value.
                 dict.__setitem__(cur, step, inner)
                 cur = inner
             else:
@@ -360,9 +347,8 @@ def build_from_parse(result: ParseResult) -> Document:
     doc._displaced_recorder = None  # noqa: SLF001
     doc._layout_root = doc  # noqa: SLF001
     if result.slots:
-        # Migrate the head slot's positional-prefix (preamble +
-        # archived above-blocks) onto the document. The head slot's
-        # leading retains only its own attached comments + indent.
+        # Move the head slot's above-blank prefix onto the document
+        # preamble; leave only attached comments + indent on the slot.
         head = result.slots[0]
         above, attached, indent = _split_attached_block(head.leading)
         if above:

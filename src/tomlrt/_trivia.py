@@ -1,10 +1,7 @@
-"""Trivia primitives.
+"""Represent source-preserving whitespace, newlines, and comments.
 
-A `Trivia` is an ordered run of `TriviaPiece`s — whitespace,
-newlines, and comments. Trivia hangs off slots and value nodes;
-together with the `lexeme`/`raw` of value-bearing nodes the trivia
-captures every byte of the source so the document round-trips
-exactly.
+Trivia hangs off slots and value nodes; together with value lexemes it
+captures every byte needed for exact round-trips.
 """
 
 from __future__ import annotations
@@ -77,9 +74,7 @@ def trivia_has_newline(t: Trivia) -> bool:
 def split_lines(pieces: list[TriviaPiece]) -> list[list[TriviaPiece]]:
     """Group ``pieces`` into logical lines terminated by ``NewlineNode``.
 
-    Each inner list is the pieces that appeared on a single source line
-    up to and including the terminating newline (if any). A trailing
-    run without a newline becomes the final inner list.
+    A trailing run without a newline becomes the final inner list.
     """
     out: list[list[TriviaPiece]] = []
     cur: list[TriviaPiece] = []
@@ -106,10 +101,8 @@ def line_has_newline(line: list[TriviaPiece]) -> bool:
 def retarget_trivia_newlines(t: Trivia, target: str) -> None:
     """Rewrite every ``NewlineNode.text`` in ``t`` to ``target``.
 
-    Used by graft paths (cross-document clone / inline-value
-    deepcopy) so freshly-spliced slots adopt the destination
-    document's line ending instead of preserving the source's. A
-    no-op when every newline already matches.
+    Grafted slots adopt the destination document's line ending rather
+    than preserving the source's.
     """
     for p in t.pieces:
         if isinstance(p, NewlineNode) and p.text != target:
@@ -125,26 +118,15 @@ def retarget_eol_newline(eol: EolTrivia, target: str) -> None:
 def split_above_block(t: Trivia) -> tuple[Trivia, Trivia]:
     """Split ``t`` into ``(pad, above)``.
 
-    ``above`` is the item-attached comment block and ``pad`` is the
-    structural padding that surrounds it (opening newline + value
-    indent).
+    ``above`` is the item-attached comment block; ``pad`` is the
+    opening newline plus value indent that surrounds it. Boundary
+    mutators use this to move an above-item block between bracket pads
+    and item-leading trivia.
 
-    Used by inline-array / inline-table mutators to relocate an
-    above-item comment block from one item's leading slot to another's
-    when the boundary item changes (``insert(0)``, ``del[0]``, sort,
-    reverse, slice assignment at index 0, append onto an array whose
-    ``final_trivia`` carries an above-`]` comment block).
-
-    Two parts are returned, but they are *not* a simple concatenation:
-    the comment block lives between the opening newline (a single
-    ``NewlineNode`` from ``pad``) and the trailing value indent (the
-    rest of ``pad``). To reconstruct, splice ``above`` between
-    ``pad[0]`` and ``pad[1:]`` (use :func:`join_above_block`).
-
-    By construction ``above`` is the run of pieces strictly between
-    the first ``NewlineNode`` and the trailing whitespace immediately
-    preceding nothing (or the end of trivia). ``above`` is empty iff
-    no ``CommentNode`` appears in that run.
+    The parts are *not* a simple concatenation: reconstruct with
+    :func:`join_above_block`, which splices ``above`` between
+    ``pad[0]`` and ``pad[1:]``. ``above`` is empty iff that middle
+    region contains no ``CommentNode``.
     """
     pieces = t.pieces
     first_nl = -1
@@ -154,12 +136,10 @@ def split_above_block(t: Trivia) -> tuple[Trivia, Trivia]:
             break
     if first_nl < 0:
         return Trivia(list(pieces)), Trivia()
-    # Trailing-WS run (zero or one piece).
     tail_start = len(pieces)
     if tail_start > first_nl + 1 and isinstance(pieces[tail_start - 1], WhitespaceNode):
         tail_start -= 1
     middle = pieces[first_nl + 1 : tail_start]
-    # ``above`` is non-empty only if a CommentNode appears in middle.
     if not any(isinstance(p, CommentNode) for p in middle):
         return Trivia(list(pieces)), Trivia()
     pad = Trivia(list(pieces[: first_nl + 1]) + list(pieces[tail_start:]))
@@ -215,18 +195,14 @@ def restamp_bracket_pad_for_first(
 ) -> tuple[Trivia, Trivia]:
     r"""Reframe an empty bracket pad ahead of inserting the first item.
 
-    Given an empty bracketed value's ``final_trivia`` (which owns
-    everything between ``[`` / ``{`` and ``]`` / ``}``), returns the
-    ``(header_trivia, final_trivia)`` pair appropriate for an
+    For an empty value, ``final_trivia`` owns everything between the
+    brackets. Return the ``(header_trivia, final_trivia)`` pair for an
     about-to-be-inserted first item:
 
-    * Empty pad → returns two empty trivia (no-op).
-    * Single-line pad (no newline, e.g. ``[ ]``) → mirrors the pad on
-      both sides so both bracket faces stay padded.
-    * Multi-line pad (newline present, e.g. ``[\n]``) → splits at the
-      last newline. Everything up to and including that newline (plus
-      a value-indent) becomes the new ``header_trivia``; just the
-      newline becomes the new ``final_trivia``.
+    * Empty pad: two empty trivia.
+    * Single-line pad: mirror the pad on both bracket faces.
+    * Multi-line pad: split at the last newline; keep a value-indent
+      on ``header_trivia`` and the row break on ``final_trivia``.
 
     Shared between :class:`Array` and inline-table append paths.
     """
@@ -250,26 +226,15 @@ def restamp_bracket_pad_for_first(
 def strip_trailing_indent(header_trivia: Trivia, final_trivia: Trivia) -> None:
     r"""Normalise an emptied bracket pad to canonical empty form.
 
-    Used after deleting the last item / entry of a multi-line inline
-    array or inline table. On entry, ``header_trivia`` may still hold
-    the per-item indent (and possibly an above-item comment block /
-    bracket-EOL comment glued to the opening bracket) that anchored
-    the now-removed first item.
+    After deleting the last item, ``header_trivia`` may still hold the
+    removed item's indent or a bracket-EOL comment. Without comments,
+    drop the trailing whitespace/newline run so ``final_trivia`` owns
+    the canonical empty ``[\\n]`` / ``{\\n}`` newline.
 
-    * If ``header_trivia`` contains no ``CommentNode``, drop the
-      entire trailing ``WhitespaceNode`` / ``NewlineNode`` run,
-      restoring the canonical empty form ``[\\n]`` / ``{\\n}`` —
-      ``header_trivia`` empty, ``final_trivia`` holds the single
-      newline.
-    * If ``header_trivia`` contains a ``CommentNode`` (a bracket-EOL
-      comment glued to the opening bracket), drop the trailing indent
-      ``WhitespaceNode`` run, then migrate the surviving comment
-      block from ``header_trivia`` into ``final_trivia``. The
-      parse-empty canonical form is ``[ # tail\\n]`` / ``{ # tail\\n}``
-      with everything between the brackets owned by ``final_trivia``;
-      this migration makes the strip-empty state structurally
-      identical so a subsequent append correctly re-stamps the pad
-      via :func:`restamp_bracket_pad_for_first`.
+    With a bracket-EOL comment, migrate the surviving block into
+    ``final_trivia``. That matches the parse-empty ownership for
+    ``[ # tail\\n]`` / ``{ # tail\\n}``, so the next append can
+    re-stamp via :func:`restamp_bracket_pad_for_first`.
     """
     has_comment = any(isinstance(p, CommentNode) for p in header_trivia.pieces)
     if not has_comment:
@@ -296,17 +261,13 @@ def strip_trailing_indent(header_trivia: Trivia, final_trivia: Trivia) -> None:
 def split_item_above(t: Trivia) -> tuple[Trivia, Trivia, Trivia]:
     """Split an item-leading region into ``(head_pad, above, tail_pad)``.
 
-    Distinct from :func:`split_above_block` — which is for the bracket
-    pad (``header_trivia`` / ``final_trivia``) and treats a pre-NL
-    comment as an EOL glued to the bracket. This splitter is for
-    ``items[i].leading`` (i >= 1) in an inline array or inline table,
-    where there is no bracket and the leading NL may be absent
-    because item ``i-1``'s EOL hoisted it onto its
-    ``post_comma_trivia``.
+    Unlike :func:`split_above_block`, this is for ``items[i].leading``
+    (i >= 1) where there is no bracket and the leading newline may
+    have been hoisted onto item ``i-1``'s EOL section.
 
     ``head_pad`` is the leading NL (or empty); ``tail_pad`` is the
-    trailing value-indent WS (or empty); ``above`` is the comment
-    block between them (typically ``[WS, Comment, NL] * n``).
+    trailing value-indent WS (or empty); ``above`` is the comment block
+    between them.
     """
     rest = list(t.pieces)
     head: list[TriviaPiece] = []
@@ -321,19 +282,15 @@ def split_item_above(t: Trivia) -> tuple[Trivia, Trivia, Trivia]:
 def split_eol_section(t: Trivia) -> tuple[Trivia, Trivia]:
     """Split ``t`` into the inline EOL section and the structural rest.
 
-    Used to canonicalise post-comma trivia in inline arrays and inline
-    tables.  The "EOL section" is the row-attached part: any inline
-    whitespace, an EOL comment, and the terminating newline of that
-    comment row.  Anything beyond — additional newlines, indent,
-    above-item comment blocks — is structural and belongs to the
-    *next* item's leading.
+    The EOL section is row-attached: inline whitespace, an EOL comment,
+    and that row's terminating newline. Anything beyond — additional
+    newlines, indent, above-item blocks — is structural and belongs to
+    the *next* item's leading.
 
     If no EOL comment is present on the comma's row, the whole input
-    is structural and the EOL half is empty.
-
-    Note: when no comment is present, ``t`` itself is returned as the
-    structural half — callers must treat it as owned by the result and
-    must not retain or mutate the original.
+    is structural and the EOL half is empty. In that case ``t`` itself
+    is returned as the structural half; callers must treat it as owned
+    by the result.
     """
     pieces = t.pieces
     n = len(pieces)

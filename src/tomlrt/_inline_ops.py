@@ -1,28 +1,13 @@
-"""Inline-table mutation primitives.
+"""Mutate inline-table entries without touching doc-stream slots.
 
-Inline tables are decoupled from the doc-stream linked list: a top-
-level inline table is wrapped by a single `KVSlot` whose `value` is
-an `InlineTableValue`. Mutation of the inline-table contents is a
-local operation on the `InlineTableValue.items` list, plus a
-matching `dict.__setitem__` / `__delitem__` on the logical view.
-This module owns the trivia fixups required to keep the result a
-valid, nicely-spaced inline table:
+A top-level inline table is a single ``KVSlot`` whose value is an
+``InlineTableValue``; mutations edit its ``items`` plus the logical dict
+view. Dotted-key entries like ``{a.b = 1}`` live in the outermost inline
+root with multi-component ``key_parts``, so lookups climb ``_parent``
+before splicing.
 
-* `append_entry` — splice a new entry at the end, transferring
-  the prior closing space to the new entry's trailing and giving
-  the previous entry a comma + a single space after it.
-* `replace_entry_value` — overwrite the `value` field of the entry
-  matching the given logical key (no spacing changes).
-* `delete_entry` — remove the entry, then if the deleted entry was
-  last, fold the prior entry's post-comma trivia into its trailing
-  and clear its comma so we don't render a trailing comma (illegal
-  in TOML 1.0; allowed in 1.1 but not what we want by default for a
-  delete).
-
-All entry lookups walk up the inline-table chain (via `_parent`) to
-the outermost inline-table that owns the backing
-`InlineTableValue` — entries for dotted keys like ``{a.b = 1}`` are
-filed there, with multi-component `key_parts`.
+Structural layout fixes — bracket pads, comma state, EOL comments, and
+trailing-comma policy — are delegated to :mod:`tomlrt._comma_ops`.
 """
 
 from __future__ import annotations
@@ -69,7 +54,7 @@ def _outermost_inline(t: Container) -> Container:
 
 
 def _entry_key_path(t: Container, leaf: str) -> tuple[str, ...]:
-    """Full dotted path used as `key_parts` in the outermost inline value."""
+    """Return the dotted path used as ``key_parts`` in the outermost value."""
     root = _outermost_inline(t)
     suffix = t._path[len(root._path) :]  # noqa: SLF001
     return (*suffix, leaf)
@@ -85,10 +70,10 @@ def _find_entry(
 
 
 def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> list[int]:
-    """Indices of entries whose `key_parts` start with `key_path`.
+    """Return indices of entries whose ``key_parts`` start with ``key_path``.
 
-    Used when deleting a synthetic dotted-prefix container — e.g.
-    ``del obj["a"]`` for ``{a.b = 1, a.c = 2}`` removes both entries.
+    Used when deleting a synthetic dotted-prefix container, e.g.
+    ``del obj["a"]`` for ``{a.b = 1, a.c = 2}``.
     """
     n = len(key_path)
     out: list[int] = []
@@ -154,13 +139,11 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
 def overwrite_entry(t: Container, key: str, new_value: Value) -> None:
     """Replace a dotted-prefix sub-table with a single fresh entry.
 
-    Drops every ``key.*`` entry then re-adds a single ``key`` entry.
-    The outer table is only *transiently* emptied while the old prefix
-    entries are removed (it always ends up holding ``key``), so its
-    authored single-line bracket pad must survive the delete + re-add —
-    otherwise overwriting a sole-content prefix would canonicalise a
-    tight ``{...}`` to padded ``{ ... }``. Multi-line pads are left to
-    ``splice_in`` to recompute per-row.
+    Drops every ``key.*`` entry, adds ``key``, and preserves the authored
+    single-line bracket pad while the outer table is transiently empty.
+    Without that, overwriting a sole-content prefix would canonicalise
+    tight ``{...}`` to padded ``{ ... }``. Multi-line pads are recomputed
+    by ``splice_in``.
     """
     iv = _outermost_inline(t)._value  # noqa: SLF001
     assert iv is not None
@@ -207,19 +190,11 @@ def delete_entry(t: Container, key: str) -> bool:
 def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     """Reorder direct children of an inline-table container.
 
-    Permutes ``InlineTableValue.items`` so that the c-direct-child
-    keys appear in ``new_key_order``. Direct-child-key grouping
-    keeps dotted-prefix entries (``a.b``, ``a.c``) adjacent under
-    their shared prefix. Foreign entries (whose key path doesn't
-    start with c's prefix — only possible when c is a dotted-inner
-    navigator) keep their absolute positions; only owned positions
-    are reordered. The actual permutation machinery (positional vs
-    entry-attached state) lives in
-    :func:`tomlrt._format.reorder_owned`.
-
-    ``new_key_order`` is trusted to be a permutation of
-    ``dict.keys(c)``. Only mutates the CST; dict storage is the
-    caller's responsibility.
+    Direct-child-key grouping keeps dotted-prefix entries adjacent under
+    their shared prefix. Foreign entries (only possible for a dotted-inner
+    navigator) keep their absolute positions; only owned positions are
+    reordered. ``new_key_order`` is trusted to be a permutation of
+    ``dict.keys(c)``; dict storage is caller-owned.
     """
     root = _outermost_inline(c)
     iv = root._value  # noqa: SLF001

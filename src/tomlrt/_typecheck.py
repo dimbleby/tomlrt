@@ -1,15 +1,11 @@
 """Runtime type-checks for user-supplied keys and mappings.
 
-Pure functions with no dependencies on the container / array layers,
-so any module that accepts user-supplied data at a public boundary
-(``_container``, ``_array``, …) can import them without participating
-in the circular-import graph that those layers form among themselves.
+These pure helpers have no container / array dependencies, so public
+API boundaries can import them without joining that circular-import
+graph.
 
-Distinct from :mod:`tomlrt._validator`, which is the stateful TOML
-*semantic* validator that the parser drives to enforce cross-section
-grammar rules (a key bound as a value cannot later open a table, an
-explicit ``[a]`` cannot redefine an already-opened table, etc.).
-This module is API-boundary plumbing, not parse-time machinery.
+Unlike :mod:`tomlrt._validator`, this module handles runtime API input
+validation, not parse-time TOML semantics.
 """
 
 from __future__ import annotations
@@ -41,14 +37,10 @@ def _validate_key(key: object) -> str:
 def _validate_mapping(value: object, *, label: str) -> Mapping[str, Any]:
     """Reject a non-Mapping ``value`` or any Mapping with non-string keys.
 
-    Returns the validated mapping unchanged — identity is preserved so
-    downstream paths that branch on the concrete type (e.g. ``Table``
-    vs plain ``dict``) keep working. Centralising this means every
-    factory / mutator boundary produces the same wording
-    (``"<label> must be a Mapping"`` / ``"TOML keys must be str"``)
-    instead of leaking
-    ``AttributeError: 'list' object has no attribute 'items'`` from
-    inside the layout pipeline.
+    Returns the mapping unchanged so downstream paths that branch on
+    concrete type (e.g. ``Table`` vs ``dict``) keep working. Centralise
+    this so every factory / mutator boundary reports the same errors
+    instead of leaking layout-pipeline ``AttributeError``s.
     """
     if _check_str_mapping(value, label=label):
         return value
@@ -58,15 +50,11 @@ def _validate_mapping(value: object, *, label: str) -> Mapping[str, Any]:
 def _check_str_mapping(value: object, *, label: str) -> TypeIs[Mapping[str, Any]]:
     """Validate-or-raise ``TypeIs`` predicate for ``Mapping[str, Any]``.
 
-    Performs the runtime check in a single pass and raises a labelled
-    ``TypeError`` on failure. The ``TypeIs`` return type lets the type
-    checker narrow ``value`` to ``Mapping[str, Any]`` at the call site
-    in the ``True`` branch.
+    Raises a labelled ``TypeError`` on failure. The ``TypeIs`` return
+    lets callers narrow ``value`` in the ``True`` branch.
 
-    Returns ``True`` on success and never returns ``False`` (every
-    rejection raises), so callers can write ``if _check_str_mapping(v):
-    return v`` to drive the narrowing. Don't use ``assert`` — it would
-    be stripped under ``python -O``, skipping validation entirely.
+    Never returns ``False``; every rejection raises. Don't replace this
+    with ``assert``, which ``python -O`` would strip.
     """
     if not isinstance(value, Mapping):
         msg = f"{label} must be a Mapping, got {type(value).__name__}"

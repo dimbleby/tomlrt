@@ -1,11 +1,9 @@
-"""Comment side-channel views for ``Array``.
+"""Expose comment side-channel views for ``Array``.
 
-``Array.comments`` (EOL comments per item) and
-``Array.leading_comments`` (tuple of comment lines above each item)
-are implemented here.  Both are indexed by item position and share
-the encode/decode helpers and validation rules from ``_comments``.
+``Array.comments`` and ``Array.leading_comments`` are indexed by item
+position and share the encode/decode rules from ``_comments``.
 
-Per-item trivia ownership (canonical model — see ``ArrayValue``):
+Per-item trivia ownership (see ``ArrayValue``):
 
   - Above-item region for item ``i``:
       ``header_trivia``       if i == 0
@@ -73,9 +71,8 @@ def _check_index(arr: Array, key: object) -> int:
 def _downstream_break_holder(value: ArrayValue, idx: int) -> Trivia:
     """Return the trivia that owns item ``idx``'s row break.
 
-    When the item's own row carries no EOL section the break lives in the
-    next item's ``leading``, or—for the tail item—the value's
-    ``final_trivia``.
+    If the item has no EOL section, the break lives in the next item's
+    ``leading`` or, for the tail item, in ``final_trivia``.
     """
     items = value.items
     return items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
@@ -104,9 +101,8 @@ def _ensure_multiline(arr: Array) -> None:
 def _above_owner(value: ArrayValue, i: int) -> tuple[Trivia, int]:
     """Return ``(owner, prefix_len)`` for item ``i``'s above-region.
 
-    ``owner`` carries item ``i``'s above-block; its first ``prefix_len``
-    pieces precede the region and must be preserved. Comma-first parks
-    the block in ``items[i-1].trailing`` after that item's EOL section.
+    The first ``prefix_len`` owner pieces must be preserved. Comma-first
+    parks the block in ``items[i-1].trailing`` after that item's EOL.
     """
     if i == 0:
         return value.header_trivia, 0
@@ -124,10 +120,8 @@ def _comments_from_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
 def _slot_indent(arr: Array) -> str:
     """Best-effort indent string for this array's items.
 
-    The per-item value-indent is the ``tail`` of its above-frame, which
-    :func:`_split_above_frame` already resolves uniformly across the
-    bracket pad (item 0), conventional, and comma-first layouts. Return
-    the first one found.
+    ``_split_above_frame`` resolves the value-indent uniformly across
+    bracket-pad, conventional, and comma-first layouts.
     """
     value = arr._value  # noqa: SLF001
     for i in range(len(value.items)):
@@ -182,12 +176,9 @@ def _set_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
 
     The synthesised EOL section ends with its own newline, so the
     structural newline that previously terminated the item's line must
-    be removed to avoid duplication. That structural newline lives in
-    one of three places, depending on layout:
+    be removed to avoid duplication. Depending on layout, it lives:
 
-    * inside ``target`` (the item's ``post_comma_trivia`` for
-      has-comma items, or ``trailing`` for no-comma items) — handled
-      by the ``rest`` strip below;
+    * inside ``target`` — handled by the ``rest`` strip below;
     * on the next item's ``leading`` — has-comma, non-tail item;
     * in the value's ``final_trivia`` — tail item (with or without
       a trailing comma).
@@ -203,8 +194,7 @@ def _set_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
         and rest.pieces
         and isinstance(rest.pieces[0], NewlineNode)
     ):
-        # Replace the structural newline; our synthesised EOL
-        # provides its own.
+        # Replace the structural newline; our synthesised EOL has one.
         rest = Trivia(list(rest.pieces[1:]))
         stripped = True
     new_eol: list[TriviaPiece] = [
@@ -296,12 +286,10 @@ def _split_above_frame(
 ) -> tuple[Trivia, Trivia, Trivia, Trivia]:
     """Decompose item ``i``'s above-region into ``(owner, prefix, head, tail)``.
 
-    Rewrites assign ``owner.pieces``; the existing comment block is
-    discarded. ``prefix`` precedes the region and is re-emitted verbatim
-    (a comma-first predecessor's EOL section, else empty); ``head`` /
-    ``tail`` are the framing NL / value-indent. For ``i == 0`` the owner
-    is the bracket pad, where a pre-NL comment is a ``[``-EOL kept in
-    ``head`` rather than an above-block.
+    Rewrites assign ``owner.pieces``. ``prefix`` is preserved verbatim
+    (comma-first predecessor EOL, else empty); ``head`` / ``tail`` frame
+    the comment block. For item 0, pre-NL bracket comments stay in
+    ``head`` rather than becoming above-blocks.
     """
     if i == 0:
         owner = value.header_trivia
@@ -331,9 +319,8 @@ def _set_above_pieces(
 ) -> None:
     """Replace the comment block in item ``i``'s above-region.
 
-    Preserves any structural framing already present (preserved
-    prefix, leading NL, trailing value-indent WS) and only rewrites
-    the comment block between.
+    Preserve structural framing and rewrite only the comment block
+    between it.
     """
     owner, prefix, head, tail = _split_above_frame(value, i)
     if not head.pieces and not tail.pieces:
@@ -378,8 +365,8 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
         idx = _check_index(self._arr, key)
         if not seq:
             # Empty assignment means "no leading comments" — semantically
-            # a delete-if-present. Don't auto-promote to multi-line: the
-            # array doesn't need newlines to carry zero comments.
+            # a delete-if-present. Don't promote: zero comments need no
+            # newlines.
             self._delete(idx, allow_missing=True)
             return
         _ensure_multiline(self._arr)

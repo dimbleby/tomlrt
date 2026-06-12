@@ -1,12 +1,8 @@
 """Hand-written recursive-descent parser.
 
-Walks the source via `_Scanner` and emits a flat ordered list of
-physical slots (`KVSlot` and `StructuralHeaderSlot`) plus the
-document's trailing trivia. Drives `_Validator` at three points:
-
-- when a header has just been parsed,
-- when a key/value line has just been built,
-- when a key inside an inline table is about to be added.
+Walks source via `_Scanner` and emits physical slots plus trailing
+trivia. Drives `_Validator` for headers, key/value lines, and
+inline-table keys.
 """
 
 from __future__ import annotations
@@ -31,10 +27,8 @@ if TYPE_CHECKING:
 class ParseResult:
     """The output of `_Parser.parse`.
 
-    `slots` is in physical document order. `trailing` is whatever
-    trivia (blank lines, comments) hangs at end-of-file after the
-    last slot. `newline` is the document-wide line ending detected
-    by the scanner.
+    `slots` is in physical document order. `trailing` is EOF trivia;
+    `newline` is the scanner-detected document-wide line ending.
     """
 
     slots: list[Slot] = field(default_factory=list)
@@ -53,21 +47,14 @@ class _Parser:
         self._validator = _Validator(self._sc.error)
         self._value_depth = 0
 
-    # ------------------------------------------------------------------
-    # Entry point
-    # ------------------------------------------------------------------
-
     def parse(self) -> ParseResult:
         result = ParseResult()
         sc = self._sc
         src = sc.src
         end = sc.end
 
-        # A leading UTF-8 BOM (U+FEFF) is permitted by TOML 1.1 only at
-        # the very start of the document. Strip it from the parse
-        # stream and stash it on `Document` as a prelude — keeping it
-        # orthogonal to the slot / trivia plumbing means user mutations
-        # (delete first slot, set leading_comments, ...) can never
+        # TOML 1.1 permits a leading UTF-8 BOM only at document start.
+        # Store it as Document prelude so slot/trivia mutations cannot
         # silently drop or duplicate it.
         if sc.pos < end and src[sc.pos] == "\ufeff":
             result.prelude = "\ufeff"
@@ -88,7 +75,7 @@ class _Parser:
                 slot = self._parse_key_value(leading)
             result.slots.append(slot)
 
-        # Stitch the doubly-linked list.
+        # Stitch the physical slot list.
         prev: Slot | None = None
         for slot in result.slots:
             slot._prev = prev  # noqa: SLF001
@@ -98,10 +85,6 @@ class _Parser:
 
         result.newline = sc.detected_newline()
         return result
-
-    # ------------------------------------------------------------------
-    # Headers
-    # ------------------------------------------------------------------
 
     def _parse_header(self, leading: Trivia) -> StructuralHeaderSlot:
         sc = self._sc
@@ -149,16 +132,11 @@ class _Parser:
             owner.entry_slots.append(slot)
         return slot
 
-    # ------------------------------------------------------------------
-    # Keys
-    # ------------------------------------------------------------------
-
     def _parse_key(self) -> tuple[list[KeyPart], list[str], str]:
         """Parse a dotted key.
 
-        Returns ``(parts, seps, trailing_ws)`` where ``trailing_ws`` is
-        the whitespace consumed after the last key part — usable
-        directly as the caller's ``pre_eq`` / ``inner_post`` field.
+        ``trailing_ws`` is consumed after the last key part and can be
+        used directly as ``pre_eq`` / ``inner_post``.
         """
         sc = self._sc
         parts: list[KeyPart] = [sc.scan_key_part()]
@@ -169,10 +147,6 @@ class _Parser:
                 return parts, seps, text
             seps.append(text)
             parts.append(sc.scan_key_part())
-
-    # ------------------------------------------------------------------
-    # Key/value lines
-    # ------------------------------------------------------------------
 
     def _parse_key_value(self, leading: Trivia) -> KVSlot:
         sc = self._sc
@@ -208,10 +182,6 @@ class _Parser:
             owner.entry_slots.append(slot)
         return slot
 
-    # ------------------------------------------------------------------
-    # Values
-    # ------------------------------------------------------------------
-
     def _parse_value(self) -> Value:
         sc = self._sc
         pos = sc.pos
@@ -231,8 +201,6 @@ class _Parser:
                 self._value_depth -= 1
         return sc.scan_value_atom()
 
-    # --- arrays -------------------------------------------------------
-
     def _parse_array(self) -> ArrayValue:
         sc = self._sc
         src = sc.src
@@ -242,8 +210,7 @@ class _Parser:
         head = sc.scan_array_trivia()
         end = sc.end
         if sc.pos < end and src[sc.pos] == "]":
-            # Empty array: head trivia is interior, attribute it to
-            # final_trivia (the canonical pre-`]` slot).
+            # Empty array: head trivia is the canonical pre-`]` slot.
             node.final_trivia = head
             sc.pos += 1
             return node
@@ -260,17 +227,14 @@ class _Parser:
                 post_comma, next_leading = split_eol_section(scanned)
                 items.append(ArrayItem(leading, value, trailing, True, post_comma))  # noqa: FBT003
                 if sc.pos < end and src[sc.pos] == "]":
-                    # Trailing-comma terminator: structural rest is the
-                    # bracket pad.
+                    # Trailing-comma terminator: rest is bracket pad.
                     node.final_trivia = next_leading
                     sc.pos += 1
                     return node
                 leading = next_leading
             elif ch == "]":
                 items.append(ArrayItem(leading, value, trailing, False, Trivia()))  # noqa: FBT003
-                # Terminal item with no trailing comma: split the
-                # trailing scan into the EOL section (stays on the
-                # item) and the structural bracket pad (final_trivia).
+                # No trailing comma: split item EOL from bracket pad.
                 eol, rest = split_eol_section(items[-1].trailing)
                 items[-1].trailing = eol
                 node.final_trivia = rest
@@ -279,8 +243,6 @@ class _Parser:
             else:
                 msg = f"expected ',' or ']' in array, got {ch!r}"
                 raise sc.error(msg)
-
-    # --- inline tables ------------------------------------------------
 
     def _parse_inline_table(self) -> InlineTableValue:
         sc = self._sc

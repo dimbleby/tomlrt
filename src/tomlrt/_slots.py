@@ -1,12 +1,9 @@
 """Physical slot layer.
 
-A document is an ordered intrusive doubly-linked list of physical
-slots. Three slot kinds:
-
-- ``KVSlot`` — one ``key = value`` line (possibly dotted).
-- ``StructuralHeaderSlot`` — one ``[a.b]`` or ``[[a.b]]`` line.
-
-`SlotRef` is the per-container occurrence of a slot.
+A document is an intrusive doubly linked list of physical slots:
+``KVSlot`` for ``key = value`` lines and ``StructuralHeaderSlot`` for
+``[a.b]`` / ``[[a.b]]`` headers. `SlotRef` records a slot's occurrence
+in one container.
 """
 
 from __future__ import annotations
@@ -39,9 +36,8 @@ from tomlrt._values import render_dotted, retarget_value_newlines
 class AoTEntry:
     """Identifies one entry of an array-of-tables.
 
-    Carried by every physical slot that belongs to that entry
-    (``owner_aot_entry``). The ``entry_slots`` list is populated by
-    the slot-builder so render can iterate without scanning.
+    Carried by every physical slot in that entry. ``entry_slots`` is a
+    membership list populated by the slot-builder.
     """
 
     path: tuple[str, ...]
@@ -66,27 +62,22 @@ class Slot:
     owner_aot_entry: AoTEntry | None = None
     """The AoT entry that physically contains this slot, if any.
 
-    Set on every slot regardless of kind so the field is uniformly
-    typed at the base; both subclasses preserve `None` defaults.
+    Lives on the base so all slot kinds expose the field uniformly.
     """
 
     _refs: list[SlotRef] = field(default_factory=list, repr=False, compare=False)
     """Back-pointers from this slot to every `SlotRef` that references it.
 
-    Bounded length (≤ path depth + 1). Used by AoT removal to scrub
+    Bounded length (≤ path depth + 1). AoT removal uses this to scrub
     refs in O(depth) per slot instead of O(siblings) per container.
-    Maintained by `SlotRef.__post_init__` (registers) and
-    `unfile_ref` (unregisters).
     """
 
     def __deepcopy__(self, memo: dict[int, object]) -> Slot:
         """Deep-copy without following ``_refs``/``_prev``/``_next``.
 
-        Cloned slots start with a fresh empty ``_refs`` (callers
-        construct new ``SlotRef``s pointing at the clone) and
-        unlinked from any doc-stream chain (callers splice them in).
-        Following ``_prev``/``_next`` would otherwise drag the entire
-        source document into the deepcopy.
+        Clones start with empty refs and no doc-stream links; callers
+        file new refs and splice them in. Following ``_prev``/``_next``
+        would drag the whole source document into the deepcopy.
         """
         new = type(self).__new__(type(self))
         memo[id(self)] = new
@@ -110,10 +101,7 @@ class KVSlot(Slot):
     """A single ``key = value`` line."""
 
     host_path: tuple[str, ...] = field(kw_only=True)
-    """Full path of the host table — the table whose body this KV
-    physically belongs to. For top-level KVs ``()``; for KVs under
-    ``[a.b]`` ``("a", "b")``.
-    """
+    """Full path of the table body this KV physically belongs to."""
 
     key_parts: list[KeyPart] = field(kw_only=True)
     """The dotted-key parts as written. ``len >= 1``."""
@@ -129,11 +117,8 @@ class KVSlot(Slot):
     key: tuple[str, ...] = field(kw_only=True)
     """Decoded dotted-key path.
 
-    Set by every construction site (parser, mutation, synthesis).
-    The parser passes the tuple it already built for the validator;
-    mutation paths pass the path they were given. Read by
-    ``_build._apply_kv`` (and any future logic that wants the decoded
-    path without re-walking ``key_parts``).
+    Set by every construction site so ``_build._apply_kv`` can avoid
+    re-walking ``key_parts``.
     """
 
     def render_key(self) -> str:
@@ -152,10 +137,9 @@ class KVSlot(Slot):
 class StructuralHeaderSlot(Slot):
     """One ``[a.b]`` or ``[[a.b]]`` header line.
 
-    ``entry`` is the discriminator: an aot-entry header carries a
-    non-``None`` :class:`AoTEntry`; a plain table header carries
-    ``None``. The :attr:`kind` property is derived from ``entry``
-    so the two cannot drift apart.
+    ``entry`` is the discriminator: AoT-entry headers carry an
+    :class:`AoTEntry`, plain table headers carry ``None``. :attr:`kind`
+    is derived from ``entry`` so the two cannot drift.
     """
 
     path: tuple[str, ...] = field(kw_only=True)
@@ -201,10 +185,8 @@ class StructuralHeaderSlot(Slot):
 class SlotRef:
     """A per-container occurrence of a slot.
 
-    A `SlotRef` records that `slot` contributes to `container`'s
-    logical view. The key under which it is filed in
-    `container._index` is derived from the geometry of
-    (slot, container) and exposed via `local_key`.
+    `local_key` derives the key under which the ref is filed in
+    `container._index` from `(slot, container)` geometry.
     """
 
     __slots__ = ("container", "slot")
@@ -212,9 +194,8 @@ class SlotRef:
     def __init__(self, slot: Slot, container: Container) -> None:
         self.slot = slot
         self.container = container
-        # Register on the slot's back-pointer list so AoT removal
-        # can scrub all containers holding refs to a doomed slot
-        # without scanning the slot's ancestors.
+        # Back-pointers let AoT removal scrub doomed slots without
+        # scanning ancestor containers.
         slot._refs.append(self)  # noqa: SLF001
 
     @property
@@ -222,9 +203,8 @@ class SlotRef:
         """Key under which this ref is filed in ``container._index``.
 
         ``None`` for the container's own header ref (which lives in
-        ``_refs`` + ``_header_ref``, not in ``_index``); otherwise a
-        single path component, derived from the slot's logical path
-        and the container's depth.
+        ``_refs`` + ``_header_ref``, not ``_index``); otherwise a single
+        path component derived from the slot path and container depth.
         """
         slot = self.slot
         c_path = self.container._path  # noqa: SLF001
@@ -240,10 +220,7 @@ def retarget_slot_newlines(slot: Slot, target: str) -> None:
     """Rewrite every ``NewlineNode.text`` reachable from ``slot`` to ``target``.
 
     Used by graft paths so cross-document spliced slots adopt the
-    destination document's line ending. Walks the slot's leading
-    trivia, its EOL (for ``KVSlot`` / ``StructuralHeaderSlot``), and
-    recurses into any nested ``ArrayValue`` / ``InlineTableValue``
-    on a ``KVSlot``.
+    destination document's line ending, including nested inline values.
     """
     retarget_trivia_newlines(slot.leading, target)
     if isinstance(slot, KVSlot):

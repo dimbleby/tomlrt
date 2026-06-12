@@ -1,9 +1,7 @@
 """Scalar predicates and Python-to-TOML scalar coercion.
 
-These helpers are pure: they depend on `_values` for the wire-format
-`Value` types and on `datetime` for type discrimination, but they do
-not touch the container layer. Lifted out of `_container` so the same
-tests cover them in isolation and the container module shrinks.
+Pure helpers for wire-format `Value` types, kept out of the container
+layer.
 """
 
 from __future__ import annotations
@@ -22,8 +20,7 @@ from tomlrt._values import (
 
 def is_scalar(v: object) -> bool:
     """True iff ``v`` is a TOML scalar (and not an array / table)."""
-    # `bool` is an `int` subclass — explicit allow keeps the semantics
-    # in this gate clear.
+    # `bool` is an `int` subclass; keep the gate explicit.
     if isinstance(v, bool):
         return True
     if isinstance(v, (int, float, str)):
@@ -54,8 +51,7 @@ def float_lexeme(v: float) -> str:
         return "nan"
     if math.isinf(v):
         return "-inf" if v < 0 else "inf"
-    # repr() of any finite float always carries a fractional component or
-    # an exponent (e.g. "1.0", "1e+16"), both of which TOML accepts as-is.
+    # repr() of finite floats includes a TOML-accepted fraction or exponent.
     return repr(v)
 
 

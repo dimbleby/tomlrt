@@ -1,18 +1,13 @@
 """Cursor + scanner used by `tomlrt._parser`.
 
-The scanner owns the `(src, end, pos)` triple — it is the single
-cursor authority while the parser drives. Methods that recognise a
-syntactic construct return either a fully-formed CST node (for the
-messy, allocation-heavy bits like strings and trivia blocks) or a
-small tuple/`str` (for bare value tokens that the parser still
-needs to dispatch on).
+The scanner owns `(src, end, pos)`, so it is the parser's cursor
+authority. It returns CST nodes for source-preserving constructs and
+small tuples/strings for tokens the parser still dispatches.
 
-String scanning is, by design, *semantic* — escape sequences are
-decoded, surrogate code points are rejected, the leading newline
-after the opening triple-quote delimiter is trimmed, and the
-multi-line trailing-quote allowance is enforced. The returned
-`StringValue` carries both the raw lexeme (filled by `scan_string`)
-and the decoded value.
+String scanning is semantic: escapes are decoded, surrogates rejected,
+the leading newline after an opening triple quote trimmed, and the
+multi-line trailing-quote allowance enforced. `scan_string` fills the
+raw lexeme while preserving the decoded value.
 """
 
 from __future__ import annotations
@@ -44,17 +39,13 @@ if TYPE_CHECKING:
 # Comment body: anything except newline + control chars (tab is OK).
 _RE_COMMENT_BODY: Final = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
 
-# Body of a basic string: any run of chars that are NOT a quote,
-# backslash, newline, or control char (control = U+0000-U+001F or
-# U+007F, except tab which we *do* allow).
+# Body of a basic string: not quote, backslash, newline, or control
+# char (U+0000-U+001F / U+007F, except tab).
 _RE_BASIC_STR_BODY: Final = re.compile(r'[^"\\\n\r\x00-\x08\x0b-\x1f\x7f]+')
-# Body of a literal string: anything except quote, newline, control
-# char (tab and newline-not-allowed handled by the caller).
+# Body of a literal string: no quote, newline, or control char.
 _RE_LITERAL_STR_BODY: Final = re.compile(r"[^'\n\r\x00-\x08\x0b-\x1f\x7f]+")
-# Body of a multi-line basic string fragment: stops at " or \\ or \r or
-# \n or a control char. \n and \r\n are valid in ML strings, so the
-# caller handles them; we stop at \r so the caller can verify it's
-# followed by \n and emit a normalized pair.
+# Body of a multi-line basic string fragment. Newlines are valid there,
+# so the caller handles them; stop at \r to verify CRLF before emitting it.
 _RE_ML_BASIC_BODY: Final = re.compile(r'[^"\\\r\n\x00-\x08\x0b-\x1f\x7f]+')
 _RE_ML_LITERAL_BODY: Final = re.compile(r"[^'\r\n\x00-\x08\x0b-\x1f\x7f]+")
 # Bare key: ASCII alphanum + underscore + dash. (TOML 1.1 broadens
@@ -70,19 +61,16 @@ _DEC_DIGITS: Final[frozenset[str]] = frozenset("0123456789")
 def _is_ascii_digits(s: str) -> bool:
     """Return True iff ``s`` is non-empty and contains only ASCII ``0-9``.
 
-    ``str.isdigit`` accepts Unicode decimal digits (e.g. Arabic-Indic
-    ``\u0660``) and ``int(s)`` will then happily parse them — but TOML
-    integer / float literals are restricted to the ASCII digit set.
+    ``str.isdigit`` and ``int(s)`` accept non-ASCII decimal digits, but
+    TOML integer / float literals are restricted to ASCII.
     """
     return bool(s) and all(c in _DEC_DIGITS for c in s)
 
 
-# First character that ends a bare-value token (whitespace, newline,
-# array/table close, comma, comment).
+# First character that ends a bare-value token.
 _RE_VALUE_END: Final = re.compile(r"[ \t\n\r,\]}#]")
 
-# Simple backslash-escape map, shared across every string parse so we
-# don't rebuild the dict on each escape character.
+# Shared simple backslash-escape map.
 _SIMPLE_ESCAPES: Final[dict[str, str]] = {
     "b": "\b",
     "t": "\t",
@@ -102,10 +90,8 @@ class _Scanner:
         self.src = src
         self.end = len(src)
         self.pos = 0
-        # Track newline kinds as we scan so the Document layer doesn't
-        # have to walk the entire CST to discover the file's line
-        # ending. ``"\r\n"`` is reported only when every emitted newline
-        # was CRLF; mixed or LF-only documents report ``"\n"``.
+        # Track newline kinds during scanning so Document needn't walk
+        # the CST. Report CRLF only when every emitted newline was CRLF.
         self._seen_lf = False
         self._seen_crlf = False
 
@@ -118,10 +104,6 @@ class _Scanner:
         if self._seen_crlf and not self._seen_lf:
             return "\r\n"
         return "\n"
-
-    # ------------------------------------------------------------------
-    # Cursor primitives
-    # ------------------------------------------------------------------
 
     def peek(self, offset: int = 0) -> str:
         """Return the character `offset` chars ahead of the cursor.
@@ -151,10 +133,6 @@ class _Scanner:
         self.pos += n
         return s
 
-    # ------------------------------------------------------------------
-    # Diagnostics
-    # ------------------------------------------------------------------
-
     def line_col(self, pos: int) -> tuple[int, int]:
         """Return the 1-based (line, column) for source offset `pos`."""
         line = 1
@@ -171,10 +149,6 @@ class _Scanner:
         offset = self.pos if at is None else at
         line, col = self.line_col(offset)
         return TOMLParseError(message, line=line, col=col, offset=offset)
-
-    # ------------------------------------------------------------------
-    # Trivia / comment scanners
-    # ------------------------------------------------------------------
 
     def scan_comment(self) -> CommentNode:
         """Consume a comment from `#` to (but not including) the newline.
@@ -200,9 +174,8 @@ class _Scanner:
     def scan_doc_trivia(self) -> Trivia:
         """Consume a document-scope trivia block.
 
-        Whitespace, blank lines and full-line comments. Stops *before*
-        the next non-trivia character on a line — so the structural
-        token (or EOF) follows immediately at the cursor.
+        Whitespace, blank lines and full-line comments are consumed.
+        Stops before the next structural token (or EOF).
         """
         trivia = Trivia()
         pieces = trivia.pieces
@@ -268,10 +241,8 @@ class _Scanner:
     def scan_inline_ws_text(self) -> str:
         """Consume one run of inline whitespace; return raw text (or "").
 
-        Like :meth:`scan_inline_ws` but skips the ``WhitespaceNode``
-        allocation. Used by parser sites that store the result as a
-        plain ``str`` (header inner_pre/inner_post, KV pre_eq/post_eq,
-        inline-table pre_eq/post_eq).
+        Like :meth:`scan_inline_ws`, but skips the ``WhitespaceNode``
+        allocation for parser fields stored as plain ``str``.
         """
         src = self.src
         end = self.end
@@ -360,20 +331,13 @@ class _Scanner:
             raise self.error(msg)
         return EolTrivia(trailing, comment, newline)
 
-    # ------------------------------------------------------------------
-    # Strings
-    # ------------------------------------------------------------------
-
     def scan_string(self, *, allow_multiline: bool = True) -> StringValue:
         """Scan a string starting at the cursor; populate `raw`.
 
-        Dispatches on the opening quote character: `"` -> basic,
-        `'` -> literal. The returned `StringValue` carries both the
-        verbatim source slice (for round-tripping) and the decoded
-        value; its `style` reflects the chosen flavour.
-
-        `allow_multiline` defaults to True; key parsers pass False
-        to reject multi-line strings in key position.
+        Dispatches on the opening quote character and returns a
+        `StringValue` with verbatim source (for round-tripping), decoded
+        value, and style. Key parsers pass ``allow_multiline=False`` to
+        reject multi-line strings.
 
         Precondition: cursor is at `"` or `'`. Callers always peek
         first; this is asserted, not validated.
@@ -468,8 +432,7 @@ class _Scanner:
                 return StringValue(lexeme="", value="".join(out))
             ch = self.peek()
             if ch == '"':
-                # Single or double quote (not the closing triple) — emit and
-                # continue. The body regex stops at any quote.
+                # Single or double quote, not the closing triple.
                 out.append('"')
                 self.pos += 1
                 continue
@@ -495,8 +458,7 @@ class _Scanner:
                             while self.peek() in (" ", "\t"):
                                 self.pos += 1
                         continue
-                    # Not actually a line-ending backslash; rewind and
-                    # treat as a normal escape.
+                    # Not a line-ending backslash; rewind and parse an escape.
                     self.pos = save
                 out.append(self._scan_escape())
                 continue
@@ -583,7 +545,7 @@ class _Scanner:
                 return StringValue(lexeme="", value="".join(out))
             ch = self.peek()
             if ch == "'":
-                # Single quote, not the closing triple — emit and continue.
+                # Single quote, not the closing triple.
                 out.append("'")
                 self.pos += 1
                 continue
@@ -638,10 +600,6 @@ class _Scanner:
             raise self.error(msg)
         return chr(cp)
 
-    # ------------------------------------------------------------------
-    # Keys
-    # ------------------------------------------------------------------
-
     def scan_key_part(self) -> KeyPart:
         """Scan one key part: bare, basic-quoted, or literal-quoted."""
         src = self.src
@@ -662,14 +620,9 @@ class _Scanner:
     def scan_key_separator(self) -> tuple[str, bool]:
         """Scan an optional dotted-key separator and trailing whitespace.
 
-        Returns ``(text, is_separator)``:
-
-        - If the next non-whitespace char is ``.``, consume ``ws "." ws``
-          and return ``(lexeme, True)``.
-        - Otherwise consume only the leading whitespace (if any) and
-          return ``(ws_text, False)``. The caller can use ``ws_text``
-          directly as the ``pre_eq`` / ``inner_post`` field, avoiding
-          a duplicate inline-ws scan.
+        If the next non-whitespace char is ``.``, consumes ``ws "." ws``
+        and returns ``(lexeme, True)``. Otherwise returns leading
+        whitespace as ``(ws_text, False)`` for ``pre_eq`` / ``inner_post``.
         """
         src = self.src
         end = self.end
@@ -692,20 +645,15 @@ class _Scanner:
         self.pos = sep_end
         return src[save:sep_end], True
 
-    # Bare value tokens: bool, special-float keywords, integer, float,
-    # date / time / datetime. The parser dispatches strings, arrays
-    # and inline tables itself; everything else funnels through
-    # ``scan_value_atom``.
+    # Bare value tokens: bool, special floats, numbers, and date/time values.
+    # The parser dispatches strings, arrays, and inline tables itself.
 
     def scan_value_atom(self) -> Value:
         """Scan a non-container, non-string value at the cursor.
 
-        Recognises bools, special floats (``inf`` / ``nan``, with
-        optional sign), integers, floats, and date/time/datetime
-        literals. Bool and special-float keywords are matched on the
-        whole bare token, so ``trueish`` / ``infinity`` reliably
-        error rather than silently parsing as ``true`` / ``inf``
-        followed by garbage.
+        Bool and special-float keywords are whole-token matches, so
+        ``trueish`` / ``infinity`` error rather than parsing as
+        ``true`` / ``inf`` followed by garbage.
         """
         start = self.pos
         end = self._scan_value_end(start)
@@ -746,29 +694,22 @@ class _Scanner:
         return self._parse_integer_token(token, at=start)
 
     def _scan_value_end(self, start: int) -> int:
-        """Return the offset of the first char that ends a bare value.
-
-        Stops at whitespace, newline, ``,``, ``]``, ``}``, ``#``, EOF.
-        """
+        """Return the offset of the first char that ends a bare value."""
         m = _RE_VALUE_END.search(self.src, start)
         return m.start() if m is not None else len(self.src)
 
     @staticmethod
     def _looks_like_datetime(token: str) -> bool:
-        # Date: ``YYYY-MM-DD``; local time: ``HH:MM:SS``; datetime
-        # contains both and is detected via the date head. The grammar
-        # restricts every digit position to ASCII 0-9; ``str.isdigit``
-        # also accepts other Unicode decimal digits, so use the strict
-        # ASCII check.
+        # Date uses ``YYYY-MM-DD``; local time uses ``HH:MM:SS``. The
+        # grammar requires ASCII digits, so don't use ``str.isdigit``.
         if len(token) >= 5 and token[4] == "-" and _is_ascii_digits(token[:4]):
             return True
         return bool(len(token) >= 3 and token[2] == ":" and _is_ascii_digits(token[:2]))
 
     @staticmethod
     def _looks_like_float(token: str) -> bool:
-        # A decimal float must contain ``.``, ``e`` or ``E``;
-        # hex/oct/bin integers never do. A leading sign is fine to
-        # keep since none of the marker characters are signs.
+        # Decimal floats contain ``.``, ``e`` or ``E``; hex/oct/bin
+        # integers never do.
         body = token[1:] if token[:1] in "+-" else token
         if body.startswith(("0x", "0o", "0b")):
             return False
@@ -881,9 +822,8 @@ class _Scanner:
         return FloatValue(token, value)
 
     def _parse_datetime_token(self, token: str, *, at: int) -> DateTimeValue:
-        # TOML allows a single space as the date/time separator. If we
-        # just scanned a 10-char date and the next chars look like
-        # ``" HH:..."``, fold them into one local-datetime token.
+        # Fold a TOML date followed by ``" HH:..."`` into one
+        # local-datetime token.
         src = self.src
         pos = self.pos
         if (
@@ -909,7 +849,6 @@ class _Scanner:
         at: int,
         raw: str,
     ) -> DateTimeValue:
-        # Local time?
         if len(text) >= 3 and text[2] == ":":
             try:
                 value = self._parse_time_text(text)
