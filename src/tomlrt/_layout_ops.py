@@ -71,17 +71,21 @@ _reinstall_as_dotted: contextvars.ContextVar[bool] = contextvars.ContextVar(
 
 @contextlib.contextmanager
 def _record_install(doc: Document) -> Iterator[list[Slot]]:
-    """Capture every slot constructed during the with-block.
+    """Record every slot spliced into the doc-stream during the with-block.
 
-    Each call to ``_new_kv_slot`` / ``_new_section_header`` inside the
-    block (and the one bare ``KVSlot(...)`` in
-    ``_append_dotted_kv_under_implicit``) appends to the yielded list in
-    creation order, which matches doc-stream order for all installers
-    here.
+    The three insertion primitives (:func:`insert_after`,
+    :func:`insert_before`, :func:`insert_before_head`) — the sole points
+    at which a slot is linked into the document — append to the yielded
+    list. Recording at the splice boundary (rather than at slot
+    construction) captures synthesised *and* deep-cloned slots uniformly,
+    in doc-stream insertion order.
 
-    ``reposition_install`` uses this to learn what ``del + set`` just
-    installed without re-deriving it from cache snapshots. Nested
-    contexts stack; only the innermost is active.
+    The block is an install transaction: it only adds slots (the delete
+    runs before it, the reinstall never moves existing slots), so the
+    record is materialisation, not movement. ``reposition_install`` uses
+    it to learn what ``del + set`` installed so it can move that block
+    back to the saved anchor. Nested contexts stack; only the innermost
+    is active.
     """
     prev = doc._install_recorder  # noqa: SLF001
     recorder: list[Slot] = []
@@ -183,13 +187,19 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     # ``_maybe_demote_synthetic_empty_header``). Drop those orphans:
     # moving one would corrupt the linked list. ``unlink_slot`` repairs
     # the chain, so the survivors stay contiguous.
-    new_slots = [
+    survivors = [
         s
-        for s in new_slots
+        for s in dict.fromkeys(new_slots)  # de-dup, preserve order
         if s is doc._head or s._prev is not None or s._next is not None  # noqa: SLF001
     ]
-    if not new_slots:
+    if not survivors:
         return
+    # The surviving recorded slots must form exactly one contiguous
+    # doc-stream span (the reinstall appends them as a block). Recover
+    # their true doc order by walking the linked list from the span head,
+    # and assert the single-span invariant so a future installer that
+    # breaks it fails loudly instead of silently moving the wrong range.
+    new_slots = _ordered_recorded_span(survivors)
     # A header-less new binding (scalar / synth-inline) takes its scope
     # from physical position, so it only needs its anchor inside
     # ``parent``'s body region. A binding that brings a structural
@@ -220,6 +230,31 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     for slot, original, expected_pred in restores:
         if slot._prev is expected_pred:  # noqa: SLF001
             slot.leading.pieces = list(original)
+
+
+def _ordered_recorded_span(survivors: list[Slot]) -> list[Slot]:
+    """Return ``survivors`` in doc-stream order, asserting they are contiguous.
+
+    The recorded survivors of an install transaction must form exactly
+    one contiguous doc-stream span. Find the span head (the survivor with
+    no predecessor in the set) and walk forward; assert that the walk
+    reaches every survivor, so a non-contiguous or multi-span record
+    fails loudly rather than corrupting the subsequent move.
+    """
+    ids = {id(s) for s in survivors}
+    heads = [
+        s
+        for s in survivors
+        if s._prev is None or id(s._prev) not in ids  # noqa: SLF001
+    ]
+    assert len(heads) == 1, "recorded install slots are not a single span"
+    ordered: list[Slot] = []
+    cur: Slot | None = heads[0]
+    while cur is not None and id(cur) in ids:
+        ordered.append(cur)
+        cur = cur._next  # noqa: SLF001
+    assert len(ordered) == len(survivors), "recorded install slots are not contiguous"
+    return ordered
 
 
 def _ancestor_chain(c: Container) -> list[Container]:
@@ -455,6 +490,7 @@ def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
         nxt._prev = new_slot  # noqa: SLF001
     else:
         doc._tail = new_slot  # noqa: SLF001
+    _record_new_slot(doc, new_slot)
 
 
 def insert_before(anchor: Slot, new_slot: Slot, doc: Document) -> None:
@@ -467,6 +503,7 @@ def insert_before(anchor: Slot, new_slot: Slot, doc: Document) -> None:
         p._next = new_slot  # noqa: SLF001
     else:
         doc._head = new_slot  # noqa: SLF001
+    _record_new_slot(doc, new_slot)
 
 
 def insert_before_head(new_slot: Slot, doc: Document) -> None:
@@ -486,6 +523,7 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
     else:
         doc._tail = new_slot  # noqa: SLF001
     doc._head = new_slot  # noqa: SLF001
+    _record_new_slot(doc, new_slot)
 
 
 def _promote_trailing_to_preamble(new_head: Slot, doc: Document) -> None:
@@ -1336,14 +1374,14 @@ def _new_kv_slot(
     owner: AoTEntry | None,
     leading: Trivia,
 ) -> KVSlot:
-    """Synthesise a fresh KV slot, recording it on the active install recorder.
+    """Synthesise a fresh KV slot (recorded when spliced, not here).
 
     ``key_parts`` and ``key_seps`` are derived from ``key`` in the
     canonical synthetic form (``make_keypart`` per segment, ``.`` as
     separator). Mutation-side construction is the only caller, so the
     parser's source-text-preserving spelling is not needed here.
     """
-    slot = KVSlot(
+    return KVSlot(
         leading=leading,
         host_path=host_path,
         key_parts=make_keyparts(key),
@@ -1355,8 +1393,6 @@ def _new_kv_slot(
         owner_aot_entry=owner,
         key=key,
     )
-    _record_new_slot(doc, slot)
-    return slot
 
 
 def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlot:
@@ -1583,8 +1619,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     if entry_last is not None:
         insert_after(entry_last, header_slot, doc)
     elif doc._tail is None:  # noqa: SLF001
-        doc._head = header_slot  # noqa: SLF001
-        doc._tail = header_slot  # noqa: SLF001
+        insert_before_head(header_slot, doc)
         # Empty doc → no preceding header → drop the leading.
         header_slot.leading = Trivia()
     else:
@@ -1742,7 +1777,7 @@ def _new_section_header(
     entry: AoTEntry | None = None,
     owner_aot_entry: AoTEntry | None = None,
 ) -> StructuralHeaderSlot:
-    slot = StructuralHeaderSlot(
+    return StructuralHeaderSlot(
         leading=leading,
         path=path,
         key_parts=make_keyparts(path),
@@ -1752,8 +1787,6 @@ def _new_section_header(
         owner_aot_entry=owner_aot_entry,
         synthetic=True,
     )
-    _record_new_slot(doc, slot)
-    return slot
 
 
 def _belongs_to_parent_extent(
