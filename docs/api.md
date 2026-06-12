@@ -55,6 +55,7 @@ code.
         - leading_block
         - has_header
         - sort
+        - format
         - to_dict
 
 ::: tomlrt.Table
@@ -83,6 +84,7 @@ code.
         - leading_block
         - has_header
         - sort
+        - format
         - to_dict
 
 ::: tomlrt.Array
@@ -97,6 +99,7 @@ code.
         - get_array
         - comments
         - leading_comments
+        - format
         - to_list
 
 ::: tomlrt.AoT
