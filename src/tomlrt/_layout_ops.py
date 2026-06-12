@@ -1034,6 +1034,9 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
                 owner.entry_slots.remove(slot)
         unlink_slot(slot, doc)
 
+    displaced_inlines: list[Container] = []
+    displaced_arrays: list[Array] = []
+    _collect_displaced_inline_views(val, displaced_inlines, displaced_arrays)
     if transplanting:
         from tomlrt._container import Document  # noqa: PLC0415
 
@@ -1046,32 +1049,57 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
             sc._layout_root = orphan  # noqa: SLF001
         for ao in subtree_aots:
             ao._layout_root = orphan  # noqa: SLF001
+        # Keep inline descendants live against the orphan: their backing
+        # CST lives inside a transplanted KV, so re-pointing (rather than
+        # resetting) lets edits through a held reference flow into the
+        # orphaned slot value, which a later rehome moves intact.
+        for it in displaced_inlines:
+            it._layout_root = orphan  # noqa: SLF001
+        for ar in displaced_arrays:
+            ar._layout_root = orphan  # noqa: SLF001
+    else:
+        # No orphan (e.g. a top-level inline value): reset by hand so a
+        # held reference reports detached and can re-attach cleanly.
+        from tomlrt._container import (  # noqa: PLC0415
+            _reset_array_for_rehome,
+            _reset_inline_for_rehome,
+        )
 
-    # Detach inline-Container / Array views inside the displaced
-    # subtree. Section tables and AoTs are rehomed to a private
-    # orphan above (so ``_attached`` reports False via the
-    # ``_is_private`` check); inline views don't participate in
-    # that orphan-rehome dance, so reset them by hand. Without
-    # this, a held reference to a displaced inline table or array
-    # keeps a stale ``_layout_root`` / ``_attached``, breaking
-    # identity preservation on later re-assignment.
-    from tomlrt._container import (  # noqa: PLC0415
-        _reset_array_for_rehome,
-        _reset_inline_for_rehome,
-    )
-
-    displaced_inlines: list[Container] = []
-    displaced_arrays: list[Array] = []
-    _collect_displaced_inline_views(val, displaced_inlines, displaced_arrays)
-    for it in displaced_inlines:
-        if it._layout_root is not None:  # noqa: SLF001
-            _reset_inline_for_rehome(it)
-    for ar in displaced_arrays:
-        if ar._attached:  # noqa: SLF001
-            _reset_array_for_rehome(ar)
+        for it in displaced_inlines:
+            if it._layout_root is not None:  # noqa: SLF001
+                _reset_inline_for_rehome(it)
+        for ar in displaced_arrays:
+            if ar._attached:  # noqa: SLF001
+                _reset_array_for_rehome(ar)
 
     # Drop the dict entry.
     dict.__delitem__(c, key)
+
+
+def _walk_view_tree(val: object, visit: Callable[[object], None]) -> None:
+    """Visit every Container / AoT / Array node in a view subtree.
+
+    The three node kinds and their recursion (Container -> values,
+    AoT -> entries, Array -> items) are the shared spine of the
+    delete-side displacement walk (:func:`_collect_displaced_inline_views`)
+    and the adopt-side rehome walk (:func:`_rehome_view_tree`); each
+    caller supplies the per-node action. Scalars are inert.
+    """
+    from tomlrt._array import AoT, Array  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
+
+    if isinstance(val, Container):
+        visit(val)
+        for child in val.values():
+            _walk_view_tree(child, visit)
+    elif isinstance(val, AoT):
+        visit(val)
+        for entry in val:
+            _walk_view_tree(entry, visit)
+    elif isinstance(val, Array):
+        visit(val)
+        for item in val:
+            _walk_view_tree(item, visit)
 
 
 def _collect_displaced_inline_views(
@@ -1088,21 +1116,17 @@ def _collect_displaced_inline_views(
     ``_attached`` state that goes stale when their hosting KV is
     deleted.
     """
-    from tomlrt._array import AoT, Array  # noqa: PLC0415
+    from tomlrt._array import Array  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
-    if isinstance(val, Container):
-        if val._inline:  # noqa: SLF001
-            inlines_out.append(val)
-        for child in val.values():
-            _collect_displaced_inline_views(child, inlines_out, arrays_out)
-    elif isinstance(val, AoT):
-        for entry in val:
-            _collect_displaced_inline_views(entry, inlines_out, arrays_out)
-    elif isinstance(val, Array):
-        arrays_out.append(val)
-        for item in val:
-            _collect_displaced_inline_views(item, inlines_out, arrays_out)
+    def visit(node: object) -> None:
+        if isinstance(node, Container):
+            if node._inline:  # noqa: SLF001
+                inlines_out.append(node)
+        elif isinstance(node, Array):
+            arrays_out.append(node)
+
+    _walk_view_tree(val, visit)
 
 
 def _collect_subtree(
@@ -2379,6 +2403,18 @@ def clone_aot_entry_as_table(
     return _install_cloned_section(parent, key, src_slots, src_entry.path)
 
 
+def _owned_slots_from(root: Container, start: Slot) -> list[Slot]:
+    """Collect ``root``'s owned slots in doc-stream order from ``start``.
+
+    ``start`` must be the subtree's doc-stream-first owned slot (the
+    header for a header-bearing section, the first dotted KV for a
+    header-less one).
+    """
+    owned: set[int] = set()
+    _collect_subtree(root, [], [], lambda s: owned.add(id(s)))
+    return _owned_slots_in_doc_order(start, owned)
+
+
 def _gather_subtree_slots(src_table: Container) -> list[Slot]:
     """Collect a container subtree's owned slots in doc-stream order.
 
@@ -2387,18 +2423,7 @@ def _gather_subtree_slots(src_table: Container) -> list[Slot]:
     physical body of ``src_table``.
     """
     assert src_table._header_ref is not None  # noqa: SLF001
-
-    owned: set[int] = set()
-
-    def _add_slot(s: Slot) -> None:
-        owned.add(id(s))
-
-    containers_out: list[Container] = []
-    aots_out: list[AoT] = []
-    _collect_subtree(src_table, containers_out, aots_out, _add_slot)
-
-    head_slot: Slot = src_table._header_ref.slot  # noqa: SLF001
-    return _owned_slots_in_doc_order(head_slot, owned)
+    return _owned_slots_from(src_table, src_table._header_ref.slot)  # noqa: SLF001
 
 
 def clone_table_as_aot_entry(
@@ -2493,6 +2518,200 @@ def clone_document_as_section(
     )
 
 
+def adopt_private_section(
+    dest_parent: Container,
+    key: str,
+    value: Container,
+) -> Container:
+    """Rehome a private-orphan section under ``dest_parent[key]`` in place.
+
+    Moves the orphan's existing slot subtree into the destination document
+    (rebasing paths / header keys / newlines) and re-points the existing
+    view objects, rather than rebuilding from logical values. This is the
+    inverse of :func:`delete_key`'s transplant-to-orphan, and preserves
+    both the view's identity (``dest_parent[key] is value``) and its
+    body trivia (comments, string / number style, inline pad).
+
+    A header-bearing orphan that is itself an AoT entry (``[[a]]``) is
+    normalised to a plain ``[key]`` section: the head's ``[[..]]``
+    discriminator and the entry's slot / view ownership are cleared.
+
+    Pre-condition (checked by the caller): ``value`` is a header-bearing
+    section attached to a private orphan with intact slots.
+    """
+    doc = dest_parent._attached_doc  # noqa: SLF001
+    old_prefix = value._path  # noqa: SLF001
+    new_prefix = (*dest_parent._path, key)  # noqa: SLF001
+    # Non-None iff the orphan is an AoT entry being normalised to a section.
+    norm_entry = value._owner_aot_entry  # noqa: SLF001
+
+    assert value._header_ref is not None  # noqa: SLF001
+    slots = _gather_subtree_slots(value)
+    for s in slots:
+        _rebase_slot_in_place(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
+        if norm_entry is not None and s.owner_aot_entry is norm_entry:
+            s.owner_aot_entry = None
+            if isinstance(s, StructuralHeaderSlot) and s.entry is norm_entry:
+                s.entry = None  # [[a]] -> [a]
+    _rehome_view_tree(
+        value, dest_parent, old_prefix, new_prefix, doc, clear_owner=norm_entry
+    )
+
+    header = value._header_ref.slot  # noqa: SLF001
+    assert isinstance(header, StructuralHeaderSlot)
+    _retarget_header_separator(header, _build_section_leading(doc))
+    _splice_block_after(slots, _parent_subtree_tail(dest_parent), doc)
+    _file_header_binding_chain(dest_parent, header)
+    dict.__setitem__(dest_parent, key, value)
+    _maybe_demote_synthetic_empty_header(dest_parent)
+    return value
+
+
+def _retarget_slot_paths(
+    s: Slot, src_prefix: tuple[str, ...], target_prefix: tuple[str, ...], nl: str
+) -> None:
+    """Rebase a slot's host / header paths + header render keys, retarget newlines.
+
+    Shared by the deep-clone (:func:`_clone_entry_slots`) and move-in-place
+    (:func:`_rebase_slot_in_place`) rehome paths. Owner / AoT-entry handling
+    differs between the two and stays at the call site.
+    """
+    retarget_slot_newlines(s, nl)
+    if isinstance(s, KVSlot):
+        s.host_path = _rebase_path(s.host_path, src_prefix, target_prefix)
+    elif isinstance(s, StructuralHeaderSlot):
+        s.path = _rebase_path(s.path, src_prefix, target_prefix)
+        s.key_parts = make_keyparts(s.path)
+        s.key_seps = ["."] * (len(s.key_parts) - 1)
+
+
+def _rebase_slot_in_place(
+    s: Slot, old_prefix: tuple[str, ...], new_prefix: tuple[str, ...], nl: str
+) -> None:
+    """Rebase one slot in place; the reused AoT-entry's path moves with it."""
+    _retarget_slot_paths(s, old_prefix, new_prefix, nl)
+    if isinstance(s, StructuralHeaderSlot) and s.entry is not None:
+        s.entry.path = _rebase_path(s.entry.path, old_prefix, new_prefix)
+
+
+def _rehome_view_tree(
+    root: Container,
+    dest_parent: Container,
+    old_prefix: tuple[str, ...],
+    new_prefix: tuple[str, ...],
+    doc: Document,
+    *,
+    clear_owner: AoTEntry | None = None,
+) -> None:
+    """Re-point ``root``'s existing view subtree at ``doc`` with rebased paths.
+
+    Keeps every view object (so identity survives), updating only the
+    attachment fields (``_layout_root`` / ``_path`` / ``_parent``); the
+    ``_refs`` / ``_index`` / ``_header_ref`` stay valid because the slots
+    they reference were rebased consistently. Walks the same view spine
+    (:func:`_walk_view_tree`) as the delete-side displacement walk, so
+    every view that was re-pointed at the orphan is restored here.
+
+    When ``clear_owner`` is given (an AoT entry being normalised to a
+    plain section), any view owned by it has its ``_owner_aot_entry``
+    cleared; nested AoT entries keep their own ownership.
+    """
+    from tomlrt._array import AoT, Array  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
+
+    def visit(node: object) -> None:
+        if isinstance(node, (Container, AoT)):
+            node._layout_root = doc  # noqa: SLF001
+            node._path = _rebase_path(node._path, old_prefix, new_prefix)  # noqa: SLF001
+            if (
+                isinstance(node, Container)
+                and clear_owner is not None
+                and node._owner_aot_entry is clear_owner  # noqa: SLF001
+            ):
+                node._owner_aot_entry = None  # noqa: SLF001
+        elif isinstance(node, Array):
+            node._layout_root = doc  # noqa: SLF001
+
+    root._parent = dest_parent  # noqa: SLF001
+    _walk_view_tree(root, visit)
+
+
+def adopt_private_implicit(
+    dest_parent: Container,
+    key: str,
+    value: Container,
+) -> Container:
+    """Rehome a header-less (dotted) private-orphan section in place.
+
+    The orphan has no header of its own — its content lives in dotted KVs
+    hosted by an ancestor — so it is moved (not rebuilt) under
+    ``dest_parent[key]``, re-hosted at the destination's nearest header
+    and with its dotted-key prefix rebased, preserving identity and trivia
+    (dotted shape, comments, value style). Nested sub-section / AoT headers
+    keep their shape.
+    """
+    doc = dest_parent._attached_doc  # noqa: SLF001
+    old_prefix = value._path  # noqa: SLF001
+    new_prefix = (*dest_parent._path, key)  # noqa: SLF001
+    host = _nearest_header_host(dest_parent)
+    host_path = host._path  # noqa: SLF001
+
+    # An implicit table always owns at least one slot (an emptied one
+    # materialises to an inline table and never reaches here).
+    assert value._refs, "implicit orphan has no slots"  # noqa: SLF001
+    slots = _owned_slots_from(value, value._refs[0].slot)  # noqa: SLF001
+
+    nl = doc._newline  # noqa: SLF001
+    for s in slots:
+        _rebase_implicit_slot_in_place(s, old_prefix, new_prefix, host_path, nl)
+    _rehome_view_tree(value, dest_parent, old_prefix, new_prefix, doc)
+
+    _splice_block_after(slots, _parent_subtree_tail(host), doc)
+    # value's own subtree refs travelled intact; re-file only the ancestor
+    # binding refs the delete scrubbed: dotted KVs hosted at ``host`` and
+    # nested headers propagate up the chain, but KVs under a nested
+    # sub-section stay filed within value's subtree.
+    chain = _dotted_chain(host, dest_parent)
+    for s in slots:
+        if isinstance(s, KVSlot) and s.host_path != host_path:
+            continue
+        for anc in chain:
+            record_ref(anc, s)
+    dict.__setitem__(dest_parent, key, value)
+    return value
+
+
+def _rebase_implicit_slot_in_place(
+    s: Slot,
+    old_prefix: tuple[str, ...],
+    new_prefix: tuple[str, ...],
+    host_path: tuple[str, ...],
+    nl: str,
+) -> None:
+    """Rebase a header-less section's slot in place.
+
+    A dotted KV hosted *above* the section (its ``host_path`` does not
+    start with the section prefix) is re-hosted at ``host_path`` with its
+    dotted-key prefix rebased; the within-section key parts keep their
+    spelling. KVs under a nested sub-header and nested headers rebase by
+    path, exactly as for a header-bearing section.
+    """
+    if isinstance(s, KVSlot) and s.host_path[: len(old_prefix)] != old_prefix:
+        retarget_slot_newlines(s, nl)
+        within = (*s.host_path, *s.key)[len(old_prefix) :]
+        new_key = (*new_prefix, *within)[len(host_path) :]
+        head_n = len(new_key) - len(within)
+        s.host_path = host_path
+        s.key = new_key
+        s.key_parts = (
+            make_keyparts(new_key[:head_n])
+            + s.key_parts[len(s.key_parts) - len(within) :]
+        )
+        s.key_seps = ["."] * (len(new_key) - 1)
+    else:
+        _rebase_slot_in_place(s, old_prefix, new_prefix, nl)
+
+
 def clone_aot(
     parent: Container,
     key: str,
@@ -2581,19 +2800,12 @@ def _clone_entry_slots(
         c: Slot = copy.deepcopy(s)
         c._prev = None  # noqa: SLF001
         c._next = None  # noqa: SLF001
-        retarget_slot_newlines(c, dst_newline)
+        _retarget_slot_paths(c, src_prefix, target_prefix, dst_newline)
         src_owner = s.owner_aot_entry
         mapped = nested_entry_map.get(id(src_owner)) if src_owner else None
-        dst_owner = mapped if mapped is not None else body_owner
-        if isinstance(c, KVSlot):
-            c.owner_aot_entry = dst_owner
-            c.host_path = _rebase_path(c.host_path, src_prefix, target_prefix)
-        elif isinstance(c, StructuralHeaderSlot):
+        c.owner_aot_entry = mapped if mapped is not None else body_owner
+        if isinstance(c, StructuralHeaderSlot):
             assert isinstance(s, StructuralHeaderSlot)
-            c.owner_aot_entry = dst_owner
-            c.path = _rebase_path(c.path, src_prefix, target_prefix)
-            c.key_parts = make_keyparts(c.path)
-            c.key_seps = ["."] * (len(c.key_parts) - 1)
             if s.entry is not None:
                 c.entry = nested_entry_map.get(id(s.entry))
         cloned.append(c)

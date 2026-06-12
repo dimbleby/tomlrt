@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Overwriting a section that has array-of-tables children now keeps those
   children under the section, instead of moving them to the end of the
   document.
+- Re-attaching a section that was removed (via `del`, `pop`, or overwrite) now
+  keeps its comments and formatting, instead of dropping them.
 
 ## [1.7.5] - 2026-06-11
 
