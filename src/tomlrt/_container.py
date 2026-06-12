@@ -56,6 +56,7 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    retarget_trivia_newlines,
     trivia_has_comment,
 )
 from tomlrt._typecheck import _validate_key, _validate_mapping
@@ -638,7 +639,9 @@ class Container(dict[str, Any]):
 
         AoT-entry sources clone as a table so trivia survives and the
         head normalises from ``[[..]]`` to ``[..]``. Attached
-        header-bearing sections clone slots; attached implicit sources
+        header-bearing sections clone slots; a whole attached
+        ``Document`` clones its body under a synthesised header (so body
+        comments and inline pad survive); attached implicit sources
         recurse via ``_install_attached_subtree``; detached/private
         sources rehome in place.
         """
@@ -651,9 +654,11 @@ class Container(dict[str, Any]):
                 _layout_ops.clone_aot_entry_as_table(self, key, value)
             elif value._header_ref is not None:
                 _layout_ops.clone_section_as_section(self, key, value)
+            elif isinstance(value, Document):
+                _layout_ops.clone_document_as_section(self, key, value)
             else:
-                # Implicit source / whole Document: tuple-path install
-                # preserves structural children and implicit chains.
+                # Implicit source: tuple-path install preserves structural
+                # children and implicit chains.
                 _install_attached_subtree(self, (key,), value)
             return
         if src_root is not None and src_root._is_private:  # noqa: SLF001
@@ -1514,7 +1519,7 @@ def _install_attached_subtree(
             direct_kvs.append((k, v))
 
     if direct_kvs:
-        _install_dotted_direct_kvs(dst_parent, dst_path, direct_kvs)
+        _install_dotted_direct_kvs(dst_parent, dst_path, direct_kvs, src_table)
 
     for k, v in structural:
         sub_path = (*dst_path, k)
@@ -1530,33 +1535,43 @@ def _install_dotted_direct_kvs(
     dst_parent: Container,
     dst_path: tuple[str, ...],
     direct_kvs: list[tuple[str, object]],
+    src_table: Container,
 ) -> None:
     """Emit each ``(k, v)`` in ``direct_kvs`` as a dotted KV under host.
 
     ``host`` is the nearest header-bearing ancestor at-or-above
     ``dst_parent`` (or the doc / AoT-entry root). Creates implicit
-    intermediates as needed. Values are deep-cloned through
-    ``_to_python`` + ``_synth_value`` so the source CST is not disturbed.
+    intermediates as needed. Each value's CST and leading trivia are
+    deep-cloned from the corresponding source slot so string/number
+    style, inline-array pad, and standalone comments survive — a
+    re-synthesis from the logical value would drop all of those.
     """
+    from tomlrt._build import _decode_value  # noqa: PLC0415
+
+    doc = dst_parent._attached_doc  # noqa: SLF001
     host: Container = dst_parent
     while host._header_ref is None and host._parent is not None:  # noqa: SLF001
         host = host._parent  # noqa: SLF001
     parent_to_host = dst_parent._path[len(host._path) :]  # noqa: SLF001
-    layout_root = dst_parent._layout_root  # noqa: SLF001
     owner = host._owner_aot_entry  # noqa: SLF001
-    for k, v in direct_kvs:
+    for k, _v in direct_kvs:
         leaf_keypath = (*parent_to_host, *dst_path, k)
         leaf_parent = _layout_ops.ensure_implicit_chain(host, leaf_keypath[:-1])
-        py = _to_python(v)
-        cst, decoded = _synth_value(
-            py,
-            layout_root=layout_root,
-            parent=leaf_parent,
-            path=(*host._path, *leaf_keypath),  # noqa: SLF001
-            owner=owner,
+        path = (*host._path, *leaf_keypath)  # noqa: SLF001
+        # A direct (non-structural) key of an attached source is always
+        # backed by a single KVSlot; clone its value + leading so style
+        # and standalone comments survive (re-synthesis would drop them).
+        src_slot = src_table._index[k][0].slot  # noqa: SLF001
+        assert isinstance(src_slot, KVSlot)
+        cst = copy.deepcopy(src_slot.value)
+        _retarget_to_doc(cst, doc)
+        leading = copy.deepcopy(src_slot.leading)
+        retarget_trivia_newlines(leading, doc._newline)  # noqa: SLF001
+        decoded = _decode_value(
+            cst, layout_root=doc, parent=leaf_parent, path=path, owner=owner
         )
         _layout_ops.install_dotted_kv_slot(
-            host, leaf_keypath, cst, leaf_parent=leaf_parent
+            host, leaf_keypath, cst, leaf_parent=leaf_parent, leading=leading
         )
         dict.__setitem__(leaf_parent, k, decoded)
 

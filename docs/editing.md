@@ -65,6 +65,19 @@ A container that is already attached somewhere is deep-cloned on assignment, so
 two slots never share state.
 This applies whether the source and destination are in the same document
 (`doc["b"] = doc["a"]`) or different ones (`d2["x"] = d1["x"]`).
+The clone is byte-faithful: comments, whitespace, and string / number style on
+the bytes you didn't touch survive the move.
+
+Assigning a whole parsed `Document` as a value lifts its body into a section,
+preserving the comments and layout that were in the source:
+
+```python
+template = tomlrt.loads(template_text)   # a standalone file, no [header]
+doc["tool"]["bumpversion"] = template    # becomes [tool.bumpversion], trivia intact
+```
+
+The document's own file-level preamble / epilogue (comment blocks separated from
+the body by a blank line) belong to no key and are not carried across.
 
 ## Removal and orphaning
 
