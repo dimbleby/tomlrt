@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   match synthesis and `.format()`.
 - Assigning a parsed document or table into another document now keeps its
   comments and formatting, instead of dropping them.
+- Overwriting a section that has array-of-tables children now keeps those
+  children under the section, instead of moving them to the end of the
+  document.
 
 ## [1.7.5] - 2026-06-11
 
