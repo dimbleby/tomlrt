@@ -1,8 +1,7 @@
 """Array views.
 
-`Array(list)` backs an inline-array TOML value (`[1, 2, 3]`). `AoT`
-(array-of-tables) is a `list[Table]` whose entries are individually
-backed by `AoTEntry` records and whose elements are `Table` views.
+`Array(list)` backs inline TOML arrays. `AoT(list[Table])` backs
+array-of-tables entries via `AoTEntry` records.
 """
 
 from __future__ import annotations
@@ -80,8 +79,8 @@ _T = TypeVar("_T")
 class Array(list[Any]):
     """An inline TOML array.
 
-    `Array` is a `list` subclass, so ``isinstance(arr, list)`` holds
-    and it can be passed wherever a `list` or `Sequence` is expected.
+    `Array` is a `list` subclass, so ``isinstance(arr, list)`` holds and
+    it can be passed wherever a `list` or `Sequence` is expected.
     """
 
     __slots__ = ("_layout_root", "_multiline", "_value")
@@ -95,9 +94,8 @@ class Array(list[Any]):
     ) -> None:
         """Construct a standalone inline array.
 
-        ``Array([1, 2, 3])`` builds an inline array;
-        ``Array([1, 2, 3], multiline=True)`` lays it out one item per
-        line with ``indent`` indentation.
+        ``Array([1, 2, 3])`` builds an inline array; ``multiline=True``
+        lays items out one per line with ``indent``.
         """
         super().__init__()
 
@@ -130,9 +128,8 @@ class Array(list[Any]):
                 it.trailing = Trivia()
                 it.has_comma = True
         elif multiline and not val.items:
-            # Empty multiline factory: header_trivia stays empty;
-            # final_trivia carries the pre-`]` line break + indent so
-            # that a subsequent first append slots in correctly.
+            # Empty multiline factory: final_trivia carries the pre-`]`
+            # break + indent so a later first append slots in correctly.
             val.final_trivia = Trivia(
                 [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
             )
@@ -188,8 +185,6 @@ class Array(list[Any]):
             raise TypeError(msg)
         return v
 
-    # ---- mutation -----------------------------------------------------
-
     @property
     def _attached(self) -> bool:
         """True iff this array is wired to a user-visible document.
@@ -235,10 +230,9 @@ class Array(list[Any]):
     def format(self, *, comments: bool = True) -> None:
         """Canonicalise this array's formatting in place.
 
-        Rewrites whitespace, indentation, separators, and newlines to a
-        canonical layout, while preserving the array's overall shape
-        (single-line stays single-line, multi-line stays multi-line)
-        and the *content* of any orphan comment blocks above items.
+        Rewrites whitespace, indentation, separators, and newlines
+        while preserving shape (single-line stays single-line, multi-line
+        stays multi-line) and orphan comment text.
 
         When ``comments`` is true (the default), comment text is also
         normalised: ``#foo`` and ``#   foo`` both become ``# foo``, and
@@ -250,9 +244,8 @@ class Array(list[Any]):
         """Switch this array between flush single-line and multi-line form.
 
         Raises ``TOMLError`` when collapsing a multi-line array that
-        carries comments (anywhere in per-item trivia, header_trivia
-        or final_trivia, or in nested inline values), since those
-        would have nowhere to live on a single line.
+        carries comments anywhere in it, including inside nested values,
+        since they would have nowhere to live on one line.
 
         Returns ``self`` for chaining.
         """
@@ -321,10 +314,8 @@ class Array(list[Any]):
     def _append_with_style(self, cst: Value, decoded: Any, style: CommaStyle) -> None:
         """Append ``cst`` / ``decoded`` using a precomputed ``style``.
 
-        Shared between `append` (which derives style fresh) and
-        `__imul__` (which must snapshot style before mutating, so
-        the closing trailing-comma decision reflects the array's
-        original layout — not the half-mutated state).
+        `__imul__` snapshots style before mutating so trailing-comma
+        decisions reflect the original layout, not a half-mutated one.
         """
         new_item = _make_item(cst, has_comma=False)
         splice_in(self._value, new_item, style, self._doc_newline)
@@ -332,17 +323,14 @@ class Array(list[Any]):
 
     @override
     def extend(self, values: Iterable[Any]) -> None:
-        # Snapshot first so ``arr.extend(arr)`` (and ``arr += arr``)
-        # match list semantics — duplicate once — rather than
-        # iterating forever as ``self`` grows.
+        # Snapshot so ``arr.extend(arr)`` duplicates once like list does.
         for v in list(values):
             self.append(v)
 
     @override
     def clear(self) -> None:
         self._value.items.clear()
-        # Drop any inter-item trivia clutter; preserve the bracket
-        # leading captured in final_trivia.
+        # Drop inter-item trivia; preserve bracket leading in final_trivia.
         strip_trailing_indent(self._value.header_trivia, self._value.final_trivia)
         list.clear(self)
 
@@ -382,22 +370,17 @@ class Array(list[Any]):
             return
         style = self._style()
         if i == 0:
-            # Item-owned semantics: any above-block currently inside
-            # header_trivia conceptually belongs to *the item that
-            # appears below it*. On insert(0), that item becomes
-            # items[1]; the above-block migrates to its leading. The
-            # new item gets bare leading; header_trivia retains only
-            # its structural pad.
+            # Item-owned semantics: an above-block in header_trivia
+            # belongs to the item below it, so insert(0) migrates that
+            # block to items[1].leading and leaves structural pad behind.
             new_item = _make_item(cst, has_comma=True)
             self._value.header_trivia, items[0].leading = migrate_bracket_above(
                 self._value.header_trivia, style.inter_separator
             )
             items.insert(0, new_item)
         else:
-            # Internal insert: new item with leading = inter_sep; the
-            # item that was at position i (now at i+1) keeps its old
-            # leading (which already carries inter_sep + its own
-            # above-block).
+            # Internal insert: the displaced item keeps its existing
+            # leading (inter_sep plus any above-block).
             new_item = _make_item(
                 cst, leading=style.inter_separator.copy(), has_comma=True
             )
@@ -469,14 +452,11 @@ class Array(list[Any]):
                         f"to extended slice of size {len(indices)}"
                     )
                     raise ValueError(msg)
-                # Extended slice: positions are unchanged, only values
-                # change. Delegate to the int-index path per slot.
+                # Extended slice positions are unchanged; replace per slot.
                 for k, v in zip(indices, values, strict=True):
                     self[k] = v
                 return
-            # Contiguous slice: realise as delete + insert so the
-            # boundary-handling that ``__delitem__`` and ``insert``
-            # already encode is reused, rather than duplicated here.
+            # Reuse delete/insert boundary handling for contiguous slices.
             start, stop, _ = index.indices(len(self))
             del self[start:stop]
             for offset, v in enumerate(values):
@@ -497,8 +477,7 @@ class Array(list[Any]):
         if not items:
             list.__delitem__(self, index)  # propagate IndexError
             return
-        # Normalise to a list of removed positions so the shared
-        # comma-list orchestration can run uniformly.
+        # Normalise removed positions for shared comma-list orchestration.
         if isinstance(index, slice):
             removed = list(range(*index.indices(len(items))))
         else:
@@ -534,16 +513,9 @@ class Array(list[Any]):
             return self
         if n == 1:
             return self
-        # Snapshot style and the source-item list before any append:
-        # ``_append_with_style`` flips the previous-last item's
-        # ``has_comma``, so re-detecting style on a half-mutated array
-        # would spuriously promote a no-trailing-comma array to one with
-        # a trailing comma. The items list is snapshot because we append
-        # to it inside the loop. Each iteration deepcopies the source
-        # ``Value`` and re-decodes so the appended logical view is wired
-        # to its own CST clone (``deepcopy`` of the decoded view for an
-        # inline ``Table`` / ``Array`` yields a detached object not wired
-        # to any CST).
+        # Snapshot style and items before appending: `_append_with_style`
+        # flips the previous last comma, and decoded inline views must be
+        # re-built from cloned CST so they stay wired to their own nodes.
         from tomlrt._build import _decode_value  # noqa: PLC0415
 
         style = self._style()
@@ -562,18 +534,12 @@ class Array(list[Any]):
         return self
 
 
-# ---------------------------------------------------------------------------
-# Array-specific helpers (style detection + canonical pads live in _format)
-# ---------------------------------------------------------------------------
-
-
 def _make_item(
     cst: Value, *, leading: Trivia | None = None, has_comma: bool
 ) -> ArrayItem:
     """Build a fresh ``ArrayItem`` with empty trailing/post_comma.
 
-    Most call-sites only vary ``leading`` and ``has_comma``; this helper
-    centralises the boilerplate so the policy stays in one place.
+    Most call sites only vary ``leading`` and ``has_comma``.
     """
     return ArrayItem(
         leading=leading if leading is not None else Trivia(),
@@ -614,9 +580,8 @@ def _renormalise_commas(items: list[ArrayItem], style: CommaStyle) -> None:
 class AoT(list["Table"]):
     """An Array-of-tables, e.g. ``[[products]]`` repeated.
 
-    `AoT` is a `list[Table]` subclass, so ``isinstance(aot, list)``
-    holds and it can be passed wherever a `list` or `Sequence` is
-    expected.
+    `AoT` is a `list[Table]` subclass, so ``isinstance(aot, list)`` holds
+    and it can be passed wherever a `list` or `Sequence` is expected.
     """
 
     __slots__ = ("_layout_root", "_parent", "_path")
@@ -633,10 +598,7 @@ class AoT(list["Table"]):
 
     @property
     def _attached_doc(self) -> Document:
-        """The owning ``Document``, asserting this AoT is attached.
-
-        Mirror of :attr:`Container._attached_doc` — see that docstring.
-        """
+        """The owning ``Document``, asserting this AoT is attached."""
         lr = self._layout_root
         assert lr is not None, "AoT is not attached to a document"
         return lr
@@ -654,8 +616,8 @@ class AoT(list["Table"]):
     def add(self, entry: Mapping[str, TomlInput] | None = None) -> Table:
         """Append a fresh ``[[path]]`` entry and return its `Table` view.
 
-        ``entry`` may be a Mapping (initial body content) or ``None``
-        (empty entry). The AoT must be attached to a document.
+        ``entry`` may be initial body content or ``None``. Attached AoTs
+        append to the owning document.
         """
         if entry is not None:
             entry = _validate_mapping(entry, label="AoT entry")
@@ -667,10 +629,8 @@ class AoT(list["Table"]):
     def _add_entry_attached(self, value: Mapping[str, Any]) -> Table:
         """Dispatch a new attached AoT entry from ``value``.
 
-        Pre: ``self._layout_root is not None``. Selects the trivia-
-        preserving clone path when ``value`` is itself an attached
-        AoT entry or attached standard section, otherwise falls
-        through to ``add_aot_entry``.
+        Pre: attached AoT. Selects the trivia-preserving clone path for
+        attached AoT entries or sections.
         """
         from tomlrt._container import Table as TableType  # noqa: PLC0415
 
@@ -696,8 +656,7 @@ class AoT(list["Table"]):
             return
         _layout_ops.replace_aot_entry(self, index, value)
 
-    # Supported list-mutator surface. Anything not implemented here
-    # is overridden below to fail closed rather than corrupt the
+    # Unsupported list mutators fail closed rather than corrupt the
     # doc-stream via inherited `list` behaviour.
 
     @override
@@ -766,18 +725,15 @@ class AoT(list["Table"]):
                     f"to extended slice of size {len(indices)}"
                 )
                 raise ValueError(msg)
-            # Validate every assigned value is a Mapping/Table BEFORE
-            # mutating the AoT (atomicity preflight).
+            # Atomicity preflight: validate everything before mutating.
             typed_values = [_validate_mapping(v, label="AoT entry") for v in values]
             if self._layout_root is None:
                 list.__setitem__(
                     self, index, [_make_unattached_entry(v) for v in typed_values]
                 )
                 return
-            # For contiguous step == 1: replace by delete-range then
-            # insert at the start index. Order matters: build new
-            # entries via the dispatcher (appended to end), then
-            # renormalise.
+            # Contiguous replacement: delete, append via dispatcher,
+            # then renormalise to the requested order.
             if index.step is None or index.step == 1:
                 start = index.indices(len(self))[0]
                 for i in sorted(indices, reverse=True):
@@ -790,8 +746,7 @@ class AoT(list["Table"]):
                 if cur != list(self):
                     _layout_ops.renormalise_aot_order(self, cur)
                 return
-            # Extended slice with step != 1 and matching length:
-            # replace each entry in place.
+            # Extended slice with matching length: replace in place.
             for i, v in zip(indices, typed_values, strict=True):
                 self._replace_entry_attached(i, v)
             return
@@ -812,9 +767,7 @@ class AoT(list["Table"]):
 
     @override
     def extend(self, values: Iterable[Table | Mapping[str, TomlInput]]) -> None:
-        # Snapshot first so ``aot.extend(aot)`` (and ``aot += aot``)
-        # match list semantics — duplicate once — rather than
-        # iterating forever as ``self`` grows.
+        # Snapshot so ``aot.extend(aot)`` duplicates once like list does.
         for v in list(values):
             self.append(v)
 
@@ -826,9 +779,7 @@ class AoT(list["Table"]):
         if self._layout_root is None:
             list.insert(self, index, _make_unattached_entry(entry))
             return
-        # Normalise against the pre-append length so semantics match
-        # list.insert (e.g. insert(-1, x) inserts BEFORE the last entry,
-        # not in place of it).
+        # Normalise against the pre-append length to match list.insert.
         n_before = len(self)
         new_entry = self._add_entry_attached(entry)
         idx = int(index)
@@ -885,10 +836,8 @@ class AoT(list["Table"]):
         if n == 1:
             return self
         if self._layout_root is None:
-            # Detached AoT: replicate entries through `extend`, so the
-            # detached append path (`_make_unattached_entry`) is the
-            # one source of truth for "how do we add an entry without
-            # touching the document".
+            # Detached AoT: replicate via `extend` so `_make_unattached_entry`
+            # stays the source of truth for document-free entries.
             bodies = self.to_list()
             for _ in range(n - 1):
                 self.extend(bodies)

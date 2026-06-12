@@ -1,18 +1,10 @@
 """Semantic validator for parsed TOML.
 
-The parser drives this with two operations:
+The parser calls this for headers, key/value lines, and inline-table
+local duplicate / dotted-prefix checks.
 
-- ``enter_header(path, kind, at)`` when a ``[H]`` / ``[[H]]``
-  header has just been parsed.
-- ``record_keyvalue(key_path, value, at)`` when a ``key = value``
-  line has just been built.
-
-Plus ``check_inline_key_conflict`` for inline-table local
-duplicate / dotted-prefix detection.
-
-The validator also tracks the active ``AoTEntry`` per AoT path so
-the parser can attach the correct owning entry to each physical
-slot it builds.
+It also tracks the active ``AoTEntry`` per AoT path so the parser can
+attach the correct owner to each physical slot.
 """
 
 from __future__ import annotations
@@ -61,15 +53,9 @@ class _Validator:
         self._aot_subpaths: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
         self._current_section: tuple[str, ...] = ()
 
-        # AoT-entry tracking. ``_active_aot_entries`` maps each
-        # currently-open AoT path to the most recent AoTEntry opened
-        # there.
+        # Active AoT paths map to their most recently opened entry.
         self._active_aot_entries: dict[tuple[str, ...], AoTEntry] = {}
         self._current_owner_aot_entry: AoTEntry | None = None
-
-    # ------------------------------------------------------------------
-    # Public read accessors used by the slot-builder.
-    # ------------------------------------------------------------------
 
     def current_section(self) -> tuple[str, ...]:
         return self._current_section
@@ -77,17 +63,12 @@ class _Validator:
     def current_owner_aot_entry(self) -> AoTEntry | None:
         return self._current_owner_aot_entry
 
-    # ------------------------------------------------------------------
-    # Headers
-    # ------------------------------------------------------------------
-
     def enter_header(
         self, path: tuple[str, ...], kind: HeaderKind, *, at: int
     ) -> AoTEntry | None:
         """Validate a ``[H]`` / ``[[H]]`` header.
 
-        Returns the freshly-opened ``AoTEntry`` when ``kind ==
-        "aot-entry"``; otherwise ``None``.
+        Returns the opened ``AoTEntry`` for ``[[H]]``, otherwise ``None``.
         """
         # Prefix overlaps with a bound value would mean overwriting a scalar
         # (or an inline-table value) with a table — always invalid.
@@ -129,8 +110,7 @@ class _Validator:
                     "already used as an implicit table"
                 )
                 raise self._error(msg, at=at)
-            # Opening a new AoT entry at `path` invalidates any per-entry
-            # tracking that was scoped to the previous entry.
+            # A new AoT entry invalidates per-entry tracking under it.
             self._reset_scope_under(path)
             self._aot_paths.add(path)
             self._track(path)
@@ -169,10 +149,6 @@ class _Validator:
             if entry is not None:
                 return entry
         return None
-
-    # ------------------------------------------------------------------
-    # Key/value lines
-    # ------------------------------------------------------------------
 
     def record_keyvalue(
         self, key_path: tuple[str, ...], value: Value, *, at: int
@@ -224,10 +200,6 @@ class _Validator:
                 if isinstance(item.value, InlineTableValue):
                     self._register_inline_table(item.value, abs_prefix=None)
 
-    # ------------------------------------------------------------------
-    # Inline tables
-    # ------------------------------------------------------------------
-
     def check_inline_key_conflict(
         self,
         path: tuple[str, ...],
@@ -277,10 +249,6 @@ class _Validator:
                     if isinstance(item.value, InlineTableValue):
                         self._register_inline_table(item.value, abs_prefix=None)
 
-    # ------------------------------------------------------------------
-    # AoT scope tracking
-    # ------------------------------------------------------------------
-
     def _track(self, p: tuple[str, ...]) -> None:
         aot_paths = self._aot_paths
         if not aot_paths:
@@ -304,7 +272,6 @@ class _Validator:
             self._explicit_table_paths.discard(p)
             self._implicit_table_paths.discard(p)
             self._aot_paths.discard(p)
-            # Also clear active AoT entry tracking under this path.
             self._active_aot_entries.pop(p, None)
         for nested in nested_aots:
             self._reset_scope_under(nested)

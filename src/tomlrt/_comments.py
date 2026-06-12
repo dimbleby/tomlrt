@@ -1,23 +1,10 @@
-"""Comment side-channel views over slot trivia.
+"""Expose comment side-channel views over slot trivia.
 
-Two primary views per `Container`:
-
-- `Container.comments` — `MutableMapping[str, str]` over the *EOL*
-  comment of the direct-KV slot for each key.  Reading returns the
-  decoded comment text (the leading ``#`` and one optional space
-  are stripped); writing accepts the same shape and re-encodes.
-- `Container.leading_comments` — `MutableMapping[str, tuple[str, ...]]`
-  over the *leading* comment block on the direct-KV slot for each
-  key.  Empty tuple means "no comments above this key".
-
-Implementation notes:
-
-- A slot is exposed under its leaf key on whichever container is its
-  immediate parent. For a plain ``key = value``, that's the explicit
-  section it sits in; for a dotted KV like ``b.c = 1`` under ``[a]``,
-  that's ``a["b"]`` (not ``a``).
-- Inline-table containers do not expose a comment view (TOML
-  forbids comments inside an inline table).
+`Container.comments` maps direct keys to decoded EOL comments;
+`Container.leading_comments` maps them to attached leading comment
+blocks. A slot is exposed under its leaf key on its immediate parent
+(``b.c = 1`` under ``[a]`` appears on ``a["b"]``). Inline tables have
+no comment view because TOML forbids comments inside them.
 """
 
 from __future__ import annotations
@@ -61,8 +48,8 @@ def _validate_comment_text(text: str) -> None:
         raise TOMLError(msg)
     for ch in text:
         cp = ord(ch)
-        # TOML comments allow TAB plus any printable Unicode; reject
-        # other ASCII control chars and DEL.
+        # TOML comments allow TAB plus printable Unicode; reject other
+        # ASCII controls and DEL.
         if cp == 0x09:
             continue
         if cp < 0x20 or cp == 0x7F:
@@ -107,11 +94,8 @@ def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
 def _require_attached(c: Container) -> None:
     """Reject comment-view mutation on a container with no slot stream.
 
-    Detached containers (e.g. ``Table.section()`` before assignment into
-    a `Document`) have no slot stream, so the comment views have nowhere
-    to store the mutation. Raise a clear `TOMLError` pointing at the
-    fix instead of a misleading ``KeyError`` from the internal slot
-    lookup.
+    Detached containers have nowhere to store comment mutations, so
+    raise a clear `TOMLError` instead of an internal ``KeyError``.
     """
     if c._layout_root is None:  # noqa: SLF001
         msg = (
@@ -128,9 +112,8 @@ _T = TypeVar("_T")
 class _SlotKeyedView(MutableMapping[str, _T]):
     """Mapping over Container keys whose direct-KV slot satisfies a predicate.
 
-    Subclasses provide ``_present(slot)`` plus the read/write/delete
-    item methods. The base supplies ``__init__``, ``__contains__``,
-    ``__iter__``, ``__len__`` and ``__repr__``.
+    Subclasses provide ``_present(slot)`` and item methods; the base
+    supplies the shared mapping plumbing.
     """
 
     __slots__ = ("_c",)
@@ -214,20 +197,15 @@ def _split_attached_block(
 ) -> tuple[list[list[TriviaPiece]], list[list[TriviaPiece]], list[TriviaPiece]]:
     """Split the leading into (above_blank, attached_comment_lines, slot_indent).
 
-    The "attached" group is the contiguous run of comment lines
-    immediately preceding the slot — i.e. with no blank line
-    between the run and the slot itself.  Everything before the
-    last blank-separator-or-start is "above_blank" (preamble +
-    archived blocks).  ``slot_indent`` is any trailing whitespace-
-    only, newline-less "indent" line (the slot's own column
-    offset) — preserved separately so callers can reapply it
-    when rebuilding the leading.
+    The attached group is the contiguous comment run immediately before
+    the slot. Earlier lines are preamble/archived blocks. ``slot_indent``
+    is the trailing whitespace-only, newline-less column offset that
+    rebuilders must reapply.
     """
     lines = split_lines(leading.pieces)
     indent: list[TriviaPiece] = []
     if lines and not any(isinstance(p, NewlineNode) for p in lines[-1]):
         last = lines[-1]
-        # Only treat as indent if it has no comment.
         if not any(isinstance(p, CommentNode) for p in last):
             indent = last
             lines = lines[:-1]
@@ -242,9 +220,8 @@ def _split_attached_block(
 def _read_leading_block(c: Container, slot: Slot) -> tuple[str | None, ...]:
     """Decoded leading block of ``slot``.
 
-    Comment-bearing lines decode to their text; blank or whitespace-only
-    lines become ``None``.  The slot's own trailing indent line (if any)
-    is excluded.
+    Comment lines decode to text, blank/whitespace-only lines become
+    ``None``, and the slot's own trailing indent is excluded.
     """
     del c
     above, attached, _indent = _split_attached_block(slot.leading)
@@ -257,9 +234,8 @@ def _write_leading_block(
 ) -> None:
     """Replace ``slot``'s leading with ``block``.
 
-    The slot's own trailing indent (column offset) is preserved.  Comment
-    lines re-use that indent as their prefix; blank lines are emitted as
-    a bare newline with no trailing whitespace.
+    Preserve the slot's column indent; comment lines reuse it and blank
+    lines emit a bare newline.
     """
     _above, _attached, indent = _split_attached_block(slot.leading)
     new_pieces: list[TriviaPiece] = []
@@ -298,9 +274,8 @@ def _validate_block_seq(value: object, name: str) -> tuple[str | None, ...]:
 def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
     """Return only the *attached* run of comment-bearing lines.
 
-    The "attached" run is the contiguous block immediately above
-    the slot — comments separated by a blank line are considered
-    preamble or archived blocks and are excluded.
+    Comments separated by a blank line are preamble or archived blocks
+    and are excluded.
     """
     _above, attached, _indent = _split_attached_block(leading)
     return _lines_to_comments(attached)
@@ -355,16 +330,12 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
 class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
     """Mapping view over the full leading-trivia block of each direct key.
 
-    Entries are tuples of comment strings and ``None`` (one ``None`` per
-    blank line), in source order; the slot's own column indent is not
-    included.  This is the full-fidelity peer of
-    :class:`LeadingCommentView`, which only exposes the trailing attached
-    block.  Writing replaces the entire leading; the slot's indent is
-    re-applied to each comment line and to the slot itself.
+    Entries are source-order comment strings and ``None`` for blank
+    lines; the slot's own column indent is excluded and re-applied on
+    write. This is the full-fidelity peer of :class:`LeadingCommentView`.
 
-    For the document's head slot the above-blank region (preamble) is
-    disjoint from this view: it is exposed and mutated via
-    :attr:`Document.preamble` instead.
+    The document head preamble is disjoint and lives on
+    :attr:`Document.preamble`.
     """
 
     __slots__ = ()
@@ -407,9 +378,8 @@ class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
 def _header_slot(c: Container) -> StructuralHeaderSlot | None:
     """Return the StructuralHeaderSlot for a section container, or raise.
 
-    Raises TOMLError on inline tables (no header to attach a comment to).
-    Returns None if this container has no own header (document root /
-    purely-implicit container).
+    Inline tables raise because they have no header; document roots and
+    purely implicit containers return ``None``.
     """
     if c._inline:  # noqa: SLF001
         msg = "header comment API is not available on inline tables"
@@ -427,9 +397,8 @@ def _header_comment_get(c: Container) -> str | None:
     h = _header_slot(c)
     if h is None:
         # No header line means no header comment; mirror the empty
-        # state of an explicit section that simply has no comment.
-        # Setters still raise — silently dropping a write would be a
-        # footgun.
+        # state of an explicit section. Setters still raise; silently
+        # dropping a write would be a footgun.
         return None
     eol = h.eol
     if eol.comment is None:
@@ -520,9 +489,8 @@ def _lines_to_comments(lines: Iterable[Iterable[TriviaPiece]]) -> tuple[str, ...
 def _set_attached_block(leading: Trivia, comments: tuple[str, ...], nl: str) -> None:
     """Replace the attached comment block on ``leading`` with ``comments``.
 
-    Preserves any preamble / archived blocks above any blank-line
-    separator and re-applies the slot's own indent before each new
-    comment line and the slot itself.
+    Preserve preamble/archived blocks and reapply the slot's indent to
+    each new comment line and the slot itself.
     """
     above, _attached, indent = _split_attached_block(leading)
     kept: list[TriviaPiece] = []

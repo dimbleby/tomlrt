@@ -1,34 +1,18 @@
-"""Structural mutation primitives for inline-array / inline-table values.
+"""Mutate inline-array / inline-table item lists structurally.
 
-This module owns the operations that splice items into or out of a
-:class:`tomlrt._values.CommaValue` while keeping the canonical layout
-invariants (per-item trivia ownership, one-row-break-per-row, EOL
-section attachment, trailing-comma policy). It is the structural
-counterpart to :mod:`tomlrt._format`, which owns the *canonicalisation*
-of an existing layout to a chosen shape.
+All structural changes to a :class:`tomlrt._values.CommaValue` pass
+through this module so the canonical model stays central: per-item
+trivia ownership, ``header_trivia`` / ``final_trivia`` bracket-pad
+attachment, one-row-break-per-row, EOL section placement, and
+trailing-comma policy. :mod:`tomlrt._format` is the counterpart that
+canonicalises an existing layout without changing structure.
 
-The public surface is intentionally small:
+The small public surface covers append, removal, reorder, comma-state
+flips, and EOL-section helpers for arrays and inline tables.
 
-* :func:`splice_in` — append one item.
-* :func:`splice_out_tail` — promote a previously-internal
-  item to terminal after its successor has been spliced out.
-* :func:`splice_out_head` — promote a previously-internal
-  item to head after the original head has been spliced out.
-* :func:`splice_out` — splice out a set of owned
-  indices and run the head / tail / inter-item fix-ups.
-* :func:`reorder_owned` — permute a set of owned indices
-  in place.
-
-Inline-array (`tomlrt._array.Array`) and inline-table
-(`tomlrt._inline_ops`) mutation both drive every structural change
-through these helpers, so a future change to the canonical model only
+Inline-array and inline-table mutation both drive structural changes
+through these helpers, so a future change to the comma-value model only
 needs to land here.
-
-Supporting primitives — :func:`flip_to_internal` / :func:`flip_to_terminal`
-and the EOL section helpers :func:`_take_eol` / :func:`_put_eol` /
-:func:`_item_has_eol` / :func:`_normalise_row_breaks` — also live here
-and are exported for the few :mod:`tomlrt._format` canonicalisation
-paths that need them.
 """
 
 from __future__ import annotations
@@ -76,7 +60,7 @@ _CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
 
 
 def _row_terminated(item: CommaItem) -> bool:
-    """True if the item's own row already carries its terminating newline.
+    """Return whether the item's own row carries its terminating newline.
 
     Otherwise the break is downstream, in the next item's leading (or
     ``final_trivia`` for the tail). Comma placement never enters into it.
@@ -87,7 +71,7 @@ def _row_terminated(item: CommaItem) -> bool:
 def _take_eol(item: CommaItem) -> Trivia:
     """Split out and return the item's row-attached EOL section.
 
-    On return the item holds only the structural rest in that channel.
+    The item keeps only the structural rest in that channel.
     """
     channel = item_eol_channel(item)
     eol, rest = split_eol_section(channel)
@@ -168,16 +152,10 @@ def _normalise_row_breaks(
 def flip_to_internal(item: CommaItem) -> None:
     """Make ``item`` look like an internal (non-last) item.
 
-    Under the canonical model the inter-item separator lives in the
-    NEXT item's leading; this function only ensures the comma is set
-    and carries any EOL comment across the channel flip (trailing →
-    post_comma_trivia) so the comma stays immediately after the
-    value and the comment after the comma. No-op if the item already
-    has a comma.
-
-    Shared between the inline-array append path and the inline-table
-    append path, both of which transition a previously-terminal item
-    into an internal item when a new item is being appended.
+    The inter-item separator belongs to the next item's leading; this
+    only sets comma state and carries any EOL comment across the
+    ``trailing`` → ``post_comma_trivia`` channel flip so the comma renders
+    before the comment. No-op if the item already has a comma.
     """
     if item.has_comma:
         return
@@ -187,7 +165,11 @@ def flip_to_internal(item: CommaItem) -> None:
 
 
 def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
-    """Make ``item`` look like the terminal (last) item per style."""
+    """Make ``item`` look like the terminal item for ``style``.
+
+    Trailing-comma style keeps existing ``post_comma_trivia`` intact;
+    no-trailing style moves any EOL section back to ``trailing``.
+    """
     if style.trailing_comma:
         if not item.has_comma:
             eol = _take_eol(item)
@@ -212,11 +194,10 @@ def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
 
 @dataclass(slots=True, frozen=True)
 class CommaStyle:
-    """Inferred layout policy for an inline array or inline table.
+    """Hold inferred layout policy for inline array/table append paths.
 
-    Used by both the inline-array and inline-table append paths to
-    decide where the new item goes, how the previous-last is flipped
-    to internal, and whether the new last carries a trailing comma.
+    Carries the inter-item separator, whether the value is multi-line,
+    and whether the terminal item should keep a trailing comma.
     """
 
     is_multiline: bool
@@ -230,9 +211,9 @@ def detect_style(
 ) -> CommaStyle:
     """Infer a :class:`CommaStyle` for ``value`` (or for a fresh value).
 
-    The inter-item separator is sampled from ``items[1].leading``; a
-    multi-line value that can't (single item, or a comma-first peer with
-    an empty leading) falls back to :func:`_canonical_separator`.
+    The inter-item separator is sampled from ``items[1].leading``. A
+    multi-line value that cannot sample one (single item, or a comma-first
+    peer with empty leading) falls back to :func:`_canonical_separator`.
     """
     if value is None:
         return CommaStyle(
@@ -273,7 +254,7 @@ def _first_indent_after_newline(trivia: Trivia) -> str:
 
 
 def _value_newline(value: CommaValue[Any]) -> str:
-    """The newline text ``value`` uses (sampled from its bracket pads)."""
+    """Return the newline text sampled from ``value`` bracket pads."""
     for trivia in (value.header_trivia, value.final_trivia):
         for p in trivia.pieces:
             if isinstance(p, NewlineNode):
@@ -282,7 +263,7 @@ def _value_newline(value: CommaValue[Any]) -> str:
 
 
 def _canonical_separator(value: CommaValue[Any]) -> Trivia:
-    """Fallback inter-item separator: a newline + the value's own indent."""
+    """Return the fallback inter-item newline plus value indent."""
     indent = (
         _first_indent_after_newline(value.header_trivia)
         or indent_from_final_trivia(value.final_trivia)
@@ -295,7 +276,7 @@ def _canonical_separator(value: CommaValue[Any]) -> Trivia:
 def _row_break(
     value: CommaValue[Any], existing: Sequence[TriviaPiece]
 ) -> list[TriviaPiece]:
-    """Row break to prepend to ``existing``; adds indent only if it has none."""
+    """Return a row break to prepend, adding indent only if none exists."""
     if existing and isinstance(existing[0], WhitespaceNode):
         return [NewlineNode(text=_value_newline(value))]
     return list(_canonical_separator(value).pieces)
@@ -304,11 +285,9 @@ def _row_break(
 def migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, Trivia]:
     """Migrate any above-bracket comment block onto a new item's leading.
 
-    An above-block in ``header_trivia`` / ``final_trivia`` (the
-    structural row(s) between the bracket and the next/last item)
-    conceptually belongs to the item below it. When a new boundary
-    item is being inserted or appended, the block migrates from the
-    bracket pad onto that item's leading.
+    An above-block in ``header_trivia`` / ``final_trivia`` conceptually
+    belongs to the item below it. Inserting a boundary item moves that
+    block from the bracket pad onto the item's leading.
 
     Returns ``(new_bracket, new_leading)``.
     """
@@ -329,21 +308,12 @@ def splice_in(
 ) -> None:
     """Append ``new_item`` to ``cv`` honouring ``style``.
 
-    Shared orchestration for inline arrays and inline tables. The
-    caller is responsible for constructing ``new_item`` of the
-    appropriate concrete type (``ArrayItem`` for an array,
-    ``InlineTableEntry`` for an inline table) and for computing the
-    appropriate ``style`` (typically via :func:`detect_style`).
-
-    Empty case: reframes the bracket pad so the new item sits on its
-    own canonical row, stamping the value's canonical single-line pad
-    (one space for inline tables, none for arrays) when no pad survives,
-    then flips it to terminal-per-style.
-
-    Non-empty case: migrates any above-bracket comment block onto the
-    new item's leading, flips the previous-last to internal, appends,
-    flips the new item to terminal-per-style, and renormalises the
-    row-break invariant.
+    The caller supplies the concrete item (``ArrayItem`` or
+    ``InlineTableEntry``) and style. Empty values reframe bracket pads for
+    the first item, preserving canonical single-line inner pad when no
+    authored pad survives. Non-empty values migrate above-bracket comments
+    to the new item's leading, flip the old tail internal, make the new
+    item terminal, and restore row-break invariants.
     """
     items = cv.items
     if not items:
@@ -373,23 +343,14 @@ def splice_out_tail(
 ) -> None:
     """Re-terminalise the new last item after a tail removal.
 
-    Both inline-array tail-delete and inline-table tail-delete face
-    the same transition: the previous tail has been spliced out, and
-    the item that was internal is now the new tail.
+    The former internal tail adopts the removed tail's comma policy while
+    its row-attached EOL section survives the
+    ``post_comma_trivia``/``trailing`` channel flip. No-op when empty;
+    caller owns empty bracket-pad cleanup.
 
-    Steps (mirroring :func:`splice_in` in reverse):
-      * take the entry-attached EOL section off the new tail (it
-        currently lives in ``post_comma_trivia`` because the entry
-        was internal);
-      * adopt the removed entry's trailing-comma policy on the new
-        tail and clear its now-stale ``post_comma_trivia``;
-      * put the EOL section back, routed to ``trailing`` or
-        ``post_comma_trivia`` per the new ``has_comma`` state;
-      * renormalise the row-break invariant.
-
-    No-ops when ``cv.items`` is empty (the caller's
-    ``strip_trailing_indent`` or equivalent handles the no-item
-    canonical form).
+    This mirrors ``splice_in`` in reverse: the item was internal, so its
+    EOL section may currently live after its comma; terminalising may move
+    that section back before the (now absent) comma.
     """
     items = cv.items
     if not items:
@@ -408,16 +369,10 @@ def splice_out_head(
 ) -> None:
     """Migrate the above-block of the new first item into ``header_trivia``.
 
-    After deleting the original head item(s), the item that is now
-    ``items[0]`` was previously internal; its ``leading`` still
-    carries the inter-item separator plus any above-item comment
-    block that conceptually belonged above it. Under the canonical
-    model ``items[0].leading`` is always empty and the above-block
-    above the first item lives in ``header_trivia``. This helper
-    completes the migration: the caller has already extracted the
-    above-block (before deletion, via :func:`split_item_above` on
-    the soon-to-be-new-first item's leading); we splice it into
-    ``header_trivia`` and reset ``items[0].leading``.
+    After head deletion, new item 0 was internal and still has separator
+    plus above-item comments in leading. The canonical model keeps item 0
+    leading empty and stores the above-block in ``header_trivia``; caller
+    passes the pre-extracted block.
     """
     if not cv.items:
         return
@@ -436,29 +391,14 @@ def splice_out(
 ) -> None:
     """Splice out ``removed_indices`` and run the boundary fixups.
 
-    Shared orchestration for inline-array tail/head/internal removal
-    (``Array.__delitem__``) and inline-table key / dotted-prefix
-    removal (``_inline_ops.delete_entry``). The caller is responsible
-    for the kind-specific logic that *finds* the indices to remove
-    (slice-vs-int normalisation for arrays, key / prefix lookup for
-    inline tables) and for any associated logical-view bookkeeping
-    (decoded ``list`` / ``dict`` removal).
-
-    Steps:
-      * snapshot the above-block of the soon-to-be-new-first item
-        when position 0 is among ``removed_indices`` (so the
-        canonical "above-block of item 0 lives in header_trivia"
-        invariant can be restored after the splice);
-      * capture the about-to-be-removed tail's ``has_comma`` policy
-        (so the new tail can adopt it);
-      * pop the removed indices from ``cv.items`` in reverse order;
-      * if no items remain, call :func:`strip_trailing_indent` to
-        canonicalise the empty bracket pad (unless
-        ``strip_when_empty`` is False — used by callers that own a
-        different empty-canonicalisation policy);
-      * else dispatch to :func:`splice_out_head` /
-        :func:`splice_out_tail` /
-        :func:`_normalise_row_breaks` as appropriate.
+    Shared removal orchestration for inline arrays and inline-table
+    entries; callers own index discovery (slice/int normalisation for
+    arrays, key/prefix lookup for inline tables) and logical-view updates.
+    Head removal snapshots the new-first above-block so the "item 0
+    above-block lives in ``header_trivia``" invariant is restored. Tail
+    removal transfers the removed tail's comma policy to the new tail.
+    Empty values use :func:`strip_trailing_indent` unless the caller
+    supplies a different policy.
 
     ``removed_indices`` must be a list of valid distinct indices into
     ``cv.items`` (not necessarily sorted on input; sorted internally).
@@ -512,30 +452,19 @@ def reorder_owned(
 ) -> None:
     """Reorder ``owned_positions`` within ``cv.items`` in place.
 
-    Positional-preserve strategy shared by inline arrays (where every
-    position is owned) and inline tables (where the caller may be a
-    dotted-inner navigator with foreign entries interspersed). The
-    split between positional state (stays at the position) and
-    entry-attached state (travels with the entry) is:
+    Shared positional-preserve strategy for arrays and dotted-inner
+    inline-table navigators. State splits as follows:
 
-      * **Positional**: structural pad (the part of ``leading`` —
-        or ``header_trivia`` for position 0 — before any above-item
-        comment block), ``has_comma``, ``post_comma_trivia``,
-        ``trailing``.
-      * **Entry-attached**: above-item comment block, row-attached
-        EOL section.
+    * positional: structural pad, comma state, post-comma trivia, trailing
+      trivia;
+    * entry-attached: above-item comment blocks and row-attached EOL
+      sections.
 
-    ``owned_positions`` is a strictly ascending list of indices into
-    ``cv.items`` that are subject to reordering; non-owned positions
-    are left untouched. ``new_owned`` is the permutation: the entry
-    to place at each owned position, in the same order. Both lists
-    must have equal length, and ``new_owned`` must be a permutation
-    of ``cv.items[i]`` for ``i in owned_positions``.
-
-    Bracket trivia (``header_trivia`` / ``final_trivia``) is
-    untouched, so above-bracket comment blocks survive the reorder
-    at their structural position. No-op for fewer than two owned
-    positions.
+    ``owned_positions`` is strictly ascending and foreign positions stay
+    untouched. ``new_owned`` is the matching permutation. Bracket trivia
+    (``header_trivia`` / ``final_trivia``) is untouched, so above-bracket
+    comments stay at their structural position. No-op for fewer than two
+    owned positions.
     """
     if len(owned_positions) <= 1:
         return

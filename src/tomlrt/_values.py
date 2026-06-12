@@ -1,14 +1,8 @@
-"""Value types — the inline-value layer.
+"""Represent byte-exact inline TOML values.
 
-Every TOML value (scalar, inline array, inline table) is one of
-these. They are pure data: no document/slot stream awareness.
-
-Each scalar carries its source ``lexeme`` together with the
-decoded Python value so that re-emission is byte-exact.
-
-`ArrayValue` and `InlineTableValue` carry their full internal
-layout (every separator, comment, and whitespace run) for the
-same reason.
+Values are pure data with no slot-stream awareness. Scalars carry their
+source ``lexeme``; arrays and inline tables carry every separator,
+comment, and whitespace run needed for exact re-emission.
 """
 
 from __future__ import annotations
@@ -155,12 +149,8 @@ class CommaItem:
     """One slot inside a comma-separated value.
 
     Layout: ``leading value trailing [comma post_comma_trivia]``.
-    Shared base of the two concrete leaves: `ArrayItem` (bare value,
-    used by `ArrayValue`) and `InlineTableEntry` (with a ``key = ``
-    prefix, used by `InlineTableValue`). The two leaves are siblings,
-    not parent/child — annotate with `CommaItem` when working
-    polymorphically over both, and with the concrete leaf when the
-    caller is flavour-specific.
+    Shared base of sibling leaves `ArrayItem` and `InlineTableEntry`;
+    use `CommaItem` only at polymorphic call sites.
     """
 
     leading: Trivia
@@ -178,21 +168,15 @@ class CommaItem:
 
 @dataclass(slots=True, eq=False)
 class ArrayItem(CommaItem):
-    """One bare-value slot inside an inline array.
-
-    Adds no fields over `CommaItem`; exists as a distinct concrete
-    leaf so `ArrayValue.items: list[ArrayItem]` narrows away
-    `InlineTableEntry` at the type level.
-    """
+    """Represent one bare-value slot inside an inline array."""
 
 
 @dataclass(slots=True, eq=False)
 class InlineTableEntry(CommaItem):
     """One ``key = value`` slot inside an inline table.
 
-    Extends `CommaItem` with the key prefix. The shared trivia +
-    comma machinery lives on the base; only the key-prefix fields
-    and the keyed-form `render` are added here.
+    The shared trivia/comma machinery lives on `CommaItem`; this leaf
+    adds only the key-prefix fields and keyed rendering.
     """
 
     key_parts: list[KeyPart] = field(kw_only=True)
@@ -202,12 +186,8 @@ class InlineTableEntry(CommaItem):
     key_path: tuple[str, ...] = field(kw_only=True)
     """Decoded dotted-key path.
 
-    Set by every construction site (parser, mutation, synthesis). The
-    parser passes the tuple it already built for inline-key conflict
-    detection; mutation paths pass the path they were given. Read by
-    ``_validator._register_inline_table`` and
-    ``_build._decode_inline_table`` (also reached via cross-document
-    clone of inline-table entries).
+    Set by every construction site and read by inline-table validation,
+    decoding, and cross-document cloning.
     """
 
     def render_key(self) -> str:
@@ -225,12 +205,6 @@ class InlineTableEntry(CommaItem):
         return out
 
 
-# Any per-item shape — bare `ArrayItem` or keyed `InlineTableEntry`.
-# `CommaItem` is the real base class of both; use it at call sites
-# that are polymorphic over the two flavours, and use the concrete
-# leaf where the code is flavour-specific.
-
-
 _ItemT = TypeVar("_ItemT", bound=CommaItem)
 
 
@@ -238,25 +212,18 @@ _ItemT = TypeVar("_ItemT", bound=CommaItem)
 class CommaValue(Generic[_ItemT]):
     """Shared backbone of `ArrayValue` and `InlineTableValue`.
 
-    Trivia ownership (canonical model):
-      - ``header_trivia`` owns the gap immediately after the opening
-        bracket and before the first item — bracket pad / leading
-        newline / indent / interior comments above item 0.
+    Canonical trivia ownership:
+      - ``header_trivia`` owns the gap after the opening bracket and
+        before item 0: bracket pad, leading newline, indent, comments.
       - ``items[0].leading`` is always empty.
-      - ``items[k].leading`` (k >= 1) owns the entire physical gap
-        before items[k]: structural newline + indent + above-item
-        comment block + indent before the value.
+      - ``items[k].leading`` (k >= 1) owns the physical gap before
+        item k, including structural newline, indent, and above-block.
       - ``items[k].post_comma_trivia`` carries only the row-attached
-        EOL section: same-line whitespace + EOL comment + the
-        terminating newline of that comment row.  Empty if no EOL
-        comment.
+        EOL section: same-line whitespace, comment, and row newline.
       - ``final_trivia`` owns the gap before the closing bracket
-        (bracket pad / trailing newline). For an empty value this is
-        the only place interior trivia can live.
+        and is the only interior owner for an empty value.
 
-    Concrete subclasses bind ``_ItemT`` to the item flavour they hold
-    and set ``_open`` / ``_close`` ClassVars to the appropriate
-    brackets.
+    Concrete subclasses bind ``_ItemT`` and set the bracket ClassVars.
     """
 
     items: list[_ItemT] = field(default_factory=list)
@@ -308,11 +275,7 @@ Value = (
 
 
 def item_breaks_before_comma(item: CommaItem) -> bool:
-    """True iff the row break (and any EOL comment) precedes the comma.
-
-    The single canonical test for the comma-first / leading-comma
-    layout.
-    """
+    """Return whether the row break and any EOL comment precede the comma."""
     return item.has_comma and trivia_has_newline(item.trailing)
 
 
@@ -343,11 +306,8 @@ def inter_item_separator(items: Sequence[CommaItem]) -> Trivia:
 def value_is_multiline(v: ArrayValue | InlineTableValue) -> bool:
     """Shape detection: any structural ``NewlineNode`` inside means multi-line.
 
-    Inspects every trivia region that can hold a structural newline
-    under the canonical model (``header_trivia`` / ``final_trivia`` /
-    per-item ``leading`` / ``trailing`` / ``post_comma_trivia``).
-    Sufficient and correct independent of which subset of those
-    regions actually carries the row breaks in a given layout.
+    Inspect every trivia region that can carry a row break under the
+    canonical model; layouts differ in which channel owns it.
     """
     if trivia_has_newline(v.header_trivia) or trivia_has_newline(v.final_trivia):
         return True
@@ -364,13 +324,9 @@ def value_is_multiline(v: ArrayValue | InlineTableValue) -> bool:
 def retarget_value_newlines(v: Value, target: str) -> None:
     """Recursively rewrite every ``NewlineNode.text`` under ``v`` to ``target``.
 
-    Walks the trivia inside ``ArrayValue`` / ``InlineTableValue``
-    containers (header / final / per-item) and recurses into nested
-    values. Scalar values have no trivia and are no-ops.
-
-    Multi-line string content lives in ``StringValue.lexeme``, NOT
-    in ``NewlineNode``, so this walk preserves any literal CR/LF
-    bytes inside string values.
+    Scalar values have no trivia. Multi-line string content lives in
+    ``StringValue.lexeme``, not ``NewlineNode``, so literal CR/LF bytes
+    inside strings are preserved.
     """
     if not isinstance(v, CommaValue):
         return

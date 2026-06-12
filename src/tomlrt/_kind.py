@@ -1,10 +1,7 @@
 """The shape a `Container` (Document or Table) is in.
 
-This lives in its own leaf module so that both `_container.py`
-(which derives `_kind` from existing flags) and `_inline_ops.py`
-(which dispatches on it) can import the enum without running into
-the existing circular import: `_container` imports `_inline_ops`
-at module top, so `_inline_ops` cannot import from `_container`.
+This leaf module lets `_container.py` and `_inline_ops.py` share the
+enum without worsening their existing circular import.
 """
 
 from __future__ import annotations
