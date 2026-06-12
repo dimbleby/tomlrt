@@ -642,8 +642,10 @@ class Container(dict[str, Any]):
         header-bearing sections clone slots; a whole attached
         ``Document`` clones its body under a synthesised header (so body
         comments and inline pad survive); attached implicit sources
-        recurse via ``_install_attached_subtree``; detached/private
-        sources rehome in place.
+        recurse via ``_install_attached_subtree``. A private orphan is
+        rehomed in place — its slots move into the document, preserving
+        identity and trivia; a truly detached source (no slots) is
+        synthesised.
         """
         src_root = value._layout_root
         live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
@@ -662,7 +664,15 @@ class Container(dict[str, Any]):
                 _install_attached_subtree(self, (key,), value)
             return
         if src_root is not None and src_root._is_private:  # noqa: SLF001
-            _reset_table_for_rehome(value)
+            # Private orphan with intact slots: move the slots into the
+            # document so identity and trivia both survive. A header-bearing
+            # section (an AoT entry is normalised to a plain section) moves
+            # its block; a header-less implicit section moves its dotted KVs.
+            if value._header_ref is not None:
+                _layout_ops.adopt_private_section(self, key, value)
+            else:
+                _layout_ops.adopt_private_implicit(self, key, value)
+            return
         _layout_ops.attach_section_at(self, (key,), value)
 
     def _scalar_replace(self, key: str, value: Any) -> None:

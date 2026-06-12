@@ -1125,7 +1125,6 @@ def test_self_overlap_assign_replaces_with_child_block() -> None:
     assert out == td("""
         [a]
         y = 2
-
         [[a.list]]
         n = 1
         """)
@@ -4400,3 +4399,203 @@ def test_reassign_only_section_with_aot_child() -> None:
         glob = "g"
         """)
     assert _reparses(tomlrt.dumps(doc)) == {"x": {"a": 99, "files": [{"glob": "g"}]}}
+
+
+def test_reassign_orphan_section_preserves_trivia() -> None:
+    """Reassigning a detached section keeps its comments and value style.
+
+    A detached ("private orphan") section is rehomed by moving its
+    existing slots into the document, not by rebuilding from values, so
+    standalone comments, string style, number format, and inline-array
+    pad all survive — and the key rename (``b`` -> ``b2``) is applied.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+
+        [b]
+        # why lit
+        lit = 'literal'
+        hex = 0xFF
+        vals = [ "p", "q" ]
+        """)
+    )
+    held = doc["b"]
+    del doc["b"]
+    doc["b2"] = held
+    assert doc["b2"] is held  # identity preserved
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+
+        [b2]
+        # why lit
+        lit = 'literal'
+        hex = 0xFF
+        vals = [ "p", "q" ]
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {
+        "a": {"x": 1},
+        "b2": {"lit": "literal", "hex": 255, "vals": ["p", "q"]},
+    }
+
+
+def test_reassign_orphan_section_keeps_nested_identity_live() -> None:
+    """Nested child views survive the rehome with identity and live-attach."""
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        arr = [1, 2]
+
+        [a.sub]
+        m = 1
+        """)
+    )
+    held = doc["a"]
+    sub = held["sub"]
+    arr = held["arr"]
+    del doc["a"]
+    doc["a"] = held
+    assert doc["a"]["sub"] is sub
+    assert doc["a"]["arr"] is arr
+    sub["new"] = 9
+    arr.append(3)
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == {"a": {"arr": [1, 2, 3], "sub": {"m": 1, "new": 9}}}
+
+
+def test_reassign_orphan_section_with_detached_inline_edit() -> None:
+    """An inline child edited while detached keeps both the edit and trivia."""
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        inline = { x = 1 }
+        # keepme
+        plain = 5
+        """)
+    )
+    held = doc["a"]
+    it = held["inline"]
+    del doc["a"]
+    it["x"] = 2  # edit the detached inline child
+    doc["b"] = held
+    assert doc["b"]["inline"] is it
+    assert tomlrt.dumps(doc) == td("""
+        [b]
+        inline = { x = 2 }
+        # keepme
+        plain = 5
+        """)
+
+
+def test_reassign_orphan_section_repoints_array_nested_views() -> None:
+    """Views reached only through an array are re-pointed to the live doc.
+
+    The rehome walk must mirror the delete-side displacement walk, which
+    descends into array items; otherwise an inline table or array nested
+    inside an array item keeps a stale ``_layout_root`` after re-attach.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        arr = [ { x = 1 }, [10, 20] ]
+        """)
+    )
+    held = doc["a"]
+    item = held["arr"][0]
+    nested = held["arr"][1]
+    del doc["a"]
+    doc["a"] = held
+    assert doc["a"]["arr"][0] is item
+    assert doc["a"]["arr"][1] is nested
+    assert item._attached  # re-pointed to the live doc, not the orphan  # noqa: SLF001
+    assert nested._attached  # noqa: SLF001
+    item["x"] = 7
+    nested.append(30)
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"arr": [{"x": 7}, [10, 20, 30]]}}
+
+
+def test_reassign_implicit_orphan_section_preserves_trivia() -> None:
+    """A header-less (implicit, dotted) orphan section is moved, not rebuilt.
+
+    Its dotted KVs move into the document with the key prefix rebased,
+    keeping the dotted shape, comments, and value style. Nested
+    sub-sections keep their headers; identity and live-attach survive.
+    """
+    doc = tomlrt.loads(
+        td("""
+        a.x = 1
+        # keepme
+        a.deep.k = 0xFF
+        [a.sub]
+        m = 3
+        """)
+    )
+    held = doc["a"]
+    sub = held["sub"]
+    del doc["a"]
+    doc["b"] = held
+    assert doc["b"] is held
+    assert doc["b"]["sub"] is sub
+    assert tomlrt.dumps(doc) == td("""
+        b.x = 1
+        # keepme
+        b.deep.k = 0xFF
+        [b.sub]
+        m = 3
+        """)
+    held["new"] = 9
+    assert _reparses(tomlrt.dumps(doc)) == {
+        "b": {"x": 1, "deep": {"k": 255}, "new": 9, "sub": {"m": 3}}
+    }
+
+
+def test_reassign_aot_entry_orphan_as_section_preserves_trivia() -> None:
+    """A detached AoT entry reassigned as a section normalises and keeps trivia.
+
+    The ``[[a]]`` head normalises to ``[x]`` while comments and value
+    style survive; nested AoTs keep their ``[[..]]`` shape. Identity is
+    preserved.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[srv]]
+        # keepme
+        name = 'a'
+        hex = 0xFF
+        [[srv.sub]]
+        k = 1
+        """)
+    )
+    entry = doc["srv"][0]
+    del doc["srv"]
+    doc["x"] = entry
+    assert doc["x"] is entry
+    assert tomlrt.dumps(doc) == td("""
+        [x]
+        # keepme
+        name = 'a'
+        hex = 0xFF
+        [[x.sub]]
+        k = 1
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {
+        "x": {"name": "a", "hex": 255, "sub": [{"k": 1}]}
+    }
+
+
+def test_reassign_empty_implicit_orphan() -> None:
+    """An emptied implicit orphan re-attaches as an empty table."""
+    doc = tomlrt.loads(
+        td("""
+        a.x = 1
+        other = 2
+        """)
+    )
+    del doc["a"]["x"]  # a is now an empty implicit table
+    held = doc["a"]
+    del doc["a"]
+    doc["b"] = held
+    assert doc["b"] is held
+    assert _reparses(tomlrt.dumps(doc)) == {"other": 2, "b": {}}
