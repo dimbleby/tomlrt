@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.6] - 2026-06-13
+
 ### Fixed
 
 - Deleting the only content of an implicit table no longer makes the emptied
