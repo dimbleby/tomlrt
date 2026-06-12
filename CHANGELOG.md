@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the wrong table.
 - Filling a previously-empty inline table now pads the braces (`{ a = 1 }`) to
   match synthesis and `.format()`.
+- Assigning a parsed document or table into another document now keeps its
+  comments and formatting, instead of dropping them.
 
 ## [1.7.5] - 2026-06-11
 
