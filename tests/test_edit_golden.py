@@ -879,12 +879,13 @@ def test_cross_doc_table_assign_preserves_comments() -> None:
 
 
 def test_cross_doc_assign_whole_document() -> None:
-    """Assigning a whole ``Document`` as a value snapshots its full content.
+    """Assigning a whole ``Document`` grafts its body as a section.
 
-    Exercises the ``splen == 0`` branch in ``_clone_table_sections``: the
-    source's implicit pre-header entries must survive as dotted KVs under
-    the new host section, and any ``[X]`` / ``[[X]]`` sections must be
-    re-rooted under the destination key.
+    A header-less document gains a synthesised ``[wrap]`` header and its
+    entire slot stream is cloned verbatim beneath it: top-level KVs stay
+    KVs, and ``[s]`` / ``[[a]]`` sections re-root under the destination
+    key. Body trivia is preserved (here, the source's lack of blank
+    lines between sections survives).
     """
     src = td("""
         top = 1
@@ -899,23 +900,25 @@ def test_cross_doc_assign_whole_document() -> None:
     b["wrap"] = a
     out = tomlrt.dumps(b)
     assert out == td("""
-        wrap.top = 1
-        wrap.lit = "x"
-
+        [wrap]
+        top = 1
+        lit = "x"
         [wrap.s]
         x = 1
-
         [[wrap.a]]
         n = 1
         """)
+    assert _reparses(out) == {
+        "wrap": {"top": 1, "lit": "x", "s": {"x": 1}, "a": [{"n": 1}]}
+    }
 
 
 def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
     """Source table backed solely by ancestor dotted KVs (no own header).
 
-    Exercises the ``host is None`` branch in ``_clone_table_sections``:
-    the source's contents live entirely as dotted KVs under an ancestor
-    section, so the cloned block has to synthesise a host section.
+    The source's contents live entirely as dotted KVs under an ancestor
+    section; the graft re-keys them under the destination key, preserving
+    their dotted (header-less) shape.
     """
     src = td("""
         [a]
@@ -934,14 +937,82 @@ def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
     assert _reparses(out) == {"x": {"c": 1, "d": 2}}
 
 
-def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
-    """Source has both a pre-header section and an own header at full_path.
+def test_cross_doc_implicit_table_graft_preserves_trivia() -> None:
+    """Grafting an implicit (dotted) table keeps its body trivia and style.
 
-    Exercises the branch where ``host`` is a cloned own-section (rather
-    than a freshly synthesised one) into which extras must be merged.
-    Achievable via the ``Document``-as-value path: the implicit
-    pre-header entries become extras, while a top-level ``[k]`` section
-    in the source clones to the host at the destination's ``[k]``.
+    An implicit table's leaf content lives in dotted keys hosted above
+    it; cloning each source slot's value + leading keeps standalone
+    comments, string style, number format, and inline-array pad that
+    re-synthesising from the logical value would drop. Sub-sections clone
+    too, and the source's header-less (dotted) shape is preserved.
+    """
+    d1 = tomlrt.loads(
+        td("""
+        a.x = 1
+        # why lit
+        a.lit = 'literal'
+        a.hex = 0xFF
+        a.vals = [ "p", "q" ]
+        [a.sub]
+        m = 3
+        """)
+    )
+    d2 = tomlrt.loads("[tool]\n")
+    d2["tool"]["z"] = d1["a"]
+    out = tomlrt.dumps(d2)
+    assert out == td("""
+        [tool]
+        z.x = 1
+        # why lit
+        z.lit = 'literal'
+        z.hex = 0xFF
+        z.vals = [ "p", "q" ]
+
+        [tool.z.sub]
+        m = 3
+        """)
+    assert _reparses(out) == {
+        "tool": {
+            "z": {
+                "x": 1,
+                "lit": "literal",
+                "hex": 255,
+                "vals": ["p", "q"],
+                "sub": {"m": 3},
+            }
+        }
+    }
+    # The graft is an independent snapshot.
+    d1["a"]["x"] = 999
+    assert _reparses(tomlrt.dumps(d2))["tool"]["z"]["x"] == 1
+
+
+def test_cross_doc_implicit_graft_into_implicit_parent() -> None:
+    """Grafting under an implicit destination parent re-hosts at its header.
+
+    The destination ``outer`` is itself header-less, so the dotted KVs
+    are hosted at the nearest header ancestor (the doc root) and keep
+    their leading comment.
+    """
+    d1 = tomlrt.loads("a.x = 1\n# c\na.y = 2\n")
+    d2 = tomlrt.loads("outer.k = 0\n")
+    d2["outer"]["z"] = d1["a"]
+    out = tomlrt.dumps(d2)
+    assert out == td("""
+        outer.k = 0
+        outer.z.x = 1
+        # c
+        outer.z.y = 2
+        """)
+    assert _reparses(out) == {"outer": {"k": 0, "z": {"x": 1, "y": 2}}}
+
+
+def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
+    """A whole ``Document`` with both pre-header KVs and an own section.
+
+    The pre-header ``pre = 1`` and the top-level ``[k]`` section both
+    clone under the synthesised destination ``[k]`` header (the source
+    ``[k]`` re-roots to ``[k.k]``), with body trivia preserved.
     """
     src = td("""
         pre = 1
@@ -953,12 +1024,88 @@ def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
     b["k"] = a
     out = tomlrt.dumps(b)
     assert out == td("""
-        k.pre = 1
-
+        [k]
+        pre = 1
         [k.k]
         x = 2
         """)
     assert _reparses(out) == {"k": {"pre": 1, "k": {"x": 2}}}
+
+
+def test_cross_doc_document_graft_preserves_comments_and_pad() -> None:
+    """Grafting a parsed standalone template preserves body trivia (#171).
+
+    Standalone (above-key) comments and inline-array bracket pad live
+    only in the source slot stream; cloning the document body verbatim
+    keeps them, where re-synthesising from values would drop them.
+    """
+    template = td("""
+        current = "0.0.0"
+        # Parse versions with an optional .devN suffix.
+        parse = "x"
+        serialize = [
+          "x",
+          "y",
+        ]
+        # When dev is "release", the suffix is omitted.
+        parts.dev.values = [ "0", "release" ]
+        """)
+    section = tomlrt.loads(template)
+    host = tomlrt.loads("[tool]\n")
+    host["tool"]["x"] = section
+    out = tomlrt.dumps(host)
+    assert out == td("""
+        [tool]
+
+        [tool.x]
+        current = "0.0.0"
+        # Parse versions with an optional .devN suffix.
+        parse = "x"
+        serialize = [
+          "x",
+          "y",
+        ]
+        # When dev is "release", the suffix is omitted.
+        parts.dev.values = [ "0", "release" ]
+        """)
+    assert _reparses(out) == {
+        "tool": {
+            "x": {
+                "current": "0.0.0",
+                "parse": "x",
+                "serialize": ["x", "y"],
+                "parts": {"dev": {"values": ["0", "release"]}},
+            }
+        }
+    }
+
+
+def test_cross_doc_assign_document_to_itself_snapshots() -> None:
+    """``doc[k] = doc`` grafts an independent snapshot, not a self-reference.
+
+    TOML cannot express a cycle, so the whole-document graft deep-clones
+    the body; later edits to the original must not touch the snapshot.
+    """
+    doc = tomlrt.loads("top = 1\n[s]\nx = 2\n")
+    doc["a"] = doc
+    doc["top"] = 99
+    doc["s"]["x"] = 77
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        top = 99
+        [s]
+        x = 77
+
+        [a]
+        top = 1
+        [a.s]
+        x = 2
+        """)
+    assert _reparses(out) == {
+        "top": 99,
+        "s": {"x": 77},
+        "a": {"top": 1, "s": {"x": 2}},
+    }
 
 
 def test_self_overlap_assign_replaces_with_child_block() -> None:
