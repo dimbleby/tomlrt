@@ -4323,3 +4323,80 @@ def test_section_overwrite_inside_aot_entry_preserves_position() -> None:
         [[a]]
         x = 2
         """)
+
+
+def test_reassign_section_keeps_aot_children_in_place() -> None:
+    """Overwriting a section keeps its AoT children under it, not at EOF (#172).
+
+    The structural-replace path reinstalls at the doc tail then moves the
+    installed block back to the anchor. The AoT child is rehomed via the
+    clone path; the install recorder must capture those cloned slots so
+    the whole block (header + body + AoT entries) relocates together,
+    rather than stranding the AoT after later sibling sections.
+    """
+    src = td("""
+        [tool.x]
+        a = 1
+
+        [[tool.x.files]]
+        glob = "./**/*.py"
+
+        [[tool.x.files]]
+        filename = "./pyproject.toml"
+        search = "old"
+
+        [tool.y]
+        b = 2
+
+        [tool.z]
+        c = 3
+        """)
+    doc = tomlrt.loads(src)
+    new_section = Table.section({"a": 99})
+    new_section["files"] = doc["tool"]["x"]["files"]
+    doc["tool"]["x"] = new_section
+    assert tomlrt.dumps(doc) == td("""
+        [tool.x]
+        a = 99
+
+        [[tool.x.files]]
+        glob = "./**/*.py"
+
+        [[tool.x.files]]
+        filename = "./pyproject.toml"
+        search = "old"
+
+        [tool.y]
+        b = 2
+
+        [tool.z]
+        c = 3
+        """)
+
+
+def test_reassign_only_section_with_aot_child() -> None:
+    """Overwriting the sole section (empty-doc reinstall) keeps the AoT under it.
+
+    Exercises the empty-doc insertion path during reinstall (the block is
+    spliced as the new doc head), which must still record every slot.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [x]
+        a = 1
+
+        [[x.files]]
+        glob = "g"
+        """)
+    )
+    new_section = Table.section({"a": 99})
+    new_section["files"] = doc["x"]["files"]
+    doc["x"] = new_section
+    assert tomlrt.dumps(doc) == td("""
+        [x]
+        a = 99
+
+        [[x.files]]
+        glob = "g"
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"x": {"a": 99, "files": [{"glob": "g"}]}}
