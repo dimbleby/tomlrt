@@ -3714,7 +3714,12 @@ def test_array_delete_shared_row_predecessor_keeps_separator() -> None:
         """),
     )
     del doc["a"][1]
-    assert tomlrt.dumps(doc) == "a = [\n  1, # x\n 3,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1, # x
+         3,
+        ]
+        """)
 
 
 def test_inline_table_append_preserves_blank_before_bracket() -> None:
