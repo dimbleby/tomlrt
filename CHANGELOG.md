@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   irregular layouts more cleanly: a displaced item is re-indented, deleting an
   end-of-line comment keeps an adjacent blank line, and a comment block above
   unindented items lines up at column zero.
+- Trailing whitespace after a comma no longer masks the row-terminating
+  newline, so editing or restructuring such a row no longer leaves a stray
+  space-only blank line.
 
 ## [1.7.6] - 2026-06-13
 

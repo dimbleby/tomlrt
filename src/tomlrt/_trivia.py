@@ -7,6 +7,10 @@ captures every byte needed for exact round-trips.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass(slots=True, eq=False)
@@ -69,6 +73,22 @@ def trivia_has_comment(t: Trivia) -> bool:
 def trivia_has_newline(t: Trivia) -> bool:
     """True iff ``t`` contains any ``NewlineNode`` piece."""
     return any(isinstance(p, NewlineNode) for p in t.pieces)
+
+
+def leading_break_index(pieces: Sequence[TriviaPiece]) -> int | None:
+    r"""Index of a row-terminating newline at the start of ``pieces``.
+
+    An optional leading whitespace run is skipped first, so trailing
+    whitespace from the previous row (``1,  \n``) does not mask the
+    break. Returns the ``NewlineNode``'s index, or ``None`` if the first
+    non-whitespace piece is not a newline.
+    """
+    k = 0
+    while k < len(pieces) and isinstance(pieces[k], WhitespaceNode):
+        k += 1
+    if k < len(pieces) and isinstance(pieces[k], NewlineNode):
+        return k
+    return None
 
 
 def split_lines(pieces: list[TriviaPiece]) -> list[list[TriviaPiece]]:
@@ -339,6 +359,7 @@ __all__ = [
     "WhitespaceNode",
     "indent_from_final_trivia",
     "join_above_block",
+    "leading_break_index",
     "line_has_comment",
     "line_has_newline",
     "restamp_bracket_pad_for_first",

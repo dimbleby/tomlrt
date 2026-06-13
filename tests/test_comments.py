@@ -3387,3 +3387,160 @@ def test_inline_leading_comment_on_zero_indent_item() -> None:
         }
         """,
     )
+
+
+def test_array_eol_trailing_ws_after_comma_no_blank_line() -> None:
+    # Item 0's row ends with whitespace after its comma. Stamping an EOL
+    # comment must not leave that stray whitespace behind as a blank,
+    # space-only line. ("@" marks the significant trailing whitespace.)
+    doc = tomlrt.loads(
+        td(
+            """
+            a = [
+              1,@@
+              2,
+            ]
+            """,
+        ).replace("@", " "),
+    )
+    doc["a"].comments[0] = "c"
+    assert tomlrt.dumps(doc) == td(
+        """
+        a = [
+          1, # c
+          2,
+        ]
+        """,
+    )
+
+
+def test_inline_eol_trailing_ws_after_comma_no_blank_line() -> None:
+    # Same trailing-whitespace gap for inline tables: the shared comma-edit
+    # machinery must drop the stray whitespace with the row terminator.
+    doc = tomlrt.loads(
+        td(
+            """
+            t = {
+              a = 1,@@
+              b = 2,
+            }
+            """,
+        ).replace("@", " "),
+    )
+    doc.table("t").comments["a"] = "c"
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+          a = 1, # c
+          b = 2,
+        }
+        """,
+    )
+
+
+def test_array_append_trailing_ws_after_comma_no_blank_line() -> None:
+    # A structural mutation re-runs _normalise_row_breaks. Item 0's row ends
+    # with whitespace after its comma; appending a new item must not be fooled
+    # into treating that row as unterminated and inserting a spurious blank
+    # line. The trailing whitespace is preserved (we are not editing that row).
+    doc = tomlrt.loads(
+        td(
+            """
+            a = [
+              1,@@
+              2,
+            ]
+            """,
+        ).replace("@", " "),
+    )
+    doc["a"].append(3)
+    assert tomlrt.dumps(doc) == td(
+        """
+        a = [
+          1,@@
+          2,
+          3,
+        ]
+        """,
+    ).replace("@", " ")
+
+
+def test_array_sort_trailing_ws_after_comma_no_blank_line() -> None:
+    # Reordering items also normalises row breaks; the trailing whitespace
+    # after the first row's comma must not spawn a blank line.
+    doc = tomlrt.loads(
+        td(
+            """
+            a = [
+              3,@@
+              1,
+              2,
+            ]
+            """,
+        ).replace("@", " "),
+    )
+    doc["a"].sort()
+    assert tomlrt.dumps(doc) == td(
+        """
+        a = [
+          1,@@
+          2,
+          3,
+        ]
+        """,
+    ).replace("@", " ")
+
+
+def test_inline_insert_trailing_ws_after_comma_no_blank_line() -> None:
+    # Same structural path for inline tables: inserting a new entry must not
+    # turn the trailing whitespace after the first comma into a blank line.
+    doc = tomlrt.loads(
+        td(
+            """
+            t = {
+              a = 1,@@
+              b = 2,
+            }
+            """,
+        ).replace("@", " "),
+    )
+    doc.table("t")["c"] = 3
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+          a = 1,@@
+          b = 2,
+          c = 3,
+        }
+        """,
+    ).replace("@", " ")
+
+
+def test_array_mutation_drops_redundant_break_with_trailing_ws() -> None:
+    # The closing-bracket gap (final_trivia) carries a redundant break: the
+    # last item already terminates its own row (it has an EOL comment), yet a
+    # blank line sits before "]". That blank line's newline is masked behind
+    # the row's trailing indent ("  \n"). A structural mutation must still see
+    # the break through the whitespace and collapse the blank line, rather than
+    # leaving a stray space-only line.
+    doc = tomlrt.loads(
+        td(
+            """
+            a = [
+              1,
+              2, # c
+            @@
+            ]
+            """,
+        ).replace("@", " "),
+    )
+    doc["a"].insert(0, 0)
+    assert tomlrt.dumps(doc) == td(
+        """
+        a = [
+          0,
+          1,
+          2, # c
+        ]
+        """,
+    )
