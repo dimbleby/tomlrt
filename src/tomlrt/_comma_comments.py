@@ -120,10 +120,20 @@ def set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) -> 
         NewlineNode(nl),
     ]
     target.pieces = [*new_eol, *rest.pieces]
-    if not existing_eol.pieces and not stripped:
-        nxt = downstream_break_holder(value, idx)
-        if nxt.pieces and isinstance(nxt.pieces[0], NewlineNode):
-            nxt.pieces = list(nxt.pieces[1:])
+    if existing_eol.pieces or stripped:
+        return
+    nxt = downstream_break_holder(value, idx)
+    if nxt.pieces and isinstance(nxt.pieces[0], NewlineNode):
+        # The next item already starts a fresh line; the comment's own
+        # newline replaces that break.
+        nxt.pieces = list(nxt.pieces[1:])
+    else:
+        # The next item shared this row: the comment forces a break, so
+        # re-indent it to the value's indent instead of the old separator.
+        rest_pieces = list(nxt.pieces)
+        while rest_pieces and isinstance(rest_pieces[0], WhitespaceNode):
+            rest_pieces.pop(0)
+        nxt.pieces = [WhitespaceNode(value_indent(value)), *rest_pieces]
 
 
 def del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
@@ -139,12 +149,9 @@ def del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
         # comment) and leave the next item alone.
         item.trailing = Trivia([NewlineNode(nl), *rest.pieces])
         return True
-    target.pieces = list(rest.pieces)
-    # Canonical inverse: restore the structural NL onto the downstream
-    # holder so the closing layout still has its row break.
-    nxt = downstream_break_holder(value, idx)
-    if not (nxt.pieces and isinstance(nxt.pieces[0], NewlineNode)):
-        nxt.pieces = [NewlineNode(nl), *nxt.pieces]
+    # Keep this row's break on the item itself; the downstream holder
+    # (a blank line, the next item's indent, ...) is left untouched.
+    target.pieces = [NewlineNode(nl), *rest.pieces]
     return True
 
 
@@ -192,7 +199,9 @@ def value_indent(value: CommaValue[_ItemT]) -> str:
         for p in reversed(tail.pieces):
             if isinstance(p, WhitespaceNode):  # pragma: no branch
                 return p.text
-    return "  "
+    # No item carries an indent: the items sit at column zero, so a comment
+    # block above them should too.
+    return ""
 
 
 def _render_above_block(
