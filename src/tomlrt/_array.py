@@ -23,11 +23,10 @@ from tomlrt._array_comments import (
     ArrayLeadingView,
 )
 from tomlrt._comma_ops import (
-    _normalise_row_breaks,
     detect_style,
-    migrate_bracket_above,
     reorder_owned,
     splice_in,
+    splice_insert,
     splice_out,
 )
 from tomlrt._errors import TOMLError
@@ -323,30 +322,12 @@ class Array(list[Any]):
         if i < 0:
             i = max(0, n + i)
         i = min(i, n)
-        items = self._value.items
         if i == n:
             self.append(value)
             return
         style = self._style()
-        if i == 0:
-            # Item-owned semantics: an above-block in header_trivia
-            # belongs to the item below it, so insert(0) migrates that
-            # block to items[1].leading and leaves structural pad behind.
-            new_item = _make_item(cst, has_comma=True)
-            self._value.header_trivia, items[0].leading = migrate_bracket_above(
-                self._value.header_trivia, style.inter_separator
-            )
-            items.insert(0, new_item)
-        else:
-            # Internal insert: the displaced item keeps its existing
-            # leading (inter_sep plus any above-block).
-            new_item = _make_item(
-                cst, leading=style.inter_separator.copy(), has_comma=True
-            )
-            items.insert(i, new_item)
-        _normalise_row_breaks(
-            items, self._value, self._doc_newline, multiline=style.is_multiline
-        )
+        new_item = _make_item(cst, has_comma=True)
+        splice_insert(self._value, new_item, i, style, self._doc_newline)
         list.insert(self, i, decoded)
 
     @override

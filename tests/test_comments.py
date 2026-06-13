@@ -3439,10 +3439,11 @@ def test_inline_eol_trailing_ws_after_comma_no_blank_line() -> None:
 
 
 def test_array_append_trailing_ws_after_comma_no_blank_line() -> None:
-    # A structural mutation re-runs _normalise_row_breaks. Item 0's row ends
-    # with whitespace after its comma; appending a new item must not be fooled
-    # into treating that row as unterminated and inserting a spurious blank
-    # line. The trailing whitespace is preserved (we are not editing that row).
+    # A structural mutation maintains row breaks per boundary. Item 0's row
+    # ends with whitespace after its comma; appending a new item must not be
+    # fooled into treating that row as unterminated and inserting a spurious
+    # blank line. The trailing whitespace is preserved (we are not editing
+    # that row).
     doc = tomlrt.loads(
         td(
             """
@@ -3516,13 +3517,12 @@ def test_inline_insert_trailing_ws_after_comma_no_blank_line() -> None:
     ).replace("@", " ")
 
 
-def test_array_mutation_drops_redundant_break_with_trailing_ws() -> None:
-    # The closing-bracket gap (final_trivia) carries a redundant break: the
-    # last item already terminates its own row (it has an EOL comment), yet a
-    # blank line sits before "]". That blank line's newline is masked behind
-    # the row's trailing indent ("  \n"). A structural mutation must still see
-    # the break through the whitespace and collapse the blank line, rather than
-    # leaving a stray space-only line.
+def test_array_mutation_preserves_blank_before_bracket_with_trailing_ws() -> None:
+    # The closing-bracket gap (final_trivia) carries a deliberate blank line
+    # after a self-terminated item (it has an EOL comment), and that blank
+    # line's newline is masked behind the row's trailing indent ("  \n"). A
+    # structural mutation must preserve the blank line (we are
+    # format-preserving) rather than collapsing it or leaving a stray break.
     doc = tomlrt.loads(
         td(
             """
@@ -3541,6 +3541,219 @@ def test_array_mutation_drops_redundant_break_with_trailing_ws() -> None:
           0,
           1,
           2, # c
+        @@
         ]
         """,
+    ).replace("@", " ")
+
+
+def test_array_append_preserves_blank_before_bracket() -> None:
+    # A deliberate blank line before "]" (after a self-terminated item)
+    # survives an append; the new item lands above the blank.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1,
+          2, # c
+
+        ]
+        """),
     )
+    doc["a"].append(3)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+          2, # c
+          3,
+
+        ]
+        """)
+
+
+def test_array_append_preserves_interior_blank() -> None:
+    # A blank line between two existing items is untouched by an append at
+    # the tail; only the tail boundary changes.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1,
+
+          2,
+        ]
+        """),
+    )
+    doc["a"].append(3)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+
+          2,
+          3,
+        ]
+        """)
+
+
+def test_array_insert_interior_preserves_later_blank() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1,
+          2,
+
+          3,
+        ]
+        """),
+    )
+    doc["a"].insert(1, 9)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+          9,
+          2,
+
+          3,
+        ]
+        """)
+
+
+def test_array_insert_head_preserves_blank_before_bracket() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1,
+          2, # c
+
+        ]
+        """),
+    )
+    doc["a"].insert(0, 0)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          0,
+          1,
+          2, # c
+
+        ]
+        """)
+
+
+def test_array_delete_tail_preserves_blank_before_bracket() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1, # c
+          2,
+
+        ]
+        """),
+    )
+    del doc["a"][1]
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1, # c
+
+        ]
+        """)
+
+
+def test_array_delete_interior_preserves_blank_at_seam() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1,
+          2,
+
+          3,
+        ]
+        """),
+    )
+    del doc["a"][1]
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+
+          3,
+        ]
+        """)
+
+
+def test_array_sort_preserves_blank_position() -> None:
+    # The blank line is a positional pad: it stays at its boundary while the
+    # items are permuted around it.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          3,
+
+          1,
+          2,
+        ]
+        """),
+    )
+    doc["a"].sort()
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+
+          2,
+          3,
+        ]
+        """)
+
+
+def test_array_delete_shared_row_predecessor_keeps_separator() -> None:
+    # Deleting the predecessor of a shared-row item leaves that item's
+    # in-line separator (" ") in place: there is no downstream break to
+    # drop, so the item keeps its one-space lead. Best-effort, still valid.
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1, # x
+          2, 3,
+        ]
+        """),
+    )
+    del doc["a"][1]
+    assert tomlrt.dumps(doc) == "a = [\n  1, # x\n 3,\n]\n"
+
+
+def test_inline_table_append_preserves_blank_before_bracket() -> None:
+    doc = tomlrt.loads(
+        td("""
+        t = {
+          a = 1,
+          b = 2, # c
+
+        }
+        """),
+    )
+    doc["t"]["e"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          a = 1,
+          b = 2, # c
+          e = 3,
+
+        }
+        """)
+
+
+def test_inline_table_delete_preserves_blank_at_seam() -> None:
+    doc = tomlrt.loads(
+        td("""
+        t = {
+          a = 1,
+          b = 2,
+
+          c = 3,
+        }
+        """),
+    )
+    del doc["t"]["b"]
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+          a = 1,
+
+          c = 3,
+        }
+        """)

@@ -28,6 +28,10 @@ if sys.version_info >= (3, 12):
 else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
+from tomlrt._comma_ops import (
+    boundary_break_holder,
+    shift_pieces,
+)
 from tomlrt._comments import (
     _decode_comment,
     _encode_comment,
@@ -64,16 +68,6 @@ _ValueT = TypeVar("_ValueT")
 # ---------------------------------------------------------------------------
 # EOL comments
 # ---------------------------------------------------------------------------
-
-
-def _downstream_break_holder(value: CommaValue[_ItemT], idx: int) -> Trivia:
-    """Return the trivia that owns item ``idx``'s row break.
-
-    If the item has no EOL section, the break lives in the next item's
-    ``leading`` or, for the tail item, in ``final_trivia``.
-    """
-    items = value.items
-    return items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
 
 
 def _raw_eol_text(item: CommaItem) -> str | None:
@@ -123,13 +117,12 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
     target.pieces = [*new_eol, *rest.pieces]
     if existing_eol.pieces or stripped:
         return
-    nxt = _downstream_break_holder(value, idx)
-    nl_idx = leading_break_index(nxt.pieces)
-    if nl_idx is not None:
+    nxt = boundary_break_holder(value, idx + 1)
+    if leading_break_index(nxt.pieces) is not None:
         # The next item already starts a fresh line; the comment's own
-        # newline replaces that break, along with any stray trailing
-        # whitespace (``1,  \n``) that preceded it.
-        nxt.pieces = list(nxt.pieces[nl_idx + 1 :])
+        # newline replaces that break (a carried -1 boundary shift), along
+        # with any stray trailing whitespace (``1,  \n``) that preceded it.
+        nxt.pieces = shift_pieces(nxt.pieces, -1, nl)
     else:
         # The next item shared this row: the comment forces a break, so
         # re-indent it to the value's indent instead of the old separator.
