@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     )
 
 
-def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
+def _build_initial_containers(doc: Document, slots: list[Slot]) -> None:
     """Walk the slot stream and populate ``doc`` and its descendants.
 
     Threads the current header's host container through the loop so
@@ -361,8 +361,8 @@ def build_from_parse(result: ParseResult) -> Document:
         # ``trailing``; that's the preamble, not the epilogue.
         doc._preamble = result.trailing  # noqa: SLF001
         doc._trailing = Trivia()  # noqa: SLF001
-    build_initial_containers(doc, result.slots)
+    _build_initial_containers(doc, result.slots)
     return doc
 
 
-__all__ = ["build_from_parse", "build_initial_containers"]
+__all__ = ["build_from_parse"]

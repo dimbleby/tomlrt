@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     ErrorBuilder = Callable[..., TOMLParseError]
 
 
-HeaderKind = Literal["table", "aot-entry"]
+_HeaderKind = Literal["table", "aot-entry"]
 
 
 class _Validator:
@@ -64,7 +64,7 @@ class _Validator:
         return self._current_owner_aot_entry
 
     def enter_header(
-        self, path: tuple[str, ...], kind: HeaderKind, *, at: int
+        self, path: tuple[str, ...], kind: _HeaderKind, *, at: int
     ) -> AoTEntry | None:
         """Validate a ``[H]`` / ``[[H]]`` header.
 
@@ -277,4 +277,4 @@ class _Validator:
             self._reset_scope_under(nested)
 
 
-__all__ = ["HeaderKind", "_Validator"]
+__all__ = ["_Validator"]

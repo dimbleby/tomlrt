@@ -16,7 +16,7 @@ from tomlrt._trivia import Trivia, split_eol_section
 from tomlrt._validator import _Validator
 from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
 
-HeaderKind = Literal["table", "aot-entry"]
+_HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
     from tomlrt._slots import Slot
@@ -88,7 +88,7 @@ class _Parser:
 
     def _parse_header(self, leading: Trivia) -> StructuralHeaderSlot:
         sc = self._sc
-        kind: HeaderKind
+        kind: _HeaderKind
         if sc.starts_with("[["):
             sc.advance(2)
             kind = "aot-entry"

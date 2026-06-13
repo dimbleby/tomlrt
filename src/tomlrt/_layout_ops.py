@@ -4005,13 +4005,9 @@ __all__ = [
     "attach_empty_aot",
     "attach_section_at",
     "delete_key",
-    "insert_after",
-    "insert_before",
-    "insert_before_head",
     "remove_aot_entry",
     "renormalise_aot_order",
     "reorder_container",
     "replace_aot_entry",
     "reposition_install",
-    "unlink_slot",
 ]

@@ -645,12 +645,10 @@ def format_document_trailing(
 
 
 __all__ = [
-    "_canon_eol",
     "_canon_header_slot",
     "_canon_inline_value",
     "_canon_kv_slot",
     "_canon_leading",
-    "_canon_value",
     "format_document_trailing",
     "format_subtree",
     "set_comma_value_multiline",
