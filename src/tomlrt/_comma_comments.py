@@ -39,6 +39,7 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    leading_break_index,
     split_above_block,
     split_eol_section,
     split_item_above,
@@ -123,10 +124,12 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
     if existing_eol.pieces or stripped:
         return
     nxt = _downstream_break_holder(value, idx)
-    if nxt.pieces and isinstance(nxt.pieces[0], NewlineNode):
+    nl_idx = leading_break_index(nxt.pieces)
+    if nl_idx is not None:
         # The next item already starts a fresh line; the comment's own
-        # newline replaces that break.
-        nxt.pieces = list(nxt.pieces[1:])
+        # newline replaces that break, along with any stray trailing
+        # whitespace (``1,  \n``) that preceded it.
+        nxt.pieces = list(nxt.pieces[nl_idx + 1 :])
     else:
         # The next item shared this row: the comment forces a break, so
         # re-indent it to the value's indent instead of the old separator.

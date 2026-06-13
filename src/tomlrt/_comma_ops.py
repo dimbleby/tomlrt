@@ -26,6 +26,7 @@ from tomlrt._trivia import (
     WhitespaceNode,
     indent_from_final_trivia,
     join_above_block,
+    leading_break_index,
     restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
@@ -126,21 +127,21 @@ def _normalise_row_breaks(
     for i in range(1, len(items)):
         pred = items[i - 1]
         pieces = items[i].leading.pieces
-        has_nl = bool(pieces) and isinstance(pieces[0], NewlineNode)
-        if _row_terminated(pred) and has_nl:
-            items[i].leading = Trivia(pieces[1:])
-        elif not _row_terminated(pred) and not has_nl:
+        nl_idx = leading_break_index(pieces)
+        if _row_terminated(pred) and nl_idx is not None:
+            items[i].leading = Trivia(pieces[nl_idx + 1 :])
+        elif not _row_terminated(pred) and nl_idx is None:
             items[i].leading = Trivia([*_row_break(value, pieces), *pieces])
     # Closing-bracket gap: final_trivia carries the break iff the last
     # item's own row is not already terminated.
     if not items:
         return
     ft = value.final_trivia
-    has_nl = bool(ft.pieces) and isinstance(ft.pieces[0], NewlineNode)
+    nl_idx = leading_break_index(ft.pieces)
     last_terminated = _row_terminated(items[-1])
-    if last_terminated and has_nl:
-        ft.pieces = list(ft.pieces[1:])
-    elif not last_terminated and not has_nl:
+    if last_terminated and nl_idx is not None:
+        ft.pieces = list(ft.pieces[nl_idx + 1 :])
+    elif not last_terminated and nl_idx is None:
         ft.pieces = [NewlineNode(text=nl), *ft.pieces]
 
 
