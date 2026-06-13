@@ -186,7 +186,27 @@ def _shift_carried_boundary(
     if not delta:
         return
     holder = boundary_break_holder(cv, b)
+    had_break = leading_break_index(holder.pieces) is not None
     holder.pieces = shift_pieces(holder.pieces, delta, nl)
+    if delta < 0 and not had_break and b < len(cv.items):
+        # The successor had no break of its own — it was a shared-row
+        # follower of the (now-removed/relocated) predecessor. Its new
+        # predecessor terminates its own row, so the follower becomes a row
+        # leader at the value indent rather than its leftover separator.
+        reindent_as_leader(holder, _value_indent(cv))
+
+
+def reindent_as_leader(holder: Trivia, indent: str) -> None:
+    """Promote a shared-row follower to a row leader at ``indent``.
+
+    The follower's leftover inline separator — a leading whitespace run
+    with no row break of its own — is replaced by ``indent``; any later
+    pieces (a downstream above-block, blank lines) are kept.
+    """
+    rest = list(holder.pieces)
+    while rest and isinstance(rest[0], WhitespaceNode):
+        rest.pop(0)
+    holder.pieces = [WhitespaceNode(text=indent), *rest]
 
 
 # ---------------------------------------------------------------------------
@@ -307,15 +327,19 @@ def _value_newline(value: CommaValue[Any]) -> str:
     return "\n"
 
 
-def _canonical_separator(value: CommaValue[Any]) -> Trivia:
-    """Return the fallback inter-item newline plus value indent."""
-    indent = (
+def _value_indent(value: CommaValue[Any]) -> str:
+    """Return the row indent sampled from ``value`` (4 spaces if none)."""
+    return (
         _first_indent_after_newline(value.header_trivia)
         or indent_from_final_trivia(value.final_trivia)
         or "    "
     )
+
+
+def _canonical_separator(value: CommaValue[Any]) -> Trivia:
+    """Return the fallback inter-item newline plus value indent."""
     nl = NewlineNode(text=_value_newline(value))
-    return Trivia([nl, WhitespaceNode(text=indent)])
+    return Trivia([nl, WhitespaceNode(text=_value_indent(value))])
 
 
 def migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, Trivia]:
@@ -593,6 +617,7 @@ __all__ = [
     "boundary_break_holder",
     "detect_style",
     "migrate_bracket_above",
+    "reindent_as_leader",
     "reorder_owned",
     "shift_pieces",
     "splice_in",

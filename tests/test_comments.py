@@ -3701,10 +3701,10 @@ def test_array_sort_preserves_blank_position() -> None:
         """)
 
 
-def test_array_delete_shared_row_predecessor_keeps_separator() -> None:
-    # Deleting the predecessor of a shared-row item leaves that item's
-    # in-line separator (" ") in place: there is no downstream break to
-    # drop, so the item keeps its one-space lead. Best-effort, still valid.
+def test_array_delete_shared_row_predecessor_realigns_follower() -> None:
+    # Deleting the predecessor of a shared-row item promotes that item to a
+    # row leader: its leftover one-space inline separator is replaced by the
+    # canonical row indent so it aligns with its siblings.
     doc = tomlrt.loads(
         td("""
         a = [
@@ -3717,7 +3717,51 @@ def test_array_delete_shared_row_predecessor_keeps_separator() -> None:
     assert tomlrt.dumps(doc) == td("""
         a = [
           1, # x
-         3,
+          3,
+        ]
+        """)
+
+
+def test_inline_table_delete_shared_row_predecessor_realigns_follower() -> None:
+    # Same row-leader promotion as the array case, through the shared
+    # _comma_ops primitive: deleting a shared-row entry realigns the
+    # follower to the canonical row indent.
+    doc = tomlrt.loads(
+        td("""
+        a = {
+          b = 1, # x
+          c = 2, d = 3,
+        }
+        """),
+    )
+    del doc["a"]["c"]
+    assert tomlrt.dumps(doc) == td("""
+        a = {
+          b = 1, # x
+          d = 3,
+        }
+        """)
+
+
+def test_array_sort_promotes_shared_row_follower_to_leader() -> None:
+    # Reorder path through the same _comma_ops primitive: sorting moves the
+    # terminated `1, # x` item ahead of the former shared-row follower `2`,
+    # which must be re-indented from its one-space separator to the row
+    # indent (otherwise it would render ` 2,`).
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          2, 1, # x
+          3,
+        ]
+        """),
+    )
+    doc["a"].sort()
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1, # x
+          2,
+          3,
         ]
         """)
 
