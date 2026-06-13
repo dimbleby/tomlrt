@@ -3837,35 +3837,22 @@ def test_del_loop_leaves_doc_empty() -> None:
     assert tomlrt.dumps(doc) == ""
 
 
-def test_inline_append_does_not_steal_eol_comment_in_multiline() -> None:
-    # TOML 1.1 multiline inline table with an inline comment on the
-    # last entry's line. The comment must stay attached to `a`, not
-    # migrate to the appended entry.
+def test_inline_append_to_entry_with_eol_comment() -> None:
+    # Appending to a last entry that has an EOL comment but no trailing
+    # comma: the comma must land immediately after the value with the
+    # comment moving to after the comma (not orphaned on its own line as
+    # ``a = 1 # eol-on-a\n,\n  b = 2\n  }``), and the comment must stay
+    # attached to `a` rather than migrating to the appended entry.
     src = "obj = { a = 1 # eol-on-a\n  }\n"
     doc = tomlrt.loads(src)
-    obj = doc.table("obj")
-    obj["b"] = 2
+    doc.table("obj")["b"] = 2
     out = tomlrt.dumps(doc)
     assert out == td("""
         obj = { a = 1, # eol-on-a
             b = 2
           }
         """)
-    assert out.index("# eol-on-a") < out.index("b = 2")
     assert tomlrt.loads(out).table("obj").to_dict() == {"a": 1, "b": 2}
-
-
-def test_inline_append_keeps_eol_after_comma_not_orphans_comma() -> None:
-    # When appending to a last entry that has an EOL comment but no
-    # trailing comma, the comma must land immediately after the value
-    # (with the comment moving to after the comma). Earlier code left
-    # the comment in place and put the comma on its own line, yielding
-    # the orphan-comma layout ``a = 1 # eol-on-a\n,\n  b = 2\n  }``.
-    src = "obj = { a = 1 # eol-on-a\n  }\n"
-    doc = tomlrt.loads(src)
-    doc.table("obj")["b"] = 2
-    assert tomlrt.dumps(doc) == "obj = { a = 1, # eol-on-a\n    b = 2\n  }\n"
-    assert tomlrt.loads(tomlrt.dumps(doc)).table("obj").to_dict() == {"a": 1, "b": 2}
 
 
 def test_inline_append_migrates_above_bracket_comment_to_new_entry() -> None:

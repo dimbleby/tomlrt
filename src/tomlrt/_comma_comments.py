@@ -30,6 +30,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
 
 from tomlrt._comma_ops import (
     boundary_break_holder,
+    reindent_as_leader,
     shift_pieces,
 )
 from tomlrt._comments import (
@@ -125,11 +126,8 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
         nxt.pieces = shift_pieces(nxt.pieces, -1, nl)
     else:
         # The next item shared this row: the comment forces a break, so
-        # re-indent it to the value's indent instead of the old separator.
-        rest_pieces = list(nxt.pieces)
-        while rest_pieces and isinstance(rest_pieces[0], WhitespaceNode):
-            rest_pieces.pop(0)
-        nxt.pieces = [WhitespaceNode(_value_indent(value)), *rest_pieces]
+        # promote it to a row leader at the value indent.
+        reindent_as_leader(nxt, _value_indent(value))
 
 
 def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:

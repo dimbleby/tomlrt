@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structural edits (append, insert, delete, sort) on multi-line inline arrays
   and tables now preserve deliberate blank lines elsewhere in the value instead
   of collapsing them.
+- Deleting the predecessor of a shared-row item in a multi-line inline array
+  or table now re-indents the surviving follower to the canonical row indent
+  instead of leaving its one-space inline separator in place.
+
 
 ## [1.7.6] - 2026-06-13
 
