@@ -508,12 +508,8 @@ def reorder_owned(
 __all__ = [
     "CommaStyle",
     "detect_style",
-    "flip_to_internal",
-    "flip_to_terminal",
     "migrate_bracket_above",
     "reorder_owned",
     "splice_in",
     "splice_out",
-    "splice_out_head",
-    "splice_out_tail",
 ]

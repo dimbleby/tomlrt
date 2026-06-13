@@ -65,7 +65,7 @@ _ValueT = TypeVar("_ValueT")
 # ---------------------------------------------------------------------------
 
 
-def downstream_break_holder(value: CommaValue[_ItemT], idx: int) -> Trivia:
+def _downstream_break_holder(value: CommaValue[_ItemT], idx: int) -> Trivia:
     """Return the trivia that owns item ``idx``'s row break.
 
     If the item has no EOL section, the break lives in the next item's
@@ -85,13 +85,13 @@ def _raw_eol_text(item: CommaItem) -> str | None:
     return None
 
 
-def item_eol(item: CommaItem) -> str | None:
+def _item_eol(item: CommaItem) -> str | None:
     """Decoded EOL comment on ``item``, or None."""
     raw = _raw_eol_text(item)
     return _decode_comment(raw) if raw is not None else None
 
 
-def set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) -> None:
+def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) -> None:
     """Stamp a raw (already-encoded) EOL comment onto item ``idx``.
 
     The synthesised EOL section ends with its own newline, so the
@@ -122,7 +122,7 @@ def set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) -> 
     target.pieces = [*new_eol, *rest.pieces]
     if existing_eol.pieces or stripped:
         return
-    nxt = downstream_break_holder(value, idx)
+    nxt = _downstream_break_holder(value, idx)
     if nxt.pieces and isinstance(nxt.pieces[0], NewlineNode):
         # The next item already starts a fresh line; the comment's own
         # newline replaces that break.
@@ -133,10 +133,10 @@ def set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) -> 
         rest_pieces = list(nxt.pieces)
         while rest_pieces and isinstance(rest_pieces[0], WhitespaceNode):
             rest_pieces.pop(0)
-        nxt.pieces = [WhitespaceNode(value_indent(value)), *rest_pieces]
+        nxt.pieces = [WhitespaceNode(_value_indent(value)), *rest_pieces]
 
 
-def del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
+def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
     """Remove the EOL comment on item ``idx``; return whether one existed."""
     item = value.items[idx]
     target = item_eol_channel(item)
@@ -160,7 +160,7 @@ def del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def above_owner(value: CommaValue[_ItemT], i: int) -> tuple[Trivia, int]:
+def _above_owner(value: CommaValue[_ItemT], i: int) -> tuple[Trivia, int]:
     """Return ``(owner, prefix_len)`` for item ``i``'s above-region.
 
     The first ``prefix_len`` owner pieces must be preserved. Comma-first
@@ -179,20 +179,20 @@ def _comments_from_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
     return tuple(_decode_comment(p.text) for p in pieces if isinstance(p, CommentNode))
 
 
-def read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]:
+def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]:
     """Decoded comments in item ``idx``'s above-region (all, source order)."""
-    owner, prefix_len = above_owner(value, idx)
+    owner, prefix_len = _above_owner(value, idx)
     return _comments_from_lines(list(owner.pieces[prefix_len:]))
 
 
-def value_indent(value: CommaValue[_ItemT]) -> str:
+def _value_indent(value: CommaValue[_ItemT]) -> str:
     """Best-effort indent string for this value's items.
 
-    ``split_above_frame`` resolves the value-indent uniformly across
+    ``_split_above_frame`` resolves the value-indent uniformly across
     bracket-pad, conventional, and comma-first layouts.
     """
     for i in range(len(value.items)):
-        _owner, _prefix, _head, tail = split_above_frame(value, i)
+        _owner, _prefix, _head, tail = _split_above_frame(value, i)
         # `split_item_above` / the item-0 bracket-pad split guarantee that
         # a non-empty `tail` is a single value-indent WhitespaceNode, so the
         # isinstance check never fails here (it exists only for the type).
@@ -217,7 +217,7 @@ def _render_above_block(
     return out
 
 
-def split_above_frame(
+def _split_above_frame(
     value: CommaValue[_ItemT], i: int
 ) -> tuple[Trivia, Trivia, Trivia, Trivia]:
     """Decompose item ``i``'s above-region into ``(owner, prefix, head, tail)``.
@@ -240,13 +240,13 @@ def split_above_frame(
         head = Trivia(pieces[: nl_idx + 1])
         tail = Trivia(pieces[nl_idx + 1 :])
         return owner, Trivia(), head, tail
-    owner, prefix_len = above_owner(value, i)
+    owner, prefix_len = _above_owner(value, i)
     prefix = Trivia(list(owner.pieces[:prefix_len]))
     head, _drop, tail = split_item_above(Trivia(list(owner.pieces[prefix_len:])))
     return owner, prefix, head, tail
 
 
-def set_above_pieces(
+def _set_above_pieces(
     value: CommaValue[_ItemT],
     i: int,
     raw_lines: tuple[str, ...],
@@ -258,7 +258,7 @@ def set_above_pieces(
     Preserve structural framing and rewrite only the comment block
     between it.
     """
-    owner, prefix, head, tail = split_above_frame(value, i)
+    owner, prefix, head, tail = _split_above_frame(value, i)
     if not head.pieces and not tail.pieces:
         # An empty region needs its own framing. When `prefix` already
         # ends in a row break (the comma-first layout) reuse it rather
@@ -270,9 +270,9 @@ def set_above_pieces(
     owner.pieces = [*prefix.pieces, *head.pieces, *above, *tail.pieces]
 
 
-def clear_above_pieces(value: CommaValue[_ItemT], i: int) -> None:
+def _clear_above_pieces(value: CommaValue[_ItemT], i: int) -> None:
     """Strip the comment block from item ``i``'s above-region; keep framing."""
-    owner, prefix, head, tail = split_above_frame(value, i)
+    owner, prefix, head, tail = _split_above_frame(value, i)
     owner.pieces = [*prefix.pieces, *head.pieces, *tail.pieces]
 
 
@@ -362,14 +362,14 @@ class CommaEolView(_CommaView[_KeyT, str]):
 
     @override
     def _present(self, idx: int) -> bool:
-        return item_eol(self._a.value().items[idx]) is not None
+        return _item_eol(self._a.value().items[idx]) is not None
 
     @override
     def __getitem__(self, key: _KeyT) -> str:
         idx = self._a.resolve(key)
         if idx is None:
             raise KeyError(key)
-        eol = item_eol(self._a.value().items[idx])
+        eol = _item_eol(self._a.value().items[idx])
         if eol is None:
             raise KeyError(key)
         return eol
@@ -384,14 +384,14 @@ class CommaEolView(_CommaView[_KeyT, str]):
             raise KeyError(key)
         self._a.promote()
         # Promotion preserves item order, so the resolved index is stable.
-        set_eol_raw(self._a.value(), idx, _encode_comment(value), self._a.newline())
+        _set_eol_raw(self._a.value(), idx, _encode_comment(value), self._a.newline())
 
     @override
     def __delitem__(self, key: _KeyT) -> None:
         idx = self._a.resolve(key)
         if idx is None:
             raise KeyError(key)
-        if not del_eol(self._a.value(), idx, self._a.newline()):
+        if not _del_eol(self._a.value(), idx, self._a.newline()):
             raise KeyError(key)
 
 
@@ -401,7 +401,7 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
     __slots__ = ()
 
     def _read(self, idx: int) -> tuple[str, ...]:
-        return read_above_comments(self._a.value(), idx)
+        return _read_above_comments(self._a.value(), idx)
 
     @override
     def _present(self, idx: int) -> bool:
@@ -428,13 +428,13 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
             # delete-if-present. Don't promote: zero comments need no
             # newlines.
             if self._read(idx):
-                clear_above_pieces(self._a.value(), idx)
+                _clear_above_pieces(self._a.value(), idx)
             return
         self._a.promote()
         value_obj = self._a.value()
         encoded = tuple(_encode_comment(c) for c in seq)
-        set_above_pieces(
-            value_obj, idx, encoded, self._a.newline(), value_indent(value_obj)
+        _set_above_pieces(
+            value_obj, idx, encoded, self._a.newline(), _value_indent(value_obj)
         )
 
     @override
@@ -444,7 +444,7 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
             raise KeyError(key)
         if not self._read(idx):
             raise KeyError(key)
-        clear_above_pieces(self._a.value(), idx)
+        _clear_above_pieces(self._a.value(), idx)
 
     @override
     def __repr__(self) -> str:
@@ -455,14 +455,4 @@ __all__ = [
     "CommaCommentAdapter",
     "CommaEolView",
     "CommaLeadingView",
-    "above_owner",
-    "clear_above_pieces",
-    "del_eol",
-    "downstream_break_holder",
-    "item_eol",
-    "read_above_comments",
-    "set_above_pieces",
-    "set_eol_raw",
-    "split_above_frame",
-    "value_indent",
 ]

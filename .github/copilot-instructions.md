@@ -201,11 +201,10 @@ them. Read roughly in this order:
   inline arrays (`Array`) and inline tables (`_inline_ops`).
   Owns the canonical layout invariants for any `CommaValue`:
   per-item trivia ownership, the single-row-break rule, EOL
-  section attachment, and trailing-comma policy. Public surface
-  is intentionally small — `splice_in`, `splice_out`,
-  `splice_out_head`, `splice_out_tail`, `reorder_owned`, plus
-  the `flip_to_internal` / `flip_to_terminal` boundary helpers
-  and the `_take_eol` / `_put_eol` EOL-section primitives. The
+  section attachment, and trailing-comma policy. The cross-module
+  surface is intentionally small — a few `splice_*` / `reorder_owned`
+  entry points consumed by `Array` / `_inline_ops`; the lower-level
+  boundary-flip and EOL-section helpers stay module-private. The
   shared bracket-pad re-anchoring uses `split_above_block` /
   `join_above_block` from `_trivia.py`. A future change to the
   canonical inline-value model only needs to land here.
