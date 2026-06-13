@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `set_multiline`), matching inline arrays. Setting a comment promotes a
   single-line inline table to multi-line (TOML 1.1).
 
+### Fixed
+
+- Comment editing on multi-line inline arrays and tables now lays out
+  irregular layouts more cleanly: a displaced item is re-indented, deleting an
+  end-of-line comment keeps an adjacent blank line, and a comment block above
+  unindented items lines up at column zero.
+
 ## [1.7.6] - 2026-06-13
 
 ### Fixed

@@ -1269,26 +1269,56 @@ def test_array_comma_first_leading_comment_eol_predecessor_no_indent() -> None:
 
 def test_array_comma_first_leading_comment_first_item_on_open_line() -> None:
     # The first value shares the opening-bracket line, so header_trivia is
-    # empty and the indent must be recovered from the comma-first items'
-    # own (newline-only, unindented) trailings — exercising the indent
-    # fallback.
-    doc = tomlrt.loads("a = [1\n,2\n,3]\n")
+    # empty and the comma-first items sit at column zero; a leading comment
+    # lines up with them rather than picking up an arbitrary indent.
+    doc = tomlrt.loads(
+        td(
+            """
+            a = [1
+            ,2
+            ,3]
+            """,
+        ),
+    )
     arr = doc.array("a")
     arr.leading_comments[1] = ("above",)
     out = tomlrt.dumps(doc)
-    assert out == "a = [1\n  # above\n,2\n,3]\n"
+    assert out == td(
+        """
+        a = [1
+        # above
+        ,2
+        ,3]
+        """,
+    )
     assert list(tomlrt.loads(out).array("a")) == [1, 2, 3]
 
 
 def test_array_leading_comment_on_first_item_sharing_open_line() -> None:
     # Item 0 sits on the opening-bracket line, so its above-region
     # (header_trivia) is empty. A leading comment must be framed onto its
-    # own line above the value, not glued to ``[`` as a bracket EOL.
-    doc = tomlrt.loads("a = [1\n,2\n]\n")
+    # own line above the value, lined up at column zero with the items.
+    doc = tomlrt.loads(
+        td(
+            """
+            a = [1
+            ,2
+            ]
+            """,
+        ),
+    )
     arr = doc.array("a")
     arr.leading_comments[0] = ("first",)
     out = tomlrt.dumps(doc)
-    assert out == "a = [\n  # first\n  1\n,2\n]\n"
+    assert out == td(
+        """
+        a = [
+        # first
+        1
+        ,2
+        ]
+        """,
+    )
     reparsed = tomlrt.loads(out).array("a")
     assert list(reparsed) == [1, 2]
     assert dict(reparsed.leading_comments) == {0: ("first",)}
@@ -3282,8 +3312,9 @@ def test_inline_comma_first_leading_comment_set() -> None:
 
 
 def test_inline_eol_on_item_sharing_a_line() -> None:
-    # Two items on one physical row: setting an EOL comment on the first one
-    # has no downstream newline to reclaim (the break-holder strip is skipped).
+    # Two items on one physical row: setting an EOL comment on the first
+    # forces a break, and the item pushed onto its own line is re-indented
+    # to the value's indent.
     doc = tomlrt.loads(
         td(
             """
@@ -3299,7 +3330,7 @@ def test_inline_eol_on_item_sharing_a_line() -> None:
         """
         t = {
             a = 1, # x
-         b = 2,
+            b = 2,
             c = 3,
         }
         """,
@@ -3307,8 +3338,8 @@ def test_inline_eol_on_item_sharing_a_line() -> None:
 
 
 def test_inline_delete_eol_keeps_existing_downstream_break() -> None:
-    # A blank line below the item already carries a structural newline, so
-    # deleting the EOL comment must not synthesise a second one.
+    # Deleting the EOL comment keeps the item's own row break, so an
+    # adjacent blank line below it is preserved.
     doc = tomlrt.loads(
         td(
             """
@@ -3325,6 +3356,7 @@ def test_inline_delete_eol_keeps_existing_downstream_break() -> None:
         """
         t = {
             a = 1,
+
             b = 2,
         }
         """,
@@ -3333,8 +3365,7 @@ def test_inline_delete_eol_keeps_existing_downstream_break() -> None:
 
 def test_inline_leading_comment_on_zero_indent_item() -> None:
     # A zero-indent item whose above-region already holds a comment: the
-    # value-indent scan walks past that comment's newline (a non-whitespace
-    # piece) before falling through to the default indent.
+    # replacement comment block lines up at column zero with the items.
     doc = tomlrt.loads(
         td(
             """
@@ -3350,7 +3381,7 @@ def test_inline_leading_comment_on_zero_indent_item() -> None:
     assert tomlrt.dumps(doc) == td(
         """
         t = {
-          # L
+        # L
         a = 1,
         b = 2,
         }
