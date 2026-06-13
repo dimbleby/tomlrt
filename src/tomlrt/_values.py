@@ -22,6 +22,7 @@ from tomlrt._trivia import (
     WhitespaceNode,
     retarget_trivia_newlines,
     split_item_above,
+    trivia_has_comment,
     trivia_has_newline,
 )
 
@@ -321,6 +322,26 @@ def value_is_multiline(v: ArrayValue | InlineTableValue) -> bool:
     return False
 
 
+def value_has_any_comment(v: Value) -> bool:
+    """Whether any comment appears anywhere within ``v`` (recursively)."""
+    if not isinstance(v, CommaValue):
+        return False
+    if trivia_has_comment(v.header_trivia) or trivia_has_comment(v.final_trivia):
+        return True
+    return any(item_has_any_comment(it) for it in v.items)
+
+
+def item_has_any_comment(item: CommaItem) -> bool:
+    """Whether ``item`` carries a comment in its trivia or nested value."""
+    if (
+        trivia_has_comment(item.leading)
+        or trivia_has_comment(item.trailing)
+        or trivia_has_comment(item.post_comma_trivia)
+    ):
+        return True
+    return value_has_any_comment(item.value)
+
+
 def retarget_value_newlines(v: Value, target: str) -> None:
     """Recursively rewrite every ``NewlineNode.text`` under ``v`` to ``target``.
 
@@ -356,6 +377,7 @@ __all__ = [
     "inter_item_separator",
     "item_breaks_before_comma",
     "item_eol_channel",
+    "item_has_any_comment",
     "retarget_value_newlines",
     "value_is_multiline",
 ]

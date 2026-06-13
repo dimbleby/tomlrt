@@ -44,9 +44,9 @@ x = { a = 1, b = 2 }
   The user's bare-vs-quoted spelling for each key segment is preserved.
 - **Header brackets**: `[  a . b  ]` → `[a.b]`.
 - **Inline arrays and inline tables**: spacing collapses to the
-  canonical form (`[1, 2, 3]`, `{ x = 1, y = 2 }`). The array's
-  overall _shape_ is preserved — a multi-line array stays multi-line,
-  and a single-line array stays single-line.
+  canonical form (`[1, 2, 3]`, `{ x = 1, y = 2 }`). The overall
+  _shape_ is preserved — a multi-line value stays multi-line, and a
+  single-line value stays single-line.
 - **Blank lines between sibling KVs** collapse to none.
 - **Blank lines before structural section / array-of-tables headers**
   collapse to exactly one.

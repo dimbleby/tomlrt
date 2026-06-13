@@ -160,6 +160,22 @@ arr.set_multiline(multiline=True, indent="  ")
 Collapsing a multi-line array to single-line is rejected if any item carries a
 comment; clear them first (see [Comments](comments.md)).
 
+## Inline-table layout
+
+Inline tables expose the same controls. `Table.multiline` and
+`Table.set_multiline` flip an inline table between single- and multi-line
+layout (TOML 1.1 allows multi-line inline tables):
+
+```python
+tbl = doc.table("pkg")
+tbl.set_multiline(multiline=True, indent="  ")
+```
+
+As with arrays, collapsing back to a single line is rejected when an entry
+carries a comment. `multiline` / `set_multiline` apply to the inline table as
+a whole, so call them on the table itself, not on a dotted-key view of it.
+
+
 ## Promoting inline → section
 
 If a value started life as an inline table or inline array of inline tables, you
