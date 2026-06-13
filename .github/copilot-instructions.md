@@ -203,8 +203,10 @@ them. Read roughly in this order:
   per-item trivia ownership, the single-row-break rule, EOL
   section attachment, and trailing-comma policy. The cross-module
   surface is intentionally small — a few `splice_*` / `reorder_owned`
-  entry points consumed by `Array` / `_inline_ops`; the lower-level
-  boundary-flip and EOL-section helpers stay module-private. The
+  entry points consumed by `Array` / `_inline_ops`, plus the
+  row-break primitives (`shift_pieces`, `boundary_break_holder`)
+  shared with `_comma_comments`; the lower-level boundary-flip and
+  EOL-section helpers stay module-private. The
   shared bracket-pad re-anchoring uses `split_above_block` /
   `join_above_block` from `_trivia.py`. A future change to the
   canonical inline-value model only needs to land here.

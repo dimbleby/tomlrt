@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Trailing whitespace after a comma no longer masks the row-terminating
   newline, so editing or restructuring such a row no longer leaves a stray
   space-only blank line.
+- Structural edits (append, insert, delete, sort) on multi-line inline arrays
+  and tables now preserve deliberate blank lines elsewhere in the value instead
+  of collapsing them.
 
 ## [1.7.6] - 2026-06-13
 
