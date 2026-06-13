@@ -44,6 +44,7 @@ from tomlrt._format import (
     format_document_trailing,
     format_subtree,
 )
+from tomlrt._inline_comments import InlineEolView, InlineLeadingView
 from tomlrt._kind import _Kind
 from tomlrt._paths import split_path, validate_path
 from tomlrt._render import render
@@ -67,10 +68,11 @@ from tomlrt._values import (
     InlineTableValue,
     make_keypart,
     retarget_value_newlines,
+    value_is_multiline,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Iterable, MutableMapping, Sequence
 
     from _typeshed import SupportsKeysAndGetItem, SupportsRichComparison
     from typing_extensions import Self
@@ -139,20 +141,21 @@ class Container(dict[str, Any]):
         return _Kind.IMPLICIT_SECTION
 
     @property
-    def comments(self) -> EolCommentView:
+    def comments(self) -> MutableMapping[str, str]:
         """Mapping view of EOL comments on this container's direct keys.
 
-        Mutating the view requires the container to be attached to a
-        `Document`; mutate via the attached view, not on a detached
-        ``Table.section()`` / ``Table.inline()``.
+        For a section-backed container the view is keyed by direct key
+        and requires attachment to a `Document` to mutate. For an inline
+        table the view is keyed by direct leaf key over the backing
+        inline value; setting a comment promotes a single-line table to
+        multi-line (a single line has nowhere to hold a comment).
         """
         if self._inline:
-            msg = "comment API is not available on inline tables"
-            raise TOMLError(msg)
+            return InlineEolView(self)
         return EolCommentView(self)
 
     @property
-    def leading_comments(self) -> LeadingCommentView:
+    def leading_comments(self) -> MutableMapping[str, tuple[str, ...]]:
         """Mapping view of leading-comment blocks on this container's direct keys.
 
         Returns only the *attached* comment run immediately above each key
@@ -161,15 +164,18 @@ class Container(dict[str, Any]):
         [`leading_block`][tomlrt.Table.leading_block].
 
         Mutating the view requires the container to be attached to a
-        `Document`.
+        `Document`. On an inline table the view is keyed by direct leaf
+        key over the backing inline value; it returns every comment in
+        the entry's above-region (matching `Array.leading_comments`,
+        with no blank-line grouping), and setting comments promotes a
+        single-line table to multi-line.
         """
         if self._inline:
-            msg = "comment API is not available on inline tables"
-            raise TOMLError(msg)
+            return InlineLeadingView(self)
         return LeadingCommentView(self)
 
     @property
-    def leading_block(self) -> LeadingBlockView:
+    def leading_block(self) -> MutableMapping[str, tuple[str | None, ...]]:
         """Mapping view of full leading-trivia blocks on direct keys.
 
         Each entry is a ``tuple[str | None, ...]`` of comment strings
@@ -1227,6 +1233,60 @@ class Table(Container):
     def is_inline(self) -> bool:
         """True for inline ``{...}`` tables, False for ``[section]`` blocks."""
         return self._inline
+
+    def _require_inline_root(self, action: str) -> Container:
+        """Return the `INLINE_ROOT` backing this table, else raise.
+
+        ``multiline`` is a property of the whole physical inline value, so
+        a dotted-key navigator view is rejected in favour of calling on
+        the table itself.
+        """
+        kind = self._kind
+        if kind is _Kind.INLINE_ROOT:
+            return self
+        if not self._inline:
+            msg = f"{action} is only available on inline tables"
+            raise TOMLError(msg)
+        if kind is _Kind.INLINE_FACTORY:
+            msg = (
+                f"{action} is unavailable on a detached inline table; "
+                "attach it to a Document first"
+            )
+            raise TOMLError(msg)
+        msg = (
+            f"{action} applies to the whole inline table; call it on the "
+            "table itself, not on a dotted-key view"
+        )
+        raise TOMLError(msg)
+
+    @property
+    def multiline(self) -> bool:
+        """Whether this inline table is laid out across multiple lines.
+
+        Raises [`TOMLError`][tomlrt.TOMLError] on a non-inline table.
+        """
+        root = self._require_inline_root("multiline")
+        assert root._value is not None  # noqa: SLF001
+        return value_is_multiline(root._value)  # noqa: SLF001
+
+    @multiline.setter
+    def multiline(self, value: bool) -> None:
+        if self.multiline == value:
+            return
+        self.set_multiline(multiline=value)
+
+    def set_multiline(self, *, multiline: bool, indent: str = "    ") -> Table:
+        """Switch this inline table between single-line and multi-line form.
+
+        Raises [`TOMLError`][tomlrt.TOMLError] on a non-inline table, and
+        when collapsing a multi-line table that carries comments anywhere
+        in it (they would have nowhere to live on one line).
+
+        Returns ``self`` for chaining.
+        """
+        root = self._require_inline_root("set_multiline")
+        _inline_ops.set_inline_multiline(root, multiline=multiline, indent=indent)
+        return self
 
     @classmethod
     def section(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:

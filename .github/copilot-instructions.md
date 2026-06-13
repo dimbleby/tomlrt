@@ -193,7 +193,10 @@ them. Read roughly in this order:
   one canonical implementation; this module just resolves the
   outermost inline-table for a dotted key, files / unfiles the
   matching `InlineTableEntry`, and forwards to `splice_in` /
-  `splice_out` / `reorder_owned`.
+  `splice_out` / `reorder_owned`. Also exposes the inline-table
+  multi-line control (`set_inline_multiline` / `ensure_inline_multiline`)
+  backing `Table.multiline` / `Table.set_multiline`, delegating the
+  actual expand / collapse to `_format.set_comma_value_multiline`.
 - **`_comma_ops.py`** — structural mutation primitives shared by
   inline arrays (`Array`) and inline tables (`_inline_ops`).
   Owns the canonical layout invariants for any `CommaValue`:
@@ -217,7 +220,10 @@ them. Read roughly in this order:
   which owns *changing* layout; this module owns
   *canonicalising* the layout you already have. Re-uses
   `flip_to_*` / `_take_eol` / `_put_eol` from `_comma_ops` for
-  the bits that touch the comma-value boundary.
+  the bits that touch the comma-value boundary. Also owns
+  `set_comma_value_multiline` — the shared single ↔ multi-line
+  expand / collapse for any `CommaValue`, used by both
+  `Array.set_multiline` and the inline-table multi-line control.
 - **`_render.py`** — pure linear walk of the doc-stream slot list
   + trailing trivia → source string. Byte-exact for any
   unmodified parse.
@@ -243,12 +249,33 @@ them. Read roughly in this order:
   glue that connects an entry's slots to its Table view. Inline-
   array structural mutation is forwarded to `_comma_ops`.
 - **`_comments.py`** — the `MutableMapping`-shaped EOL / leading-
-  comment side-channel views over `Container` slot trivia
-  (`Container.comments`, `Container.leading_comments`).
-- **`_array_comments.py`** — the `MutableSequence`-shaped
-  equivalents for `Array` items (`Array.comments`,
-  `Array.leading_comments`). Shares encode/decode rules with
-  `_comments`.
+  comment side-channel views over **section** `Container` slot trivia
+  (`Container.comments` / `leading_comments` / `leading_block` when the
+  container is section-backed). These operate on the physical slot
+  stream (`KVSlot` / `StructuralHeaderSlot`). Also owns the shared
+  comment encode/decode + validation helpers (`_encode_comment`,
+  `_decode_comment`, `_validate_comment_str`, `_validate_comment_seq`)
+  reused by the comma-value views below.
+- **`_comma_comments.py`** — the flavour-agnostic comment core shared
+  by inline **arrays** and inline **tables**, both of which carry
+  comments on a `CommaValue` / `CommaItem` (not the slot stream). Owns
+  the per-item EOL / above-block read-write plumbing **and** the
+  generic keyed mapping views: `CommaCommentAdapter` (per-flavour hooks
+  `value` / `resolve` / `promote` / `newline` / `candidates`) plus
+  `CommaEolView` / `CommaLeadingView`, which hold all the
+  get / set / del / iterate logic once. A future change to comma-value
+  comment behaviour lands here.
+- **`_array_comments.py`** — the int-keyed `Array` adapter
+  (`_ArrayAdapter`) plus one-line `ArrayEolView` / `ArrayLeadingView`
+  subclasses of the generic views (`Array.comments`,
+  `Array.leading_comments`).
+- **`_inline_comments.py`** — the str-keyed inline-**table** adapter
+  (`_InlineAdapter`, leaf-key → entry resolution via `_inline_ops`)
+  plus `InlineEolView` / `InlineLeadingView`. Backs
+  `Table.comments` / `leading_comments` when the table is inline;
+  setting a comment auto-promotes a single-line table to multi-line
+  (TOML 1.1), and a detached `Table.inline()` factory raises until it
+  is attached.
 
 ### Public API
 

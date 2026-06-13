@@ -64,6 +64,8 @@ code.
         - section
         - inline
         - is_inline
+        - multiline
+        - set_multiline
         - table
         - array
         - aot

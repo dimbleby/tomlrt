@@ -322,14 +322,19 @@ def test_comments_view_repr_shows_pairs() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_comments_on_inline_table_raises_with_helpful_message() -> None:
+def test_comments_on_inline_table_now_supported() -> None:
     src = 'pkg = { name = "tomlrt", version = "0.1" }\n'
     doc = tomlrt.loads(src)
     pkg = doc.table("pkg")
-    with pytest.raises(tomlrt.TOMLError, match="comment API"):
-        pkg.comments["name"] = "x"
-    with pytest.raises(tomlrt.TOMLError, match="comment API"):
-        _ = pkg.leading_comments
+    pkg.comments["name"] = "the package name"
+    assert tomlrt.dumps(doc) == td(
+        """
+        pkg = {
+            name = "tomlrt", # the package name
+            version = "0.1",
+        }
+        """,
+    )
 
 
 def test_inline_table_promotion_basic() -> None:
@@ -492,16 +497,16 @@ def _inline_in_doc() -> tomlrt.Table:
     return doc.table("t")
 
 
-def test_inline_table_comments_raises() -> None:
+def test_inline_table_comments_now_supported() -> None:
     t = _inline_in_doc()
-    with pytest.raises(tomlrt.TOMLError, match="comment API"):
-        _ = t.comments
+    t.comments["a"] = "an a"
+    assert dict(t.comments) == {"a": "an a"}
 
 
-def test_inline_table_leading_comments_raises() -> None:
+def test_inline_table_leading_comments_now_supported() -> None:
     t = _inline_in_doc()
-    with pytest.raises(tomlrt.TOMLError, match="comment API"):
-        _ = t.leading_comments
+    t.leading_comments["a"] = ("note",)
+    assert dict(t.leading_comments) == {"a": ("note",)}
 
 
 def test_inline_table_header_comment_get_raises() -> None:
@@ -1165,7 +1170,7 @@ def test_array_comma_first_leading_comment_add_to_uncommented_row() -> None:
         """)
     )
     arr = doc.array("a")
-    arr.leading_comments[1] = ["above two"]
+    arr.leading_comments[1] = ("above two",)
     out = tomlrt.dumps(doc)
     assert out == td("""
         a = [
@@ -1188,7 +1193,7 @@ def test_array_comma_first_leading_comment_replace_keeps_layout() -> None:
         """)
     )
     arr = doc.array("a")
-    arr.leading_comments[1] = ["changed"]
+    arr.leading_comments[1] = ("changed",)
     assert tomlrt.dumps(doc) == td("""
         a = [
               1
@@ -1233,7 +1238,7 @@ def test_array_comma_first_leading_comment_coexists_with_eol() -> None:
         """)
     )
     arr = doc.array("a")
-    arr.leading_comments[1] = ["above two"]
+    arr.leading_comments[1] = ("above two",)
     out = tomlrt.dumps(doc)
     assert out == td("""
         a = [
@@ -1254,7 +1259,7 @@ def test_array_comma_first_leading_comment_eol_predecessor_no_indent() -> None:
     # reuse that break, not stack a second one.
     doc = tomlrt.loads("a = [\n      1 # eol\n,2\n]\n")
     arr = doc.array("a")
-    arr.leading_comments[1] = ["above"]
+    arr.leading_comments[1] = ("above",)
     out = tomlrt.dumps(doc)
     assert out == "a = [\n      1 # eol\n      # above\n      ,2\n]\n"
     reparsed = tomlrt.loads(out).array("a")
@@ -1269,7 +1274,7 @@ def test_array_comma_first_leading_comment_first_item_on_open_line() -> None:
     # fallback.
     doc = tomlrt.loads("a = [1\n,2\n,3]\n")
     arr = doc.array("a")
-    arr.leading_comments[1] = ["above"]
+    arr.leading_comments[1] = ("above",)
     out = tomlrt.dumps(doc)
     assert out == "a = [1\n  # above\n,2\n,3]\n"
     assert list(tomlrt.loads(out).array("a")) == [1, 2, 3]
@@ -1281,7 +1286,7 @@ def test_array_leading_comment_on_first_item_sharing_open_line() -> None:
     # own line above the value, not glued to ``[`` as a bracket EOL.
     doc = tomlrt.loads("a = [1\n,2\n]\n")
     arr = doc.array("a")
-    arr.leading_comments[0] = ["first"]
+    arr.leading_comments[0] = ("first",)
     out = tomlrt.dumps(doc)
     assert out == "a = [\n  # first\n  1\n,2\n]\n"
     reparsed = tomlrt.loads(out).array("a")
@@ -2867,3 +2872,487 @@ def test_detached_aot_element_comments_documented_workaround() -> None:
     doc["items"] = aot
     doc["items"][-1].comments["x"] = "eol"
     assert tomlrt.dumps(doc) == "[[items]]\nx = 1 # eol\n"
+
+
+# ---------------------------------------------------------------------------
+# Inline-table comments (TOML 1.1)
+# ---------------------------------------------------------------------------
+
+
+def test_inline_eol_comment_set_promotes_to_multiline() -> None:
+    doc = tomlrt.loads("t = { a = 1, b = 2 }\n")
+    t = doc.table("t")
+    before = t.multiline
+    t.comments["a"] = "first"
+    after = t.multiline
+    assert before is False
+    assert after is True
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1, # first
+            b = 2,
+        }
+        """,
+    )
+
+
+def test_inline_leading_comment_set_promotes_to_multiline() -> None:
+    doc = tomlrt.loads("t = { a = 1, b = 2 }\n")
+    t = doc.table("t")
+    t.leading_comments["b"] = ("note one", "note two")
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1,
+            # note one
+            # note two
+            b = 2,
+        }
+        """,
+    )
+
+
+def test_inline_comment_read_roundtrips_byte_exact() -> None:
+    src = td(
+        """
+        t = { a = 1, # eol-a
+              # above-b
+              b = 2 }
+        """,
+    )
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    assert tomlrt.dumps(doc) == src
+    assert dict(t.comments) == {"a": "eol-a"}
+    assert dict(t.leading_comments) == {"b": ("above-b",)}
+
+
+def test_inline_comment_membership_and_iteration() -> None:
+    doc = tomlrt.loads("t = { a = 1, b = 2, c = 3 }\n")
+    t = doc.table("t")
+    t.comments["b"] = "bee"
+    assert "b" in t.comments
+    assert "a" not in t.comments
+    assert "missing" not in t.comments
+    assert list(t.comments) == ["b"]
+    assert len(t.comments) == 1
+
+
+def test_inline_eol_comment_delete_restores_single_break() -> None:
+    src = td(
+        """
+        t = {
+            a = 1, # gone
+            b = 2,
+        }
+        """,
+    )
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    del t.comments["a"]
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1,
+            b = 2,
+        }
+        """,
+    )
+
+
+def test_inline_eol_comment_delete_on_tail_without_comma() -> None:
+    src = td(
+        """
+        t = {
+            a = 1,
+            b = 2 # gone
+        }
+        """,
+    )
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    del t.comments["b"]
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1,
+            b = 2
+        }
+        """,
+    )
+
+
+def test_inline_leading_comment_delete() -> None:
+    src = td(
+        """
+        t = {
+            a = 1,
+            # bye
+            b = 2,
+        }
+        """,
+    )
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    del t.leading_comments["b"]
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1,
+            b = 2,
+        }
+        """,
+    )
+
+
+def test_inline_dotted_prefix_not_a_comment_key() -> None:
+    doc = tomlrt.loads("t = { a.b = 1, a.c = 2 }\n")
+    t = doc.table("t")
+    assert "a" not in t.comments
+    assert "a" not in t.leading_comments
+
+
+def test_inline_dotted_comment_via_navigator() -> None:
+    doc = tomlrt.loads("t = { a.b = 1, a.c = 2 }\n")
+    inner = doc.table("t")["a"]
+    inner.comments["b"] = "dotted"
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a.b = 1, # dotted
+            a.c = 2,
+        }
+        """,
+    )
+    assert dict(inner.comments) == {"b": "dotted"}
+
+
+def test_inline_quoted_dotted_key_comment() -> None:
+    doc = tomlrt.loads('t = { "a.b" = 1, c = 2 }\n')
+    t = doc.table("t")
+    t.comments["a.b"] = "quoted"
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            "a.b" = 1, # quoted
+            c = 2,
+        }
+        """,
+    )
+
+
+def test_inline_nested_inline_table_comment() -> None:
+    doc = tomlrt.loads("t = { a = { b = 1 }, c = 2 }\n")
+    inner = doc.table("t").table("a")
+    inner.comments["b"] = "nested"
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = { a = {
+            b = 1, # nested
+        }, c = 2 }
+        """,
+    )
+
+
+def test_inline_set_multiline_then_collapse() -> None:
+    doc = tomlrt.loads("t = { a = 1, b = 2 }\n")
+    t = doc.table("t")
+    t.set_multiline(multiline=True)
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1,
+            b = 2,
+        }
+        """,
+    )
+    t.set_multiline(multiline=False)
+    assert tomlrt.dumps(doc) == "t = { a = 1, b = 2 }\n"
+
+
+def test_inline_collapse_with_comment_raises() -> None:
+    doc = tomlrt.loads("t = { a = 1, b = 2 }\n")
+    t = doc.table("t")
+    t.comments["a"] = "stuck"
+    with pytest.raises(tomlrt.TOMLError):
+        t.set_multiline(multiline=False)
+
+
+def test_inline_multiline_on_non_inline_raises() -> None:
+    doc = tomlrt.loads("[t]\na = 1\n")
+    section = doc.table("t")
+    with pytest.raises(tomlrt.TOMLError, match="only available on inline"):
+        _ = section.multiline
+    with pytest.raises(tomlrt.TOMLError, match="only available on inline"):
+        section.set_multiline(multiline=True)
+
+
+def test_inline_multiline_on_detached_factory_raises() -> None:
+    t = tomlrt.Table.inline({"a": 1})
+    with pytest.raises(tomlrt.TOMLError, match="detached inline"):
+        _ = t.multiline
+
+
+def test_inline_set_multiline_on_navigator_raises() -> None:
+    doc = tomlrt.loads("t = { a.b = 1 }\n")
+    inner = doc.table("t")["a"]
+    with pytest.raises(tomlrt.TOMLError, match="whole inline table"):
+        inner.set_multiline(multiline=True)
+
+
+def test_inline_comments_detached_factory_raises() -> None:
+    t = tomlrt.Table.inline({"a": 1})
+    with pytest.raises(tomlrt.TOMLError, match="detached inline"):
+        t.comments["a"] = "x"
+
+
+def test_inline_comment_set_missing_key_raises() -> None:
+    doc = tomlrt.loads("t = { a = 1 }\n")
+    t = doc.table("t")
+    with pytest.raises(KeyError):
+        t.comments["missing"] = "x"
+    # A failed set must not promote the table to multi-line.
+    assert tomlrt.dumps(doc) == "t = { a = 1 }\n"
+
+
+def test_inline_leading_comment_empty_assignment_is_delete() -> None:
+    doc = tomlrt.loads("t = { a = 1, b = 2 }\n")
+    t = doc.table("t")
+    t.leading_comments["b"] = ()
+    # No comments to add, so no promotion.
+    assert tomlrt.dumps(doc) == "t = { a = 1, b = 2 }\n"
+
+
+def test_inline_multiline_property_setter_round_trip() -> None:
+    doc = tomlrt.loads("t = { a = 1, b = 2 }\n")
+    t = doc.table("t")
+    t.multiline = True
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1,
+            b = 2,
+        }
+        """,
+    )
+    # Setting to the current value is a no-op.
+    t.multiline = True
+    # The setter also collapses back.
+    t.multiline = False
+    assert tomlrt.dumps(doc) == "t = { a = 1, b = 2 }\n"
+
+
+def test_array_comment_membership_wrong_type_key() -> None:
+    doc = tomlrt.loads("a = [1, 2]\n")
+    arr = doc.array("a")
+    bad: object = "x"
+    assert bad not in arr.comments
+    assert bad not in arr.leading_comments
+
+
+def test_inline_comment_membership_non_str_key() -> None:
+    doc = tomlrt.loads("t = { a = 1 }\n")
+    t = doc.table("t")
+    bad: object = 5
+    assert bad not in t.comments
+    assert bad not in t.leading_comments
+
+
+def test_inline_leading_comment_empty_assignment_clears_existing() -> None:
+    src = td(
+        """
+        t = {
+            a = 1,
+            # above b
+            b = 2,
+        }
+        """,
+    )
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    t.leading_comments["b"] = ()
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1,
+            b = 2,
+        }
+        """,
+    )
+
+
+def test_inline_leading_comment_delete_absent_raises() -> None:
+    doc = tomlrt.loads("t = { a = 1, b = 2 }\n")
+    t = doc.table("t")
+    with pytest.raises(KeyError):
+        del t.leading_comments["b"]
+    # Deleting a key that is not even an entry also raises.
+    with pytest.raises(KeyError):
+        del t.leading_comments["missing"]
+    # A failed delete must not promote the table to multi-line.
+    assert tomlrt.dumps(doc) == "t = { a = 1, b = 2 }\n"
+
+
+def test_inline_navigator_iteration_skips_non_prefix_entries() -> None:
+    doc = tomlrt.loads("u = { x.y = 1, z = 2 }\n")
+    u = doc.table("u")
+    u["x"].comments["y"] = "wye"
+    assert list(u["x"].comments) == ["y"]
+    assert len(u["x"].comments) == 1
+    assert tomlrt.dumps(doc) == td(
+        """
+        u = {
+            x.y = 1, # wye
+            z = 2,
+        }
+        """,
+    )
+
+
+def test_inline_comment_set_on_already_multiline_does_not_repromote() -> None:
+    src = td(
+        """
+        t = {
+            a = 1,
+            b = 2,
+        }
+        """,
+    )
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    assert t.multiline is True
+    t.comments["a"] = "first"
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1, # first
+            b = 2,
+        }
+        """,
+    )
+
+
+# The trivia-geometry branches in the shared comma-comment core only fire on
+# irregular physical layouts. These tests pin them.
+
+_COMMA_FIRST = td(
+    """
+    t = {
+          a = 1
+        , b = 2
+    }
+    """,
+)
+
+
+def test_inline_comma_first_eol_set_and_delete_round_trip() -> None:
+    doc = tomlrt.loads(_COMMA_FIRST)
+    t = doc.table("t")
+    t.comments["a"] = "x"
+    t.comments["b"] = "x"
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+              a = 1 # x
+            , b = 2 # x
+        }
+        """,
+    )
+    del t.comments["a"]
+    del t.comments["b"]
+    assert tomlrt.dumps(doc) == _COMMA_FIRST
+
+
+def test_inline_comma_first_leading_comment_set() -> None:
+    doc = tomlrt.loads(_COMMA_FIRST)
+    t = doc.table("t")
+    t.leading_comments["a"] = ("lead a",)
+    t.leading_comments["b"] = ("lead b",)
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+              # lead a
+              a = 1
+              # lead b
+            , b = 2
+        }
+        """,
+    )
+
+
+def test_inline_eol_on_item_sharing_a_line() -> None:
+    # Two items on one physical row: setting an EOL comment on the first one
+    # has no downstream newline to reclaim (the break-holder strip is skipped).
+    doc = tomlrt.loads(
+        td(
+            """
+            t = {
+                a = 1, b = 2,
+                c = 3,
+            }
+            """,
+        ),
+    )
+    doc.table("t").comments["a"] = "x"
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1, # x
+         b = 2,
+            c = 3,
+        }
+        """,
+    )
+
+
+def test_inline_delete_eol_keeps_existing_downstream_break() -> None:
+    # A blank line below the item already carries a structural newline, so
+    # deleting the EOL comment must not synthesise a second one.
+    doc = tomlrt.loads(
+        td(
+            """
+            t = {
+                a = 1, # x
+
+                b = 2,
+            }
+            """,
+        ),
+    )
+    del doc.table("t").comments["a"]
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a = 1,
+            b = 2,
+        }
+        """,
+    )
+
+
+def test_inline_leading_comment_on_zero_indent_item() -> None:
+    # A zero-indent item whose above-region already holds a comment: the
+    # value-indent scan walks past that comment's newline (a non-whitespace
+    # piece) before falling through to the default indent.
+    doc = tomlrt.loads(
+        td(
+            """
+            t = {
+            # c
+            a = 1,
+            b = 2,
+            }
+            """,
+        ),
+    )
+    doc.table("t").leading_comments["a"] = ("L",)
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+          # L
+        a = 1,
+        b = 2,
+        }
+        """,
+    )

@@ -20,6 +20,7 @@ from tomlrt._comma_ops import (
     splice_in,
     splice_out,
 )
+from tomlrt._format import set_comma_value_multiline
 from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
@@ -221,4 +222,41 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
     )
 
 
-__all__ = ["append_entry", "delete_entry", "reorder_inline", "replace_entry_value"]
+def set_inline_multiline(root: Container, *, multiline: bool, indent: str) -> None:
+    """Switch an inline-table root between single-line and multi-line form.
+
+    ``root`` must be an `INLINE_ROOT` (it owns ``_value``). Collapsing
+    raises `TOMLError` if a comment would be orphaned.
+    """
+    iv = root._value  # noqa: SLF001
+    assert iv is not None
+    set_comma_value_multiline(
+        iv,
+        multiline=multiline,
+        nl=root._doc_newline,  # noqa: SLF001
+        indent=indent,
+    )
+
+
+def ensure_inline_multiline(c: Container) -> None:
+    """Promote the inline table owning ``c`` to multi-line if it is not.
+
+    Resolves the outermost inline root, so a dotted-inner navigator
+    promotes the whole physical table (the only place a row comment can
+    live). No-op when already multi-line.
+    """
+    root = _outermost_inline(c)
+    iv = root._value  # noqa: SLF001
+    assert iv is not None
+    if not value_is_multiline(iv):
+        set_inline_multiline(root, multiline=True, indent="    ")
+
+
+__all__ = [
+    "append_entry",
+    "delete_entry",
+    "ensure_inline_multiline",
+    "reorder_inline",
+    "replace_entry_value",
+    "set_inline_multiline",
+]

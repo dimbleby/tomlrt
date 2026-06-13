@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import _put_eol, _take_eol
+from tomlrt._errors import TOMLError
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
     CommentNode,
@@ -49,11 +50,13 @@ from tomlrt._trivia import (
     split_eol_section,
     split_item_above,
     split_lines,
+    trivia_has_comment,
 )
 from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
+    item_has_any_comment,
     value_is_multiline,
 )
 
@@ -506,6 +509,47 @@ def _canon_value(v: Value, *, nl: str, comments: bool, parent_indent: str = "") 
     # Other value kinds carry no formattable trivia.
 
 
+def set_comma_value_multiline(
+    value: ArrayValue | InlineTableValue,
+    *,
+    multiline: bool,
+    nl: str,
+    indent: str,
+) -> None:
+    """Switch a comma-value between flush single-line and multi-line form.
+
+    Shared by `Array.set_multiline` and inline-table ``set_multiline``.
+    Collapsing raises `TOMLError` when a comment would be orphaned. The
+    single-line bracket pad is driven by ``value._single_line_pad`` (via
+    `_canon_single_line_inline`), so arrays collapse tight (``[1, 2]``)
+    while inline tables keep their pad (``{ a = 1 }``).
+    """
+    items = value.items
+    if not multiline:
+        for it in items:
+            if item_has_any_comment(it):
+                msg = (
+                    "cannot collapse to single line: "
+                    "items contain EOL or leading comments"
+                )
+                raise TOMLError(msg)
+        if trivia_has_comment(value.header_trivia) or trivia_has_comment(
+            value.final_trivia
+        ):
+            msg = (
+                "cannot collapse to single line: "
+                "header or trailing trivia contains comments"
+            )
+            raise TOMLError(msg)
+        _canon_single_line_inline(value)
+        return
+    for it in items:
+        _canon_value(it.value, nl=nl, comments=True, parent_indent=indent)
+    _canon_multiline_shape(
+        value, nl=nl, comments=True, item_indent=indent, outer_indent=""
+    )
+
+
 # ---------------------------------------------------------------------------
 # Subtree walk and orchestration
 # ---------------------------------------------------------------------------
@@ -609,4 +653,5 @@ __all__ = [
     "_canon_value",
     "format_document_trailing",
     "format_subtree",
+    "set_comma_value_multiline",
 ]

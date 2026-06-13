@@ -56,6 +56,38 @@ tags.comments[0] = "primary"
 tags.leading_comments[1] = ("alternate",)
 ```
 
+## Inline-table comments
+
+Because tomlrt targets TOML 1.1, inline tables may span multiple lines and
+carry comments. `Table.comments` and `Table.leading_comments` work on an
+inline table just as they do on a `[section]`, keyed by entry name:
+
+```python
+doc = tomlrt.loads('pkg = { name = "tomlrt", version = "0.1" }\n')
+pkg = doc.table("pkg")
+pkg.comments["name"] = "the package name"
+
+print(tomlrt.dumps(doc))
+# pkg = {
+#     name = "tomlrt", # the package name
+#     version = "0.1",
+# }
+```
+
+A single-line inline table has nowhere to put a comment, so setting one
+promotes the table to multi-line form automatically — exactly as it does
+for an inline array. You can also control the layout explicitly with
+`Table.multiline` / `Table.set_multiline(multiline=…)`; collapsing back to
+a single line raises if it would orphan a comment.
+
+For a dotted-key inline table such as `{ a.b = 1 }`, address the comment
+through the inner table — `doc["t"]["a"].comments["b"]` — mirroring how a
+top-level `a.b = 1` is reached via `doc["a"].comments["b"]`.
+
+`Table.header_comment` and `Table.header_leading_comments` remain
+unavailable on inline tables: an inline table has no header line to attach
+them to.
+
 ## Orphan comments between sections
 
 `leading_comments` and `header_leading_comments` cover only the run of `# …`

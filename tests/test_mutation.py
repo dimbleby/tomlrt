@@ -763,7 +763,7 @@ def test_array_setitem_slice_preserves_leading_comments() -> None:
     )
     doc = tomlrt.loads(src)
     arr = doc.array("arr")
-    arr.leading_comments[2] = ["above three"]
+    arr.leading_comments[2] = ("above three",)
     arr[1:2] = []
     assert tomlrt.dumps(doc) == td(
         """

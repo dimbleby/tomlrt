@@ -23,11 +23,8 @@ from tomlrt._array_comments import (
     ArrayLeadingView,
 )
 from tomlrt._comma_ops import (
-    CommaStyle,
     _normalise_row_breaks,
     detect_style,
-    flip_to_internal,
-    flip_to_terminal,
     migrate_bracket_above,
     reorder_owned,
     splice_in,
@@ -36,32 +33,31 @@ from tomlrt._comma_ops import (
 from tomlrt._errors import TOMLError
 from tomlrt._format import (
     _canon_inline_value,
-    _canon_multiline_shape,
-    _canon_value,
+    set_comma_value_multiline,
 )
 from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
     strip_trailing_indent,
-    trivia_has_comment,
 )
 from tomlrt._typecheck import _validate_mapping
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
-    CommaValue,
     value_is_multiline,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping, MutableMapping
 
     from _typeshed import SupportsRichComparison
 
+    from tomlrt._comma_ops import (
+        CommaStyle,
+    )
     from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
-        CommaItem,
         Value,
     )
 
@@ -218,12 +214,12 @@ class Array(list[Any]):
         self.set_multiline(multiline=value)
 
     @property
-    def comments(self) -> ArrayEolView:
+    def comments(self) -> MutableMapping[int, str]:
         """EOL comment view, indexed by item position."""
         return ArrayEolView(self)
 
     @property
-    def leading_comments(self) -> ArrayLeadingView:
+    def leading_comments(self) -> MutableMapping[int, tuple[str, ...]]:
         """Leading-comment view, indexed by item position."""
         return ArrayLeadingView(self)
 
@@ -249,47 +245,10 @@ class Array(list[Any]):
 
         Returns ``self`` for chaining.
         """
-        ind = indent
-        value = self._value
-        items = value.items
-        if not multiline:
-            for it in items:
-                if _item_has_any_comment(it):
-                    msg = (
-                        "cannot collapse multi-line array: "
-                        "items contain EOL or leading comments"
-                    )
-                    raise TOMLError(msg)
-            if trivia_has_comment(value.header_trivia) or trivia_has_comment(
-                value.final_trivia
-            ):
-                msg = (
-                    "cannot collapse multi-line array: "
-                    "header or trailing trivia contains comments"
-                )
-                raise TOMLError(msg)
-            value.header_trivia = Trivia()
-            value.final_trivia = Trivia()
-            for k, it in enumerate(items):
-                it.leading = Trivia() if k == 0 else Trivia([WhitespaceNode(" ")])
-                it.post_comma_trivia = Trivia()
-                it.trailing = Trivia()
-            self._multiline = False
-            flush_style = CommaStyle(
-                is_multiline=False,
-                inter_separator=Trivia([WhitespaceNode(text=" ")]),
-                trailing_comma=False,
-                trailing_post=Trivia(),
-            )
-            _renormalise_commas(items, flush_style)
-            return self
-        self._multiline = True
-        nl = self._doc_newline
-        for it in items:
-            _canon_value(it.value, nl=nl, comments=True, parent_indent=ind)
-        _canon_multiline_shape(
-            value, nl=nl, comments=True, item_indent=ind, outer_indent=""
+        set_comma_value_multiline(
+            self._value, multiline=multiline, nl=self._doc_newline, indent=indent
         )
+        self._multiline = multiline
         return self
 
     def _synth_cst(self, value: object) -> tuple[Value, object]:
@@ -548,33 +507,6 @@ def _make_item(
         has_comma=has_comma,
         post_comma_trivia=Trivia(),
     )
-
-
-def _value_has_any_comment(val: Value) -> bool:
-    if not isinstance(val, CommaValue):
-        return False
-    if trivia_has_comment(val.header_trivia) or trivia_has_comment(val.final_trivia):
-        return True
-    return any(_item_has_any_comment(it) for it in val.items)
-
-
-def _item_has_any_comment(item: CommaItem) -> bool:
-    if (
-        trivia_has_comment(item.leading)
-        or trivia_has_comment(item.trailing)
-        or trivia_has_comment(item.post_comma_trivia)
-    ):
-        return True
-    return _value_has_any_comment(item.value)
-
-
-def _renormalise_commas(items: list[ArrayItem], style: CommaStyle) -> None:
-    """Reset has_comma + post_comma_trivia across ``items`` per style."""
-    if not items:
-        return
-    for it in items[:-1]:
-        flip_to_internal(it)
-    flip_to_terminal(items[-1], style)
 
 
 class AoT(list["Table"]):
