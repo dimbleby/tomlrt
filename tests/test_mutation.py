@@ -1202,8 +1202,8 @@ def test_aot_clear_removes_all_entries_and_owned_subsections() -> None:
     aot.clear()
     assert len(aot) == 0
     out = tomlrt.dumps(doc)
-    assert out == ""
-    assert _reparses(out) == {}
+    assert out == "pkg = []\n"
+    assert _reparses(out) == {"pkg": []}
 
 
 def test_aot_delitem_index_pops_one() -> None:
@@ -1403,8 +1403,8 @@ def test_aot_imul_zero_clears() -> None:
     aot = doc.aot("t")
     aot *= 0
     out = tomlrt.dumps(doc)
-    assert out == ""
-    assert "t" not in tomlrt.loads(out)
+    assert out == "t = []\n"
+    assert tomlrt.loads(out)["t"] == []
 
 
 def test_aot_imul_detached_replicates_entries() -> None:

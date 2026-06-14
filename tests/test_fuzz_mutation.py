@@ -107,16 +107,6 @@ def _leaves_match(rendered: object, logical: object) -> bool:
     return fa.keys() == fb.keys() and all(_deep_eq(fa[k], fb[k]) for k in fa)
 
 
-def _has_empty_aot(value: object) -> bool:
-    if isinstance(value, AoT):
-        return len(value) == 0 or any(_has_empty_aot(e) for e in value)
-    if isinstance(value, Array):
-        return any(_has_empty_aot(e) for e in value)
-    if isinstance(value, Container):
-        return any(_has_empty_aot(value[k]) for k in value)
-    return False
-
-
 def _rand_value(rng: random.Random) -> Any:
     return rng.choice(
         [1, 3.5, "str", True, -7, "x y", "", [1, 2], {"a": 1}, [{"q": 1}]]
@@ -228,10 +218,10 @@ def test_mutation_keeps_model_consistent(path: Path) -> None:
         # Valid TOML and a fixed point of dump -> load -> dump.
         tomli.loads(out)
         assert tomlrt.dumps(tomlrt.loads(out)) == out, f"non-idempotent: {ctx}\n{out!r}"
-        # The rendered output reflects the in-memory logical model. Skip
-        # when the model holds a non-representable empty array-of-tables.
-        if not _has_empty_aot(doc):
-            assert _leaves_match(tomli.loads(out), doc.to_dict()), (
-                f"render/model mismatch: {ctx}\n{out!r}\n"
-                f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
-            )
+        # The rendered output reflects the in-memory logical model. An
+        # empty array-of-tables renders as ``key = []``, so the
+        # render/model oracle holds even when the model holds one.
+        assert _leaves_match(tomli.loads(out), doc.to_dict()), (
+            f"render/model mismatch: {ctx}\n{out!r}\n"
+            f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
+        )

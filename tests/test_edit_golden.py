@@ -2639,7 +2639,10 @@ def test_assign_empty_aot_returns_appendable_view() -> None:
     doc = tomlrt.loads("")
     doc["servers"] = AoT()
     aot = doc["servers"]
-    assert tomlrt.dumps(doc) == ""
+    # An empty AoT renders as an empty array, preserving the dict-view
+    # shape (``{"servers": []}``); appending the first entry replaces it
+    # with the ``[[servers]]`` header.
+    assert tomlrt.dumps(doc) == "servers = []\n"
     aot.append({"host": "localhost"})
     rendered = tomlrt.dumps(doc)
     assert rendered == td("""
@@ -3822,12 +3825,10 @@ def test_leading_comments_view_does_not_bleed_eol_comment() -> None:
 
 
 def test_aot_clear_renders_empty_but_keeps_key() -> None:
-    """Clearing an AoT empties it like a regular Python list value:
-    the key stays on the host (so ``in`` / ``len`` / ``keys`` keep
-    behaving like a dict), but render skips it because empty AoTs
-    have no syntax in TOML. A subsequent re-parse will not see the
-    key — that's an acceptable mutation-time cost; held references
-    keep working as plain (now-empty) lists."""
+    """Clearing an AoT empties it like a regular Python list value: the
+    key stays on the host and renders as an empty array (``a = []``), so
+    the document keeps the same semantic shape as the dict view. A
+    re-parse reads ``a`` as an empty inline array rather than an AoT."""
     doc = tomlrt.loads(
         td("""
         [[a]]
@@ -3839,7 +3840,7 @@ def test_aot_clear_renders_empty_but_keeps_key() -> None:
     doc["a"].clear()
     assert "a" in doc
     assert len(doc["a"]) == 0
-    assert tomlrt.dumps(doc) == ""
+    assert tomlrt.dumps(doc) == "a = []\n"
 
 
 def test_aot_pop_last_renders_empty_but_keeps_key() -> None:
@@ -3852,7 +3853,108 @@ def test_aot_pop_last_renders_empty_but_keeps_key() -> None:
     )
     doc["a"].pop()
     assert "a" in doc
-    assert tomlrt.dumps(doc) == "x=0\n"
+    assert tomlrt.dumps(doc) == "x=0\na = []\n"
+
+
+def test_aot_empty_placeholder_lands_in_parent_body_not_after_sibling() -> None:
+    """When the AoT's only header sat after a sibling sub-section, the
+    ``key = []`` placeholder must move into the parent's *body* region.
+    Replacing the header in place would put it after ``[t.b]``, where a
+    re-parse would read it as ``t.b.a`` rather than ``t.a``."""
+    doc = tomlrt.loads(
+        td("""
+        [t]
+        [t.b]
+        x = 1
+        [[t.a]]
+        n = 1
+        """)
+    )
+    doc["t"]["a"].pop()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [t]
+        a = []
+        [t.b]
+        x = 1
+        """)
+    assert tomlrt.loads(out)["t"]["a"] == []
+
+
+def test_aot_first_add_after_placeholder_does_not_capture_sibling() -> None:
+    """Adding the first entry must anchor the ``[[t.a]]`` header at the
+    AoT's structural position (after the parent body), not in place of
+    the placeholder — otherwise a trailing sibling KV would be captured
+    into the new entry on re-parse."""
+    doc = tomlrt.loads("[t]\n")
+    doc["t"]["a"] = AoT()
+    doc["t"]["x"] = 1
+    assert tomlrt.dumps(doc) == td("""
+        [t]
+        a = []
+        x = 1
+        """)
+    doc["t"]["a"].add({"n": 5})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [t]
+        x = 1
+
+        [[t.a]]
+        n = 5
+        """)
+    assert tomlrt.loads(out)["t"] == {"x": 1, "a": [{"n": 5}]}
+
+
+def test_delete_empty_aot_key_removes_placeholder() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        n = 1
+        """)
+    )
+    doc["a"].clear()
+    assert tomlrt.dumps(doc) == "a = []\n"
+    del doc["a"]
+    assert "a" not in doc
+    assert tomlrt.dumps(doc) == ""
+
+
+def test_nested_empty_aot_renders_as_empty_array() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        n = 1
+        """)
+    )
+    doc["a"][0]["sub"] = AoT()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[a]]
+        n = 1
+        sub = []
+        """)
+    assert tomlrt.loads(out)["a"][0]["sub"] == []
+
+
+def test_assign_empty_live_aot_clones_as_empty_array() -> None:
+    """Assigning a live (attached) empty AoT to another key routes
+    through the AoT clone path; with no entries to clone, the
+    destination still renders as an empty ``key = []`` array."""
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        n = 1
+        """)
+    )
+    doc["a"].clear()
+    doc["b"] = doc["a"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = []
+        b = []
+        """)
+    assert tomlrt.loads(out).to_dict() == {"a": [], "b": []}
 
 
 def test_replace_section_preserves_blank_before_next_section() -> None:

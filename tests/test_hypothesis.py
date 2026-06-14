@@ -562,12 +562,12 @@ def test_api_mutation_program(ops: list[tuple[Any, ...]]) -> None:
         # Internal consistency: dumps must succeed at every step and
         # be a fixed point of dumps -> loads -> dumps.
         #
-        # NB: a stronger ``tomllib.loads(out) == doc.to_dict()`` oracle
-        # is *not* valid here — synthesis can build logically-valid but
-        # non-representable states (e.g. an empty ``AoT``, which has no
-        # TOML syntax and renders as nothing), so the rendered bytes and
-        # the logical model legitimately diverge. The reorder property
-        # below seeds from parsed source, where that oracle does hold.
+        # NB: only the idempotence oracle is asserted here. Synthesis can
+        # build states whose rendered form re-parses to a different *type*
+        # than the logical model even though the dict view matches — e.g.
+        # an empty ``AoT`` renders as ``key = []`` and re-parses as an
+        # empty ``Array``. The reorder property below seeds from parsed
+        # source, where the stronger ``loads(out) == to_dict()`` holds.
         out = tomlrt.dumps(doc)
         assert tomlrt.dumps(tomlrt.loads(out)) == out
 

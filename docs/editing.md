@@ -142,10 +142,12 @@ doc.sort()
 
 ## Empty arrays-of-tables
 
-TOML has no syntax for an array-of-tables with zero entries, so an empty `AoT`
-does not appear in `dumps` output — the key is silently absent.
-The in-memory `AoT` remains usable: append entries to it and they will reappear
-in the next dump.
+An array-of-tables with zero entries has no `[[key]]` syntax, so an empty `AoT`
+renders as an empty array — `key = []` — preserving the same semantic shape as
+the dict view (`{"key": []}`). Appending the first entry replaces that
+placeholder with the usual `[[key]]` header. Note that re-parsing such output
+reads `key = []` back as an empty inline `Array` rather than an `AoT`; the dict
+view (`to_dict()`) is identical, but the in-memory type differs.
 
 ## Inline-array layout
 

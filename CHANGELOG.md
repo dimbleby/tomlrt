@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- An empty array-of-tables now renders as an empty array (`key = []`) instead of
+  being omitted, so a dumped document matches its dict view.
+
 ## [1.8.1] - 2026-06-14
 
 ### Fixed

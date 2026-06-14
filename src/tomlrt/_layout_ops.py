@@ -43,7 +43,7 @@ from tomlrt._trivia import (
     WhitespaceNode,
     line_has_comment,
 )
-from tomlrt._values import InlineTableValue, make_keyparts
+from tomlrt._values import ArrayValue, InlineTableValue, make_keyparts
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -1149,6 +1149,9 @@ def _collect_subtree(
             _collect_subtree(child, containers_out, aots_out, add_slot)
     elif isinstance(val, AoT):
         aots_out.append(val)
+        placeholder = _empty_aot_placeholder_ref(val)
+        if placeholder is not None:
+            add_slot(placeholder.slot)
         for entry in val:
             _collect_subtree(entry, containers_out, aots_out, add_slot)
 
@@ -2053,9 +2056,11 @@ def _build_section_leading(doc: Document) -> Trivia:
 def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
     """Bind an empty AoT under ``parent[key]``.
 
-    No physical slots are created; subsequent ``aot.add(...)`` calls
-    will materialise the first ``[[path]]`` header. The ``source_aot``
-    is rehomed in place (identity preserved).
+    The AoT has no entries, so its physical presence is a single
+    ``key = []`` placeholder KVSlot (an empty inline array) filed in
+    ``parent``'s body. The first ``aot.add(...)`` consumes that
+    placeholder and materialises the first ``[[path]]`` header in its
+    stead. The ``source_aot`` is rehomed in place (identity preserved).
     """
     if len(source_aot) > 0:  # pragma: no cover
         msg = "non-empty AoT live-attach has its own routing"
@@ -2064,7 +2069,87 @@ def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
     source_aot._layout_root = parent._layout_root  # noqa: SLF001
     source_aot._path = (*parent._path, key)  # noqa: SLF001
     source_aot._parent = parent  # noqa: SLF001
+    _materialise_empty_aot(source_aot)
     return source_aot
+
+
+def _materialise_empty_aot(aot: AoT) -> None:
+    """Splice a ``key = []`` placeholder for a now-empty attached AoT.
+
+    The placeholder is a normal direct KV (empty ``ArrayValue``) under
+    the AoT's parent, so it lands in the parent's body region rather
+    than at a header position a re-parse would misattribute. Dict
+    storage at ``parent[key]`` is left as the AoT — only the physical
+    slot is created.
+    """
+    parent = aot._parent  # noqa: SLF001
+    assert parent is not None
+    assert len(aot) == 0
+    key = aot._path[-1]  # noqa: SLF001
+    append_direct_kv(parent, key, ArrayValue())
+
+
+def _empty_aot_placeholder_ref(aot: AoT) -> SlotRef | None:
+    """Return the ``key = []`` placeholder ref backing an empty AoT, if any.
+
+    Derived from the parent's ``_index[key]``: an empty AoT's only
+    physical presence is one ``KVSlot`` whose value is an empty
+    ``ArrayValue``. Returns ``None`` when the AoT is non-empty or carries
+    no placeholder yet (e.g. a fresh AoT mid-clone, before its first
+    entry or placeholder lands).
+    """
+    if len(aot) != 0:
+        return None
+    parent = aot._parent  # noqa: SLF001
+    assert parent is not None
+    key = aot._path[-1]  # noqa: SLF001
+    bucket = parent._index.get(key)  # noqa: SLF001
+    if not bucket:
+        return None
+    ref = bucket[0]
+    slot = ref.slot
+    if not (isinstance(slot, KVSlot) and isinstance(slot.value, ArrayValue)):
+        return None  # pragma: no cover -- key invariant: one value per key
+    return ref
+
+
+def _remove_empty_aot_placeholder(aot: AoT, ref: SlotRef) -> None:
+    """Unlink an empty AoT's placeholder slot and scrub its refs.
+
+    Mirrors the focused leaf-delete sequence in `delete_key`: scrub
+    every ref via slot back-pointers, recompute body tails on the
+    parent chain, drop any ``entry_slots`` membership, then unlink.
+    """
+    parent = aot._parent  # noqa: SLF001
+    assert parent is not None
+    doc = aot._attached_doc  # noqa: SLF001
+    slot = ref.slot
+    owned_ids = {id(slot)}
+    _scrub_owned_slots_via_backptrs([slot])
+    min_depth = len(slot.host_path) if isinstance(slot, KVSlot) else 0
+    _invalidate_body_tail_chain(parent, owned_ids, min_depth=min_depth, recompute=True)
+    owner = slot.owner_aot_entry
+    if owner is not None:
+        with contextlib.suppress(ValueError):
+            owner.entry_slots.remove(slot)
+    unlink_slot(slot, doc)
+
+
+def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
+    """Drop the ``key = []`` placeholder before the AoT's first entry lands.
+
+    No-op past entry 0 or when the AoT carries no placeholder (the
+    fresh-AoT clone path). The first ``[[path]]`` header takes the AoT's
+    structural position (after the parent body), not the placeholder's
+    in-body position, which a re-parse could otherwise misattribute.
+    Runs before the append anchor is computed and before any synthetic
+    parent header is demoted.
+    """
+    if ordinal != 0:
+        return
+    placeholder = _empty_aot_placeholder_ref(aot)
+    if placeholder is not None:
+        _remove_empty_aot_placeholder(aot, placeholder)
 
 
 def _aot_separator(aot: AoT, doc: Document) -> Trivia:
@@ -2105,6 +2190,12 @@ def add_aot_entry(
     assert path
 
     ordinal = len(aot)
+    # Consume the ``key = []`` placeholder before computing the append
+    # anchor or demoting the parent header: the first ``[[path]]`` header
+    # takes the AoT's structural position (after the parent body), not
+    # the placeholder's in-body position, which could otherwise capture
+    # trailing parent KVs on re-parse.
+    _consume_first_entry_placeholder(aot, ordinal)
     entry = AoTEntry(path=path)
     leading = _build_section_leading(doc) if ordinal == 0 else _aot_separator(aot, doc)
     header = _new_section_header(
@@ -2275,6 +2366,7 @@ def _install_cloned_aot_entry(
     assert target_path
 
     ordinal = len(aot)
+    _consume_first_entry_placeholder(aot, ordinal)
     new_entry = AoTEntry(path=target_path)
 
     cloned_slots = _clone_entry_slots(
@@ -2740,6 +2832,8 @@ def clone_aot(
             dst_path=target_path,
             preserve_source_separator=True,
         )
+    if len(new_aot) == 0:
+        _materialise_empty_aot(new_aot)
     return new_aot
 
 
@@ -3283,6 +3377,9 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     def _collect_nested_aot_slots(c: Container, sink: list[Slot]) -> None:
         for v in c.values():
             if isinstance(v, AoT):
+                placeholder = _empty_aot_placeholder_ref(v)
+                if placeholder is not None:
+                    sink.append(placeholder.slot)
                 for nested_entry_table in v:
                     ne = nested_entry_table._owner_aot_entry  # noqa: SLF001
                     if ne is not None:
@@ -3354,6 +3451,10 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     last_key = aot._path[-1]  # noqa: SLF001
     if len(aot) == 0 and not parent._index.get(last_key):  # noqa: SLF001
         parent._index.pop(last_key, None)  # noqa: SLF001
+        # An empty AoT still lives in dict storage; a ``key = []``
+        # placeholder gives it a physical presence so the document keeps
+        # the same semantic shape as the dict view.
+        _materialise_empty_aot(aot)
 
     return popped_entries
 
