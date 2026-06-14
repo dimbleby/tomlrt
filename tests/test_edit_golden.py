@@ -3675,6 +3675,72 @@ def test_array_sort_leading_comments_travel_with_items() -> None:
     assert tomlrt.dumps(doc2) == expected
 
 
+def test_array_sort_leading_comments_survive_eol_comment() -> None:
+    """Regression for tomlrt #185: when an array carries an EOL comment on
+    one item *and* leading comments on others, sorting must keep every
+    leading comment attached to its own item rather than collapsing or
+    dropping them. The EOL comment terminates its row, so the following
+    item's leading carries no opening newline -- the case that previously
+    misclassified the comment block as positional pad.
+    """
+    src = td("""
+        xs = [
+            "zebra",  # eol on zebra
+            # leading on alpha
+            "alpha",
+            "gamma",
+            # leading on beta
+            "beta",
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc["xs"].sort(key=str)
+    expected = td("""
+        xs = [
+            # leading on alpha
+            "alpha",
+            # leading on beta
+            "beta",
+            "gamma",
+            "zebra",  # eol on zebra
+        ]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    # Sorting the already-sorted result is a no-op.
+    doc2 = tomlrt.loads(tomlrt.dumps(doc))
+    doc2["xs"].sort(key=str)
+    assert tomlrt.dumps(doc2) == expected
+
+
+def test_array_sort_leading_comment_with_trailing_ws_after_comma() -> None:
+    """Regression: a leftover whitespace run after a comma (``"z" , \\n``)
+    files at the head of the next item's leading, *before* the structural
+    row break. Locating the break must skip that whitespace, otherwise the
+    break is stolen into the traveling comment block and the following item
+    is reflowed onto the moved item's line.
+    """
+    src = td(
+        """
+        xs = [
+            "zebra" ,@
+            # lead alpha
+            "alpha",
+        ]
+        """,
+    ).replace("@", " ")
+    doc = tomlrt.loads(src)
+    doc["xs"].sort(key=str)
+    assert tomlrt.dumps(doc) == td(
+        """
+        xs = [
+            # lead alpha
+            "alpha" ,@
+            "zebra",
+        ]
+        """,
+    ).replace("@", " ")
+
+
 def test_array_insert_zero_pushes_existing_leading_comment_to_new_position() -> None:
     """``insert(0, x)`` must not duplicate the leading-of-(formerly) item-0
     onto both the new item and its old (now position-1) item."""
