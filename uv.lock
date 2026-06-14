@@ -858,7 +858,7 @@ wheels = [
 
 [[package]]
 name = "tomlrt"
-version = "1.8.1"
+version = "1.8.2"
 source = { editable = "." }
 dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
@@ -883,10 +883,10 @@ requires-dist = [{ name = "typing-extensions", marker = "python_full_version < '
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6" },
-    { name = "mypy", specifier = ">=1.11" },
+    { name = "mypy", specifier = ">=2.1" },
     { name = "pytest", specifier = ">=9" },
     { name = "pytest-cov", specifier = ">=5" },
-    { name = "tomli", specifier = ">=2.2" },
+    { name = "tomli", specifier = ">=2.4" },
 ]
 docs = [
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.27" },
