@@ -364,7 +364,7 @@ wrong.
   overwrite / sort / array + AoT ops) over each parsed document and
   asserts the model stays self-consistent — valid TOML out, a
   dump→load→dump fixed point, and (the important oracle)
-  `tomllib.loads(dumps(doc))` matching `doc.to_dict()`, which catches a
+  `tomli.loads(dumps(doc))` matching `doc.to_dict()`, which catches a
   mutation that places a slot where a re-parse attributes it to a
   different owner than the logical view says. Draws **fresh random
   seeds** each run and reports the failing seed for reproduction.
@@ -380,7 +380,9 @@ wrong.
 - `tests/_helpers.py` — shared test helpers: `td(""" … """)` for writing
   TOML fixtures as indented triple-quoted literals (prefer it over walls
   of `\n`-escaped strings in new tests), and `reparses(src)` for the
-  re-parse sanity check via stdlib `tomllib`.
+  re-parse sanity check via `tomli` (used unconditionally because, as of
+  writing, stdlib `tomllib` is TOML 1.0 only whereas `tomli` 2.4+ accepts
+  TOML 1.1 syntax).
 
 When adding behaviour, add a focused unit test in the relevant file
 **and** consider whether the property tests should grow.

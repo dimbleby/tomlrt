@@ -11,10 +11,10 @@ seeded random edit programs (set / delete / overwrite / sort across
 containers, plus append / insert / pop / sort / reverse across arrays
 and arrays-of-tables) and asserts the model stayed self-consistent:
 
-* the rendered output is valid TOML (``tomllib`` accepts it);
+* the rendered output is valid TOML (``tomli`` accepts it);
 * dump -> load -> dump is a fixed point (byte-exact idempotence);
 * the rendered output reads back as the in-memory logical model
-  (``tomllib.loads(dumps(doc))`` matches ``doc.to_dict()``).
+  (``tomli.loads(dumps(doc))`` matches ``doc.to_dict()``).
 
 The last oracle is the important one: it is sensitive to a mutation
 that places a slot where a re-parse attributes it to a different owner
@@ -40,20 +40,15 @@ from __future__ import annotations
 import math
 import random
 import secrets
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+import tomli
 
 import tomlrt
 from tomlrt import AoT, Array
 from tomlrt._container import Container
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover -- 3.10 backport
-    import tomli as tomllib
 
 pytestmark = pytest.mark.slow
 
@@ -214,9 +209,9 @@ def _mutate_aot(node: AoT, rng: random.Random) -> None:
 def test_mutation_keeps_model_consistent(path: Path) -> None:
     src = path.read_text(encoding="utf-8")
     try:
-        tomllib.loads(src)
-    except tomllib.TOMLDecodeError:
-        pytest.skip("corpus entry not valid under stdlib tomllib")
+        tomli.loads(src)
+    except tomli.TOMLDecodeError:
+        pytest.skip("corpus entry not valid under tomli")
 
     for _ in range(_PROGRAMS):
         # A fresh random seed every run, so the fuzzer explores new
@@ -231,12 +226,12 @@ def test_mutation_keeps_model_consistent(path: Path) -> None:
         out = tomlrt.dumps(doc)
         ctx = f"{path.relative_to(_VALID_ROOT).as_posix()} seed={seed}"
         # Valid TOML and a fixed point of dump -> load -> dump.
-        tomllib.loads(out)
+        tomli.loads(out)
         assert tomlrt.dumps(tomlrt.loads(out)) == out, f"non-idempotent: {ctx}\n{out!r}"
         # The rendered output reflects the in-memory logical model. Skip
         # when the model holds a non-representable empty array-of-tables.
         if not _has_empty_aot(doc):
-            assert _leaves_match(tomllib.loads(out), doc.to_dict()), (
+            assert _leaves_match(tomli.loads(out), doc.to_dict()), (
                 f"render/model mismatch: {ctx}\n{out!r}\n"
-                f"logical={doc.to_dict()!r}\nreparsed={tomllib.loads(out)!r}"
+                f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
             )

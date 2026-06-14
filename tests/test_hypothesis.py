@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import math
 import string
-import sys
 from typing import Any
 
 import pytest
+import tomli
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -16,11 +16,6 @@ from _helpers import td
 from tomlrt import Document
 
 pytestmark = pytest.mark.slow
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 
 def _deep_equal(a: object, b: object) -> bool:
@@ -65,7 +60,20 @@ _STRINGS = _BASIC_STR_CHARS.map(_quoted)
 _INTS = st.integers(min_value=-(2**31), max_value=2**31 - 1).map(str)
 _BOOLS = st.sampled_from(["true", "false"])
 _FLOATS = st.sampled_from(["0.0", "1.5", "-3.25", "1e10", "-2.5e-3", "inf", "-inf"])
-_SCALARS = st.one_of(_STRINGS, _INTS, _BOOLS, _FLOATS)
+
+# TOML 1.1 scalar literals that `tomli` (>=2.4) accepts but the stdlib
+# `tomllib` does not yet: the `\xHH` / `\e` basic-string escapes and the
+# seconds-optional date-time / time forms. Including them here threads
+# 1.1 syntax through every `_document()`-based round-trip + oracle test.
+_TOML11_STRINGS = st.sampled_from(
+    [r'"\xe9"', r'"tail \xE9"', r'"esc\e end"', r'"\x00\x7f"']
+)
+_TOML11_DATETIMES = st.sampled_from(
+    ["07:32", "1979-05-27T07:32", "1979-05-27 07:32Z", "1979-05-27 07:32-07:00"]
+)
+_TOML11_SCALARS = st.one_of(_TOML11_STRINGS, _TOML11_DATETIMES)
+
+_SCALARS = st.one_of(_STRINGS, _INTS, _BOOLS, _FLOATS, _TOML11_SCALARS)
 
 
 @st.composite
@@ -145,13 +153,13 @@ def _document(draw: st.DrawFn) -> str:
 
 def _python_scalar(literal: str) -> Any:
     """Decode a TOML scalar literal (as our generator emits it) to Python."""
-    return tomllib.loads(f"_x = {literal}")["_x"]
+    return tomli.loads(f"_x = {literal}")["_x"]
 
 
 @st.composite
 def _document_with_overrides(draw: st.DrawFn) -> tuple[str, dict[str, Any]]:
     src = draw(_document())
-    parsed = tomllib.loads(src)
+    parsed = tomli.loads(src)
     top_keys = [k for k, v in parsed.items() if not isinstance(v, (dict, list))]
     overrides: dict[str, Any] = {}
     for k in top_keys:
@@ -171,14 +179,14 @@ def test_document_invariants(case: tuple[str, dict[str, Any]]) -> None:
 
     For each generated source, asserts:
     * byte-exact round-trip (parse + dumps == src);
-    * semantic equivalence to stdlib `tomllib`;
+    * semantic equivalence to `tomli`;
     * mutating top-level scalar slots reflects in to_dict() and
       survives a dump/parse cycle.
     """
     src, overrides = case
     doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
-    expected = tomllib.loads(src)
+    expected = tomli.loads(src)
     assert _deep_equal(doc.to_dict(), expected)
     for k, v in overrides.items():
         doc[k] = v
@@ -217,6 +225,19 @@ _EDGE_CASES = [
     "[a.b.c]\nv = 1\n",
     "a.b.c = 1\n",
     f"strs = {list(string.ascii_letters[:5])}\n".replace("'", '"'),
+    # TOML 1.1: inline-table trailing commas, multi-line inline tables,
+    # and the new \xHH / \e escapes and seconds-optional times.
+    "obj = { a = 1, b = 2, }\n",
+    td("""
+        obj = {
+            a = 1,
+            b = 2,
+        }
+        """),
+    'a = "hi \\xe9 \\e there"\n',
+    "t = 07:32\n",
+    "ldt = 1979-05-27T07:32\n",
+    "odt = 1979-05-27 07:32Z\n",
 ]
 
 
@@ -358,7 +379,7 @@ def test_eol_comment_set_then_clear(text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Edge-case + tomllib semantic cross-check on the fixed corpus.
+# Edge-case + tomli semantic cross-check on the fixed corpus.
 # ---------------------------------------------------------------------------
 
 
@@ -366,7 +387,7 @@ def test_eol_comment_set_then_clear(text: str) -> None:
 @settings(max_examples=len(_EDGE_CASES), database=None)
 def test_edge_cases_match_tomllib(src: str) -> None:
     ours = tomlrt.loads(src).to_dict()
-    theirs = tomllib.loads(src)
+    theirs = tomli.loads(src)
     assert _deep_equal(ours, theirs)
 
 
@@ -594,6 +615,6 @@ def test_aot_reorder_preserves_nested_blocks(src: str, how: str) -> None:
         aot.reverse()
     out = tomlrt.dumps(doc)
     # The rendered output must reflect the reordered logical model...
-    assert _deep_equal(tomllib.loads(out), doc.to_dict())
+    assert _deep_equal(tomli.loads(out), doc.to_dict())
     # ...and stay valid + idempotent.
     assert tomlrt.dumps(tomlrt.loads(out)) == out
