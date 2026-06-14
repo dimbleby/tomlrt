@@ -26,11 +26,13 @@ from tomlrt._trivia import (
     WhitespaceNode,
     indent_from_final_trivia,
     join_above_block,
+    join_leading_above,
     leading_break_index,
     restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
     split_item_above,
+    split_leading_above,
     strip_trailing_indent,
     trivia_has_newline,
 )
@@ -578,8 +580,10 @@ def reorder_owned(
     eol_by_entry: dict[int, Trivia] = {}
     for i in owned_positions:
         e = items[i]
-        src = cv.header_trivia if i == 0 else e.leading
-        pad, above = split_above_block(src)
+        if i == 0:
+            pad, above = split_above_block(cv.header_trivia)
+        else:
+            pad, above = split_leading_above(e.leading)
         eol_by_entry[id(e)] = _take_eol(e)
         pos_state[i] = (pad, e.has_comma, e.post_comma_trivia, e.trailing)
         above_by_entry[id(e)] = above
@@ -601,7 +605,7 @@ def reorder_owned(
             cv.header_trivia = join_above_block(pad, above)
             e.leading = Trivia()
         else:
-            e.leading = join_above_block(pad, above)
+            e.leading = join_leading_above(pad, above)
     # Restore the structural break at the boundaries the reorder touched.
     # An owned item carries its EOL section (hence its termination) with it,
     # so a boundary whose predecessor moved sees a predecessor-termination

@@ -179,6 +179,61 @@ def join_above_block(pad: Trivia, above: Trivia) -> Trivia:
     return Trivia([pieces[0], *above.pieces, *pieces[1:]])
 
 
+def split_leading_above(t: Trivia) -> tuple[Trivia, Trivia]:
+    r"""Split an item-leading region into ``(pad, above)``.
+
+    Like :func:`split_above_block`, but for ``items[i].leading`` (i >= 1)
+    rather than a bracket pad. The opening row break may be *absent* —
+    when the predecessor terminates its own row (e.g. it carries a
+    trailing EOL comment) the leading begins at the comment indent with
+    no leading newline, so the comment block sits ahead of the first
+    newline. ``above`` is that comment block (empty unless a
+    ``CommentNode`` is present); ``pad`` is the opening newline (if any),
+    any blank lines, and the value indent — all positional. Reconstruct
+    with :func:`join_leading_above`.
+
+    Unlike a bracket pad, a pre-newline comment here is an above-block
+    rather than a bracket-line EOL, which is why this cannot share
+    :func:`split_above_block`.
+
+    The opening break is located with :func:`leading_break_index`, so a
+    leftover whitespace run from the previous row (``1, \n``) does not
+    mask it. When there is no opening break (the first non-whitespace
+    piece is a comment) the predecessor terminates its own row and the
+    whole comment block is the traveling ``above``.
+    """
+    pieces = t.pieces
+    k = leading_break_index(pieces)
+    body_start = k + 1 if k is not None else 0
+    tail_start = len(pieces)
+    if tail_start > body_start and isinstance(pieces[tail_start - 1], WhitespaceNode):
+        tail_start -= 1
+    middle = pieces[body_start:tail_start]
+    if not any(isinstance(p, CommentNode) for p in middle):
+        return Trivia(list(pieces)), Trivia()
+    pad = Trivia(list(pieces[:body_start]) + list(pieces[tail_start:]))
+    above = Trivia(list(middle))
+    return pad, above
+
+
+def join_leading_above(pad: Trivia, above: Trivia) -> Trivia:
+    """Splice ``above`` back into an item-leading ``pad``.
+
+    When ``pad`` carries an opening break (the row's own newline, found
+    with :func:`leading_break_index` past any leftover whitespace)
+    ``above`` is inserted just after it, ahead of the value indent;
+    otherwise the break lives upstream on the predecessor, so ``above``
+    is prepended. Inverse of :func:`split_leading_above`.
+    """
+    pieces = list(pad.pieces)
+    if not above.pieces:
+        return Trivia(pieces)
+    k = leading_break_index(pieces)
+    if k is not None:
+        return Trivia([*pieces[: k + 1], *above.pieces, *pieces[k + 1 :]])
+    return Trivia([*above.pieces, *pieces])
+
+
 def indent_from_final_trivia(ft: Trivia) -> str:
     """Extract a logical indent from a bracket-pad's pieces.
 
@@ -359,6 +414,7 @@ __all__ = [
     "WhitespaceNode",
     "indent_from_final_trivia",
     "join_above_block",
+    "join_leading_above",
     "leading_break_index",
     "line_has_comment",
     "line_has_newline",
@@ -368,6 +424,7 @@ __all__ = [
     "split_above_block",
     "split_eol_section",
     "split_item_above",
+    "split_leading_above",
     "split_lines",
     "strip_trailing_indent",
     "trivia_has_comment",
