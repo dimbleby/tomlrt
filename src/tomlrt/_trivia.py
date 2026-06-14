@@ -135,6 +135,26 @@ def retarget_eol_newline(eol: EolTrivia, target: str) -> None:
         eol.newline.text = target
 
 
+def _pad_above_from(
+    pieces: Sequence[TriviaPiece], body_start: int
+) -> tuple[Trivia, Trivia]:
+    """Split ``pieces`` into ``(pad, above)`` at ``body_start``.
+
+    ``above`` is the comment block from ``body_start`` up to any trailing
+    value-indent whitespace; ``pad`` is everything around it. Absent a
+    comment in that span there is nothing to detach, so ``above`` is
+    empty and ``pad`` is the whole input.
+    """
+    tail_start = len(pieces)
+    if tail_start > body_start and isinstance(pieces[tail_start - 1], WhitespaceNode):
+        tail_start -= 1
+    middle = pieces[body_start:tail_start]
+    if not any(isinstance(p, CommentNode) for p in middle):
+        return Trivia(list(pieces)), Trivia()
+    pad = Trivia(list(pieces[:body_start]) + list(pieces[tail_start:]))
+    return pad, Trivia(list(middle))
+
+
 def split_above_block(t: Trivia) -> tuple[Trivia, Trivia]:
     """Split ``t`` into ``(pad, above)``.
 
@@ -149,22 +169,12 @@ def split_above_block(t: Trivia) -> tuple[Trivia, Trivia]:
     region contains no ``CommentNode``.
     """
     pieces = t.pieces
-    first_nl = -1
-    for i, p in enumerate(pieces):
-        if isinstance(p, NewlineNode):
-            first_nl = i
-            break
-    if first_nl < 0:
+    first_nl = next(
+        (i for i, p in enumerate(pieces) if isinstance(p, NewlineNode)), None
+    )
+    if first_nl is None:
         return Trivia(list(pieces)), Trivia()
-    tail_start = len(pieces)
-    if tail_start > first_nl + 1 and isinstance(pieces[tail_start - 1], WhitespaceNode):
-        tail_start -= 1
-    middle = pieces[first_nl + 1 : tail_start]
-    if not any(isinstance(p, CommentNode) for p in middle):
-        return Trivia(list(pieces)), Trivia()
-    pad = Trivia(list(pieces[: first_nl + 1]) + list(pieces[tail_start:]))
-    above = Trivia(list(middle))
-    return pad, above
+    return _pad_above_from(pieces, first_nl + 1)
 
 
 def join_above_block(pad: Trivia, above: Trivia) -> Trivia:
@@ -180,40 +190,18 @@ def join_above_block(pad: Trivia, above: Trivia) -> Trivia:
 
 
 def split_leading_above(t: Trivia) -> tuple[Trivia, Trivia]:
-    r"""Split an item-leading region into ``(pad, above)``.
+    r"""Split an ``items[i].leading`` (i >= 1) into ``(pad, above)``.
 
-    Like :func:`split_above_block`, but for ``items[i].leading`` (i >= 1)
-    rather than a bracket pad. The opening row break may be *absent* —
-    when the predecessor terminates its own row (e.g. it carries a
-    trailing EOL comment) the leading begins at the comment indent with
-    no leading newline, so the comment block sits ahead of the first
-    newline. ``above`` is that comment block (empty unless a
-    ``CommentNode`` is present); ``pad`` is the opening newline (if any),
-    any blank lines, and the value indent — all positional. Reconstruct
-    with :func:`join_leading_above`.
-
-    Unlike a bracket pad, a pre-newline comment here is an above-block
-    rather than a bracket-line EOL, which is why this cannot share
-    :func:`split_above_block`.
-
-    The opening break is located with :func:`leading_break_index`, so a
-    leftover whitespace run from the previous row (``1, \n``) does not
-    mask it. When there is no opening break (the first non-whitespace
-    piece is a comment) the predecessor terminates its own row and the
-    whole comment block is the traveling ``above``.
+    Unlike :func:`split_above_block`, the opening break is located with
+    :func:`leading_break_index` (so a leftover ``1, \n`` whitespace run
+    does not mask it) and may be *absent*: when the predecessor
+    terminates its own row the leading starts at the comment indent, and
+    that whole comment block becomes the traveling ``above`` rather than
+    a bracket-line EOL. Reconstruct with :func:`join_leading_above`.
     """
     pieces = t.pieces
     k = leading_break_index(pieces)
-    body_start = k + 1 if k is not None else 0
-    tail_start = len(pieces)
-    if tail_start > body_start and isinstance(pieces[tail_start - 1], WhitespaceNode):
-        tail_start -= 1
-    middle = pieces[body_start:tail_start]
-    if not any(isinstance(p, CommentNode) for p in middle):
-        return Trivia(list(pieces)), Trivia()
-    pad = Trivia(list(pieces[:body_start]) + list(pieces[tail_start:]))
-    above = Trivia(list(middle))
-    return pad, above
+    return _pad_above_from(pieces, k + 1 if k is not None else 0)
 
 
 def join_leading_above(pad: Trivia, above: Trivia) -> Trivia:
