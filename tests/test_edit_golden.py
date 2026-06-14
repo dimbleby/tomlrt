@@ -3741,6 +3741,22 @@ def test_array_sort_leading_comment_with_trailing_ws_after_comma() -> None:
     ).replace("@", " ")
 
 
+def test_array_sort_single_element_is_byte_exact_noop() -> None:
+    """Sorting a one-item array reorders nothing: ``reorder_owned`` takes
+    its ``len(owned_positions) <= 1`` early-out, so the value -- including
+    its leading comment and EOL comment -- is preserved byte-for-byte.
+    """
+    src = td("""
+        xs = [
+            # only one
+            "solo",  # eol on solo
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc["xs"].sort(key=str)
+    assert tomlrt.dumps(doc) == src
+
+
 def test_array_insert_zero_pushes_existing_leading_comment_to_new_position() -> None:
     """``insert(0, x)`` must not duplicate the leading-of-(formerly) item-0
     onto both the new item and its old (now position-1) item."""
