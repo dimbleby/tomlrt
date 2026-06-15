@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -231,6 +231,12 @@ class CommaValue(Generic[_ItemT]):
     header_trivia: Trivia = field(default_factory=Trivia)
     final_trivia: Trivia = field(default_factory=Trivia)
 
+    # Memoised `is_multiline()` result; None means "not computed".
+    # Append/insert/sort/reorder preserve multi-line shape, so the hot
+    # build path leaves it warm; only item removal and the explicit
+    # single<->multi toggle can flip it, and those invalidate it.
+    _ml_cache: bool | None = field(default=None, init=False, compare=False, repr=False)
+
     _open: ClassVar[str] = ""
     _close: ClassVar[str] = ""
 
@@ -245,6 +251,29 @@ class CommaValue(Generic[_ItemT]):
             f"{self._open}{self.header_trivia.render()}"
             f"{body}{self.final_trivia.render()}{self._close}"
         )
+
+    def is_multiline(self) -> bool:
+        """Whether this value renders across multiple physical lines.
+
+        Memoised: the scan is O(n) for a single-line value, but the answer
+        only flips on item removal or an explicit single<->multi toggle (see
+        ``reset_multiline_cache``), so building a value with repeated appends
+        stays linear overall.
+        """
+        if self._ml_cache is None:
+            self._ml_cache = _scan_multiline(self)
+        return self._ml_cache
+
+    def reset_multiline_cache(self) -> None:
+        """Drop the memoised ``is_multiline`` result so it recomputes.
+
+        Call after any mutation that can change the multi-line shape: item
+        removal (the removed item may carry the sole newline, or emptying may
+        collapse the bracket pads) and the explicit single<->multi toggle.
+        Append / insert / sort / reorder preserve the shape and deliberately
+        do *not* reset it, keeping the build path warm.
+        """
+        self._ml_cache = None
 
 
 @dataclass(slots=True, eq=False)
@@ -304,12 +333,8 @@ def inter_item_separator(items: Sequence[CommaItem]) -> Trivia:
     return Trivia([WhitespaceNode(text=" ")])
 
 
-def value_is_multiline(v: ArrayValue | InlineTableValue) -> bool:
-    """Shape detection: any structural ``NewlineNode`` inside means multi-line.
-
-    Inspect every trivia region that can carry a row break under the
-    canonical model; layouts differ in which channel owns it.
-    """
+def _scan_multiline(v: CommaValue[Any]) -> bool:
+    """Uncached scan: inspect every trivia region that can carry a row break."""
     if trivia_has_newline(v.header_trivia) or trivia_has_newline(v.final_trivia):
         return True
     for it in v.items:
@@ -379,5 +404,4 @@ __all__ = [
     "item_eol_channel",
     "item_has_any_comment",
     "retarget_value_newlines",
-    "value_is_multiline",
 ]

@@ -39,7 +39,6 @@ from tomlrt._trivia import (
 from tomlrt._values import (
     inter_item_separator,
     item_eol_channel,
-    value_is_multiline,
 )
 
 if TYPE_CHECKING:
@@ -277,15 +276,15 @@ def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle
     """Infer a :class:`CommaStyle` for ``value``.
 
     Multi-line shape is read from the value's own trivia
-    (:func:`value_is_multiline`) — the value is the single source of truth,
-    so there is no separate "force multi-line" flag. The inter-item separator
-    is sampled from ``items[1].leading``; a multi-line value that cannot sample
-    one (single item, or a comma-first peer with empty leading) falls back to
-    :func:`_canonical_separator`. ``nl`` is the owning document's newline, used
-    for any break this synthesises when the value carries none of its own.
+    (:meth:`CommaValue.is_multiline`) — the value is the single source of
+    truth, so there is no separate "force multi-line" flag. The inter-item
+    separator is sampled from ``items[1].leading``; a multi-line value that
+    cannot sample one (single item, or a comma-first peer with empty leading)
+    falls back to :func:`_canonical_separator`. ``nl`` is the owning document's
+    newline, used for any break this synthesises when the value carries none.
     """
     items = value.items
-    is_multiline = value_is_multiline(value)
+    is_multiline = value.is_multiline()
     inter_sep = inter_item_separator(items)
     if is_multiline and not trivia_has_newline(inter_sep):
         inter_sep = _canonical_separator(value, nl)
@@ -496,6 +495,11 @@ def splice_out(
     items = cv.items
     if not items:
         return
+    # A single-line value cannot gain a newline by removal, so only a
+    # currently multi-line value can flip (the removed item may hold the
+    # sole newline, or emptying may collapse the pads).
+    if is_multiline:
+        cv.reset_multiline_cache()
     orig_len = len(items)
     sorted_removed = sorted(removed_indices)
     removed_set = set(sorted_removed)

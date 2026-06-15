@@ -68,7 +68,6 @@ from tomlrt._values import (
     InlineTableValue,
     make_keypart,
     retarget_value_newlines,
-    value_is_multiline,
 )
 
 if TYPE_CHECKING:
@@ -1267,7 +1266,7 @@ class Table(Container):
         """
         root = self._require_inline_root("multiline")
         assert root._value is not None  # noqa: SLF001
-        return value_is_multiline(root._value)  # noqa: SLF001
+        return root._value.is_multiline()  # noqa: SLF001
 
     @multiline.setter
     def multiline(self, value: bool) -> None:

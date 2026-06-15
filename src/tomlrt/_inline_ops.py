@@ -28,7 +28,6 @@ from tomlrt._trivia import (
 from tomlrt._values import (
     InlineTableEntry,
     make_keyparts,
-    value_is_multiline,
 )
 
 if TYPE_CHECKING:
@@ -149,9 +148,7 @@ def overwrite_entry(t: Container, key: str, new_value: Value) -> None:
     iv = _outermost_inline(t)._value  # noqa: SLF001
     assert iv is not None
     keep_pad = (
-        None
-        if value_is_multiline(iv)
-        else (iv.header_trivia.copy(), iv.final_trivia.copy())
+        None if iv.is_multiline() else (iv.header_trivia.copy(), iv.final_trivia.copy())
     )
     delete_entry(t, key)
     append_entry(t, key, new_value)
@@ -183,7 +180,7 @@ def delete_entry(t: Container, key: str) -> bool:
         iv,
         indices,
         root._doc_newline,  # noqa: SLF001
-        is_multiline=value_is_multiline(iv),
+        is_multiline=iv.is_multiline(),
     )
     return True
 
@@ -218,7 +215,7 @@ def reorder_inline(c: Container, new_key_order: list[str]) -> None:
         owned_positions,
         new_owned,
         root._doc_newline,  # noqa: SLF001
-        is_multiline=value_is_multiline(iv),
+        is_multiline=iv.is_multiline(),
     )
 
 
@@ -248,7 +245,7 @@ def ensure_inline_multiline(c: Container) -> None:
     root = _outermost_inline(c)
     iv = root._value  # noqa: SLF001
     assert iv is not None
-    if not value_is_multiline(iv):
+    if not iv.is_multiline():
         set_inline_multiline(root, multiline=True, indent="    ")
 
 

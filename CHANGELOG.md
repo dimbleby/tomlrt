@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Array.extend()` now computes its layout style once instead of per item,
   making a bulk extend linear rather than quadratic in the array's length.
+- Multi-line detection for inline arrays and tables is now memoised, so
+  building one with repeated `append` / `update` / `t[k] = v` is linear
+  rather than quadratic in the number of items.
 
 ## [1.8.2] - 2026-06-14
 
