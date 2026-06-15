@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaves a half-collapsed layout, and appends in a CRLF document no longer
   emit a stray LF.
 
+### Changed
+
+- `Array.extend()` now computes its layout style once instead of per item,
+  making a bulk extend linear rather than quadratic in the array's length.
+
 ## [1.8.2] - 2026-06-14
 
 ### Fixed

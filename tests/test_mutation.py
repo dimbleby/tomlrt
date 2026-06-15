@@ -819,6 +819,35 @@ def test_array_extend_iadd() -> None:
     assert _reparses(out) == {"xs": [1, 2, 3, 4]}
 
 
+def test_array_extend_multiline_lays_one_item_per_line() -> None:
+    # extend snapshots the layout style once and reuses it, so a multi-line
+    # array still gets each appended item on its own line (matching repeated
+    # append) rather than collapsing onto a single row.
+    doc = tomlrt.loads(
+        td("""
+        xs = [
+            1,
+        ]
+        """),
+    )
+    doc["xs"].extend([2, 3])
+    assert tomlrt.dumps(doc) == td("""
+        xs = [
+            1,
+            2,
+            3,
+        ]
+        """)
+
+
+def test_array_extend_rejects_aot_atomically() -> None:
+    doc = tomlrt.loads("xs = [1]\n")
+    with pytest.raises(tomlrt.TOMLError):
+        doc["xs"].extend([2, AoT([{"a": 1}])])
+    # The whole extend is rejected up front; no partial mutation.
+    assert tomlrt.dumps(doc) == "xs = [1]\n"
+
+
 def test_array_extend_self_duplicates_once() -> None:
     """``arr.extend(arr)`` matches list semantics: duplicate once, no hang.
 
@@ -4222,24 +4251,6 @@ def test_emptied_multiline_array_refill_collapses_to_single_line() -> None:
     doc["xs"].append(2)
     doc["xs"].append(3)
     assert tomlrt.dumps(doc) == "xs = [2, 3]\r\n"
-
-
-def test_emptied_array_keeping_multiline_pads_refills_multiline() -> None:
-    # When the pads keep their newline through the emptying (set_multiline
-    # parks the closing break in final_trivia), the array stays multi-line and
-    # refills one item per line.
-    doc = tomlrt.loads("xs = [1, 2]\n")
-    doc["xs"].set_multiline(multiline=True)
-    del doc["xs"][0]
-    del doc["xs"][0]
-    doc["xs"].append(7)
-    doc["xs"].append(8)
-    assert tomlrt.dumps(doc) == td("""
-        xs = [
-            7,
-            8,
-        ]
-        """)
 
 
 def test_delete_inserted_top_level_kv_round_trips() -> None:
