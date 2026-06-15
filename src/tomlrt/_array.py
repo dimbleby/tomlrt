@@ -44,7 +44,6 @@ from tomlrt._typecheck import _validate_mapping
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
-    value_is_multiline,
 )
 
 if TYPE_CHECKING:
@@ -203,7 +202,7 @@ class Array(list[Any]):
     @property
     def multiline(self) -> bool:
         """True iff this array is rendered in multi-line form."""
-        return value_is_multiline(self._value)
+        return self._value.is_multiline()
 
     @multiline.setter
     def multiline(self, value: bool) -> None:
@@ -299,6 +298,7 @@ class Array(list[Any]):
         # Drop inter-item trivia; preserve bracket leading in final_trivia.
         strip_trailing_indent(self._value.header_trivia, self._value.final_trivia)
         list.clear(self)
+        self._value.reset_multiline_cache()
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Any:
@@ -445,7 +445,7 @@ class Array(list[Any]):
             self._value,
             removed,
             self._doc_newline,
-            is_multiline=value_is_multiline(self._value),
+            is_multiline=self._value.is_multiline(),
         )
 
     @override

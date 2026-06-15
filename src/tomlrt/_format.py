@@ -57,7 +57,6 @@ from tomlrt._values import (
     InlineTableEntry,
     InlineTableValue,
     item_has_any_comment,
-    value_is_multiline,
 )
 
 if TYPE_CHECKING:
@@ -265,7 +264,7 @@ def _canon_inline_value(
 ) -> None:
     """Canonicalise inline array/table layout while preserving shape."""
     items = v.items
-    multi = value_is_multiline(v)
+    multi = v.is_multiline()
     item_indent = parent_indent + "  " if multi else parent_indent
 
     for it in items:
@@ -525,6 +524,9 @@ def set_comma_value_multiline(
     while inline tables keep their pad (``{ a = 1 }``).
     """
     items = value.items
+    # The explicit single<->multi toggle is the one operation that can flip
+    # shape without removing an item; drop the memo so it recomputes.
+    value.reset_multiline_cache()
     if not multiline:
         for it in items:
             if item_has_any_comment(it):

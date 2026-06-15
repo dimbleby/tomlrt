@@ -809,6 +809,19 @@ def test_array_clear_and_append() -> None:
     assert _reparses(out) == {"xs": ["hi"]}
 
 
+def test_array_multiline_tracks_shape_across_add_and_remove() -> None:
+    # `multiline` is derived from the value's rendered shape and memoised.
+    # The memo must stay correct as items are added (shape preserved) and
+    # removed (removing the item that carries the sole newline flips it to
+    # single-line, so a later append must not resurrect the multi-line form).
+    doc = tomlrt.loads("xs = [1, # c\n    2]\n")
+    assert doc.array("xs").multiline is True
+    del doc.array("xs")[0]
+    doc.array("xs").append(3)
+    assert doc.array("xs").multiline is False
+    assert tomlrt.dumps(doc) == "xs = [2, 3]\n"
+
+
 def test_array_extend_iadd() -> None:
     doc = tomlrt.loads("xs = []\n")
     xs = doc.array("xs")
