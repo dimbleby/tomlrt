@@ -273,33 +273,25 @@ class CommaStyle:
     trailing_post: Trivia
 
 
-def detect_style(
-    value: ArrayValue | InlineTableValue | None, *, multiline_flag: bool
-) -> CommaStyle:
-    """Infer a :class:`CommaStyle` for ``value`` (or for a fresh value).
+def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle:
+    """Infer a :class:`CommaStyle` for ``value``.
 
-    The inter-item separator is sampled from ``items[1].leading``. A
-    multi-line value that cannot sample one (single item, or a comma-first
-    peer with empty leading) falls back to :func:`_canonical_separator`.
+    Multi-line shape is read from the value's own trivia
+    (:func:`value_is_multiline`) — the value is the single source of truth,
+    so there is no separate "force multi-line" flag. The inter-item separator
+    is sampled from ``items[1].leading``; a multi-line value that cannot sample
+    one (single item, or a comma-first peer with empty leading) falls back to
+    :func:`_canonical_separator`. ``nl`` is the owning document's newline, used
+    for any break this synthesises when the value carries none of its own.
     """
-    if value is None:
-        return CommaStyle(
-            is_multiline=multiline_flag,
-            inter_separator=Trivia([WhitespaceNode(text=" ")]),
-            trailing_comma=multiline_flag,
-            trailing_post=Trivia(),
-        )
     items = value.items
-    is_multiline = multiline_flag or value_is_multiline(value)
+    is_multiline = value_is_multiline(value)
     inter_sep = inter_item_separator(items)
     if is_multiline and not trivia_has_newline(inter_sep):
-        inter_sep = _canonical_separator(value)
+        inter_sep = _canonical_separator(value, nl)
     trailing_comma = items[-1].has_comma if items else is_multiline
     pad_ft, _above_ft = split_above_block(value.final_trivia)
     trailing_post = pad_ft if pad_ft.pieces else value.final_trivia.copy()
-    if not items and is_multiline and not trailing_post.pieces:
-        nl_text = "\n"
-        trailing_post = Trivia([NewlineNode(text=nl_text)])
     return CommaStyle(
         is_multiline=is_multiline,
         inter_separator=inter_sep,
@@ -320,13 +312,19 @@ def _first_indent_after_newline(trivia: Trivia) -> str:
     return ""
 
 
-def _value_newline(value: CommaValue[Any]) -> str:
-    """Return the newline text sampled from ``value`` bracket pads."""
+def _value_newline(value: CommaValue[Any], nl: str) -> str:
+    """Return the newline text sampled from ``value`` bracket pads, else ``nl``.
+
+    ``nl`` is the owning document's newline: the fallback for a value whose
+    bracket pads carry no break to sample (e.g. a multi-line array whose only
+    newline lives in an item's EOL section), so a synthesised break matches
+    the document instead of defaulting to LF.
+    """
     for trivia in (value.header_trivia, value.final_trivia):
         for p in trivia.pieces:
             if isinstance(p, NewlineNode):
                 return str(p.text)
-    return "\n"
+    return nl
 
 
 def _value_indent(value: CommaValue[Any]) -> str:
@@ -338,10 +336,10 @@ def _value_indent(value: CommaValue[Any]) -> str:
     )
 
 
-def _canonical_separator(value: CommaValue[Any]) -> Trivia:
+def _canonical_separator(value: CommaValue[Any], nl: str) -> Trivia:
     """Return the fallback inter-item newline plus value indent."""
-    nl = NewlineNode(text=_value_newline(value))
-    return Trivia([nl, WhitespaceNode(text=_value_indent(value))])
+    nlnode = NewlineNode(text=_value_newline(value, nl))
+    return Trivia([nlnode, WhitespaceNode(text=_value_indent(value))])
 
 
 def migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, Trivia]:

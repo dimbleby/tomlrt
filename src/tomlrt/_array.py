@@ -78,7 +78,7 @@ class Array(list[Any]):
     it can be passed wherever a `list` or `Sequence` is expected.
     """
 
-    __slots__ = ("_layout_root", "_multiline", "_value")
+    __slots__ = ("_layout_root", "_value")
 
     def __init__(
         self,
@@ -95,7 +95,6 @@ class Array(list[Any]):
         super().__init__()
 
         self._value: ArrayValue = ArrayValue()
-        self._multiline: bool = multiline
         self._layout_root: Document | None = None
         items_list = list(items)
         if not items_list:
@@ -136,10 +135,10 @@ class Array(list[Any]):
         return [_to_python(x) for x in self]
 
     def __copy__(self) -> Array:
-        return Array(self.to_list(), multiline=self._multiline)
+        return Array(self.to_list(), multiline=self.multiline)
 
     def __deepcopy__(self, memo: dict[int, object]) -> Array:
-        return Array(self.to_list(), multiline=self._multiline)
+        return Array(self.to_list(), multiline=self.multiline)
 
     def array(self, index: SupportsIndex) -> Array:
         """Return ``self[index]`` typed as a nested `Array`."""
@@ -199,12 +198,12 @@ class Array(list[Any]):
         return lr._newline if lr is not None else "\n"  # noqa: SLF001
 
     def _style(self) -> CommaStyle:
-        return detect_style(self._value, multiline_flag=self._multiline)
+        return detect_style(self._value, nl=self._doc_newline)
 
     @property
     def multiline(self) -> bool:
         """True iff this array is rendered in multi-line form."""
-        return self._style().is_multiline
+        return value_is_multiline(self._value)
 
     @multiline.setter
     def multiline(self, value: bool) -> None:
@@ -247,7 +246,6 @@ class Array(list[Any]):
         set_comma_value_multiline(
             self._value, multiline=multiline, nl=self._doc_newline, indent=indent
         )
-        self._multiline = multiline
         return self
 
     def _synth_cst(self, value: object) -> tuple[Value, object]:
@@ -437,7 +435,7 @@ class Array(list[Any]):
             self._value,
             removed,
             self._doc_newline,
-            is_multiline=self._multiline or value_is_multiline(self._value),
+            is_multiline=value_is_multiline(self._value),
         )
 
     @override

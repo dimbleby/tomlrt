@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Sorting a multi-line inline array or table after deleting one of its
   end-of-line comments no longer detaches another item's comment.
+- A multi-line inline array's layout is now derived consistently from its
+  rendered shape (like inline tables): emptying and refilling one no longer
+  leaves a half-collapsed layout, and appends in a CRLF document no longer
+  emit a stray LF.
 
 ## [1.8.2] - 2026-06-14
 

@@ -133,7 +133,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         post_eq=eq_post,
         key_path=key_path,
     )
-    style = detect_style(iv, multiline_flag=False)
+    style = detect_style(iv, nl=root._doc_newline)  # noqa: SLF001
     splice_in(iv, new_entry, style, root._doc_newline)  # noqa: SLF001
 
 
