@@ -4201,6 +4201,47 @@ def test_insert_top_level_kv_crlf_doc() -> None:
     assert tomlrt.dumps(doc) == "new = 1\r\n\r\n[s]\r\nx = 1\r\n"
 
 
+def test_append_multiline_array_pad_free_newline_uses_doc_newline_crlf() -> None:
+    # The array is multi-line but its only newline lives in item 0's EOL
+    # comment section, not the bracket pads. A synthesised inter-item
+    # separator must still use the document newline (CRLF), not a hardcoded LF.
+    doc = tomlrt.loads("xs = [1, # c\r\n    2]\r\n")
+    doc["xs"].append(3)
+    assert tomlrt.dumps(doc) == "xs = [1, # c\r\n    2,\r\n    3]\r\n"
+
+
+def test_emptied_multiline_array_refill_collapses_to_single_line() -> None:
+    # An array's multi-line shape is derived from its bracket pads, not a
+    # sticky flag. Emptying it (the closing break lived in the deleted item's
+    # EOL section, so the pads collapse) leaves a single-line ``[]``; refilling
+    # is then cleanly single-line in both LF and CRLF documents rather than a
+    # half-expanded shape with a stray LF.
+    doc = tomlrt.loads("xs = [1]\r\n")
+    doc["xs"].comments[0] = "c"  # promote to multi-line
+    del doc["xs"][0]  # empty: bracket pads collapse
+    doc["xs"].append(2)
+    doc["xs"].append(3)
+    assert tomlrt.dumps(doc) == "xs = [2, 3]\r\n"
+
+
+def test_emptied_array_keeping_multiline_pads_refills_multiline() -> None:
+    # When the pads keep their newline through the emptying (set_multiline
+    # parks the closing break in final_trivia), the array stays multi-line and
+    # refills one item per line.
+    doc = tomlrt.loads("xs = [1, 2]\n")
+    doc["xs"].set_multiline(multiline=True)
+    del doc["xs"][0]
+    del doc["xs"][0]
+    doc["xs"].append(7)
+    doc["xs"].append(8)
+    assert tomlrt.dumps(doc) == td("""
+        xs = [
+            7,
+            8,
+        ]
+        """)
+
+
 def test_delete_inserted_top_level_kv_round_trips() -> None:
     doc = tomlrt.loads("[s]\nx = 1\n")
     doc["new"] = 1
