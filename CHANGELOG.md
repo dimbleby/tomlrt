@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-line detection for inline arrays and tables is now memoised, so
   building one with repeated `append` / `update` / `t[k] = v` is linear
   rather than quadratic in the number of items.
+- Adding keys to a section table is now linear rather than quadratic, so
+  building a large table key-by-key is much faster.
 
 ## [1.8.2] - 2026-06-14
 

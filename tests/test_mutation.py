@@ -220,6 +220,35 @@ def test_overwrite_dotted_intermediate_keeps_dotted_form() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_overwrite_dotted_subtable_before_sibling_header_under_same_key() -> None:
+    # Overwriting a dotted sub-table re-files a ref under the shared ancestor
+    # key (`apple` on `fruit`) ahead of the `[fruit.apple.texture]` header,
+    # which is also filed under `apple`. The new ref precedes every existing
+    # `apple` ref, so the index-projection places it at the front of the
+    # bucket; the result must still round-trip and keep the header in place.
+    doc = tomlrt.loads(
+        td("""
+        [fruit]
+        apple.taste.sweet = true
+        k = { a = 1 }
+
+        [fruit.apple.texture]
+        smooth = true
+        """),
+    )
+    doc["fruit"]["apple"]["taste"] = {"a": 1}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [fruit]
+        apple.taste = { a = 1 }
+        k = { a = 1 }
+
+        [fruit.apple.texture]
+        smooth = true
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_overwrite_header_intermediate_keeps_header_form() -> None:
     """The mirror case: an intermediate written with a header keeps a header.
 

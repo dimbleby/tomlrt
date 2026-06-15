@@ -102,6 +102,13 @@ def main() -> None:
                 sec[f"k{k}"] = k * 10
         tomlrt.dumps(doc)
 
+    def build_section_new_keys() -> None:
+        doc = tomlrt.loads("[t]\n")
+        sec = doc["t"]
+        for i in range(1000):
+            sec[f"k{i}"] = i
+        tomlrt.dumps(doc)
+
     def delete_kvs() -> None:
         doc = tomlrt.loads(section_src)
         for s in range(50):
@@ -121,6 +128,7 @@ def main() -> None:
     _bench("append 50 AoT entries (base 500)", append_aot_entry, repeats=200)
     _bench("install 20 new sections", deep_set_new_section, repeats=200)
     _bench("bulk update 1000 KVs", bulk_kv_update, repeats=100)
+    _bench("build section with 1000 new keys", build_section_new_keys, repeats=100)
     _bench("delete 100 KVs", delete_kvs, repeats=200)
 
 
