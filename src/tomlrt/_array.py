@@ -280,8 +280,18 @@ class Array(list[Any]):
     @override
     def extend(self, values: Iterable[Any]) -> None:
         # Snapshot so ``arr.extend(arr)`` duplicates once like list does.
-        for v in list(values):
-            self.append(v)
+        snapshot = list(values)
+        if not snapshot:
+            return
+        if any(isinstance(v, AoT) for v in snapshot):
+            msg = "Cannot store an array-of-tables inside an inline array"
+            raise TOMLError(msg)
+        # Reuse one style for every item: re-deriving it per item is O(n)
+        # for a single-line array, so doing it n times would be quadratic.
+        style = self._style()
+        for v in snapshot:
+            cst, decoded = self._synth_cst(v)
+            self._append_with_style(cst, decoded, style)
 
     @override
     def clear(self) -> None:
