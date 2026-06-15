@@ -19,8 +19,7 @@ and arrays-of-tables) and asserts the model stayed self-consistent:
 The last oracle is the important one: it is sensitive to a mutation
 that places a slot where a re-parse attributes it to a different owner
 than the logical view says — the silent, self-consistent corruption an
-idempotence check alone cannot see. Empty arrays-of-tables have no TOML
-representation, so examples that produce one are excluded there.
+idempotence check alone cannot see.
 
 Each run draws **fresh random seeds**, so the fuzzer explores new
 programs every time rather than re-checking a frozen grid — it keeps
@@ -79,32 +78,6 @@ def _deep_eq(a: object, b: object) -> bool:
             _deep_eq(x, y) for x, y in zip(a, b, strict=True)
         )
     return type(a) is type(b) and a == b
-
-
-def _flatten(
-    value: object, path: tuple[Any, ...] = ()
-) -> dict[tuple[Any, ...], object]:
-    """Map every non-empty scalar / array leaf to its path.
-
-    Empty dicts contribute nothing, so the comparison is blind to which
-    empty tables are representable in TOML (an inherent ambiguity that
-    ``to_dict`` cannot see) and focuses on real value placement.
-    """
-    out: dict[tuple[Any, ...], object] = {}
-    if isinstance(value, dict):
-        for k, v in value.items():
-            out.update(_flatten(v, (*path, k)))
-    elif isinstance(value, list) and value and all(isinstance(x, dict) for x in value):
-        for i, v in enumerate(value):
-            out.update(_flatten(v, (*path, i)))
-    else:
-        out[path] = value
-    return out
-
-
-def _leaves_match(rendered: object, logical: object) -> bool:
-    fa, fb = _flatten(rendered), _flatten(logical)
-    return fa.keys() == fb.keys() and all(_deep_eq(fa[k], fb[k]) for k in fa)
 
 
 def _rand_value(rng: random.Random) -> Any:
@@ -218,10 +191,8 @@ def test_mutation_keeps_model_consistent(path: Path) -> None:
         # Valid TOML and a fixed point of dump -> load -> dump.
         tomli.loads(out)
         assert tomlrt.dumps(tomlrt.loads(out)) == out, f"non-idempotent: {ctx}\n{out!r}"
-        # The rendered output reflects the in-memory logical model. An
-        # empty array-of-tables renders as ``key = []``, so the
-        # render/model oracle holds even when the model holds one.
-        assert _leaves_match(tomli.loads(out), doc.to_dict()), (
+        # The rendered output reflects the in-memory logical model.
+        assert _deep_eq(tomli.loads(out), doc.to_dict()), (
             f"render/model mismatch: {ctx}\n{out!r}\n"
             f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
         )
