@@ -143,9 +143,15 @@ def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
         # comment) and leave the next item alone.
         item.trailing = Trivia([NewlineNode(nl), *rest.pieces])
         return True
-    # Keep this row's break on the item itself; the downstream holder
-    # (a blank line, the next item's indent, ...) is left untouched.
-    target.pieces = [NewlineNode(nl), *rest.pieces]
+    # Non-comma-first: the row break lived inside the eol section. Drop the
+    # whole section and re-home the break (plus any structural rest) onto the
+    # downstream holder, mirroring _set_eol_raw in reverse. A bare break left
+    # in the item's own channel renders identically but desyncs from a fresh
+    # parse: reorder_owned treats that channel as positional and would orphan
+    # a later item's EOL comment onto its own line.
+    target.pieces = []
+    nxt = boundary_break_holder(value, idx + 1)
+    nxt.pieces = [NewlineNode(nl), *rest.pieces, *nxt.pieces]
     return True
 
 
