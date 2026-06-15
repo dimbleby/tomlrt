@@ -3766,6 +3766,51 @@ def test_array_sort_promotes_shared_row_follower_to_leader() -> None:
         """)
 
 
+def test_array_sort_after_eol_delete_keeps_sibling_eol_attached() -> None:
+    # Deleting an EOL comment must re-home the row break downstream (matching
+    # a fresh parse) rather than leaving a bare break in the item's own EOL
+    # channel. Otherwise the next reorder treats that channel as positional
+    # and orphans a surviving sibling's EOL comment onto its own line, where
+    # a re-parse would read it back as a leading comment.
+    doc = tomlrt.loads(
+        td("""
+        xs = [
+            3, # a
+            2, # b
+        ]
+        """),
+    )
+    del doc["xs"].comments[1]
+    doc["xs"].sort()
+    assert tomlrt.dumps(doc) == td("""
+        xs = [
+            2,
+            3, # a
+        ]
+        """)
+
+
+def test_inline_table_sort_after_eol_delete_keeps_sibling_eol_attached() -> None:
+    # Same re-home of the row break through the shared _comma_comments path,
+    # exercised on an inline table's keyed EOL view + sort.
+    doc = tomlrt.loads(
+        td("""
+        t = {
+            b = 3, # a
+            a = 2, # b
+        }
+        """),
+    )
+    del doc["t"].comments["a"]
+    doc["t"].sort()
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+            a = 2,
+            b = 3, # a
+        }
+        """)
+
+
 def test_inline_table_append_preserves_blank_before_bracket() -> None:
     doc = tomlrt.loads(
         td("""
