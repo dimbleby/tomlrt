@@ -630,6 +630,45 @@ def _splice_body_slot(
     return False
 
 
+def _slot_filed_in(slot: Slot, c: Container) -> bool:
+    """Whether ``c`` holds a ref to ``slot`` (via the slot's back-pointers).
+
+    ``slot._refs`` is bounded by path depth, so this is O(depth) rather than
+    an O(len(c._refs)) scan.
+    """
+    return any(r.container is c for r in slot._refs)  # noqa: SLF001
+
+
+def _project_bucket_index(
+    refs: list[SlotRef], bucket: list[SlotRef], insert_idx: int
+) -> int:
+    """Position in ``bucket`` for a ref inserted into ``refs`` at ``insert_idx``.
+
+    ``bucket`` is the same-key ordered subsequence of ``refs`` (a
+    ``Container._index`` entry). The new ref belongs immediately after its
+    nearest predecessor that is also in ``bucket``, or at the front if it has
+    none. A fresh key (empty bucket), an append past the last ref, and — the
+    sequential-append common case — an append directly after the last same-key
+    ref all resolve in O(1); only an insert that lands *between* two same-key
+    refs builds the position map and scans left for the predecessor.
+    """
+    if not bucket:
+        return 0
+    if insert_idx >= len(refs):
+        return len(bucket)
+    if insert_idx > 0 and refs[insert_idx - 1] is bucket[-1]:
+        return len(bucket)
+    pos = {r: i for i, r in enumerate(bucket)}
+    for k in range(insert_idx - 1, -1, -1):
+        i = pos.get(refs[k])
+        if i is not None:
+            return i + 1
+    # No same-key predecessor: the new ref precedes every existing ref of its
+    # key, so it heads the bucket. Reached e.g. when overwriting a dotted
+    # sub-table whose key also heads a later sub-section header.
+    return 0
+
+
 def _file_body_ref(
     anc: Container,
     new_slot: Slot,
@@ -640,23 +679,26 @@ def _file_body_ref(
 ) -> SlotRef:
     """File a ref to ``new_slot`` on ``anc`` at its doc-stream position.
 
-    After ``anchor_slot``'s ref when ``anc`` holds one; else index 0 for a
-    head-of-doc insert; else the tail. Rebuilds ``anc._index[local_key]``
-    rather than appending, which would misorder a key with later refs
-    (e.g. ``a.x = 1`` then ``[a.b]``).
+    ``anc._index[local_key]`` is the same-key ordered projection of
+    ``anc._refs``; both are spliced in lockstep. The new ref goes after
+    ``anchor_slot``'s ref when ``anc`` holds one, else at the head for a
+    head-of-doc insert, else at the tail. Maintaining the projection
+    incrementally (see :func:`_project_bucket_index`) avoids the O(len(refs))
+    rescan a full rebuild would cost on every insert.
     """
     new_ref = SlotRef(slot=new_slot, container=anc)
-    if anchor_slot is not None and any(
-        r.slot is anchor_slot
-        for r in anc._refs  # noqa: SLF001
-    ):
-        anchor_idx = _find_ref_index_by_slot(anc, anchor_slot)
-        anc._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
-    elif inserted_at_head and anc._refs:  # noqa: SLF001
-        anc._refs.insert(0, new_ref)  # noqa: SLF001
+    assert new_ref.local_key == local_key
+    refs = anc._refs  # noqa: SLF001
+    if anchor_slot is not None and _slot_filed_in(anchor_slot, anc):
+        insert_idx = _find_ref_index_by_slot(anc, anchor_slot) + 1
+    elif inserted_at_head and refs:
+        insert_idx = 0
     else:
-        anc._refs.append(new_ref)  # noqa: SLF001
-    _rebuild_index_for_key(anc, local_key)
+        insert_idx = len(refs)
+    bucket = anc._index.setdefault(local_key, [])  # noqa: SLF001
+    bucket_idx = _project_bucket_index(refs, bucket, insert_idx)
+    refs.insert(insert_idx, new_ref)
+    bucket.insert(bucket_idx, new_ref)
     return new_ref
 
 
