@@ -164,7 +164,7 @@ def _canon_leading(
     When ``middle`` is non-empty, clamp the head gap to 0/1 so
     comment-block separation intent survives.
     """
-    lines = split_lines(list(slot.leading.pieces))
+    lines = split_lines(slot.leading.pieces)
 
     if lines and not line_has_newline(lines[-1]) and not line_has_comment(lines[-1]):
         lines.pop()
