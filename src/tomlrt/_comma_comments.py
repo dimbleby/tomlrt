@@ -180,9 +180,13 @@ def _comments_from_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
 
 
 def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]:
-    """Decoded comments in item ``idx``'s above-region (all, source order)."""
-    owner, prefix_len = _above_owner(value, idx)
-    return _comments_from_lines(list(owner.pieces[prefix_len:]))
+    """Decoded comments in item ``idx``'s above-region (source order).
+
+    Reads exactly the comment block the writers rewrite — the bracket-line
+    framing (item 0's ``[ # hdr``) is excluded by construction.
+    """
+    _owner, _prefix, _head, block, _tail = _split_above_frame(value, idx)
+    return _comments_from_lines(block.pieces)
 
 
 def _value_indent(value: CommaValue[_ItemT]) -> str:
@@ -192,7 +196,7 @@ def _value_indent(value: CommaValue[_ItemT]) -> str:
     bracket-pad, conventional, and comma-first layouts.
     """
     for i in range(len(value.items)):
-        _owner, _prefix, _head, tail = _split_above_frame(value, i)
+        _owner, _prefix, _head, _block, tail = _split_above_frame(value, i)
         # `split_item_above` / the item-0 bracket-pad split guarantee that
         # a non-empty `tail` is a single value-indent WhitespaceNode, so the
         # isinstance check never fails here (it exists only for the type).
@@ -219,31 +223,32 @@ def _render_above_block(
 
 def _split_above_frame(
     value: CommaValue[_ItemT], i: int
-) -> tuple[Trivia, Trivia, Trivia, Trivia]:
-    """Decompose item ``i``'s above-region into ``(owner, prefix, head, tail)``.
+) -> tuple[Trivia, Trivia, Trivia, Trivia, Trivia]:
+    """Decompose item ``i``'s above-region into ``(owner, prefix, head, block, tail)``.
 
     Rewrites assign ``owner.pieces``. ``prefix`` is preserved verbatim
-    (comma-first predecessor EOL, else empty); ``head`` / ``tail`` frame
-    the comment block. For item 0, pre-NL bracket comments stay in
-    ``head`` rather than becoming above-blocks.
+    (comma-first predecessor EOL, else empty); ``head`` / ``tail`` frame the
+    comment ``block``. For item 0, pre-NL bracket comments stay in ``head``
+    rather than becoming part of ``block``. The reader and the writers all
+    consume this one decomposition, so they agree on block vs. framing.
     """
     if i == 0:
         owner = value.header_trivia
-        pad, _drop = split_above_block(owner)
+        pad, block = split_above_block(owner)
         pieces = list(pad.pieces)
         nl_idx = next(
             (k for k, p in enumerate(pieces) if isinstance(p, NewlineNode)),
             -1,
         )
         if nl_idx < 0:
-            return owner, Trivia(), Trivia(pieces), Trivia()
+            return owner, Trivia(), Trivia(pieces), block, Trivia()
         head = Trivia(pieces[: nl_idx + 1])
         tail = Trivia(pieces[nl_idx + 1 :])
-        return owner, Trivia(), head, tail
+        return owner, Trivia(), head, block, tail
     owner, prefix_len = _above_owner(value, i)
     prefix = Trivia(list(owner.pieces[:prefix_len]))
-    head, _drop, tail = split_item_above(Trivia(list(owner.pieces[prefix_len:])))
-    return owner, prefix, head, tail
+    head, block, tail = split_item_above(Trivia(list(owner.pieces[prefix_len:])))
+    return owner, prefix, head, block, tail
 
 
 def _set_above_pieces(
@@ -258,7 +263,7 @@ def _set_above_pieces(
     Preserve structural framing and rewrite only the comment block
     between it.
     """
-    owner, prefix, head, tail = _split_above_frame(value, i)
+    owner, prefix, head, _block, tail = _split_above_frame(value, i)
     if not head.pieces and not tail.pieces:
         # An empty region needs its own framing. When `prefix` already
         # ends in a row break (the comma-first layout) reuse it rather
@@ -272,7 +277,7 @@ def _set_above_pieces(
 
 def _clear_above_pieces(value: CommaValue[_ItemT], i: int) -> None:
     """Strip the comment block from item ``i``'s above-region; keep framing."""
-    owner, prefix, head, tail = _split_above_frame(value, i)
+    owner, prefix, head, _block, tail = _split_above_frame(value, i)
     owner.pieces = [*prefix.pieces, *head.pieces, *tail.pieces]
 
 
