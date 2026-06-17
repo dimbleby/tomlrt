@@ -91,7 +91,7 @@ def leading_break_index(pieces: Sequence[TriviaPiece]) -> int | None:
     return None
 
 
-def split_lines(pieces: list[TriviaPiece]) -> list[list[TriviaPiece]]:
+def split_lines(pieces: Sequence[TriviaPiece]) -> list[list[TriviaPiece]]:
     """Group ``pieces`` into logical lines terminated by ``NewlineNode``.
 
     A trailing run without a newline becomes the final inner list.
@@ -108,12 +108,12 @@ def split_lines(pieces: list[TriviaPiece]) -> list[list[TriviaPiece]]:
     return out
 
 
-def line_has_comment(line: list[TriviaPiece]) -> bool:
+def line_has_comment(line: Sequence[TriviaPiece]) -> bool:
     """True iff ``line`` contains a ``CommentNode``."""
     return any(isinstance(p, CommentNode) for p in line)
 
 
-def line_has_newline(line: list[TriviaPiece]) -> bool:
+def line_has_newline(line: Sequence[TriviaPiece]) -> bool:
     """True iff ``line`` contains a ``NewlineNode``."""
     return any(isinstance(p, NewlineNode) for p in line)
 

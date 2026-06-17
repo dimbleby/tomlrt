@@ -55,7 +55,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
     from typing import Any
 
     from tomlrt._trivia import TriviaPiece
@@ -175,7 +175,7 @@ def _above_owner(value: CommaValue[_ItemT], i: int) -> tuple[Trivia, int]:
     return value.items[i].leading, 0
 
 
-def _comments_from_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
+def _comments_from_lines(pieces: Sequence[TriviaPiece]) -> tuple[str, ...]:
     return tuple(_decode_comment(p.text) for p in pieces if isinstance(p, CommentNode))
 
 
