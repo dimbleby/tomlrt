@@ -26,6 +26,7 @@ from tomlrt._trivia import (
     NewlineNode,
     WhitespaceNode,
     line_has_comment,
+    line_has_newline,
     split_lines,
 )
 
@@ -190,6 +191,30 @@ class EolCommentView(_SlotKeyedView[str]):
         # don't leave a dangling tail like `key = 1   \n`.
         if slot.eol.trailing_ws is not None:
             slot.eol.trailing_ws = None
+
+
+def _split_preamble(
+    leading: Trivia,
+) -> tuple[list[TriviaPiece], list[TriviaPiece]]:
+    """Split the head slot's leading at the first blank line into (preamble, rest).
+
+    The dual of :func:`_split_attached_block` (which cuts at the *last* blank).
+    The preamble is the opening contiguous comment run, but only when a blank
+    line follows it (and travels with it). If that run is attached straight to
+    the first construct, or the leading starts with a blank, there is no
+    preamble. ``rest`` keeps the construct's own leading block, blanks and all.
+    """
+    lines = split_lines(leading.pieces)
+    i = 0
+    while i < len(lines) and line_has_comment(lines[i]):
+        i += 1
+    # A separating blank line is a newline with no comment — not the slot's
+    # trailing indent (whitespace, no newline).
+    if i == 0 or i >= len(lines) or not line_has_newline(lines[i]):
+        return [], list(leading.pieces)
+    preamble = [p for line in lines[: i + 1] for p in line]
+    rest = [p for line in lines[i + 1 :] for p in line]
+    return preamble, rest
 
 
 def _split_attached_block(
