@@ -307,7 +307,10 @@ def _canon_multiline_shape(
             nl=nl,
             trailing_indent=item_indent,
         )
-        _, final_above = split_above_block(v.final_trivia)
+        # Unlike ``header_trivia``, ``final_trivia`` has no bracket-EOL first
+        # line, so use ``split_item_above`` (keeps a leading comment) rather
+        # than ``split_above_block`` (would drop it as framing).
+        _, final_above, _ = split_item_above(v.final_trivia)
         v.final_trivia = _compose_pad(
             head_eol=Trivia(),
             above=final_above,

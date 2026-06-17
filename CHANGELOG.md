@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `format()` no longer drops a comment placed before a multi-line array's
+  closing bracket.
 - Fixed `Document.preamble` dropping blank lines: reading and re-assigning it
   no longer collapses blank-separated comment groups. `preamble` is now the
   opening comment paragraph (up to the first blank line); comments below that
