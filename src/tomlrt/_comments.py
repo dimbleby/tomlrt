@@ -563,19 +563,25 @@ def _doc_preamble_set(doc: Document, value: tuple[str, ...]) -> None:
     doc._preamble.pieces = pieces  # noqa: SLF001
 
 
-def _doc_epilogue_get(doc: Document) -> tuple[str, ...]:
-    return _lines_to_comments(split_lines(doc._trailing.pieces))  # noqa: SLF001
+def _doc_epilogue_get(doc: Document) -> tuple[str | None, ...]:
+    # Full fidelity: comment lines decode to text, blank lines become None
+    # (including a blank that separates the epilogue from the last slot).
+    lines = split_lines(doc._trailing.pieces)  # noqa: SLF001
+    return tuple(_line_to_comment(line) for line in lines)
 
 
-def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
-    comments = _validate_comment_seq(value, "epilogue")
-    if doc._head is None and comments:  # noqa: SLF001
+def _doc_epilogue_set(doc: Document, value: tuple[str | None, ...]) -> None:
+    block = _validate_block_seq(value, "epilogue")
+    if doc._head is None and block:  # noqa: SLF001
         msg = "cannot set epilogue: document has no structural content"
         raise TOMLError(msg)
     nl = doc._newline  # noqa: SLF001
     new_pieces: list[TriviaPiece] = []
-    for c in comments:
-        new_pieces.extend((CommentNode(_encode_comment(c)), NewlineNode(nl)))
+    for entry in block:
+        if entry is None:
+            new_pieces.append(NewlineNode(nl))
+        else:
+            new_pieces.extend((CommentNode(_encode_comment(entry)), NewlineNode(nl)))
     doc._trailing.pieces = new_pieces  # noqa: SLF001
 
 

@@ -5626,7 +5626,7 @@ def test_sort_preserves_document_epilogue() -> None:
 
         # trailing comment
         """)
-    assert doc.epilogue == ("trailing comment",)
+    assert doc.epilogue == (None, "trailing comment")
     assert _reparses(tomlrt.dumps(doc))
 
 
@@ -5654,7 +5654,7 @@ def test_aot_sort_preserves_document_epilogue() -> None:
 
         # trailing comment
         """)
-    assert doc.epilogue == ("trailing comment",)
+    assert doc.epilogue == (None, "trailing comment")
     assert _reparses(tomlrt.dumps(doc))
 
 

@@ -1868,6 +1868,35 @@ def test_epilogue_delete() -> None:
     assert doc.epilogue == ()
 
 
+def test_epilogue_full_fidelity_round_trips_blank_separated_groups() -> None:
+    # The epilogue keeps blank lines (as None), including the blank that
+    # separates it from the last value, so a read-then-write is a no-op
+    # (it used to collapse blank-separated groups).
+    src = td("""
+        x = 1
+
+        # group one
+
+        # group two
+        """)
+    doc = tomlrt.loads(src)
+    assert doc.epilogue == (None, "group one", None, "group two")
+    doc.epilogue = doc.epilogue
+    assert tomlrt.dumps(doc) == src
+
+
+def test_epilogue_set_with_blank_lines() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    doc.epilogue = ("group one", None, "group two")
+    assert tomlrt.dumps(doc) == td("""
+        x = 1
+        # group one
+
+        # group two
+        """)
+    assert tomlrt.loads(tomlrt.dumps(doc)).epilogue == ("group one", None, "group two")
+
+
 def test_del_preamble_clears_block() -> None:
     """``del doc.preamble`` is equivalent to ``doc.preamble = ()``."""
     doc = tomlrt.loads(
