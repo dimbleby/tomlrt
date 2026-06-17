@@ -30,6 +30,24 @@ def test_idempotent() -> None:
     assert once == twice
 
 
+def test_format_keeps_comment_after_last_array_item() -> None:
+    # A comment block before `]`, after the last item's EOL comment, lives in
+    # `final_trivia` with no leading newline; format used to drop its first
+    # line (losing one comment per pass).
+    src = td("""
+        a = [
+          1,
+          2, # eol
+          # trailing
+        ]
+    """)
+    once = _roundtrip(src)
+    assert once == src
+    doc = tomlrt.loads(once)
+    doc.format()
+    assert tomlrt.dumps(doc) == once
+
+
 def test_kv_spacing() -> None:
     src = td("""
         a   =1
