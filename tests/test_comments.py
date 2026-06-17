@@ -1324,6 +1324,31 @@ def test_array_leading_comment_on_first_item_sharing_open_line() -> None:
     assert dict(reparsed.leading_comments) == {0: ("first",)}
 
 
+def test_array_first_item_leading_excludes_open_bracket_comment() -> None:
+    # A comment on the opening-bracket line trails the `[`; it is framing,
+    # not item 0's leading block. Reading item 0's leading must omit it, and a
+    # read-write round-trip must not duplicate it.
+    src = td("""
+        more = [ # hdr
+          # lead0
+          42,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("more")
+    assert arr.leading_comments[0] == ("lead0",)
+    arr.leading_comments[0] = arr.leading_comments[0]
+    assert tomlrt.dumps(doc) == src
+    # Replacing the leading block keeps the bracket comment intact.
+    arr.leading_comments[0] = ("changed",)
+    assert tomlrt.dumps(doc) == td("""
+        more = [ # hdr
+          # changed
+          42,
+        ]
+        """)
+
+
 def test_array_delete_eol_on_multiline_last_item_no_comma_keeps_break() -> None:
     """Deleting an EOL on the last item of a multi-line, no-trailing-comma
     array must keep the structural newline before ``]``.
