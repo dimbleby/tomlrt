@@ -1403,23 +1403,24 @@ class Document(Container):
         _doc_preamble_set(self, ())
 
     @property
-    def epilogue(self) -> tuple[str, ...]:
+    def epilogue(self) -> tuple[str | None, ...]:
         """Comment block at the very end of the document.
 
-        Returns the trailing run of ``# …`` lines that follows all
-        structural content; with no structural content everything is
-        `preamble`.
+        The trailing comments that follow all structural content, as bare
+        comment texts (without the leading ``#``) with ``None`` for each
+        blank line, in source order. With no structural content everything
+        is `preamble` instead.
 
-        Setter accepts a sequence of bare comment texts and replaces
-        the current epilogue. Assign ``()`` to remove.
+        Setting replaces the epilogue with the same shape; assign ``()`` to
+        remove. Line terminators within a comment are rejected.
 
-        Raises [`TOMLError`][tomlrt.TOMLError] if called with a
-        non-empty value on a document with no structural content.
+        Raises [`TOMLError`][tomlrt.TOMLError] if called with a non-empty
+        value on a document with no structural content.
         """
         return _doc_epilogue_get(self)
 
     @epilogue.setter
-    def epilogue(self, value: tuple[str, ...]) -> None:
+    def epilogue(self, value: tuple[str | None, ...]) -> None:
         _doc_epilogue_set(self, value)
 
     @epilogue.deleter
