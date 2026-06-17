@@ -2678,6 +2678,98 @@ def test_header_leading_block_round_trip_preserves_document_preamble() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+def test_preamble_is_opening_paragraph_and_round_trips() -> None:
+    # Preamble is the opening paragraph; later groups are the first
+    # construct's block. Re-assigning preamble is a no-op (was lossy).
+    src = td("""
+        # preamble
+
+        # orphan
+
+        # attached
+        [a]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    assert doc.preamble == ("preamble",)
+    assert doc["a"].header_leading_block == ("orphan", None, "attached")
+    doc.preamble = doc.preamble
+    assert tomlrt.dumps(doc) == src
+
+
+def test_comment_above_indented_first_construct_is_leading_not_preamble() -> None:
+    # TOML allows leading whitespace before a key/header. A comment directly
+    # above an indented first construct (no blank line) is that construct's
+    # leading comment, not the preamble: the line after the comment is the
+    # slot's indent, not a blank separator.
+    for src in ("# comment\n  key = 1\n", "# comment\n  [a]\n  x = 1\n"):
+        doc = tomlrt.loads(src)
+        assert doc.preamble == ()
+        assert tomlrt.dumps(doc) == src
+    kv = tomlrt.loads("# comment\n  key = 1\n")
+    assert kv.leading_comments["key"] == ("comment",)
+
+
+def test_blank_block_under_preamble_round_trips_without_drift() -> None:
+    # An existing preamble's blank line shields the first construct's block,
+    # so a blank-bearing block there round-trips exactly.
+    doc = tomlrt.loads(
+        td("""
+        # license
+
+        [a]
+        x = 1
+        """)
+    )
+    doc["a"].header_leading_block = ("orphan", None, "attached")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        # license
+
+        # orphan
+
+        # attached
+        [a]
+        x = 1
+        """)
+    reparsed = tomlrt.loads(out)
+    assert reparsed.preamble == ("license",)
+    assert reparsed["a"].header_leading_block == ("orphan", None, "attached")
+
+
+def test_blank_block_on_first_construct_without_preamble_is_byte_idempotent() -> None:
+    # With no preamble, a blank-bearing block on the first construct renders
+    # fine and is byte-idempotent, but on reload its opening paragraph reads
+    # back as the preamble (the two are textually identical).
+    doc = tomlrt.loads("[a]\nx = 1\n")
+    doc["a"].header_leading_block = ("orphan", None, "attached")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        # orphan
+
+        # attached
+        [a]
+        x = 1
+        """)
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+    reparsed = tomlrt.loads(out)
+    assert reparsed.preamble == ("orphan",)
+    assert reparsed["a"].header_leading_block == ("attached",)
+
+
+def test_blank_block_on_non_head_key_round_trips() -> None:
+    doc = tomlrt.loads("x = 1\ny = 2\n")
+    doc.leading_block["y"] = ("orphan", None, "attached")
+    assert doc.leading_block["y"] == ("orphan", None, "attached")
+    assert tomlrt.dumps(doc) == td("""
+        x = 1
+        # orphan
+
+        # attached
+        y = 2
+        """)
+
+
 def test_header_leading_block_delete_first_section_preserves_preamble() -> None:
     src = td("""
         # preamble

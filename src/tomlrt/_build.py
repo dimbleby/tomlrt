@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
-from tomlrt._comments import _split_attached_block
+from tomlrt._comments import _split_preamble
 from tomlrt._container import Container, Document, Table
 from tomlrt._layout_ops import maybe_advance_body_tail, record_ref
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
@@ -347,15 +347,13 @@ def build_from_parse(result: ParseResult) -> Document:
     doc._displaced_recorder = None  # noqa: SLF001
     doc._layout_root = doc  # noqa: SLF001
     if result.slots:
-        # Move the head slot's above-blank prefix onto the document
-        # preamble; leave only attached comments + indent on the slot.
+        # The opening comment paragraph is the document preamble; the rest of
+        # the head slot's leading stays as the first construct's block.
         head = result.slots[0]
-        above, attached, indent = _split_attached_block(head.leading)
-        if above:
-            doc._preamble = Trivia([p for line in above for p in line])  # noqa: SLF001
-            head.leading = Trivia(
-                [*(p for line in attached for p in line), *indent],
-            )
+        preamble, rest = _split_preamble(head.leading)
+        if preamble:
+            doc._preamble = Trivia(preamble)  # noqa: SLF001
+            head.leading = Trivia(rest)
     else:
         # Comment-only source: the parser put everything onto
         # ``trailing``; that's the preamble, not the epilogue.

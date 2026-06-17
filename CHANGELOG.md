@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed `Document.preamble` dropping blank lines: reading and re-assigning it
+  no longer collapses blank-separated comment groups. `preamble` is now the
+  opening comment paragraph (up to the first blank line); comments below that
+  blank belong to the first key or section.
 - Sorting a multi-line inline array or table after deleting one of its
   end-of-line comments no longer detaches another item's comment.
 - A multi-line inline array's layout is now derived consistently from its

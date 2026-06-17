@@ -181,10 +181,9 @@ class Container(dict[str, Any]):
         interleaved with ``None`` (one per blank line), in source order;
         the slot's own column indent is implicit and re-applied on write.
 
-        At the document's head slot,
-        [`Document.preamble`][tomlrt.Document.preamble] is disjoint from
-        this view: reading omits the preamble lines, and writing
-        preserves them.
+        For the document's first key, the opening comment paragraph is the
+        [`Document.preamble`][tomlrt.Document.preamble] and is omitted here;
+        this block starts after the first blank line.
 
         Mutating the view requires the container to be attached to a
         `Document`.
@@ -246,10 +245,9 @@ class Container(dict[str, Any]):
         container raises [`TOMLError`][tomlrt.TOMLError]; inline tables
         also raise.
 
-        For the first section in a document,
-        [`Document.preamble`][tomlrt.Document.preamble] is disjoint from
-        this view: reading omits the preamble lines, and writing preserves
-        them.
+        For the document's first section, the opening comment paragraph is
+        the [`Document.preamble`][tomlrt.Document.preamble] and is omitted
+        here; this block starts after the first blank line.
         """
         return _header_leading_block_get(self)
 
@@ -1383,25 +1381,16 @@ class Document(Container):
 
     @property
     def preamble(self) -> tuple[str, ...]:
-        """Comment block at the top of the document.
+        """The document's opening comment paragraph, as bare comment texts.
 
-        A "preamble" is the run of ``# …`` lines that opens the file
-        and is blank-line-separated from anything below. Comments
-        directly above the first key (no blank line) are that key's
-        `leading_comments`. With no structural content, the opening
-        comment block is preamble.
+        The preamble is the run of ``# …`` lines before the first blank
+        line. Comments below that blank line belong to the first key or
+        section (its `leading_comments` / `leading_block`), not the
+        preamble.
 
-        Setter accepts a sequence of bare comment texts (without the
-        leading ``#``) and replaces the current preamble; assign ``()``
-        to remove. Newlines inside any line are rejected.
-
-        When the first slot is a section header or bare key, the
-        preamble is stored as the above-blank prefix of that slot's
-        leading trivia — the same storage that
-        [`Table.header_leading_block`][tomlrt.Table.header_leading_block] /
-        [`Document.leading_block`][tomlrt.Document.leading_block] expose
-        for the first slot. Writes through either path are visible
-        through the other.
+        Setting replaces the preamble with a sequence of comment texts
+        (without the leading ``#``); assign ``()`` to remove. Line
+        terminators within a comment are rejected.
         """
         return _doc_preamble_get(self)
 
