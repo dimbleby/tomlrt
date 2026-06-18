@@ -156,7 +156,7 @@ For multi-line layout with a custom indent, call `set_multiline`:
 
 ```python
 arr = doc.array("tags")
-arr.set_multiline(multiline=True, indent="  ")
+arr.set_multiline(multiline=True, indent=2)
 ```
 
 Collapsing a multi-line array to single-line is rejected if any item carries a
@@ -170,7 +170,7 @@ layout (TOML 1.1 allows multi-line inline tables):
 
 ```python
 tbl = doc.table("pkg")
-tbl.set_multiline(multiline=True, indent="  ")
+tbl.set_multiline(multiline=True, indent=2)
 ```
 
 As with arrays, collapsing back to a single line is rejected when an entry

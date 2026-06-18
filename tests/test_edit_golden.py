@@ -2378,7 +2378,7 @@ def test_array_set_multiline_false_refuses_when_inner_inline_has_comment() -> No
 
 def test_array_set_multiline_custom_indent() -> None:
     doc = tomlrt.loads("a = [1, 2]\n")
-    doc.array("a").set_multiline(multiline=True, indent="  ")
+    doc.array("a").set_multiline(multiline=True, indent=2)
     assert tomlrt.dumps(doc) == td("""
         a = [
           1,
@@ -2389,7 +2389,7 @@ def test_array_set_multiline_custom_indent() -> None:
 
 def test_array_set_multiline_preserves_crlf_newlines() -> None:
     doc = tomlrt.loads("a = [1, 2]\r\n")
-    doc.array("a").set_multiline(multiline=True, indent="  ")
+    doc.array("a").set_multiline(multiline=True, indent=2)
     out = tomlrt.dumps(doc)
     assert out == "a = [\r\n  1,\r\n  2,\r\n]\r\n"
 
@@ -2445,7 +2445,7 @@ def test_array_set_multiline_indent_preserved_on_install() -> None:
     # installing it should honour the requested indent, not silently
     # revert to the indent passed to the Array constructor.
     arr = tomlrt.Array([1, 2, 3])
-    arr.set_multiline(multiline=True, indent="  ")
+    arr.set_multiline(multiline=True, indent=2)
     doc = Document()
     doc["x"] = arr
     assert tomlrt.dumps(doc) == td("""
@@ -3079,7 +3079,7 @@ def test_assign_array_multiline_lays_out_one_per_line() -> None:
 
 def test_assign_array_custom_indent() -> None:
     doc = tomlrt.loads("")
-    doc["x"] = Array([1, 2], multiline=True, indent="  ")
+    doc["x"] = Array([1, 2], multiline=True, indent=2)
     assert tomlrt.dumps(doc) == td("""
         x = [
           1,
@@ -3161,7 +3161,7 @@ def test_install_detached_aot_preserves_entry_array_multiline_layout() -> None:
     doc = tomlrt.loads("")
     aot = tomlrt.AoT()
     pkg = aot.add({"name": "bar"})
-    pkg["files"] = Array([1, 2], multiline=True, indent="  ")
+    pkg["files"] = Array([1, 2], multiline=True, indent=2)
     doc.install("pkgs", aot)
     assert tomlrt.dumps(doc) == (
         td("""

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The `indent` argument of `Array(...)`, `Array.set_multiline`, and
+  `Table.set_multiline` is now an `int` (number of spaces) instead of a
+  string, so callers can no longer pass arbitrary indent text.
+
 ## [1.8.3] - 2026-06-17
 
 ### Fixed

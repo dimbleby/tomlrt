@@ -4563,7 +4563,7 @@ def test_standalone_array_multiline_property() -> None:
 
 def test_standalone_array_set_multiline_then_attach() -> None:
     arr = Array([1, 2])
-    arr.set_multiline(multiline=True, indent="  ")
+    arr.set_multiline(multiline=True, indent=2)
     doc = tomlrt.loads("")
     doc["xs"] = arr
     out = tomlrt.dumps(doc)
@@ -4586,7 +4586,7 @@ def test_set_multiline_true_preserves_eol_comment_when_synthesising_comma() -> N
         ]
         """)
     doc = tomlrt.loads(src)
-    doc.array("alist").set_multiline(multiline=True, indent="  ")
+    doc.array("alist").set_multiline(multiline=True, indent=2)
     assert tomlrt.dumps(doc) == td("""
         alist = [
           'w', # Comment
@@ -4605,7 +4605,7 @@ def test_set_multiline_true_no_blank_line_before_bracket_with_eol_comment() -> N
         ]
         """)
     doc = tomlrt.loads(src)
-    doc.array("alist").set_multiline(multiline=True, indent="  ")
+    doc.array("alist").set_multiline(multiline=True, indent=2)
     assert tomlrt.dumps(doc) == td("""
         alist = [
           'w', # Comment
@@ -4626,7 +4626,7 @@ def test_set_multiline_true_preserves_embedded_comments() -> None:
         """)
     doc = tomlrt.loads(src)
     arr = doc.array("alist")
-    arr.set_multiline(multiline=True, indent="    ")
+    arr.set_multiline(multiline=True, indent=4)
     assert tomlrt.dumps(doc) == td("""
         alist = [
             # Orphan comment
@@ -4706,7 +4706,7 @@ def test_set_multiline_true_preserves_bracket_eol_comment() -> None:
         ]
         """)
     doc = tomlrt.loads(src)
-    doc.array("xs").set_multiline(multiline=True, indent="  ")
+    doc.array("xs").set_multiline(multiline=True, indent=2)
     assert tomlrt.dumps(doc) == td("""
         xs = [ # opening
           1,
@@ -4734,7 +4734,7 @@ def test_set_multiline_true_preserves_bracket_eol_on_empty_array() -> None:
         ]
         """)
     doc = tomlrt.loads(src)
-    doc.array("xs").set_multiline(multiline=True, indent="  ")
+    doc.array("xs").set_multiline(multiline=True, indent=2)
     assert tomlrt.dumps(doc) == td("""
         xs = [ # opening
         ]
@@ -4744,7 +4744,7 @@ def test_set_multiline_true_preserves_bracket_eol_on_empty_array() -> None:
 def test_set_multiline_true_empty_array_aligns_close_to_outer_indent() -> None:
     src = "xs = []\n"
     doc = tomlrt.loads(src)
-    doc.array("xs").set_multiline(multiline=True, indent="    ")
+    doc.array("xs").set_multiline(multiline=True, indent=4)
     assert tomlrt.dumps(doc) == td("""
         xs = [
         ]
