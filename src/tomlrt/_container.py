@@ -447,7 +447,7 @@ class Container(dict[str, Any]):
         """Resolve a (possibly dotted) key path; raises ``KeyError`` if missing.
 
         Raises ``TypeError`` if descent passes through a non-table, and
-        ``TOMLError`` for an empty path or a path with empty segments.
+        ``ValueError`` for an empty path or a path with empty segments.
         """
         parts = validate_path(key)
         cur: object = self
@@ -1065,9 +1065,9 @@ class Container(dict[str, Any]):
         """Convert an inline-table entry at ``key`` into a section header.
 
         Returns the live view at ``key`` after promotion. Raises
-        ``TOMLError`` if the key is missing or doesn't refer to an
-        inline-style table. If the value is already a section table,
-        returns it unchanged.
+        ``KeyError`` if the key is missing, or ``TOMLError`` if it
+        doesn't refer to an inline-style table. If the value is already
+        a section table, returns it unchanged.
         """
         if self._inline:
             msg = "inline-table promotion is not supported on inline tables"
@@ -1116,9 +1116,9 @@ class Container(dict[str, Any]):
         """Convert an array-of-inline-tables at ``key`` into an AoT.
 
         Returns the live AoT view at ``key``. If the value is already
-        an AoT, returns it unchanged. Raises ``TOMLError`` if the key
-        is missing, refers to a non-array, an empty array, or an array
-        with non-inline-table elements.
+        an AoT, returns it unchanged. Raises ``KeyError`` if the key is
+        missing, or ``TOMLError`` if it refers to a non-array, an empty
+        array, or an array with non-inline-table elements.
         """
         if self._inline:
             msg = "array-of-tables promotion is not supported on inline tables"

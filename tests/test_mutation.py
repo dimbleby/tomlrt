@@ -2577,25 +2577,25 @@ def test_dotted_subtable_delitem_missing_key_raises_keyerror() -> None:
 
 def test_install_rejects_empty_string_path() -> None:
     doc = tomlrt.loads("")
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.install("", 1)
 
 
 def test_install_rejects_empty_tuple_path() -> None:
     doc = tomlrt.loads("")
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.install((), 1)
 
 
 def test_install_rejects_string_path_with_empty_segment() -> None:
     doc = tomlrt.loads("")
-    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+    with pytest.raises(ValueError, match="empty segment"):
         doc.install("a..b", 1)
 
 
 def test_install_rejects_tuple_path_with_empty_segment() -> None:
     doc = tomlrt.loads("")
-    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+    with pytest.raises(ValueError, match="empty segment"):
         doc.install(("a", ""), 1)
 
 
@@ -2607,35 +2607,35 @@ def test_install_rejects_non_string_path() -> None:
 
 def test_entry_rejects_empty_string_path() -> None:
     doc = tomlrt.loads("x = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.entry("")
 
 
 def test_entry_rejects_empty_sequence_path() -> None:
     doc = tomlrt.loads("x = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.entry([])
 
 
 def test_entry_rejects_string_path_with_empty_segment() -> None:
     doc = tomlrt.loads("[a]\ny = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+    with pytest.raises(ValueError, match="empty segment"):
         doc.entry("a..y")
 
 
 def test_entry_rejects_sequence_path_with_empty_segment() -> None:
     doc = tomlrt.loads("[a]\ny = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+    with pytest.raises(ValueError, match="empty segment"):
         doc.entry(["a", "", "y"])
 
 
 def test_typed_accessors_reject_empty_path() -> None:
     doc = tomlrt.loads("x = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.table("")
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.array([])
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.aot("")
 
 
@@ -2643,9 +2643,9 @@ def test_get_entry_propagates_empty_path_error() -> None:
     # An empty path is a malformed argument, not a missing key, so the
     # ``get_*`` variants must raise rather than swallow it as a default.
     doc = tomlrt.loads("x = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.get_entry("", default=None)
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.get_table("", default=None)
 
 

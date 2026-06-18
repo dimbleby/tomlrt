@@ -115,7 +115,7 @@ def test_preamble_element_not_str_raises_typeerror() -> None:
 
 def test_preamble_element_with_embedded_newline_rejected() -> None:
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="line terminator"):
+    with pytest.raises(ValueError, match="line terminator"):
         doc.preamble = ("a\nb",)
 
 
@@ -205,7 +205,7 @@ def test_empty_comment_in_source_round_trips_through_view() -> None:
 
 def test_set_eol_comment_rejects_newline() -> None:
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(tomlrt.TOMLError):
+    with pytest.raises(ValueError, match="single-line"):
         doc.comments["a"] = "no\nway"
 
 
@@ -223,7 +223,7 @@ def test_set_eol_comment_rejects_other_control_chars(ch: str) -> None:
     # The setter must refuse them up front rather than silently produce
     # output that no longer reparses.
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(tomlrt.TOMLError):
+    with pytest.raises(ValueError, match="control character"):
         doc.comments["a"] = f"bad{ch}stuff"
 
 
@@ -1989,7 +1989,7 @@ def test_preamble_round_trips_through_reparse() -> None:
 
 def test_preamble_rejects_embedded_newline() -> None:
     doc = tomlrt.loads("")
-    with pytest.raises(tomlrt.TOMLError, match="line terminator"):
+    with pytest.raises(ValueError, match="line terminator"):
         doc.preamble = ("a\nb",)
 
 
@@ -2949,7 +2949,7 @@ def test_leading_block_rejects_non_string_non_none_entries() -> None:
 
 def test_leading_block_rejects_newline_inside_entry() -> None:
     doc = tomlrt.loads("x = 1\n")
-    with pytest.raises(tomlrt.TOMLError):
+    with pytest.raises(ValueError, match="line terminator"):
         doc.leading_block["x"] = ("a\nb",)
 
 

@@ -46,7 +46,7 @@ def _validate_comment_text(text: str) -> None:
     """Reject a comment value that would not round-trip via the parser."""
     if "\n" in text or "\r" in text:
         msg = "comment must be single-line"
-        raise TOMLError(msg)
+        raise ValueError(msg)
     for ch in text:
         cp = ord(ch)
         # TOML comments allow TAB plus printable Unicode; reject other
@@ -55,7 +55,7 @@ def _validate_comment_text(text: str) -> None:
             continue
         if cp < 0x20 or cp == 0x7F:
             msg = f"comment may not contain control character U+{cp:04X}"
-            raise TOMLError(msg)
+            raise ValueError(msg)
 
 
 def _validate_comment_str(value: object, name: str) -> str:
@@ -290,7 +290,7 @@ def _validate_block_seq(value: object, name: str) -> tuple[str | None, ...]:
             raise TypeError(msg)
         if "\n" in c or "\r" in c:
             msg = f"{name} entries must not contain a line terminator"
-            raise TOMLError(msg)
+            raise ValueError(msg)
         _validate_comment_text(c)
         out.append(c)
     return tuple(out)
@@ -492,7 +492,7 @@ def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
             raise TypeError(msg)
         if "\n" in c or "\r" in c:
             msg = f"{name} entries must not contain a line terminator"
-            raise TOMLError(msg)
+            raise ValueError(msg)
         _validate_comment_text(c)
         out.append(c)
     return tuple(out)

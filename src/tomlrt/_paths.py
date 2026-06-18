@@ -4,29 +4,27 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from tomlrt._errors import TOMLError
-
 
 def validate_path(path: object) -> list[str]:
     """Validate a key-path argument and return its components.
 
-    Raises ``TypeError`` for the wrong outer type, and ``TOMLError``
+    Raises ``TypeError`` for the wrong outer type, and ``ValueError``
     for empty paths or paths with empty segments.
     """
     if isinstance(path, str):
         if path == "":
             msg = "key path must not be empty"
-            raise TOMLError(msg)
+            raise ValueError(msg)
         parts = path.split(".")
         for p in parts:
             if p == "":
                 msg = f"key path {path!r} contains an empty segment"
-                raise TOMLError(msg)
+                raise ValueError(msg)
         return parts
     if isinstance(path, Sequence):
         if len(path) == 0:
             msg = "key path must not be empty"
-            raise TOMLError(msg)
+            raise ValueError(msg)
         out: list[str] = []
         for seg in path:
             if not isinstance(seg, str):
@@ -34,7 +32,7 @@ def validate_path(path: object) -> list[str]:
                 raise TypeError(msg)
             if seg == "":
                 msg = "key path contains an empty segment"
-                raise TOMLError(msg)
+                raise ValueError(msg)
             out.append(seg)
         return out
     msg = f"key path must be str or sequence of str, got {type(path).__name__}"
