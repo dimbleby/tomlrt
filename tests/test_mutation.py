@@ -2605,6 +2605,50 @@ def test_install_rejects_non_string_path() -> None:
         doc.install(123, 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
+def test_entry_rejects_empty_string_path() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.entry("")
+
+
+def test_entry_rejects_empty_sequence_path() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.entry([])
+
+
+def test_entry_rejects_string_path_with_empty_segment() -> None:
+    doc = tomlrt.loads("[a]\ny = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+        doc.entry("a..y")
+
+
+def test_entry_rejects_sequence_path_with_empty_segment() -> None:
+    doc = tomlrt.loads("[a]\ny = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+        doc.entry(["a", "", "y"])
+
+
+def test_typed_accessors_reject_empty_path() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.table("")
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.array([])
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.aot("")
+
+
+def test_get_entry_propagates_empty_path_error() -> None:
+    # An empty path is a malformed argument, not a missing key, so the
+    # ``get_*`` variants must raise rather than swallow it as a default.
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.get_entry("", default=None)
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.get_table("", default=None)
+
+
 def test_install_rejects_tuple_with_non_string_segment() -> None:
     doc = tomlrt.loads("")
     with pytest.raises(TypeError, match="segment must be str"):

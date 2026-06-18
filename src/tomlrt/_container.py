@@ -46,7 +46,7 @@ from tomlrt._format import (
 )
 from tomlrt._inline_comments import InlineEolView, InlineLeadingView
 from tomlrt._kind import _Kind
-from tomlrt._paths import split_path, validate_path
+from tomlrt._paths import validate_path
 from tomlrt._render import render
 from tomlrt._scalar import (
     coerce_scalar,
@@ -446,9 +446,10 @@ class Container(dict[str, Any]):
     def entry(self, key: str | Sequence[str]) -> Any:
         """Resolve a (possibly dotted) key path; raises ``KeyError`` if missing.
 
-        Raises ``TypeError`` if descent passes through a non-table.
+        Raises ``TypeError`` if descent passes through a non-table, and
+        ``TOMLError`` for an empty path or a path with empty segments.
         """
-        parts = split_path(key)
+        parts = validate_path(key)
         cur: object = self
         for i, p in enumerate(parts):
             if not isinstance(cur, Container):

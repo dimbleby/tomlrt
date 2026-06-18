@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Table.set_multiline` is now an `int` (number of spaces) instead of a
   string, so callers can no longer pass arbitrary indent text.
 
+### Fixed
+
+- Key-path lookups now raise `TOMLError` on an empty path (e.g. `""`,
+  `[]`, `"a..b"`) instead of silently returning the whole container.
+
 ## [1.8.3] - 2026-06-17
 
 ### Fixed

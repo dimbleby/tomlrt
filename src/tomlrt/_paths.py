@@ -7,18 +7,6 @@ from collections.abc import Sequence
 from tomlrt._errors import TOMLError
 
 
-def split_path(path: str | Sequence[str]) -> list[str]:
-    """Split a path argument into a list of component names.
-
-    A ``str`` is interpreted as a dotted path (no quoting support; for
-    keys containing dots, pass a sequence). A non-string ``Sequence``
-    is taken verbatim.
-    """
-    if isinstance(path, str):
-        return path.split(".") if path else []
-    return list(path)
-
-
 def validate_path(path: object) -> list[str]:
     """Validate a key-path argument and return its components.
 
