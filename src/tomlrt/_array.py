@@ -350,7 +350,7 @@ class Array(list[Any]):
     def sort(
         self,
         *,
-        key: Callable[[Any], object] | None = None,
+        key: Callable[[Any], SupportsRichComparison] | None = None,
         reverse: bool = False,
     ) -> None:
         n = len(self)
@@ -359,7 +359,7 @@ class Array(list[Any]):
         else:
             key_fn = key
             sort_key = lambda i: key_fn(self[i])  # noqa: E731
-        order = sorted(range(n), key=sort_key, reverse=reverse)  # ty: ignore[no-matching-overload]
+        order = sorted(range(n), key=sort_key, reverse=reverse)
         self._reorder(order)
 
     def _reorder(self, order: list[int]) -> None:
