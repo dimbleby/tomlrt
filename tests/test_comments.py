@@ -477,7 +477,7 @@ def test_inline_promotion_inserts_after_parent_block() -> None:
 
 def test_promote_non_inline_raises() -> None:
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="not an inline table"):
+    with pytest.raises(TypeError, match="not an inline table"):
         doc.promote_inline("a")
 
 

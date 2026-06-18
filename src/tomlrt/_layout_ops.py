@@ -2332,7 +2332,7 @@ def clone_aot_entry(
     else:
         owner = src._owner_aot_entry  # noqa: SLF001
         if owner is None:  # pragma: no cover
-            msg = "Source entry has no owning AoTEntry"
+            msg = "source entry has no owning AoTEntry"
             raise RuntimeError(msg)
         src_entry = owner
         # _gather_subtree_slots (not just entry.entry_slots) so nested
@@ -2531,7 +2531,7 @@ def clone_aot_entry_as_table(
     """
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
     if src_entry is None:  # pragma: no cover
-        msg = "Source entry has no owning AoTEntry"
+        msg = "source entry has no owning AoTEntry"
         raise RuntimeError(msg)
     src_slots = list(src_entry.entry_slots)
     return _install_cloned_section(parent, key, src_slots, src_entry.path)
@@ -2572,7 +2572,7 @@ def clone_table_as_aot_entry(
     """
     src_slots = _gather_subtree_slots(src_table)
     if not isinstance(src_slots[0], StructuralHeaderSlot):  # pragma: no cover
-        msg = "Source section's first owned slot is not a header"
+        msg = "source section's first owned slot is not a header"
         raise AssertionError(msg)  # noqa: TRY004
     if src_slots[0].kind != "table":  # pragma: no cover
         msg = "clone_table_as_aot_entry: source must be a standard section"
@@ -2599,7 +2599,7 @@ def clone_section_as_section(
     """
     src_slots = _gather_subtree_slots(src_table)
     if not isinstance(src_slots[0], StructuralHeaderSlot):  # pragma: no cover
-        msg = "Source section's first owned slot is not a header"
+        msg = "source section's first owned slot is not a header"
         raise AssertionError(msg)  # noqa: TRY004
     return _install_cloned_section(parent, key, src_slots, src_table._path)  # noqa: SLF001
 
