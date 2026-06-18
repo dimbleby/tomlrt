@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Table.set_multiline` is now an `int` (number of spaces) instead of a
   string, so callers can no longer pass arbitrary indent text.
 
+### Removed
+
+- The deprecated `tomlrt.document()` and `tomlrt.parse()` aliases. Use
+  `Document()` and `loads()` instead.
+
 ### Fixed
 
 - Key-path lookups now raise `TOMLError` on an empty path (e.g. `""`,
