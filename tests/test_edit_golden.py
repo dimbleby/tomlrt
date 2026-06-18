@@ -2977,13 +2977,13 @@ def test_install_aot_dotted_path() -> None:
 
 def test_install_section_rejects_empty_path() -> None:
     doc = tomlrt.loads("")
-    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         doc.install("", Table.section())
 
 
 def test_install_section_rejects_empty_segment() -> None:
     doc = tomlrt.loads("")
-    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+    with pytest.raises(ValueError, match="empty segment"):
         doc.install("tool..poetry", Table.section())
 
 

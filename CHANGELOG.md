@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `indent` argument of `Array(...)`, `Array.set_multiline`, and
   `Table.set_multiline` is now an `int` (number of spaces) instead of a
   string, so callers can no longer pass arbitrary indent text.
+- Invalid-argument errors now use the standard built-in exceptions
+  instead of `TOMLError`: an empty or malformed key path, and a comment
+  string containing a newline or other control character, now raise
+  `ValueError`. `TOMLError` is reserved for tomlrt-domain conditions.
 
 ### Removed
 
@@ -20,8 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Key-path lookups now raise `TOMLError` on an empty path (e.g. `""`,
-  `[]`, `"a..b"`) instead of silently returning the whole container.
+- Key-path lookups now raise on an empty path (e.g. `""`, `[]`,
+  `"a..b"`) instead of silently returning the whole container.
 
 ## [1.8.3] - 2026-06-17
 

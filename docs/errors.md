@@ -4,7 +4,8 @@ tomlrt raises a small exception hierarchy.
 
 ## `TOMLError`
 
-Base class for everything tomlrt raises.
+Base class for tomlrt's own errors — operations that are invalid for a
+document's structure, such as promoting a non-inline table.
 
 ```python
 try:
