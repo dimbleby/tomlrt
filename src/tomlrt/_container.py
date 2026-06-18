@@ -500,10 +500,10 @@ class Container(dict[str, Any]):
         # assignment site, for both attached and detached factories.
         if self._inline:
             if isinstance(value, AoT):
-                msg = "Cannot store an array-of-tables inside an inline table"
+                msg = "cannot store an array-of-tables inside an inline table"
                 raise TOMLError(msg)
             if _is_section(value):
-                msg = "Cannot store a section-style table inside an inline-style table"
+                msg = "cannot store a section-style table inside an inline-style table"
                 raise TOMLError(msg)
         # Unattached factory mode: dict-only storage until attach.
         if self._layout_root is None:
@@ -552,7 +552,7 @@ class Container(dict[str, Any]):
             return
         # Unsupported value type — TypeError, not NIE.
         msg = (
-            f"Cannot convert value of type {type(value).__name__!r} "
+            f"cannot convert value of type {type(value).__name__!r} "
             f"for TOML key {key!r}"
         )
         raise TypeError(msg)
@@ -585,7 +585,7 @@ class Container(dict[str, Any]):
             self._attach_section(key, value)
             return
         # Unsupported types get the canonical TypeError.
-        msg = f"Cannot convert {type(value).__name__} to a TOML value"
+        msg = f"cannot convert {type(value).__name__} to a TOML value"
         raise TypeError(msg)
 
     def _attach_aot(self, key: str, value: AoT) -> None:
@@ -1065,7 +1065,7 @@ class Container(dict[str, Any]):
         """Convert an inline-table entry at ``key`` into a section header.
 
         Returns the live view at ``key`` after promotion. Raises
-        ``KeyError`` if the key is missing, or ``TOMLError`` if it
+        ``KeyError`` if the key is missing, or ``TypeError`` if it
         doesn't refer to an inline-style table. If the value is already
         a section table, returns it unchanged.
         """
@@ -1078,7 +1078,7 @@ class Container(dict[str, Any]):
         cur = dict.__getitem__(self, key)
         if not (_is_inline_table(cur)):
             msg = f"{key!r} is not an inline table"
-            raise TOMLError(msg)
+            raise TypeError(msg)
         if _inline_value_has_inner_comments(cur._value):  # noqa: SLF001
             msg = (
                 f"cannot promote {key!r}: inline table has inner "
@@ -1117,8 +1117,9 @@ class Container(dict[str, Any]):
 
         Returns the live AoT view at ``key``. If the value is already
         an AoT, returns it unchanged. Raises ``KeyError`` if the key is
-        missing, or ``TOMLError`` if it refers to a non-array, an empty
-        array, or an array with non-inline-table elements.
+        missing, ``TypeError`` if it refers to a non-array, or
+        ``TOMLError`` for an empty array or an array with
+        non-inline-table elements.
         """
         if self._inline:
             msg = "array-of-tables promotion is not supported on inline tables"
@@ -1129,7 +1130,7 @@ class Container(dict[str, Any]):
         cur = dict.__getitem__(self, key)
         if not isinstance(cur, Array):
             msg = f"{key!r} is not an array"
-            raise TOMLError(msg)
+            raise TypeError(msg)
         if len(cur) == 0:
             msg = f"cannot promote empty array {key!r}"
             raise TOMLError(msg)
@@ -1775,10 +1776,10 @@ def _synth_value(
     if is_scalar(v):
         return coerce_scalar(v), v
     if isinstance(v, AoT):
-        msg = "Cannot store an array-of-tables inside an inline table"
+        msg = "cannot store an array-of-tables inside an inline table"
         raise TOMLError(msg)
     if _is_section(v):
-        msg = "Cannot store a section-style table inside an inline-style table"
+        msg = "cannot store a section-style table inside an inline-style table"
         raise TOMLError(msg)
     # Live-attach unattached inline values so user identity is preserved.
     # Displaced inline tables need a reset before reattach; arrays do not.
@@ -1823,7 +1824,7 @@ def _synth_value(
     # Plain ``list`` → inline array (synthesise from items).
     if isinstance(v, list):
         return _synth_inline_array(v, layout_root=layout_root, owner=owner)
-    msg = f"Cannot convert {type(v).__name__} to a TOML value"
+    msg = f"cannot convert {type(v).__name__} to a TOML value"
     raise TypeError(msg)
 
 

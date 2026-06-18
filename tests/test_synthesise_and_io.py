@@ -281,20 +281,20 @@ def test_assign_existing_inline_table_deep_copies() -> None:
 
 def test_assign_unsupported_type_raises() -> None:
     doc = tomlrt.loads("x = 0\n")
-    with pytest.raises(TypeError, match="Cannot convert"):
+    with pytest.raises(TypeError, match="cannot convert"):
         doc["x"] = object()
 
 
 def test_assign_inline_table_with_unsupported_value_raises() -> None:
     """Synthesis recurses into mappings; the inner value gets the same check."""
     doc = tomlrt.loads("x = 0\n")
-    with pytest.raises(TypeError, match="Cannot convert"):
+    with pytest.raises(TypeError, match="cannot convert"):
         doc["x"] = {"a": object()}
 
 
 def test_assign_inline_array_with_unsupported_value_raises() -> None:
     doc = tomlrt.loads("x = 0\n")
-    with pytest.raises(TypeError, match="Cannot convert"):
+    with pytest.raises(TypeError, match="cannot convert"):
         doc["x"] = [object()]
 
 

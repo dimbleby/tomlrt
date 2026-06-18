@@ -265,7 +265,7 @@ class Array(list[Any]):
     @override
     def append(self, value: Any) -> None:
         if isinstance(value, AoT):
-            msg = "Cannot store an array-of-tables inside an inline array"
+            msg = "cannot store an array-of-tables inside an inline array"
             raise TOMLError(msg)
         cst, decoded = self._synth_cst(value)
         self._append_with_style(cst, decoded, self._style())
@@ -287,7 +287,7 @@ class Array(list[Any]):
         if not snapshot:
             return
         if any(isinstance(v, AoT) for v in snapshot):
-            msg = "Cannot store an array-of-tables inside an inline array"
+            msg = "cannot store an array-of-tables inside an inline array"
             raise TOMLError(msg)
         # Reuse one style for every item: re-deriving it per item is O(n)
         # for a single-line array, so doing it n times would be quadratic.

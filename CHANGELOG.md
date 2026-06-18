@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Invalid-argument errors now use the standard built-in exceptions
   instead of `TOMLError`: an empty or malformed key path, and a comment
   string containing a newline or other control character, now raise
-  `ValueError`. `TOMLError` is reserved for tomlrt-domain conditions.
+  `ValueError`; `promote_inline` / `promote_array` raise `TypeError`
+  when the target value is the wrong kind. `TOMLError` is reserved for
+  tomlrt-domain conditions.
 
 ### Removed
 

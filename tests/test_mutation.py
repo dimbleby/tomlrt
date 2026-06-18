@@ -2558,7 +2558,7 @@ def test_array_append_aot_raises() -> None:
     # An AoT only renders as ``[[ ... ]]`` sections; trying to splice
     # one into an inline array has no valid serialisation.
     doc = tomlrt.loads("xs = [1]\n")
-    with pytest.raises(tomlrt.TOMLError, match="Cannot store an array-of-tables"):
+    with pytest.raises(tomlrt.TOMLError, match="cannot store an array-of-tables"):
         doc.array("xs").append(tomlrt.AoT())
 
 
@@ -5966,18 +5966,18 @@ def test_update_rejects_multiple_positional_args() -> None:
 
 def test_inline_setitem_non_coerceable_matches_regular_table() -> None:
     """Inline-table assignment of a non-coerceable type raises the same
-    ``TypeError: Cannot convert ...`` as the regular-table path, rather
+    ``TypeError: cannot convert ...`` as the regular-table path, rather
     than the previous misleading ``NotImplementedError`` about
     "live-attach of typed Container/Array/AoT"."""
     doc = tomlrt.loads("t = {a = 1}\n")
     inline = doc.table("t")
-    with pytest.raises(TypeError, match="Cannot convert set"):
+    with pytest.raises(TypeError, match="cannot convert set"):
         inline["x"] = {1, 2, 3}
 
 
 def test_insert_new_key_non_coerceable_type_raises() -> None:
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(TypeError, match="Cannot convert set"):
+    with pytest.raises(TypeError, match="cannot convert set"):
         doc["b"] = {1, 2, 3}
 
 
@@ -5994,7 +5994,7 @@ def test_promote_array_missing_key_raises() -> None:
 
 def test_promote_array_not_an_array_raises() -> None:
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="not an array"):
+    with pytest.raises(TypeError, match="not an array"):
         doc.promote_array("a")
 
 

@@ -2745,7 +2745,7 @@ def test_promote_array_rejects_non_table_elements() -> None:
 
 def test_promote_array_rejects_non_array() -> None:
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(tomlrt.TOMLError, match="not an array"):
+    with pytest.raises(TypeError, match="not an array"):
         doc.promote_array("a")
 
 
@@ -2761,7 +2761,7 @@ def test_promote_inline_rejects_non_inline_for_present_keys() -> None:
     ]:
         doc = tomlrt.loads(src)
         assert target in doc["a"]
-        with pytest.raises(tomlrt.TOMLError, match="not an inline table"):
+        with pytest.raises(TypeError, match="not an inline table"):
             doc["a"].promote_inline(target)
 
 
@@ -2773,7 +2773,7 @@ def test_promote_array_rejects_non_array_for_present_keys() -> None:
     ]:
         doc = tomlrt.loads(src)
         assert target in doc["a"]
-        with pytest.raises(tomlrt.TOMLError, match="not an array"):
+        with pytest.raises(TypeError, match="not an array"):
             doc["a"].promote_array(target)
 
 
