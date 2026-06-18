@@ -1272,8 +1272,11 @@ class Table(Container):
             return
         self.set_multiline(multiline=value)
 
-    def set_multiline(self, *, multiline: bool, indent: str = "    ") -> Table:
+    def set_multiline(self, *, multiline: bool, indent: int = 4) -> Table:
         """Switch this inline table between single-line and multi-line form.
+
+        When laying out multi-line, entries are indented by ``indent``
+        spaces.
 
         Raises [`TOMLError`][tomlrt.TOMLError] on a non-inline table, and
         when collapsing a multi-line table that carries comments anywhere
@@ -1282,7 +1285,7 @@ class Table(Container):
         Returns ``self`` for chaining.
         """
         root = self._require_inline_root("set_multiline")
-        _inline_ops.set_inline_multiline(root, multiline=multiline, indent=indent)
+        _inline_ops.set_inline_multiline(root, multiline=multiline, indent=" " * indent)
         return self
 
     @classmethod

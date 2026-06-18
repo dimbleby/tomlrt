@@ -84,22 +84,23 @@ class Array(list[Any]):
         items: Iterable[TomlInput] = (),
         *,
         multiline: bool = False,
-        indent: str = "    ",
+        indent: int = 4,
     ) -> None:
         """Construct a standalone inline array.
 
         ``Array([1, 2, 3])`` builds an inline array; ``multiline=True``
-        lays items out one per line with ``indent``.
+        lays items out one per line, indented by ``indent`` spaces.
         """
         super().__init__()
 
+        indent_str = " " * indent
         self._value: ArrayValue = ArrayValue()
         self._layout_root: Document | None = None
         items_list = list(items)
         if not items_list:
             if multiline:
                 self._value.final_trivia = Trivia(
-                    [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
+                    [NewlineNode(text="\n"), WhitespaceNode(text=indent_str)]
                 )
             return
         from tomlrt._container import _synth_inline_array  # noqa: PLC0415
@@ -111,7 +112,7 @@ class Array(list[Any]):
         if multiline and val.items:
             indent_pieces: list[TriviaPiece] = [
                 NewlineNode(text="\n"),
-                WhitespaceNode(text=indent),
+                WhitespaceNode(text=indent_str),
             ]
             val.header_trivia = Trivia(list(indent_pieces))
             val.final_trivia = Trivia([NewlineNode(text="\n")])
@@ -124,7 +125,7 @@ class Array(list[Any]):
             # Empty multiline factory: final_trivia carries the pre-`]`
             # break + indent so a later first append slots in correctly.
             val.final_trivia = Trivia(
-                [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
+                [NewlineNode(text="\n"), WhitespaceNode(text=indent_str)]
             )
 
     def to_list(self) -> list[Any]:
@@ -233,8 +234,11 @@ class Array(list[Any]):
         """
         _canon_inline_value(self._value, nl=self._doc_newline, comments=comments)
 
-    def set_multiline(self, *, multiline: bool, indent: str = "    ") -> Array:
+    def set_multiline(self, *, multiline: bool, indent: int = 4) -> Array:
         """Switch this array between flush single-line and multi-line form.
+
+        When laying out multi-line, items are indented by ``indent``
+        spaces.
 
         Raises ``TOMLError`` when collapsing a multi-line array that
         carries comments anywhere in it, including inside nested values,
@@ -243,7 +247,7 @@ class Array(list[Any]):
         Returns ``self`` for chaining.
         """
         set_comma_value_multiline(
-            self._value, multiline=multiline, nl=self._doc_newline, indent=indent
+            self._value, multiline=multiline, nl=self._doc_newline, indent=" " * indent
         )
         return self
 
