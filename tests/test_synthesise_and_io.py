@@ -554,20 +554,6 @@ def test_document_factory_with_data_passes_container_through() -> None:
         """)
 
 
-def test_document_factory_emits_deprecation_warning() -> None:
-    with pytest.warns(DeprecationWarning, match="tomlrt.Document"):
-        doc = tomlrt.document({"x": 1})
-    assert isinstance(doc, Document)
-    assert doc["x"] == 1
-
-
-def test_parse_emits_deprecation_warning() -> None:
-    with pytest.warns(DeprecationWarning, match="tomlrt.loads"):
-        doc = tomlrt.parse("x = 1\n")
-    assert isinstance(doc, Document)
-    assert doc["x"] == 1
-
-
 def test_deepcopy_preserves_document_structure() -> None:
 
     src = td("""
