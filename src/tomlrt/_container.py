@@ -1114,9 +1114,8 @@ class Container(dict[str, Any]):
     def promote_array(self, key: str) -> AoT:
         """Convert an array-of-inline-tables at ``key`` into an AoT.
 
-        Returns the live AoT view at ``key``. If the value is already
-        an AoT, returns it unchanged. Raises ``KeyError`` if the key is
-        missing, ``TypeError`` if it refers to a non-array, or
+        Returns the live AoT view at ``key``. Raises ``KeyError`` if the
+        key is missing, ``TypeError`` if it refers to a non-array, or
         ``TOMLError`` for an empty array or an array with
         non-inline-table elements.
         """
