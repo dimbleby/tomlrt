@@ -2775,6 +2775,16 @@ def test_promote_inline_on_already_promoted_section_raises() -> None:
         doc.promote_inline("a")
 
 
+def test_promote_array_on_already_promoted_aot_raises() -> None:
+    """Promotion is not idempotent: re-promoting a key that is now an AoT
+    raises ``TypeError`` rather than returning it unchanged.
+    """
+    doc = tomlrt.loads("[[a]]\nb = 1\n")
+    assert isinstance(doc["a"], tomlrt.AoT)
+    with pytest.raises(TypeError, match="not an array"):
+        doc.promote_array("a")
+
+
 def test_promote_array_rejects_non_array_for_present_keys() -> None:
     for src, target in [
         ("[a]\nb.c = 1\n", "b"),
