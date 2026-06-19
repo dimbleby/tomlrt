@@ -2765,6 +2765,16 @@ def test_promote_inline_rejects_non_inline_for_present_keys() -> None:
             doc["a"].promote_inline(target)
 
 
+def test_promote_inline_on_already_promoted_section_raises() -> None:
+    """Promotion is not idempotent: re-promoting a key that is now a
+    section table raises ``TypeError`` rather than returning it unchanged.
+    """
+    doc = tomlrt.loads("a = {b = 1}\n")
+    doc.promote_inline("a")
+    with pytest.raises(TypeError, match="not an inline table"):
+        doc.promote_inline("a")
+
+
 def test_promote_array_rejects_non_array_for_present_keys() -> None:
     for src, target in [
         ("[a]\nb.c = 1\n", "b"),

@@ -1066,8 +1066,7 @@ class Container(dict[str, Any]):
 
         Returns the live view at ``key`` after promotion. Raises
         ``KeyError`` if the key is missing, or ``TypeError`` if it
-        doesn't refer to an inline-style table. If the value is already
-        a section table, returns it unchanged.
+        doesn't refer to an inline-style table.
         """
         if self._inline:
             msg = "inline-table promotion is not supported on inline tables"
