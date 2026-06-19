@@ -4500,6 +4500,12 @@ def test_ensure_table_through_inline_value_raises() -> None:
         doc.ensure_table(["t", "sub"])
 
 
+def test_ensure_table_through_scalar_value_raises() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="inline table or non-table"):
+        doc.ensure_table("a")
+
+
 def test_ensure_table_on_detached_table_section() -> None:
     t = Table.section()
     sub = t.ensure_table(["a", "b", "c"])
