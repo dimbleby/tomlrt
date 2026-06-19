@@ -1010,8 +1010,9 @@ class Container(dict[str, Any]):
         If any prefix already exists as a section, descent continues
         from there. Intermediate components missing entirely are left
         implicit; only the deepest component gets an explicit
-        ``[a.b.c]`` header. An existing non-table at any component
-        raises ``TypeError``.
+        ``[a.b.c]`` header. Raises `TOMLError` if a component cannot be
+        descended through: an existing array-of-tables, or a non-table
+        value or inline table that would have to be traversed.
         """
         parts = validate_path(key)
         cur: Container = self
