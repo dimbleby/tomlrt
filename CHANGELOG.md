@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Editing a "comma-first" multi-line array or inline table (comma leading
+  each row) now preserves that layout instead of breaking it.
 - Key-path lookups now raise on an empty path (e.g. `""`, `[]`,
   `"a..b"`) instead of silently returning the whole container.
 
