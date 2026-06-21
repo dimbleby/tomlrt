@@ -416,10 +416,15 @@ class Array(list[Any]):
             return
         # int index: just replace the value CST in place.
         i = int(index)
-        cst, dec = self._synth_cst(value)
         items = self._value.items
         if i < 0:
             i += len(items)
+        if i < 0 or i >= len(items):
+            # Reject before synthesising or mutating any CST, matching the
+            # IndexError that ``list.__setitem__`` raises for a bad index.
+            msg = "list assignment index out of range"
+            raise IndexError(msg)
+        cst, dec = self._synth_cst(value)
         items[i].value = cst
         list.__setitem__(self, index, dec)
 

@@ -699,6 +699,23 @@ def test_array_setitem_int_negative_index() -> None:
     assert _reparses(out) == {"xs": [1, 2, 33]}
 
 
+def test_array_setitem_int_oob_index_does_not_corrupt_cst() -> None:
+    # Regression: an out-of-range index (negative or positive) must raise
+    # IndexError *without* mutating any item's value CST. The negative case
+    # used to normalise into a valid slot and silently overwrite it before
+    # ``list.__setitem__`` raised, leaving the rendered output disagreeing
+    # with the logical view.
+    for bad in (-4, 3):
+        doc = tomlrt.loads("xs = [1, 2, 3]\n")
+        xs = doc.array("xs")
+        with pytest.raises(IndexError, match="list assignment index out of range"):
+            xs[bad] = 99
+        assert list(xs) == [1, 2, 3]
+        out = tomlrt.dumps(doc)
+        assert out == "xs = [1, 2, 3]\n"
+        assert _reparses(out) == {"xs": [1, 2, 3]}
+
+
 def test_array_setitem_slice_extended_matching_length() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3, 4, 5]\n")
     xs = doc.array("xs")
