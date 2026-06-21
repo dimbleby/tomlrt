@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An out-of-range index in `arr[i] = value` now raises `IndexError`
+  without corrupting the array; previously an out-of-range negative
+  index could silently overwrite the wrong element.
 - Editing a "comma-first" multi-line array or inline table (comma leading
   each row) now preserves that layout instead of breaking it.
 - Key-path lookups now raise on an empty path (e.g. `""`, `[]`,
