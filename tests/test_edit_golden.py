@@ -2570,11 +2570,9 @@ def test_append_preserves_leading_comment_in_single_item_array() -> None:
 def test_append_preserves_comma_first_boundary_in_array() -> None:
     # A comma-first multiline array parks its row break *before* the
     # comma (in the previous item's trailing), leaving the following
-    # item's leading empty. Appending used to renormalise that
-    # already-broken boundary, injecting a second newline that
-    # stranded the comma on its own line and dropped items to column
-    # zero. The existing ",2" row is now left untouched; only the new
-    # item is laid out (in the default comma-attached style).
+    # item's leading empty. Appending matches that style: the new item
+    # takes its own break-before-comma row at the existing comma-row
+    # indent rather than renormalising to a comma-attached layout.
     src = td("""
         a = [
               1 # comma is on the next line
@@ -2587,16 +2585,16 @@ def test_append_preserves_comma_first_boundary_in_array() -> None:
     assert tomlrt.dumps(doc) == td("""
         a = [
               1 # comma is on the next line
-             ,2,
-              99
+             ,2
+             ,99
             ]
         """)
 
 
 def test_assign_preserves_comma_first_boundary_in_inline_table() -> None:
     # Comma-first inline tables share the row-break logic with arrays
-    # (via _comma_ops), so the existing comma-first entry boundary is
-    # preserved the same way.
+    # (via _comma_ops), so a new entry also takes its own
+    # break-before-comma row matching the existing boundary.
     src = td("""
         t = {
               a = 1 # comma is on the next line
@@ -2609,9 +2607,136 @@ def test_assign_preserves_comma_first_boundary_in_inline_table() -> None:
     assert tomlrt.dumps(doc) == td("""
         t = {
               a = 1 # comma is on the next line
-             ,b = 2,
-              c = 3
+             ,b = 2
+             ,c = 3
             }
+        """)
+
+
+def test_slice_assign_preserves_comma_first_array() -> None:
+    # Replacing one item with two via a slice (del + insert) must keep the
+    # comma-first layout: each new item parks its own row break before its
+    # comma rather than colliding with the predecessor's existing break.
+    src = td("""
+        a = [
+              1
+            , 2
+            , 3
+            ]
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.array("a")[1:2] = [10, 20]
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1
+            , 10
+            , 20
+            , 3
+            ]
+        """)
+
+
+def test_insert_interior_preserves_comma_first_array() -> None:
+    src = td("""
+        a = [
+              1
+            , 2
+            , 3
+            ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("a").insert(1, 99)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1
+            , 99
+            , 2
+            , 3
+            ]
+        """)
+
+
+def test_insert_head_preserves_comma_first_array() -> None:
+    src = td("""
+        a = [
+              1
+            , 2
+            , 3
+            ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("a").insert(0, 99)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              99
+            , 1
+            , 2
+            , 3
+            ]
+        """)
+
+
+def test_append_comma_first_tail_sharing_bracket_row() -> None:
+    # The former tail shared its row with the closing bracket, so the
+    # bracket break lived in the tail rather than final_trivia; appending
+    # must re-home a break before the closing bracket.
+    src = td("""
+        a = [
+              1
+             ,2 ]
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.array("a").append(3)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1
+             ,2
+             ,3
+         ]
+        """)
+
+
+def test_append_comma_first_tail_with_eol_comment() -> None:
+    # The former tail keeps its EOL comment on its own value row while the
+    # appended item takes the following break-before-comma row.
+    src = td("""
+        a = [
+              1
+             ,2  # tail
+            ]
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.array("a").append(3)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1
+             ,2  # tail
+             ,3
+            ]
+        """)
+
+
+def test_insert_comma_first_with_zero_indent() -> None:
+    # The comma sits at column zero, so the sampled pre-comma break carries
+    # no indent; the new row matches.
+    src = td("""
+        a = [
+        1
+        ,2
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.array("a").insert(1, 9)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+        1
+        ,9
+        ,2
+        ]
         """)
 
 

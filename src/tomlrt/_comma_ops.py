@@ -38,6 +38,7 @@ from tomlrt._trivia import (
 )
 from tomlrt._values import (
     inter_item_separator,
+    item_breaks_before_comma,
     item_eol_channel,
 )
 
@@ -262,14 +263,35 @@ def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
 class CommaStyle:
     """Hold inferred layout policy for inline array/table append paths.
 
-    Carries the inter-item separator, whether the value is multi-line,
-    and whether the terminal item should keep a trailing comma.
+    Carries the inter-item separator, whether the value is multi-line, and
+    whether the terminal item should keep a trailing comma. A non-empty
+    ``pre_comma_break`` marks a *break-before-comma* (comma-first) value:
+    one that parks each row break in the item's own ``trailing`` ahead of
+    its comma rather than downstream in the next item's ``leading``, so
+    ``inter_separator`` is just the post-comma pad.
     """
 
     is_multiline: bool
     inter_separator: Trivia
     trailing_comma: bool
     trailing_post: Trivia
+    pre_comma_break: Trivia
+
+    @property
+    def break_before_comma(self) -> bool:
+        return bool(self.pre_comma_break.pieces)
+
+
+def _pre_comma_break(item: CommaItem) -> Trivia:
+    """The row break a break-before-comma ``item`` parks before its comma.
+
+    Sampled so a new internal item matches the authored newline and the
+    comma-row indent (the trailing whitespace between break and comma).
+    """
+    pieces = item.trailing.pieces
+    nl_text = next(p.text for p in pieces if isinstance(p, NewlineNode))
+    indent = pieces[-1].text if isinstance(pieces[-1], WhitespaceNode) else ""
+    return Trivia([NewlineNode(text=nl_text), WhitespaceNode(indent)])
 
 
 def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle:
@@ -278,15 +300,17 @@ def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle
     Multi-line shape is read from the value's own trivia
     (:meth:`CommaValue.is_multiline`) — the value is the single source of
     truth, so there is no separate "force multi-line" flag. The inter-item
-    separator is sampled from ``items[1].leading``; a multi-line value that
-    cannot sample one (single item, or a comma-first peer with empty leading)
-    falls back to :func:`_canonical_separator`. ``nl`` is the owning document's
-    newline, used for any break this synthesises when the value carries none.
+    separator is sampled from ``items[1].leading``; a comma-last multi-line
+    value that cannot sample one (single item) falls back to
+    :func:`_canonical_separator`. When item 0 parks its break before its comma
+    the value is comma-first: the post-comma pad is kept and ``pre_comma_break``
+    seeded from that item. ``nl`` is the owning document's newline.
     """
     items = value.items
     is_multiline = value.is_multiline()
     inter_sep = inter_item_separator(items)
-    if is_multiline and not trivia_has_newline(inter_sep):
+    leader = items[0] if items and item_breaks_before_comma(items[0]) else None
+    if is_multiline and leader is None and not trivia_has_newline(inter_sep):
         inter_sep = _canonical_separator(value, nl)
     trailing_comma = items[-1].has_comma if items else is_multiline
     pad_ft, _above_ft = split_above_block(value.final_trivia)
@@ -296,6 +320,7 @@ def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle
         inter_separator=inter_sep,
         trailing_comma=trailing_comma,
         trailing_post=trailing_post,
+        pre_comma_break=_pre_comma_break(leader) if leader else Trivia(),
     )
 
 
@@ -388,6 +413,21 @@ def splice_in(
         cv.final_trivia, style.inter_separator
     )
     old_tail = items[-1]
+    if style.break_before_comma:
+        # Comma-first: the former tail keeps its EOL comment but yields its
+        # terminal break (re-homed before the closing bracket) and gains its
+        # own pre-comma break; the new tail needs no trailing break.
+        eol = _take_eol(old_tail).pieces
+        if eol and isinstance(eol[-1], NewlineNode):
+            eol = eol[:-1]
+        old_tail.trailing = Trivia([*eol, *style.pre_comma_break.pieces])
+        old_tail.has_comma = True
+        old_tail.post_comma_trivia = Trivia()
+        if not trivia_has_newline(cv.final_trivia):
+            cv.final_trivia = Trivia([NewlineNode(text=nl), *cv.final_trivia.pieces])
+        items.append(new_item)
+        flip_to_terminal(new_item, style)
+        return
     flip_to_internal(old_tail)
     items.append(new_item)
     flip_to_terminal(new_item, style)
@@ -410,13 +450,21 @@ def splice_insert(
     """Insert ``new_item`` at ``index`` (``0 <= index < len(items)``).
 
     Appending is :func:`splice_in`; this covers interior and head inserts.
-    A head insert migrates the opening-bracket above-block onto the
-    displaced item, keeping item-0 leading empty. The fresh boundary onto
-    ``new_item`` gets just its structural break; the carried boundary onto
-    the displaced item keeps its blank lines while its predecessor changes
-    to ``new_item``.
+    A comma-first item owns its break before its comma, so its neighbours are
+    untouched. Otherwise a head insert migrates the opening-bracket above-block
+    onto the displaced item (keeping item-0 leading empty); an interior insert
+    gives the new item its structural break and shifts the carried boundary so
+    the displaced item keeps its blank lines.
     """
     items = cv.items
+    if style.break_before_comma:
+        new_item.trailing = style.pre_comma_break.copy()
+        new_item.leading = Trivia() if index == 0 else style.inter_separator.copy()
+        items.insert(index, new_item)
+        if index == 0:
+            # Item 0 keeps an empty leading; the displaced item takes the pad.
+            items[1].leading = style.inter_separator.copy()
+        return
     if index == 0:
         cv.header_trivia, items[0].leading = migrate_bracket_above(
             cv.header_trivia, style.inter_separator
