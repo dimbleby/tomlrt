@@ -757,7 +757,11 @@ class _Scanner:
         if len(digits_only) > 1 and digits_only.startswith("0"):
             msg = f"leading zeros are not allowed in {token!r}"
             raise self.error(msg, at=at)
-        value = int(sign + digits_only)
+        try:
+            value = int(sign + digits_only)
+        except ValueError as exc:
+            msg = f"invalid integer {token!r}: {exc}"
+            raise self.error(msg, at=at) from exc
         return IntegerValue(token, value)
 
     def _parse_float_token(self, token: str, *, at: int) -> FloatValue:

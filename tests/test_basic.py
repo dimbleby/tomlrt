@@ -327,6 +327,17 @@ def test_deep_inline_table_nesting_raises_parse_error() -> None:
         tomlrt.loads(payload)
 
 
+def test_overlong_integer_raises_parse_error_not_valueerror() -> None:
+    # CPython caps int<->str conversion at 4300 digits by default; a
+    # longer decimal literal must surface as a TOMLParseError, not the
+    # bare ValueError that ``int()`` raises. The message forwards the
+    # underlying cause rather than presuming it.
+    payload = "x = " + "1" * 4301 + "\n"
+    with pytest.raises(tomlrt.TOMLParseError, match="invalid integer") as exc_info:
+        tomlrt.loads(payload)
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
 def test_inline_table_dotted_key_conflict_reports_inline_position() -> None:
     # The conflict between `x = 1` and `x.y = 2` lives on line 1 inside
     # the inline table; the error must point there, not at the start of
