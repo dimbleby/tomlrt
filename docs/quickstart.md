@@ -25,6 +25,9 @@ assert text == text_again
 
 `tomlrt.dumps(doc)` and `doc.render()` are equivalent.
 
+Both `dumps` and `dump` accept a plain mapping, wrapping it in a `Document`
+for you, so `tomlrt.dumps({"a": 1})` works.
+
 ## Reading values
 
 A `Document` behaves like a `dict`; nested tables are `Table` (also a `dict`

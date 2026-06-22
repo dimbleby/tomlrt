@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Any
 
 from tomlrt._build import build_from_parse
+from tomlrt._container import Document
 from tomlrt._parser import _Parser
 
 if TYPE_CHECKING:
-    from tomlrt._container import Document
+    from collections.abc import Mapping
 
 
 def loads(text: str) -> Document:
@@ -33,17 +34,25 @@ def load(fp: IO[bytes]) -> Document:
     return loads(bytes(data).decode("utf-8"))
 
 
-def dumps(doc: Document) -> str:
-    """Serialize a [`Document`][tomlrt.Document] back to a TOML string."""
+def dumps(data: Mapping[str, Any]) -> str:
+    """Serialize a [`Document`][tomlrt.Document] back to a TOML string.
+
+    A mapping that is not already a [`Document`][tomlrt.Document] is
+    wrapped in one first, so ``tomlrt.dumps({"a": 1})`` works.
+    """
+    doc = data if isinstance(data, Document) else Document(data)
     return doc.render()
 
 
-def dump(doc: Document, fp: IO[bytes]) -> None:
+def dump(data: Mapping[str, Any], fp: IO[bytes]) -> None:
     """Serialize a [`Document`][tomlrt.Document] and write it to a *binary* stream.
 
     The file must be opened in binary mode (``open(path, "wb")``).
+
+    Accepts a plain mapping as well as a [`Document`][tomlrt.Document]
+    (see [`dumps`][tomlrt.dumps]).
     """
-    fp.write(dumps(doc).encode("utf-8"))
+    fp.write(dumps(data).encode("utf-8"))
 
 
 __all__ = ["dump", "dumps", "load", "loads"]

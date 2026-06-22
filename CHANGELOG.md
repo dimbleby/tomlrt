@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `dumps` and `dump` now accept a `Mapping`.
+
 ### Changed
 
 - The `indent` argument of `Array(...)`, `Array.set_multiline`, and
