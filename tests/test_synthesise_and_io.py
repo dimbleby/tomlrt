@@ -86,6 +86,45 @@ def test_dump_emits_utf8_for_non_ascii() -> None:
     assert out.getvalue() == "name = 'café'\n".encode()
 
 
+def test_dumps_accepts_plain_dict() -> None:
+    out = tomlrt.dumps({"a": 1, "s": {"b": 2}})
+    assert out == td(
+        """
+        a = 1
+
+        [s]
+        b = 2
+        """
+    )
+
+
+def test_dumps_document_is_byte_exact() -> None:
+    src = td(
+        """
+        # preamble
+        a = 1 # eol
+        """
+    )
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+
+
+def test_dumps_accepts_table() -> None:
+    out = tomlrt.dumps(Table.section({"k": "v"}))
+    assert out == 'k = "v"\n'
+
+
+def test_dump_accepts_plain_dict() -> None:
+    out = io.BytesIO()
+    tomlrt.dump({"a": 1}, out)
+    assert out.getvalue() == b"a = 1\n"
+
+
+def test_dumps_rejects_non_mapping() -> None:
+    with pytest.raises(TypeError):
+        tomlrt.dumps([1, 2, 3])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+
 # ---------------------------------------------------------------------------
 # String escaping (every branch in _escape_basic_string)
 # ---------------------------------------------------------------------------
