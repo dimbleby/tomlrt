@@ -749,8 +749,9 @@ class Container(dict[str, Any]):
             del self[k]
 
     @override
-    def pop(self, key: str, default: Any = _MISSING) -> Any:
+    def pop(self, key: object, default: Any = _MISSING) -> Any:
         if key in self:
+            assert isinstance(key, str)
             value = dict.__getitem__(self, key)
             del self[key]
             return value
