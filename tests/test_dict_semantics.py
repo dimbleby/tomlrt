@@ -208,6 +208,20 @@ def test_pop_default_when_missing() -> None:
     assert doc.pop("missing", sentinel) is sentinel
 
 
+def test_pop_non_str_key_is_treated_as_missing() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    sentinel = object()
+    assert doc.pop(123, sentinel) is sentinel
+    with pytest.raises(KeyError):
+        doc.pop(123)
+    # Unhashable keys raise TypeError, matching ``dict.pop``.
+    with pytest.raises(TypeError):
+        doc.pop([], sentinel)
+    with pytest.raises(TypeError):
+        doc.pop([])
+    assert tomlrt.dumps(doc) == "a = 1\n"
+
+
 def test_popitem_lifo() -> None:
     doc = tomlrt.loads(
         td("""
