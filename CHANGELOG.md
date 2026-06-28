@@ -247,7 +247,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Container.format(*, comments: bool = True)` and `Array.format(*, comments:
 bool = True)` reformat a section, document, table, or inline array in place.
-  See [docs/formatting.md](docs/formatting.md) for details.
+  See [docs/layout.md](docs/layout.md) for details.
 
 ## [1.5.0] - 2026-05-24
 

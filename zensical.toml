@@ -10,7 +10,7 @@ nav = [
   { "Reading documents" = "reading.md" },
   { "Editing documents" = "editing.md" },
   { Comments = "comments.md" },
-  { Formatting = "formatting.md" },
+  { Layout = "layout.md" },
   { Errors = "errors.md" },
   { "API reference" = "api.md" },
 ]

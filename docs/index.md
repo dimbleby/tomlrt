@@ -27,9 +27,10 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 - [Reading documents](reading.md) — typed accessors, dotted paths, and
   conversion back to plain Python.
 - [Editing documents](editing.md) — dotted-path mutation, structural
-  assignment, live views, layout control.
+  assignment, live views.
 - [Comments](comments.md) — the comment API.
-- [Formatting](formatting.md) — opt-in canonical formatting for values,
-  sections, or whole documents.
+- [Layout](layout.md) — reshape a document's layout: sort keys, switch
+  inline values between single- and multi-line, promote inline values to
+  sections, and opt in to canonical formatting.
 - [Errors](errors.md) — exception types.
 - [API reference](api.md) — full public surface.
