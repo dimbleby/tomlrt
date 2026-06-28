@@ -41,6 +41,60 @@ def test_inline_factory_can_be_populated_before_assignment() -> None:
     assert dict(t) == {"x": 1, "y": "hello"}
 
 
+def test_detached_section_del_removes_key() -> None:
+    t = Table.section({"a": 1, "b": 2})
+    del t["a"]
+    assert dict(t) == {"b": 2}
+
+
+def test_detached_section_pop_and_clear() -> None:
+    t = Table.section({"a": 1, "b": 2})
+    assert t.pop("a") == 1
+    assert dict(t) == {"b": 2}
+    t.clear()
+    assert dict(t) == {}
+
+
+def test_detached_section_del_missing_key_raises_keyerror() -> None:
+    t = Table.section({"a": 1})
+    with pytest.raises(KeyError):
+        del t["nope"]
+
+
+def test_detached_inline_del_removes_key() -> None:
+    t = Table.inline({"a": 1, "b": 2})
+    del t["a"]
+    assert dict(t) == {"b": 2}
+
+
+def test_detached_inline_nested_del_removes_key() -> None:
+    t = Table.inline({"a": {"b": 1, "c": 2}})
+    del t["a"]["b"]
+    assert dict(t["a"]) == {"c": 2}
+
+
+def test_detached_section_del_then_attach_round_trips() -> None:
+    t = Table.section({"a": 1, "b": 2, "c": 3})
+    del t["b"]
+    doc = tomlrt.loads("")
+    doc["x"] = t
+    assert tomlrt.dumps(doc) == td(
+        """
+        [x]
+        a = 1
+        c = 3
+        """,
+    )
+
+
+def test_detached_inline_del_then_attach_round_trips() -> None:
+    t = Table.inline({"p": 1, "q": 2})
+    del t["p"]
+    doc = tomlrt.loads("")
+    doc["y"] = t
+    assert tomlrt.dumps(doc) == "y = { q = 2 }\n"
+
+
 def test_inline_factory_renders_with_spaced_braces() -> None:
     # Synthesised inline tables use the same spaced ({ k = v }) style
     # as plain dicts assigned through value_to_node. Empty stays {}.

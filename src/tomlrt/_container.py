@@ -733,6 +733,10 @@ class Container(dict[str, Any]):
 
     @override
     def __delitem__(self, key: str) -> None:
+        # Unattached factory mode: dict-only storage until attach.
+        if self._layout_root is None:
+            dict.__delitem__(self, key)
+            return
         if self._inline:
             self._inline_delitem(key)
             return
