@@ -959,9 +959,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     ``_path``; structural mutation through them raises
     ``NotImplementedError`` rather than corrupting the live document.
     """
-    if key not in c:
-        raise KeyError(key)
-    val = dict.__getitem__(c, key)
+    val = dict.__getitem__(c, key)  # raises KeyError if absent
     doc = c._attached_doc  # noqa: SLF001
 
     # Re-materialisation bookkeeping for the public delete API. When the

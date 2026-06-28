@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `del`, `pop`, and `clear` on a detached `Table.section()` / `Table.inline()`
+  now remove the key instead of raising `AssertionError`.
+
 ## [2.0.0] - 2026-06-22
 
 ### Added
