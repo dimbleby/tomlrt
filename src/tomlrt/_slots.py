@@ -37,11 +37,18 @@ class AoTEntry:
     """Identifies one entry of an array-of-tables.
 
     Carried by every physical slot in that entry. ``entry_slots`` is a
-    membership list populated by the slot-builder.
+    membership list populated by the slot-builder, with the entry's
+    ``[[a]]`` header kept first; :attr:`path` is derived from it.
     """
 
-    path: tuple[str, ...]
     entry_slots: list[Slot] = field(default_factory=list)
+
+    @property
+    def path(self) -> tuple[str, ...]:
+        """Decoded path of the entry, taken from its header slot."""
+        header = self.entry_slots[0]
+        assert isinstance(header, StructuralHeaderSlot)
+        return header.path
 
 
 # ---------------------------------------------------------------------------
