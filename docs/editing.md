@@ -90,7 +90,7 @@ old = doc.pop("tool")        # detached Table view
 old["debug"] = True          # does NOT affect doc
 ```
 
-## Growing an array-of-tables
+## Arrays-of-tables
 
 `AoT.add()` appends a fresh entry and returns the new `Table` view, so you can
 keep mutating it:
@@ -101,109 +101,12 @@ entry = pkgs.add({"name": "foo"})
 entry["version"] = "1.0"
 ```
 
-## Sorting child keys
+An array-of-tables with no entries has no `[[key]]` syntax, so it serialises as
+`key = []` — which re-parses as an empty inline `Array`, not an `AoT`.
 
-`Document.sort()` and `Table.sort()` reorder direct child keys in
-place. The signature mirrors `list.sort`: keyword-only `key` and
-`reverse`. Comments and blank lines travel with their keys.
+## Reshaping the layout
 
-```python
-doc = tomlrt.loads("""
-    # the name
-    name = "tomlrt"
-    # the version
-    version = "0.1"
-    # the author
-    author = "me"
-""")
-doc.sort()
-```
-
-When a document mixes bare keys and `[section]` / `[[aot]]` headers,
-`.sort()` keeps the headers after the bare keys — any bare key
-emitted after a section header would otherwise be re-parsed as a
-member of that section.
-
-```python
-doc = tomlrt.loads("""
-    [a]
-    x = 1
-    [b]
-    y = 2
-""")
-doc["nickname"] = "hi"
-doc.sort()
-# nickname, [a], [b]
-```
-
-- `key` and `reverse` apply within each partition (bare keys, then
-  sections); they do not interleave the two.
-- Dotted keys (`a.x = 1`) are bare keys for sorting purposes.
-
-## Empty arrays-of-tables
-
-An array-of-tables with zero entries has no `[[key]]` syntax, so an empty `AoT`
-renders as an empty array — `key = []` — preserving the same semantic shape as
-the dict view (`{"key": []}`). Appending the first entry replaces that
-placeholder with the usual `[[key]]` header. Note that re-parsing such output
-reads `key = []` back as an empty inline `Array` rather than an `AoT`; the dict
-view (`to_dict()`) is identical, but the in-memory type differs.
-
-## Inline-array layout
-
-`Array.multiline` flips between single- and multi-line layout in place.
-For multi-line layout with a custom indent, call `set_multiline`:
-
-```python
-arr = doc.array("tags")
-arr.set_multiline(multiline=True, indent=2)
-```
-
-Collapsing a multi-line array to single-line is rejected if any item carries a
-comment; clear them first (see [Comments](comments.md)).
-
-## Inline-table layout
-
-Inline tables expose the same controls. `Table.multiline` and
-`Table.set_multiline` flip an inline table between single- and multi-line
-layout (TOML 1.1 allows multi-line inline tables):
-
-```python
-tbl = doc.table("pkg")
-tbl.set_multiline(multiline=True, indent=2)
-```
-
-As with arrays, collapsing back to a single line is rejected when an entry
-carries a comment. `multiline` / `set_multiline` apply to the inline table as
-a whole, so call them on the table itself, not on a dotted-key view of it.
-
-
-## Promoting inline → section
-
-If a value started life as an inline table or inline array of inline tables, you
-can promote it in place:
-
-```python
-doc = tomlrt.loads('[tool]\nruff = { line-length = 88 }\n')
-doc.table("tool").promote_inline("ruff")       # → [tool.ruff]
-
-doc = tomlrt.loads('pkgs = [{a = 1}, {b = 2}]\n')
-doc.promote_array("pkgs")                      # → [[pkgs]] … [[pkgs]]
-```
-
-Promotion is rejected if it would lose inner comments; clear them first (see
-[Comments](comments.md)).
-
-## Canonical formatting
-
-Whenever you want to drop format preservation and snap a section, document, or
-array to a canonical layout, call `format()`:
-
-```python
-doc.format()           # whole document
-doc.table("tool").format()
-doc.array("pkgs").format()
-```
-
-See [Formatting](formatting.md) for what `format()` rewrites and what it
-leaves alone.
+Editing changes a document's _data_. To reshape its _layout_ — sort
+keys, switch inline values between single- and multi-line, promote an
+inline value to a section, or snap a subtree to a canonical format — see
+[Layout](layout.md).

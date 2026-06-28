@@ -425,7 +425,7 @@ uv run --group docs zensical build     # what CI runs
 The API reference page (`docs/api.md`) is generated from docstrings
 via `mkdocstrings`, so docstring changes flow through automatically.
 The task-oriented pages (`quickstart.md`, `building.md`, `reading.md`,
-`editing.md`, `comments.md`, `formatting.md`, `errors.md`) are
+`editing.md`, `comments.md`, `layout.md`, `errors.md`) are
 hand-written — update them when you add, rename, or change behaviour
 of any public API.
 
