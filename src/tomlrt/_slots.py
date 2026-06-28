@@ -114,12 +114,10 @@ class KVSlot(Slot):
     value: Value = field(kw_only=True)
     eol: EolTrivia = field(kw_only=True)
 
-    key: tuple[str, ...] = field(kw_only=True)
-    """Decoded dotted-key path.
-
-    Set by every construction site so ``_build._apply_kv`` can avoid
-    re-walking ``key_parts``.
-    """
+    @property
+    def key(self) -> tuple[str, ...]:
+        """Decoded dotted-key path, derived from ``key_parts``."""
+        return tuple(p.value for p in self.key_parts)
 
     def render_key(self) -> str:
         return render_dotted(self.key_parts, self.key_seps)
@@ -209,7 +207,7 @@ class SlotRef:
         slot = self.slot
         c_path = self.container._path  # noqa: SLF001
         if isinstance(slot, KVSlot):
-            return slot.key[len(c_path) - len(slot.host_path)]
+            return slot.key_parts[len(c_path) - len(slot.host_path)].value
         assert isinstance(slot, StructuralHeaderSlot)
         if slot.path == c_path:
             return None
