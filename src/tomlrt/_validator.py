@@ -114,7 +114,7 @@ class _Validator:
             self._reset_scope_under(path)
             self._aot_paths.add(path)
             self._track(path)
-            new_entry = AoTEntry(path=path)
+            new_entry = AoTEntry()
             self._active_aot_entries[path] = new_entry
 
         # Intermediate prefixes become implicit tables.

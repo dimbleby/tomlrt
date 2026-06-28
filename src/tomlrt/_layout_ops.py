@@ -2235,7 +2235,7 @@ def add_aot_entry(
     # the placeholder's in-body position, which could otherwise capture
     # trailing parent KVs on re-parse.
     _consume_first_entry_placeholder(aot, ordinal)
-    entry = AoTEntry(path=path)
+    entry = AoTEntry()
     leading = _build_section_leading(doc) if ordinal == 0 else _aot_separator(aot, doc)
     header = _new_section_header(
         path,
@@ -2406,7 +2406,7 @@ def _install_cloned_aot_entry(
 
     ordinal = len(aot)
     _consume_first_entry_placeholder(aot, ordinal)
-    new_entry = AoTEntry(path=target_path)
+    new_entry = AoTEntry()
 
     cloned_slots = _clone_entry_slots(
         src_slots,
@@ -2721,8 +2721,6 @@ def _rebase_slot_in_place(
 ) -> None:
     """Rebase one slot in place; the reused AoT-entry's path moves with it."""
     _retarget_slot_paths(s, old_prefix, new_prefix, nl)
-    if isinstance(s, StructuralHeaderSlot) and s.entry is not None:
-        s.entry.path = _rebase_path(s.entry.path, old_prefix, new_prefix)
 
 
 def _rehome_view_tree(
@@ -2923,9 +2921,7 @@ def _clone_entry_slots(
             continue
         if id(s.entry) in nested_entry_map:
             continue
-        nested_entry_map[id(s.entry)] = AoTEntry(
-            path=_rebase_path(s.entry.path, src_prefix, target_prefix),
-        )
+        nested_entry_map[id(s.entry)] = AoTEntry()
 
     cloned: list[Slot] = []
     for s in src_slots:
