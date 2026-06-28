@@ -191,11 +191,12 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
     threaded from the most recent header; decoded value attachment
     cascades through ``host._layout_root``.
     """
-    decoded = slot.key
+    parts = slot.key_parts
     # Logical chain for dotted-KV intermediates: host -> ... -> leaf parent.
     leaf_chain: list[Container] = [host]
     cur = host
-    for step in decoded[:-1]:
+    for part in parts[:-1]:
+        step = part.value
         sub = cur.get(step)
         if sub is None:
             child_path = (*cur._path, step)  # noqa: SLF001
@@ -209,7 +210,7 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
             cur = sub
         leaf_chain.append(cur)
     target = leaf_chain[-1]
-    name = decoded[-1]
+    name = parts[-1].value
     assert name not in target, (
         f"duplicate key {name!r} reached builder under {target._path}; "  # noqa: SLF001
         "validator drift"

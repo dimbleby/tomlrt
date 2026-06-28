@@ -1458,7 +1458,6 @@ def _new_kv_slot(
         value=value,
         eol=_default_eol(doc),
         owner_aot_entry=owner,
-        key=key,
     )
 
 
@@ -2834,7 +2833,6 @@ def _rebase_implicit_slot_in_place(
         new_key = (*new_prefix, *within)[len(host_path) :]
         head_n = len(new_key) - len(within)
         s.host_path = host_path
-        s.key = new_key
         s.key_parts = (
             make_keyparts(new_key[:head_n])
             + s.key_parts[len(s.key_parts) - len(within) :]

@@ -176,7 +176,6 @@ class _Parser:
             value=value,
             eol=eol,
             owner_aot_entry=owner,
-            key=key_path,
         )
         if owner is not None:
             owner.entry_slots.append(slot)
