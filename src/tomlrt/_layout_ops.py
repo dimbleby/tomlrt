@@ -41,7 +41,7 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
-    line_has_comment,
+    has_comment,
 )
 from tomlrt._values import ArrayValue, InlineTableValue, make_keyparts
 
@@ -2026,7 +2026,7 @@ def _split_leading_for_reorder(slot: Slot) -> tuple[Trivia, Trivia]:
     """
     above, attached, indent = _split_attached_block(slot.leading)
     i = 0
-    while i < len(above) and not line_has_comment(above[i]):
+    while i < len(above) and not has_comment(above[i]):
         i += 1
     return _split_at_remainder(slot.leading, [*above[i:], *attached], indent)
 

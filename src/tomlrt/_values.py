@@ -20,10 +20,10 @@ else:  # pragma: no cover -- backport for Python < 3.12
 from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
+    has_comment,
+    has_newline,
     retarget_trivia_newlines,
     split_item_above,
-    trivia_has_comment,
-    trivia_has_newline,
 )
 
 if TYPE_CHECKING:
@@ -306,7 +306,7 @@ Value = (
 
 def item_breaks_before_comma(item: CommaItem) -> bool:
     """Return whether the row break and any EOL comment precede the comma."""
-    return item.has_comma and trivia_has_newline(item.trailing)
+    return item.has_comma and has_newline(item.trailing.pieces)
 
 
 def item_eol_channel(item: CommaItem) -> Trivia:
@@ -335,13 +335,13 @@ def inter_item_separator(items: Sequence[CommaItem]) -> Trivia:
 
 def _scan_multiline(v: CommaValue[Any]) -> bool:
     """Uncached scan: inspect every trivia region that can carry a row break."""
-    if trivia_has_newline(v.header_trivia) or trivia_has_newline(v.final_trivia):
+    if has_newline(v.header_trivia.pieces) or has_newline(v.final_trivia.pieces):
         return True
     for it in v.items:
         if (
-            trivia_has_newline(it.leading)
-            or trivia_has_newline(it.post_comma_trivia)
-            or trivia_has_newline(it.trailing)
+            has_newline(it.leading.pieces)
+            or has_newline(it.post_comma_trivia.pieces)
+            or has_newline(it.trailing.pieces)
         ):
             return True
     return False
@@ -351,7 +351,7 @@ def value_has_any_comment(v: Value) -> bool:
     """Whether any comment appears anywhere within ``v`` (recursively)."""
     if not isinstance(v, CommaValue):
         return False
-    if trivia_has_comment(v.header_trivia) or trivia_has_comment(v.final_trivia):
+    if has_comment(v.header_trivia.pieces) or has_comment(v.final_trivia.pieces):
         return True
     return any(item_has_any_comment(it) for it in v.items)
 
@@ -359,9 +359,9 @@ def value_has_any_comment(v: Value) -> bool:
 def item_has_any_comment(item: CommaItem) -> bool:
     """Whether ``item`` carries a comment in its trivia or nested value."""
     if (
-        trivia_has_comment(item.leading)
-        or trivia_has_comment(item.trailing)
-        or trivia_has_comment(item.post_comma_trivia)
+        has_comment(item.leading.pieces)
+        or has_comment(item.trailing.pieces)
+        or has_comment(item.post_comma_trivia.pieces)
     ):
         return True
     return value_has_any_comment(item.value)

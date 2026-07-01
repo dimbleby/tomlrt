@@ -24,6 +24,7 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    has_newline,
     indent_from_final_trivia,
     join_above_block,
     join_leading_above,
@@ -34,7 +35,6 @@ from tomlrt._trivia import (
     split_item_above,
     split_leading_above,
     strip_trailing_indent,
-    trivia_has_newline,
 )
 from tomlrt._values import (
     inter_item_separator,
@@ -68,7 +68,7 @@ def _row_terminated(item: CommaItem) -> bool:
     Otherwise the break is downstream, in the next item's leading (or
     ``final_trivia`` for the tail). Comma placement never enters into it.
     """
-    return trivia_has_newline(item_eol_channel(item))
+    return has_newline(item_eol_channel(item).pieces)
 
 
 def _take_eol(item: CommaItem) -> Trivia:
@@ -305,7 +305,7 @@ def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle
     is_multiline = value.is_multiline()
     inter_sep = inter_item_separator(items)
     leader = items[0] if items and item_breaks_before_comma(items[0]) else None
-    if is_multiline and leader is None and not trivia_has_newline(inter_sep):
+    if is_multiline and leader is None and not has_newline(inter_sep.pieces):
         inter_sep = _canonical_separator(value, nl)
     trailing_comma = items[-1].has_comma if items else is_multiline
     pad_ft, _above_ft = split_above_block(value.final_trivia)
@@ -418,7 +418,7 @@ def splice_in(
         old_tail.trailing = Trivia([*eol, *style.pre_comma_break.pieces])
         old_tail.has_comma = True
         old_tail.post_comma_trivia = Trivia()
-        if not trivia_has_newline(cv.final_trivia):
+        if not has_newline(cv.final_trivia.pieces):
             cv.final_trivia = Trivia([NewlineNode(text=nl), *cv.final_trivia.pieces])
         items.append(new_item)
         flip_to_terminal(new_item, style)

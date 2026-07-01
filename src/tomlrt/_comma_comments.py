@@ -55,7 +55,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator
     from typing import Any
 
     from tomlrt._trivia import TriviaPiece
@@ -71,20 +71,14 @@ _ValueT = TypeVar("_ValueT")
 # ---------------------------------------------------------------------------
 
 
-def _raw_eol_text(item: CommaItem) -> str | None:
-    """Return the raw (still-encoded) EOL comment text on ``item`` or None."""
+def _item_eol(item: CommaItem) -> str | None:
+    """Decoded EOL comment on ``item``, or None."""
     for p in item_eol_channel(item).pieces:
         if isinstance(p, NewlineNode):
             return None
         if isinstance(p, CommentNode):
-            return p.text
+            return _decode_comment(p.text)
     return None
-
-
-def _item_eol(item: CommaItem) -> str | None:
-    """Decoded EOL comment on ``item``, or None."""
-    raw = _raw_eol_text(item)
-    return _decode_comment(raw) if raw is not None else None
 
 
 def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) -> None:
@@ -175,10 +169,6 @@ def _above_owner(value: CommaValue[_ItemT], i: int) -> tuple[Trivia, int]:
     return value.items[i].leading, 0
 
 
-def _comments_from_lines(pieces: Sequence[TriviaPiece]) -> tuple[str, ...]:
-    return tuple(_decode_comment(p.text) for p in pieces if isinstance(p, CommentNode))
-
-
 def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]:
     """Decoded comments in item ``idx``'s above-region (source order).
 
@@ -186,7 +176,9 @@ def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]
     framing (item 0's ``[ # hdr``) is excluded by construction.
     """
     _owner, _prefix, _head, block, _tail = _split_above_frame(value, idx)
-    return _comments_from_lines(block.pieces)
+    return tuple(
+        _decode_comment(p.text) for p in block.pieces if isinstance(p, CommentNode)
+    )
 
 
 def _value_indent(value: CommaValue[_ItemT]) -> str:
@@ -324,8 +316,9 @@ class CommaCommentAdapter(ABC, Generic[_KeyT]):
 class _CommaView(MutableMapping[_KeyT, _ValueT]):
     """Shared mapping plumbing over a `CommaCommentAdapter`.
 
-    Subclasses add ``_present`` and the item accessors; this base owns
-    membership, iteration, and length.
+    Subclasses supply ``_get(idx)`` — the current stored value or None
+    when absent — and their own writers; this base derives membership,
+    iteration, and ``__getitem__`` from that hook.
     """
 
     __slots__ = ("_a",)
@@ -333,8 +326,14 @@ class _CommaView(MutableMapping[_KeyT, _ValueT]):
     def __init__(self, adapter: CommaCommentAdapter[_KeyT]) -> None:
         self._a = adapter
 
-    def _present(self, idx: int) -> bool:
+    def _get(self, idx: int) -> _ValueT | None:
         raise NotImplementedError
+
+    def _idx(self, key: _KeyT) -> int:
+        idx = self._a.resolve(key)
+        if idx is None:
+            raise KeyError(key)
+        return idx
 
     @override
     def __contains__(self, key: object) -> bool:
@@ -342,18 +341,25 @@ class _CommaView(MutableMapping[_KeyT, _ValueT]):
             idx = self._a.resolve(key)
         except TypeError:
             return False
-        return idx is not None and self._present(idx)
+        return idx is not None and self._get(idx) is not None
 
     @override
     def __iter__(self) -> Iterator[_KeyT]:
         for key in self._a.candidates():
             idx = self._a.resolve(key)
-            if idx is not None and self._present(idx):
+            if idx is not None and self._get(idx) is not None:
                 yield key
 
     @override
     def __len__(self) -> int:
         return sum(1 for _ in self)
+
+    @override
+    def __getitem__(self, key: _KeyT) -> _ValueT:
+        v = self._get(self._idx(key))
+        if v is None:
+            raise KeyError(key)
+        return v
 
     @override
     def __repr__(self) -> str:
@@ -366,36 +372,22 @@ class CommaEolView(_CommaView[_KeyT, str]):
     __slots__ = ()
 
     @override
-    def _present(self, idx: int) -> bool:
-        return _item_eol(self._a.value().items[idx]) is not None
-
-    @override
-    def __getitem__(self, key: _KeyT) -> str:
-        idx = self._a.resolve(key)
-        if idx is None:
-            raise KeyError(key)
-        eol = _item_eol(self._a.value().items[idx])
-        if eol is None:
-            raise KeyError(key)
-        return eol
+    def _get(self, idx: int) -> str | None:
+        return _item_eol(self._a.value().items[idx])
 
     @override
     def __setitem__(self, key: _KeyT, value: str) -> None:
         _validate_comment_str(value, "comment text")
         # Resolve before any structural change: a missing key must not
         # leave a partially-promoted single-line value in multi-line form.
-        idx = self._a.resolve(key)
-        if idx is None:
-            raise KeyError(key)
+        idx = self._idx(key)
         self._a.promote()
         # Promotion preserves item order, so the resolved index is stable.
         _set_eol_raw(self._a.value(), idx, _encode_comment(value), self._a.newline())
 
     @override
     def __delitem__(self, key: _KeyT) -> None:
-        idx = self._a.resolve(key)
-        if idx is None:
-            raise KeyError(key)
+        idx = self._idx(key)
         if not _del_eol(self._a.value(), idx, self._a.newline()):
             raise KeyError(key)
 
@@ -405,34 +397,19 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
 
     __slots__ = ()
 
-    def _read(self, idx: int) -> tuple[str, ...]:
-        return _read_above_comments(self._a.value(), idx)
-
     @override
-    def _present(self, idx: int) -> bool:
-        return bool(self._read(idx))
-
-    @override
-    def __getitem__(self, key: _KeyT) -> tuple[str, ...]:
-        idx = self._a.resolve(key)
-        if idx is None:
-            raise KeyError(key)
-        out = self._read(idx)
-        if not out:
-            raise KeyError(key)
-        return out
+    def _get(self, idx: int) -> tuple[str, ...] | None:
+        return _read_above_comments(self._a.value(), idx) or None
 
     @override
     def __setitem__(self, key: _KeyT, value: tuple[str, ...] | list[str]) -> None:
         seq = _validate_comment_seq(value, "leading_comments")
-        idx = self._a.resolve(key)
-        if idx is None:
-            raise KeyError(key)
+        idx = self._idx(key)
         if not seq:
             # Empty assignment means "no leading comments" — a
             # delete-if-present. Don't promote: zero comments need no
             # newlines.
-            if self._read(idx):
+            if self._get(idx) is not None:
                 _clear_above_pieces(self._a.value(), idx)
             return
         self._a.promote()
@@ -444,10 +421,8 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
 
     @override
     def __delitem__(self, key: _KeyT) -> None:
-        idx = self._a.resolve(key)
-        if idx is None:
-            raise KeyError(key)
-        if not self._read(idx):
+        idx = self._idx(key)
+        if self._get(idx) is None:
             raise KeyError(key)
         _clear_above_pieces(self._a.value(), idx)
 
