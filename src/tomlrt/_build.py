@@ -69,6 +69,24 @@ def _apply_header(doc: Document, slot: StructuralHeaderSlot) -> Table:
     return _open_table(doc, slot)
 
 
+def _resolve_parent(
+    doc: Document, path: tuple[str, ...], header: StructuralHeaderSlot
+) -> tuple[Container, str]:
+    """Resolve ``path``'s parent + final component, recording ancestor refs."""
+    parent_chain = _resolve_chain(doc, path[:-1])
+    for ancestor in parent_chain:
+        record_ref(ancestor, header)
+    return parent_chain[-1], path[-1]
+
+
+def _finish_opened_table(table: Table, header: StructuralHeaderSlot) -> Table:
+    """Own-header ref + body-tail reset for a freshly opened ``table``."""
+    own_ref = record_ref(table, header)
+    table._header_ref = own_ref  # noqa: SLF001
+    table._body_tail = header  # noqa: SLF001
+    return table
+
+
 def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
     """Open ``[a.b.c]`` — return the `Table` view for ``path``.
 
@@ -76,12 +94,7 @@ def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
     validator drift and raises.
     """
     path = header.path
-    parent_chain = _resolve_chain(doc, path[:-1])
-    parent = parent_chain[-1]
-    name = path[-1]
-    # Ancestor binding refs (chain[:i] -> child step path[i]).
-    for ancestor in parent_chain:
-        record_ref(ancestor, header)
+    parent, name = _resolve_parent(doc, path, header)
     existing = parent.get(name)
     if existing is None:
         table = _make_table(parent, path, owner=header.owner_aot_entry)
@@ -92,11 +105,7 @@ def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
             f"{name!r} (got {type(existing).__name__}); validator drift"
         )
         table = existing
-    # Own-header ref + body-tail reset for this container.
-    own_ref = record_ref(table, header)
-    table._header_ref = own_ref  # noqa: SLF001
-    table._body_tail = header  # noqa: SLF001
-    return table
+    return _finish_opened_table(table, header)
 
 
 def _open_aot_entry(
@@ -106,12 +115,7 @@ def _open_aot_entry(
 ) -> Table:
     """Open ``[[a.b]]`` — append a fresh `Table` to the AoT at ``path``."""
     path = header.path
-    parent_chain = _resolve_chain(doc, path[:-1])
-    parent = parent_chain[-1]
-    name = path[-1]
-    # Ancestor binding refs to the [[..]] header slot.
-    for ancestor in parent_chain:
-        record_ref(ancestor, header)
+    parent, name = _resolve_parent(doc, path, header)
     aot = parent.get(name)
     if aot is None:
         aot = AoT()
@@ -125,10 +129,7 @@ def _open_aot_entry(
     )
     table = _make_table(parent, path, owner=entry)
     list.append(aot, table)
-    own_ref = record_ref(table, header)
-    table._header_ref = own_ref  # noqa: SLF001
-    table._body_tail = header  # noqa: SLF001
-    return table
+    return _finish_opened_table(table, header)
 
 
 def _resolve_chain(doc: Document, prefix: tuple[str, ...]) -> list[Container]:

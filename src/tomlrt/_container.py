@@ -677,6 +677,11 @@ class Container(dict[str, Any]):
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
             return
+        # A Container with no layout root can't be a Document (which is
+        # always its own root), so it must be an unattached Table.
+        if not isinstance(value, Table):  # pragma: no cover  -- type invariant guard
+            msg = "internal: detached section source expected to be a Table"
+            raise AssertionError(msg)  # noqa: TRY004
         _layout_ops.attach_section_at(self, (key,), value)
 
     def _scalar_replace(self, key: str, value: Any) -> None:
@@ -1295,6 +1300,17 @@ class Table(Container):
         return self
 
     @classmethod
+    def _factory(
+        cls, mapping: Mapping[str, TomlInput] | None, *, inline: bool, label: str
+    ) -> Table:
+        t = cls()
+        t._inline = inline
+        if mapping is not None:
+            mapping = _validate_mapping(mapping, label=label)
+            _populate_unattached(t, mapping)
+        return t
+
+    @classmethod
     def section(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:
         """Return a standard-section table, optionally populated from ``mapping``.
 
@@ -1302,11 +1318,7 @@ class Table(Container):
 
             doc[k] = Table.section({"x": 1})
         """
-        t = cls()
-        if mapping is not None:
-            mapping = _validate_mapping(mapping, label="Table.section argument")
-            _populate_unattached(t, mapping)
-        return t
+        return cls._factory(mapping, inline=False, label="Table.section argument")
 
     @classmethod
     def inline(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:
@@ -1316,12 +1328,7 @@ class Table(Container):
 
             doc[k] = Table.inline({"x": 1})
         """
-        t = cls()
-        t._inline = True
-        if mapping is not None:
-            mapping = _validate_mapping(mapping, label="Table.inline argument")
-            _populate_unattached(t, mapping)
-        return t
+        return cls._factory(mapping, inline=True, label="Table.inline argument")
 
 
 class Document(Container):
@@ -1864,7 +1871,7 @@ def _attach_inline_child_view(
 
 
 def _populate_inline_table(
-    table: Table | Container,
+    table: Container,
     items: list[tuple[object, object]],
     *,
     layout_root: Document | None,

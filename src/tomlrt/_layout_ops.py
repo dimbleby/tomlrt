@@ -126,13 +126,6 @@ def _record_displacements(
         doc._displaced_recorder = prev  # noqa: SLF001
 
 
-def _record_displacement(doc: Document, slot: Slot, original_pred: Slot | None) -> None:
-    """Snapshot ``slot``'s leading + original predecessor for later restore."""
-    recorder = doc._displaced_recorder  # noqa: SLF001
-    if recorder is not None:
-        recorder.append((slot, list(slot.leading.pieces), original_pred))
-
-
 def reposition_install(parent: Container, key: str, value: Any) -> None:
     """Replace ``parent[key]`` while preserving its physical position.
 
@@ -257,7 +250,7 @@ def _ordered_recorded_span(survivors: list[Slot]) -> list[Slot]:
     return ordered
 
 
-def _ancestor_chain(c: Container) -> list[Container]:
+def _ancestor_chain(c: Container | AoT) -> list[Container]:
     """Ancestors from ``c._parent`` up to (and including) the document root."""
     out: list[Container] = []
     cur = c._parent  # noqa: SLF001
@@ -265,6 +258,15 @@ def _ancestor_chain(c: Container) -> list[Container]:
         out.append(cur)
         cur = cur._parent  # noqa: SLF001
     return out
+
+
+def _resort_and_recompute_tails(c: Container, doc: Document) -> None:
+    """Resort ``[c, *ancestors]`` refs by doc order and refresh cached body tails."""
+    chain: list[Container] = [c, *_ancestor_chain(c)]
+    _resort_refs_by_doc_order(chain, doc)
+    for cn in chain:
+        if cn._body_tail is not None:  # noqa: SLF001
+            cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
 
 
 def _anchor_in_parent_direct_body(parent: Container, anchor_prev: Slot | None) -> bool:
@@ -319,12 +321,18 @@ def record_ref(c: Container, slot: Slot) -> SlotRef:
 def maybe_advance_body_tail(c: Container, slot: Slot) -> None:
     """Advance ``c._body_tail`` if ``slot`` is a body-region KV of ``c``.
 
-    Body-region predicate matches :func:`_is_body_kv`. Used by
-    ``_build``'s initial population pass; mutation-time appends
-    set ``_body_tail`` directly because they know they are
-    appending a body slot by construction.
+    For a header-bearing (SECTION) container, the body is restricted to
+    its own host_path; for a header-less container (document root or
+    implicit table) any KV with a matching owner counts. Used by
+    ``_build``'s initial population pass; mutation-time appends set
+    ``_body_tail`` directly because they know they are appending a body
+    slot by construction.
     """
-    if _is_body_kv(c, slot):
+    if (
+        isinstance(slot, KVSlot)
+        and slot.owner_aot_entry is c._owner_aot_entry  # noqa: SLF001
+        and (c._kind is not _Kind.SECTION or slot.host_path == c._path)  # noqa: SLF001
+    ):
         c._body_tail = slot  # noqa: SLF001
 
 
@@ -342,7 +350,7 @@ def _file_header_binding_chain(
     """
     _file_ref_at_tail(deepest, SlotRef(slot=header, container=deepest))
     for anc in _ancestor_chain(deepest):
-        _file_ref_at_tail(anc, SlotRef(slot=header, container=anc))
+        record_ref(anc, header)
 
 
 def _file_synthetic_header_and_kv(
@@ -526,7 +534,7 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
     _record_new_slot(doc, new_slot)
 
 
-def _promote_trailing_to_preamble(new_head: Slot, doc: Document) -> None:
+def _promote_trailing_to_preamble(doc: Document) -> None:
     """Ensure the doc preamble carries a blank-line separator before the head.
 
     Called on the empty-to-non-empty transition (first slot insert).
@@ -535,7 +543,6 @@ def _promote_trailing_to_preamble(new_head: Slot, doc: Document) -> None:
     row) before the new first slot. Idempotent and no-op when preamble
     is empty.
     """
-    del new_head
     pieces = doc._preamble.pieces  # noqa: SLF001
     if not pieces:
         return
@@ -626,17 +633,8 @@ def _splice_body_slot(
         return True
     # Empty doc: splice in as head, hoisting any preamble trivia.
     insert_before_head(new_slot, doc)
-    _promote_trailing_to_preamble(new_slot, doc)
+    _promote_trailing_to_preamble(doc)
     return False
-
-
-def _slot_filed_in(slot: Slot, c: Container) -> bool:
-    """Whether ``c`` holds a ref to ``slot`` (via the slot's back-pointers).
-
-    ``slot._refs`` is bounded by path depth, so this is O(depth) rather than
-    an O(len(c._refs)) scan.
-    """
-    return any(r.container is c for r in slot._refs)  # noqa: SLF001
 
 
 def _project_bucket_index(
@@ -689,7 +687,7 @@ def _file_body_ref(
     new_ref = SlotRef(slot=new_slot, container=anc)
     assert new_ref.local_key == local_key
     refs = anc._refs  # noqa: SLF001
-    if anchor_slot is not None and _slot_filed_in(anchor_slot, anc):
+    if anchor_slot is not None and any(r.container is anc for r in anchor_slot._refs):  # noqa: SLF001
         insert_idx = _find_ref_index_by_slot(anc, anchor_slot) + 1
     elif inserted_at_head and refs:
         insert_idx = 0
@@ -726,7 +724,13 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
             # header (see ``reposition_install``).
             _synthesise_header_then_insert_kv(c, key, value)
             return
-        _append_dotted_kv_under_implicit(c, key, value)
+        host = _nearest_header_host(c)
+        install_dotted_kv_slot(
+            host,
+            (*c._path[len(host._path) :], key),  # noqa: SLF001
+            value,
+            leaf_parent=c,
+        )
         return
     if c._owner_aot_entry is not None and c._header_ref is not None:  # noqa: SLF001
         # Body inserts work like a normal header-bearing container, plus
@@ -1257,12 +1261,29 @@ def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
 # ---------------------------------------------------------------------------
 
 
-def _last_kv(c: Container, predicate: Callable[[KVSlot], bool]) -> KVSlot | None:
-    """Reverse-walk ``c._refs`` for the last KVSlot satisfying ``predicate``."""
+def _last_kv(
+    c: Container, *, direct: bool = False, body: bool = False
+) -> KVSlot | None:
+    """Reverse-walk ``c._refs`` for the last matching KV slot.
+
+    Default: matches any KV with ``host_path == c._path`` and matching owner.
+    ``direct=True``: further restrict to single-key-part.
+    ``body=True``: header-bearing (SECTION) container's body is
+    ``host_path == c._path``; otherwise (document root, implicit table)
+    any KV with a matching owner counts.
+    """
+    owner = c._owner_aot_entry  # noqa: SLF001
+    path = c._path  # noqa: SLF001
+    lax_body = body and c._kind is not _Kind.SECTION  # noqa: SLF001
     for ref in reversed(c._refs):  # noqa: SLF001
         s = ref.slot
-        if isinstance(s, KVSlot) and predicate(s):
-            return s
+        if not isinstance(s, KVSlot) or s.owner_aot_entry is not owner:
+            continue
+        if not lax_body and s.host_path != path:
+            continue
+        if direct and len(s.key_parts) != 1:
+            continue
+        return s
     return None
 
 
@@ -1274,28 +1295,6 @@ def _is_direct_kv(c: Container, s: Slot) -> bool:
         and len(s.key_parts) == 1
         and s.owner_aot_entry is c._owner_aot_entry  # noqa: SLF001
     )
-
-
-def _is_host_kv(c: Container, s: Slot) -> bool:
-    """True iff ``s`` is a KV of ``c`` (any keypart length, same owner)."""
-    return (
-        isinstance(s, KVSlot)
-        and s.host_path == c._path  # noqa: SLF001
-        and s.owner_aot_entry is c._owner_aot_entry  # noqa: SLF001
-    )
-
-
-def _is_body_kv(c: Container, s: Slot) -> bool:
-    """True iff ``s`` is a body-region KV of ``c``.
-
-    For a header-bearing container, the body is restricted to its own
-    host_path; for a header-less container (e.g. an implicit table or
-    the document root) any KV with a matching owner counts.
-    """
-    if not isinstance(s, KVSlot) or s.owner_aot_entry is not c._owner_aot_entry:  # noqa: SLF001
-        return False
-    has_header = c._kind is _Kind.SECTION  # noqa: SLF001
-    return not has_header or s.host_path == c._path  # noqa: SLF001
 
 
 def _last_direct_kv(c: Container) -> KVSlot | None:
@@ -1310,7 +1309,7 @@ def _last_direct_kv(c: Container) -> KVSlot | None:
     if body_tail is not None and _is_direct_kv(c, body_tail):
         assert isinstance(body_tail, KVSlot)
         return body_tail
-    return _last_kv(c, lambda s: _is_direct_kv(c, s))
+    return _last_kv(c, direct=True)
 
 
 def _extract_indent(leading: Trivia) -> str:
@@ -1529,7 +1528,7 @@ def install_dotted_kv_slot(
         owner=owner,
         leading=leading
         if leading is not None
-        else _kv_leading_after(_last_kv(host, lambda s: _is_host_kv(host, s)), doc),
+        else _kv_leading_after(_last_kv(host), doc),
     )
 
     inserted_at_head = _splice_body_slot(
@@ -1565,23 +1564,6 @@ def install_dotted_kv_slot(
         # ``entry_slots`` is membership + header-first order only (doc
         # order is derived on demand), so a plain append is enough.
         owner.entry_slots.append(new_slot)
-
-
-def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> None:
-    """Insert into an implicit-headerless container via dotted KV.
-
-    Thin wrapper over :func:`install_dotted_kv_slot` that derives the
-    nearest header-bearing host and leaf keypath. Handles both existing
-    dotted bodies and fully-empty ``c`` (no anchor of its own).
-    """
-    host = _nearest_header_host(c)
-
-    install_dotted_kv_slot(
-        host,
-        (*c._path[len(host._path) :], key),  # noqa: SLF001
-        value,
-        leaf_parent=c,
-    )
 
 
 def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
@@ -1625,7 +1607,9 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         owner_aot_entry=owner,
     )
     insert_before(anchor_slot, header_slot, doc)
-    _record_displacement(doc, anchor_slot, original_pred)
+    recorder = doc._displaced_recorder  # noqa: SLF001
+    if recorder is not None:
+        recorder.append((anchor_slot, list(anchor_slot.leading.pieces), original_pred))
     anchor_slot.leading = new_descendant_leading
 
     # File a binding ref for the new header on every ancestor along
@@ -1821,7 +1805,7 @@ def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
 
 def _recompute_body_tail(c: Container) -> Slot | None:
     """Last body-region ref's slot in ``c._refs`` (mirrors invariants rule)."""
-    found = _last_kv(c, lambda s: _is_body_kv(c, s))
+    found = _last_kv(c, body=True)
     if found is not None:
         return found
     if c._header_ref is not None:  # noqa: SLF001
@@ -1913,7 +1897,7 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
         # Empty doc: this is also the first slot, so any preamble
         # parked in `_trailing` migrates onto its leading.
         insert_before_head(slot, doc)
-        _promote_trailing_to_preamble(slot, doc)
+        _promote_trailing_to_preamble(doc)
     else:
         _ensure_terminator(anchor, doc)
         insert_after(anchor, slot, doc)
@@ -2030,7 +2014,7 @@ def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
     return _split_at_remainder(leading, attached, indent)
 
 
-def _split_leading_for_reorder(doc: Document, slot: Slot) -> tuple[Trivia, Trivia]:
+def _split_leading_for_reorder(slot: Slot) -> tuple[Trivia, Trivia]:
     """Reorder-aware leading split: disjoint comment blocks travel with the slot.
 
     Per the public ownership model (``Table.header_leading_block``,
@@ -2040,7 +2024,6 @@ def _split_leading_for_reorder(doc: Document, slot: Slot) -> tuple[Trivia, Trivi
     prefix is the run of pure-blank lines before the first comment;
     the remainder is everything from the first comment line onward.
     """
-    del doc
     above, attached, indent = _split_attached_block(slot.leading)
     i = 0
     while i < len(above) and not line_has_comment(above[i]):
@@ -2152,28 +2135,6 @@ def _empty_aot_placeholder_ref(aot: AoT) -> SlotRef | None:
     return ref
 
 
-def _remove_empty_aot_placeholder(aot: AoT, ref: SlotRef) -> None:
-    """Unlink an empty AoT's placeholder slot and scrub its refs.
-
-    Mirrors the focused leaf-delete sequence in `delete_key`: scrub
-    every ref via slot back-pointers, recompute body tails on the
-    parent chain, drop any ``entry_slots`` membership, then unlink.
-    """
-    parent = aot._parent  # noqa: SLF001
-    assert parent is not None
-    doc = aot._attached_doc  # noqa: SLF001
-    slot = ref.slot
-    owned_ids = {id(slot)}
-    _scrub_owned_slots_via_backptrs([slot])
-    min_depth = len(slot.host_path) if isinstance(slot, KVSlot) else 0
-    _invalidate_body_tail_chain(parent, owned_ids, min_depth=min_depth, recompute=True)
-    owner = slot.owner_aot_entry
-    if owner is not None:
-        with contextlib.suppress(ValueError):
-            owner.entry_slots.remove(slot)
-    unlink_slot(slot, doc)
-
-
 def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     """Drop the ``key = []`` placeholder before the AoT's first entry lands.
 
@@ -2183,12 +2144,28 @@ def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     in-body position, which a re-parse could otherwise misattribute.
     Runs before the append anchor is computed and before any synthetic
     parent header is demoted.
+
+    Mirrors the focused leaf-delete sequence in `delete_key`: scrub
+    every ref via slot back-pointers, recompute body tails on the
+    parent chain, drop any ``entry_slots`` membership, then unlink.
     """
     if ordinal != 0:
         return
-    placeholder = _empty_aot_placeholder_ref(aot)
-    if placeholder is not None:
-        _remove_empty_aot_placeholder(aot, placeholder)
+    ref = _empty_aot_placeholder_ref(aot)
+    if ref is None:
+        return
+    parent = aot._parent  # noqa: SLF001
+    assert parent is not None
+    doc = aot._attached_doc  # noqa: SLF001
+    slot = ref.slot
+    _scrub_owned_slots_via_backptrs([slot])
+    min_depth = len(slot.host_path) if isinstance(slot, KVSlot) else 0
+    _invalidate_body_tail_chain(parent, {id(slot)}, min_depth=min_depth, recompute=True)
+    owner = slot.owner_aot_entry
+    if owner is not None:
+        with contextlib.suppress(ValueError):
+            owner.entry_slots.remove(slot)
+    unlink_slot(slot, doc)
 
 
 def _aot_separator(aot: AoT, doc: Document) -> Trivia:
@@ -2256,7 +2233,7 @@ def add_aot_entry(
         dict.clear(entry_table)
     else:
         entry_table = Table()
-        body_items = list(_items_for_synth(body)) if body is not None else []
+        body_items = list(body.items()) if body is not None else []
     _wire_section_container(
         entry_table,
         doc=doc,
@@ -2679,7 +2656,7 @@ def adopt_private_section(
     assert value._header_ref is not None  # noqa: SLF001
     slots = _gather_subtree_slots(value)
     for s in slots:
-        _rebase_slot_in_place(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
+        _retarget_slot_paths(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
         if norm_entry is not None and s.owner_aot_entry is norm_entry:
             s.owner_aot_entry = None
             if isinstance(s, StructuralHeaderSlot) and s.entry is norm_entry:
@@ -2704,8 +2681,8 @@ def _retarget_slot_paths(
     """Rebase a slot's host / header paths + header render keys, retarget newlines.
 
     Shared by the deep-clone (:func:`_clone_entry_slots`) and move-in-place
-    (:func:`_rebase_slot_in_place`) rehome paths. Owner / AoT-entry handling
-    differs between the two and stays at the call site.
+    rehome paths. Owner / AoT-entry handling differs between the two and
+    stays at the call site.
     """
     retarget_slot_newlines(s, nl)
     if isinstance(s, KVSlot):
@@ -2714,13 +2691,6 @@ def _retarget_slot_paths(
         s.path = _rebase_path(s.path, src_prefix, target_prefix)
         s.key_parts = make_keyparts(s.path)
         s.key_seps = ["."] * (len(s.key_parts) - 1)
-
-
-def _rebase_slot_in_place(
-    s: Slot, old_prefix: tuple[str, ...], new_prefix: tuple[str, ...], nl: str
-) -> None:
-    """Rebase one slot in place; the reused AoT-entry's path moves with it."""
-    _retarget_slot_paths(s, old_prefix, new_prefix, nl)
 
 
 def _rehome_view_tree(
@@ -2837,7 +2807,7 @@ def _rebase_implicit_slot_in_place(
         )
         s.key_seps = ["."] * (len(new_key) - 1)
     else:
-        _rebase_slot_in_place(s, old_prefix, new_prefix, nl)
+        _retarget_slot_paths(s, old_prefix, new_prefix, nl)
 
 
 def clone_aot(
@@ -3116,22 +3086,22 @@ def _populate_entry_views(
 def attach_section_at(
     parent: Container,
     sub_path: tuple[str, ...] | list[str],
-    source: Mapping[str, Any] | Container | None = None,
+    source: Table,
 ) -> Table:
     """Synthesise ``[parent_path.sub_path]`` (multi-component) at end-of-doc.
 
     Intermediate components in ``sub_path[:-1]`` become implicit tables;
-    the deepest component gets the explicit header. ``source`` may be
-    a `Table` (rehomed) or a Mapping (snapshotted) or ``None``.
+    the deepest component gets the explicit header. ``source`` (always an
+    unattached `Table`) is rehomed in place.
     """
     from tomlrt._container import (  # noqa: PLC0415
-        Table,
         _is_synth_inline,
         _synth_value,
     )
 
     sub = tuple(sub_path)
     assert sub, "attach_section_at requires a non-empty sub_path"
+    assert source._layout_root is None, "attach_section_at requires a detached source"  # noqa: SLF001
 
     doc = parent._attached_doc  # noqa: SLF001
     full_path = (*parent._path, *sub)  # noqa: SLF001
@@ -3150,13 +3120,9 @@ def attach_section_at(
     # header is filed.
     deepest_parent = ensure_implicit_chain(parent, sub[:-1])
 
-    if isinstance(source, Table) and source._layout_root is None:  # noqa: SLF001
-        section = source
-        pending: list[tuple[str, object]] = list(source.items())
-        dict.clear(section)
-    else:
-        section = Table()
-        pending = list(_items_for_synth(source)) if source is not None else []
+    section = source
+    pending: list[tuple[str, object]] = list(source.items())
+    dict.clear(section)
 
     _wire_section_container(
         section,
@@ -3218,11 +3184,6 @@ def attach_section_at(
     return section
 
 
-def _items_for_synth(source: Mapping[str, Any] | Container) -> list[tuple[str, object]]:
-    """Iterate items of a Mapping/dict/Container source as (key, value)."""
-    return list(source.items())
-
-
 def _subtree_membership(c: Container) -> set[int]:
     """Set of ``id(slot)`` for every slot owned by ``c``'s subtree.
 
@@ -3232,6 +3193,16 @@ def _subtree_membership(c: Container) -> set[int]:
     owned: set[int] = set()
     _collect_subtree(c, [], [], lambda s: owned.add(id(s)))
     return owned
+
+
+def _last_slot_in(doc: Document, owned: set[int]) -> Slot | None:
+    """Return the greatest-doc-stream-position slot with ``id in owned``, or None."""
+    cur: Slot | None = doc._tail  # noqa: SLF001
+    while cur is not None:
+        if id(cur) in owned:
+            return cur
+        cur = cur._prev  # noqa: SLF001
+    return None
 
 
 def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
@@ -3257,13 +3228,7 @@ def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
         e = entry_table._owner_aot_entry  # noqa: SLF001
         if e is None or not e.entry_slots:
             continue
-        owned = _subtree_membership(entry_table)
-        cur: Slot | None = doc._tail  # noqa: SLF001
-        while cur is not None:
-            if id(cur) in owned:
-                return cur
-            cur = cur._prev  # noqa: SLF001
-        return None  # pragma: no cover -- doc-stream/_refs invariant
+        return _last_slot_in(doc, _subtree_membership(entry_table))  # pragma: no cover
     parent = aot._parent  # noqa: SLF001
     if parent is None:  # pragma: no cover -- attached AoT always has a parent
         return None
@@ -3286,13 +3251,7 @@ def _entry_last_slot(entry: AoTEntry, doc: Document) -> Slot | None:
     maintained for membership and header-first order only, not doc
     order. O(1) amortised when the entry sits at the document tail.
     """
-    owned = {id(s) for s in entry.entry_slots}
-    cur: Slot | None = doc._tail  # noqa: SLF001
-    while cur is not None:
-        if id(cur) in owned:
-            return cur
-        cur = cur._prev  # noqa: SLF001
-    return None
+    return _last_slot_in(doc, {id(s) for s in entry.entry_slots})
 
 
 _PopT = TypeVar("_PopT")
@@ -3359,6 +3318,15 @@ def _scrub_owned_slots_via_backptrs(
             unfile_ref(ref)
 
 
+def _norm_aot_index(aot: AoT, index: int) -> int:
+    """Normalise ``index`` to non-negative; raise IndexError if out of range."""
+    n = len(aot)
+    if not -n <= index < n:
+        msg = f"AoT index {index} out of range (len {n})"
+        raise IndexError(msg)
+    return index + n if index < 0 else index
+
+
 def remove_aot_entry(aot: AoT, index: int) -> Table:
     """Remove ``aot[index]``, unlink its slots, and return it detached.
 
@@ -3367,13 +3335,7 @@ def remove_aot_entry(aot: AoT, index: int) -> Table:
     mirroring `delete_key`'s orphan-transplant model. User-held
     references remain the same object and are reusable.
     """
-    n = len(aot)
-    if not -n <= index < n:
-        msg = f"AoT index {index} out of range (len {n})"
-        raise IndexError(msg)
-    if index < 0:
-        index += n
-    return remove_aot_entries(aot, [index])[0]
+    return remove_aot_entries(aot, [_norm_aot_index(aot, index)])[0]
 
 
 def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
@@ -3430,13 +3392,8 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
         _collect_nested_aot_slots(entry_table, owned_ordered)
         # Dedupe while preserving order, in case nested collection
         # produces overlap with entry_slots.
-        seen: set[int] = set()
-        deduped: list[Slot] = []
-        for s in owned_ordered:
-            if id(s) in seen:
-                continue
-            seen.add(id(s))
-            deduped.append(s)
+        deduped = list(dict.fromkeys(owned_ordered))
+        for s in deduped:
             if s not in union_owned:
                 union_owned.add(s)
                 union_owned_ordered.append(s)
@@ -3506,12 +3463,7 @@ def replace_aot_entry_with_clone(
 
     Both entries must be attached AoT-entry tables.
     """
-    n = len(aot)
-    if not -n <= index < n:
-        msg = f"AoT index {index} out of range (len {n})"
-        raise IndexError(msg)
-    if index < 0:
-        index += n
+    index = _norm_aot_index(aot, index)
 
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
@@ -3589,13 +3541,7 @@ def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, Any] | None) -> N
     document size. Header position and `_refs` ordering are preserved
     because no slot splicing is involved.
     """
-    n = len(aot)
-    if not -n <= index < n:
-        msg = f"AoT index {index} out of range (len {n})"
-        raise IndexError(msg)
-    if index < 0:
-        index += n
-    entry_table = aot[index]
+    entry_table = aot[_norm_aot_index(aot, index)]
     if body is entry_table:
         return
     items = list(body.items()) if body is not None else []
@@ -3651,7 +3597,7 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         structural_by_position: list[Trivia] = []
         remainder_by_block: list[Trivia] = []
         for block in physical_blocks:
-            structural, remainder = _split_leading_for_reorder(doc, block[0])
+            structural, remainder = _split_leading_for_reorder(block[0])
             structural_by_position.append(structural)
             remainder_by_block.append(remainder)
 
@@ -3678,16 +3624,11 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     # Each ancestor holds entry-header refs (one per entry, filed under
     # the relevant path component); after splicing, those refs are out
     # of doc-stream order. Sort by slot's new doc-stream position.
-    chain: list[Container] = []
-    anc: Container | None = aot._parent  # noqa: SLF001
-    while anc is not None:
-        chain.append(anc)
-        anc = anc._parent  # noqa: SLF001
-    _resort_refs_by_doc_order(chain, doc)
+    _resort_refs_by_doc_order(_ancestor_chain(aot), doc)
 
 
-def _doc_position_map(doc: Document) -> dict[int, int]:
-    """Map ``id(slot)`` to its index in ``doc``'s doc-stream linked list."""
+def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> None:
+    """Resort each container's ``_refs`` and ``_index[k]`` by linked-list position."""
     position: dict[int, int] = {}
     cur = doc._head  # noqa: SLF001
     idx = 0
@@ -3695,12 +3636,6 @@ def _doc_position_map(doc: Document) -> dict[int, int]:
         position[id(cur)] = idx
         idx += 1
         cur = cur._next  # noqa: SLF001
-    return position
-
-
-def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> None:
-    """Resort each container's ``_refs`` and ``_index[k]`` by linked-list position."""
-    position = _doc_position_map(doc)
     for c in containers:
         c._refs.sort(key=lambda r: position.get(id(r.slot), 0))  # noqa: SLF001
         for refs in c._index.values():  # noqa: SLF001
@@ -3860,15 +3795,7 @@ def _move_slots_to_anchor(
     # _body_tail on each (the move may have invalidated the cached
     # tail when the moved slot block was the staging-tail of any
     # ancestor body).
-    chain: list[Container] = []
-    anc: Container | None = parent
-    while anc is not None:
-        chain.append(anc)
-        anc = anc._parent  # noqa: SLF001
-    _resort_refs_by_doc_order(chain, doc)
-    for c in chain:
-        if c._body_tail is not None:  # noqa: SLF001
-            c._body_tail = _recompute_body_tail(c)  # noqa: SLF001
+    _resort_and_recompute_tails(parent, doc)
 
 
 def _direct_child_key(
@@ -4041,9 +3968,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             front_foreign.append(scan)
         scan = scan._next  # noqa: SLF001
     if front_foreign:
-        head_structural, head_remainder = _split_leading_for_reorder(
-            doc, earliest_owned
-        )
+        head_structural, head_remainder = _split_leading_for_reorder(earliest_owned)
         earliest_owned.leading = Trivia(list(head_remainder.pieces))
         for f in front_foreign:
             unlink_slot(f, doc, strip_new_head_leading=False)
@@ -4055,7 +3980,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     # Region-external prefix moves to c-header's leading so preambles /
     # above-region separators survive even if c-header was not first.
     region_head_structural, region_head_remainder = _split_leading_for_reorder(
-        doc, earliest_owned
+        earliest_owned
     )
 
     # c-header's attached comments travel with it; its structural prefix
@@ -4064,7 +3989,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         if header_slot is earliest_owned:
             c_header_remainder = region_head_remainder
         else:
-            _, c_header_remainder = _split_leading_for_reorder(doc, header_slot)
+            _, c_header_remainder = _split_leading_for_reorder(header_slot)
     else:
         c_header_remainder = Trivia()
 
@@ -4086,7 +4011,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     child_structural_at_new_pos: list[Trivia] = []
     child_remainder_of: list[Trivia] = []
     for i, block in enumerate(child_physical_blocks):
-        structural, remainder = _split_leading_for_reorder(doc, block[0])
+        structural, remainder = _split_leading_for_reorder(block[0])
         if i == 0 and header_slot is not None and not header_above_first_child:
             structural = Trivia()
         child_structural_at_new_pos.append(structural)
@@ -4123,15 +4048,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     _splice_blocks_in_order(doc, physical_blocks, new_order_indices, new_head_leadings)
 
     # Resort refs and recompute cached body tails invalidated by splice.
-    chain: list[Container] = [c]
-    anc: Container | None = c._parent  # noqa: SLF001
-    while anc is not None:
-        chain.append(anc)
-        anc = anc._parent  # noqa: SLF001
-    _resort_refs_by_doc_order(chain, doc)
-    for cn in chain:
-        if cn._body_tail is not None:  # noqa: SLF001
-            cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
+    _resort_and_recompute_tails(c, doc)
 
 
 __all__ = [
