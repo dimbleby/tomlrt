@@ -138,7 +138,7 @@ class Array(list[Any]):
         return Array(self.to_list(), multiline=self.multiline)
 
     def __deepcopy__(self, memo: dict[int, object]) -> Array:
-        return Array(self.to_list(), multiline=self.multiline)
+        return self.__copy__()
 
     def array(self, index: SupportsIndex) -> Array:
         """Return ``self[index]`` typed as a nested `Array`."""
@@ -156,10 +156,10 @@ class Array(list[Any]):
     def get_array(self, index: SupportsIndex, default: _T) -> Array | _T: ...
     def get_array(self, index: SupportsIndex, default: object = None) -> object:
         """Like `array(index)` but returns ``default`` for out-of-range."""
-        i = operator.index(index)
-        if i < -len(self) or i >= len(self):
+        try:
+            return self.array(index)
+        except IndexError:
             return default
-        return self.array(index)
 
     @overload
     def get_table(self, index: SupportsIndex) -> Table | None: ...
@@ -167,10 +167,10 @@ class Array(list[Any]):
     def get_table(self, index: SupportsIndex, default: _T) -> Table | _T: ...
     def get_table(self, index: SupportsIndex, default: object = None) -> object:
         """Like `table(index)` but returns ``default`` for out-of-range."""
-        i = operator.index(index)
-        if i < -len(self) or i >= len(self):
+        try:
+            return self.table(index)
+        except IndexError:
             return default
-        return self.table(index)
 
     def _typed_item(self, index: SupportsIndex, cls: type[_T], label: str) -> _T:
         v = self[index]
@@ -541,7 +541,7 @@ class AoT(list["Table"]):
         return AoT(self.to_list())
 
     def __deepcopy__(self, memo: dict[int, object]) -> AoT:
-        return AoT(self.to_list())
+        return self.__copy__()
 
     def add(self, entry: Mapping[str, TomlInput] | None = None) -> Table:
         """Append a fresh ``[[path]]`` entry and return its `Table` view.

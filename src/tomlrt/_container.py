@@ -883,7 +883,7 @@ class Container(dict[str, Any]):
         return _deep_clone(self)
 
     def __deepcopy__(self, memo: dict[int, object]) -> Container:
-        return _deep_clone(self)
+        return self.__copy__()
 
     # ------------------------------------------------------------------
     # Inline-table dispatch
@@ -1445,9 +1445,7 @@ class Document(Container):
 
     @override
     def __deepcopy__(self, memo: dict[int, object]) -> Document:
-        from tomlrt._public import loads  # noqa: PLC0415
-
-        return loads(self.render())
+        return self.__copy__()
 
 
 def _inline_value_has_inner_comments(v: object) -> bool:
