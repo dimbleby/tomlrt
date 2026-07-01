@@ -3202,7 +3202,7 @@ def _last_slot_in(doc: Document, owned: set[int]) -> Slot | None:
         if id(cur) in owned:
             return cur
         cur = cur._prev  # noqa: SLF001
-    return None
+    return None  # pragma: no cover -- doc-stream/_refs invariant
 
 
 def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
@@ -3228,7 +3228,7 @@ def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
         e = entry_table._owner_aot_entry  # noqa: SLF001
         if e is None or not e.entry_slots:
             continue
-        return _last_slot_in(doc, _subtree_membership(entry_table))  # pragma: no cover
+        return _last_slot_in(doc, _subtree_membership(entry_table))
     parent = aot._parent  # noqa: SLF001
     if parent is None:  # pragma: no cover -- attached AoT always has a parent
         return None
