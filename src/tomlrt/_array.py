@@ -306,13 +306,7 @@ class Array(list[Any]):
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Any:
-        n = len(self)
-        i = int(index)
-        if i < 0:
-            i += n
-        if i < 0 or i >= n:
-            msg = "pop index out of range"
-            raise IndexError(msg)
+        i = _norm_int_index(index, len(self), "pop")
         decoded = self[i]
         del self[i]
         return decoded
@@ -376,9 +370,7 @@ class Array(list[Any]):
             self._doc_newline,
             is_multiline=self._style().is_multiline,
         )
-        list.clear(self)
-        for v in new_decoded:
-            list.append(self, v)
+        list.__init__(self, new_decoded)
 
     @overload
     def __setitem__(self, index: SupportsIndex, value: Any) -> None: ...
@@ -415,41 +407,24 @@ class Array(list[Any]):
                 self.insert(start + offset, v)
             return
         # int index: just replace the value CST in place.
-        i = int(index)
+        # Reject before synthesising or mutating any CST, matching the
+        # IndexError that ``list.__setitem__`` raises for a bad index.
         items = self._value.items
-        if i < 0:
-            i += len(items)
-        if i < 0 or i >= len(items):
-            # Reject before synthesising or mutating any CST, matching the
-            # IndexError that ``list.__setitem__`` raises for a bad index.
-            msg = "list assignment index out of range"
-            raise IndexError(msg)
+        i = _norm_int_index(index, len(items), "list assignment")
         cst, dec = self._synth_cst(value)
         items[i].value = cst
-        list.__setitem__(self, index, dec)
+        list.__setitem__(self, i, dec)
 
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
         items = self._value.items
-        if not items:
-            list.__delitem__(self, index)  # propagate IndexError
-            return
-        # Normalise removed positions for shared comma-list orchestration.
         if isinstance(index, slice):
             removed = list(range(*index.indices(len(items))))
-        else:
-            i = int(index)
-            if i < 0:
-                i += len(items)
-            if i < 0 or i >= len(items):
-                # Let list.__delitem__ raise the canonical IndexError.
-                list.__delitem__(self, index)
+            if not removed:
                 return
-            removed = [i]
-        if not removed:
-            list.__delitem__(self, index)
-            return
-        list.__delitem__(self, index)
+        else:
+            removed = [_norm_int_index(index, len(items), "list assignment")]
+        list.__delitem__(self, index if isinstance(index, slice) else removed[0])
         splice_out(
             self._value,
             removed,
@@ -489,6 +464,21 @@ class Array(list[Any]):
                 )
                 self._append_with_style(cst, decoded, style)
         return self
+
+
+def _norm_int_index(index: SupportsIndex, n: int, action: str) -> int:
+    """Return non-negative in-range index, or raise IndexError.
+
+    ``action`` is used verbatim in the error message
+    (e.g. ``"pop"`` → ``"pop index out of range"``).
+    """
+    i = int(index)
+    if i < 0:
+        i += n
+    if i < 0 or i >= n:
+        msg = f"{action} index out of range"
+        raise IndexError(msg)
+    return i
 
 
 def _make_item(
@@ -591,14 +581,10 @@ class AoT(list["Table"]):
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Table:
-        idx = int(index)
-        n = len(self)
-        if not -n <= idx < n:
-            msg = "pop index out of range"
-            raise IndexError(msg)
+        i = _norm_int_index(index, len(self), "pop")
         if self._layout_root is None:
-            return list.pop(self, idx)
-        return _layout_ops.remove_aot_entry(self, idx)
+            return list.pop(self, i)
+        return _layout_ops.remove_aot_entry(self, i)
 
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
@@ -746,9 +732,7 @@ class AoT(list["Table"]):
     ) -> None:
         new_order = sorted(self, key=key, reverse=reverse)
         if self._layout_root is None:
-            list.clear(self)
-            for t in new_order:
-                list.append(self, t)
+            list.__init__(self, new_order)
             return
         _layout_ops.renormalise_aot_order(self, new_order)
 

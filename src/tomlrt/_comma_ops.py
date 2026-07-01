@@ -234,24 +234,19 @@ def flip_to_internal(item: CommaItem) -> None:
 def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
     """Make ``item`` look like the terminal item for ``style``.
 
-    Trailing-comma style keeps existing ``post_comma_trivia`` intact;
-    no-trailing style moves any EOL section back to ``trailing``.
+    No-op when the item is already in the right comma state (so trailing-
+    comma style preserves any ``post_comma_trivia`` the parser filed).
+    Otherwise the EOL section survives the ``trailing`` /
+    ``post_comma_trivia`` channel flip; a comma-dropping flip also clears
+    the now-orphaned structural ``post_comma_trivia`` rest.
     """
-    if style.trailing_comma:
-        if not item.has_comma:
-            eol = _take_eol(item)
-            item.has_comma = True
-            _put_eol(item, eol)
-        # When has_comma==True, post_comma_trivia carries any EOL the
-        # parser/mutation already filed there; keep it intact.
+    if item.has_comma == style.trailing_comma:
         return
-    # No trailing comma policy: drop the comma; carry any EOL back
-    # to trailing.
-    if item.has_comma:
-        eol = _take_eol(item)
-        item.has_comma = False
+    eol = _take_eol(item)
+    item.has_comma = style.trailing_comma
+    if not style.trailing_comma:
         item.post_comma_trivia = Trivia()
-        _put_eol(item, eol)
+    _put_eol(item, eol)
 
 
 # ---------------------------------------------------------------------------
@@ -482,40 +477,6 @@ def splice_insert(
         _shift_carried_boundary(cv, index + 1, nl, old_pred_terminated=pred_terminated)
 
 
-def _reterminalise_tail(new_last: CommaItem, *, removed_had_comma: bool) -> None:
-    """Re-terminalise the new last item after a tail removal.
-
-    The former internal tail adopts the removed tail's comma policy while
-    its row-attached EOL section survives the
-    ``post_comma_trivia``/``trailing`` channel flip. This mirrors
-    ``splice_in`` in reverse: the item was internal, so its EOL section may
-    currently live after its comma; terminalising may move that section
-    back before the (now absent) comma.
-    """
-    eol = _take_eol(new_last)
-    new_last.has_comma = removed_had_comma
-    new_last.post_comma_trivia = Trivia()
-    _put_eol(new_last, eol)
-
-
-def splice_out_head(
-    cv: CommaValue[_CV_ItemT],
-    new_first_above: Trivia,
-) -> None:
-    """Migrate the above-block of the new first item into ``header_trivia``.
-
-    After head deletion, new item 0 was internal and still has separator
-    plus above-item comments in leading. The canonical model keeps item 0
-    leading empty and stores the above-block in ``header_trivia``; caller
-    passes the pre-extracted block.
-    """
-    if not cv.items:
-        return
-    head_pad, _drop = split_above_block(cv.header_trivia)
-    cv.header_trivia = join_above_block(head_pad, new_first_above)
-    cv.items[0].leading = Trivia()
-
-
 def splice_out(
     cv: CommaValue[_CV_ItemT],
     removed_indices: Sequence[int],
@@ -531,9 +492,11 @@ def splice_out(
     arrays, key/prefix lookup for inline tables) and logical-view updates.
     Head removal snapshots the new-first above-block so the "item 0
     above-block lives in ``header_trivia``" invariant is restored. Tail
-    removal transfers the removed tail's comma policy to the new tail.
-    Empty values use :func:`strip_trailing_indent` unless the caller
-    supplies a different policy.
+    removal transfers the removed tail's comma policy to the new tail
+    while its row-attached EOL section survives the channel flip; the
+    former internal tail's stale ``post_comma_trivia`` structural rest is
+    dropped. Empty values use :func:`strip_trailing_indent` unless the
+    caller supplies a different policy.
 
     ``removed_indices`` must be a list of valid distinct indices into
     ``cv.items`` (not necessarily sorted on input; sorted internally).
@@ -577,9 +540,15 @@ def splice_out(
             strip_trailing_indent(cv.header_trivia, cv.final_trivia)
         return
     if zero_removed:
-        splice_out_head(cv, new_first_above)
+        head_pad, _drop = split_above_block(cv.header_trivia)
+        cv.header_trivia = join_above_block(head_pad, new_first_above)
+        items[0].leading = Trivia()
     if tail_removed:
-        _reterminalise_tail(items[-1], removed_had_comma=new_terminal_has_comma)
+        new_last = items[-1]
+        eol = _take_eol(new_last)
+        new_last.post_comma_trivia = Trivia()
+        new_last.has_comma = new_terminal_has_comma
+        _put_eol(new_last, eol)
         if is_multiline:
             _shift_carried_boundary(
                 cv, len(items), nl, old_pred_terminated=term_before[last_idx]
