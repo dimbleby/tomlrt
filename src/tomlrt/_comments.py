@@ -25,8 +25,8 @@ from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
     WhitespaceNode,
-    line_has_comment,
-    line_has_newline,
+    has_comment,
+    has_newline,
     split_lines,
 )
 
@@ -206,11 +206,11 @@ def _split_preamble(
     """
     lines = split_lines(leading.pieces)
     i = 0
-    while i < len(lines) and line_has_comment(lines[i]):
+    while i < len(lines) and has_comment(lines[i]):
         i += 1
     # A separating blank line is a newline with no comment — not the slot's
     # trailing indent (whitespace, no newline).
-    if i == 0 or i >= len(lines) or not line_has_newline(lines[i]):
+    if i == 0 or i >= len(lines) or not has_newline(lines[i]):
         return [], list(leading.pieces)
     preamble = [p for line in lines[: i + 1] for p in line]
     rest = [p for line in lines[i + 1 :] for p in line]
@@ -235,7 +235,7 @@ def _split_attached_block(
             indent = last
             lines = lines[:-1]
     i = len(lines)
-    while i > 0 and line_has_comment(lines[i - 1]):
+    while i > 0 and has_comment(lines[i - 1]):
         i -= 1
     above = lines[:i]
     attached = lines[i:]
@@ -314,7 +314,7 @@ def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
 def _slot_has_attached_comments(slot: Slot) -> bool:
     leading = slot.leading
     _above, attached, _indent = _split_attached_block(leading)
-    return any(line_has_comment(line) for line in attached)
+    return any(has_comment(line) for line in attached)
 
 
 class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
@@ -545,7 +545,7 @@ def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
 def _doc_preamble_get(doc: Document) -> tuple[str, ...]:
     lines = split_lines(doc._preamble.pieces)  # noqa: SLF001
     # Drop the trailing blank-line separator before the first slot.
-    while lines and not line_has_comment(lines[-1]):
+    while lines and not has_comment(lines[-1]):
         lines.pop()
     return _lines_to_comments(lines)
 

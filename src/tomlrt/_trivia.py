@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
 
 @dataclass(slots=True, eq=False)
@@ -65,14 +65,14 @@ class Trivia:
         return Trivia(list(self.pieces))
 
 
-def trivia_has_comment(t: Trivia) -> bool:
-    """True iff ``t`` contains any ``CommentNode`` piece."""
-    return any(isinstance(p, CommentNode) for p in t.pieces)
+def has_comment(pieces: Iterable[TriviaPiece]) -> bool:
+    """True iff ``pieces`` contains any ``CommentNode``."""
+    return any(isinstance(p, CommentNode) for p in pieces)
 
 
-def trivia_has_newline(t: Trivia) -> bool:
-    """True iff ``t`` contains any ``NewlineNode`` piece."""
-    return any(isinstance(p, NewlineNode) for p in t.pieces)
+def has_newline(pieces: Iterable[TriviaPiece]) -> bool:
+    """True iff ``pieces`` contains any ``NewlineNode``."""
+    return any(isinstance(p, NewlineNode) for p in pieces)
 
 
 def leading_break_index(pieces: Sequence[TriviaPiece]) -> int | None:
@@ -106,16 +106,6 @@ def split_lines(pieces: Sequence[TriviaPiece]) -> list[list[TriviaPiece]]:
     if cur:
         out.append(cur)
     return out
-
-
-def line_has_comment(line: Sequence[TriviaPiece]) -> bool:
-    """True iff ``line`` contains a ``CommentNode``."""
-    return any(isinstance(p, CommentNode) for p in line)
-
-
-def line_has_newline(line: Sequence[TriviaPiece]) -> bool:
-    """True iff ``line`` contains a ``NewlineNode``."""
-    return any(isinstance(p, NewlineNode) for p in line)
 
 
 def retarget_trivia_newlines(t: Trivia, target: str) -> None:
@@ -253,9 +243,7 @@ def indent_from_final_trivia(ft: Trivia) -> str:
     return ""
 
 
-def restamp_bracket_pad_for_first(
-    ft: Trivia, *, default_indent: str = "    "
-) -> tuple[Trivia, Trivia]:
+def restamp_bracket_pad_for_first(ft: Trivia) -> tuple[Trivia, Trivia]:
     r"""Reframe an empty bracket pad ahead of inserting the first item.
 
     For an empty value, ``final_trivia`` owns everything between the
@@ -271,7 +259,7 @@ def restamp_bracket_pad_for_first(
     """
     if not ft.pieces:
         return Trivia(), Trivia()
-    if not trivia_has_newline(ft):
+    if not has_newline(ft.pieces):
         return ft.copy(), ft
     pieces = list(ft.pieces)
     last_nl = max(i for i, p in enumerate(pieces) if isinstance(p, NewlineNode))
@@ -280,7 +268,7 @@ def restamp_bracket_pad_for_first(
     if tail_pieces and isinstance(tail_pieces[0], WhitespaceNode):
         value_indent = str(tail_pieces[0].text)
     else:
-        value_indent = indent_from_final_trivia(ft) or default_indent
+        value_indent = indent_from_final_trivia(ft) or "    "
     new_header = Trivia([*head_pieces, WhitespaceNode(text=value_indent)])
     new_final = Trivia([NewlineNode(text=pieces[last_nl].text)])
     return new_header, new_final
@@ -299,8 +287,7 @@ def strip_trailing_indent(header_trivia: Trivia, final_trivia: Trivia) -> None:
     ``[ # tail\\n]`` / ``{ # tail\\n}``, so the next append can
     re-stamp via :func:`restamp_bracket_pad_for_first`.
     """
-    has_comment = any(isinstance(p, CommentNode) for p in header_trivia.pieces)
-    if not has_comment:
+    if not has_comment(header_trivia.pieces):
         while header_trivia.pieces and isinstance(
             header_trivia.pieces[-1], (WhitespaceNode, NewlineNode)
         ):
@@ -400,12 +387,12 @@ __all__ = [
     "Trivia",
     "TriviaPiece",
     "WhitespaceNode",
+    "has_comment",
+    "has_newline",
     "indent_from_final_trivia",
     "join_above_block",
     "join_leading_above",
     "leading_break_index",
-    "line_has_comment",
-    "line_has_newline",
     "restamp_bracket_pad_for_first",
     "retarget_eol_newline",
     "retarget_trivia_newlines",
@@ -415,6 +402,4 @@ __all__ = [
     "split_leading_above",
     "split_lines",
     "strip_trailing_indent",
-    "trivia_has_comment",
-    "trivia_has_newline",
 ]

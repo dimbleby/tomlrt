@@ -42,15 +42,14 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
-    line_has_comment,
-    line_has_newline,
+    has_comment,
+    has_newline,
     retarget_eol_newline,
     retarget_trivia_newlines,
     split_above_block,
     split_eol_section,
     split_item_above,
     split_lines,
-    trivia_has_comment,
 )
 from tomlrt._values import (
     ArrayValue,
@@ -166,12 +165,12 @@ def _canon_leading(
     """
     lines = split_lines(slot.leading.pieces)
 
-    if lines and not line_has_newline(lines[-1]) and not line_has_comment(lines[-1]):
+    if lines and not has_newline(lines[-1]) and not has_comment(lines[-1]):
         lines.pop()
 
     head_count = 0
-    while head_count < len(lines) and not line_has_comment(lines[head_count]):
-        if not line_has_newline(lines[head_count]):
+    while head_count < len(lines) and not has_comment(lines[head_count]):
+        if not has_newline(lines[head_count]):
             break
         head_count += 1
     middle = lines[head_count:]
@@ -538,8 +537,8 @@ def set_comma_value_multiline(
                     "items contain EOL or leading comments"
                 )
                 raise TOMLError(msg)
-        if trivia_has_comment(value.header_trivia) or trivia_has_comment(
-            value.final_trivia
+        if has_comment(value.header_trivia.pieces) or has_comment(
+            value.final_trivia.pieces
         ):
             msg = (
                 "cannot collapse to single line: "
