@@ -275,6 +275,14 @@ def _write_leading_block(
     slot.leading.pieces = new_pieces
 
 
+def _validate_comment_entry(c: str, name: str) -> None:
+    """Validate a single non-``None`` comment-sequence entry's content."""
+    if "\n" in c or "\r" in c:
+        msg = f"{name} entries must not contain a line terminator"
+        raise ValueError(msg)
+    _validate_comment_text(c)
+
+
 def _validate_block_seq(value: object, name: str) -> tuple[str | None, ...]:
     """Type-check a leading-block tuple; entries are ``str`` or ``None``."""
     if isinstance(value, str) or not isinstance(value, Iterable):
@@ -288,10 +296,7 @@ def _validate_block_seq(value: object, name: str) -> tuple[str | None, ...]:
         if not isinstance(c, str):
             msg = f"{name} entries must be strings or None"
             raise TypeError(msg)
-        if "\n" in c or "\r" in c:
-            msg = f"{name} entries must not contain a line terminator"
-            raise ValueError(msg)
-        _validate_comment_text(c)
+        _validate_comment_entry(c, name)
         out.append(c)
     return tuple(out)
 
@@ -490,10 +495,7 @@ def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
         if not isinstance(c, str):
             msg = f"{name} entries must be strings"
             raise TypeError(msg)
-        if "\n" in c or "\r" in c:
-            msg = f"{name} entries must not contain a line terminator"
-            raise ValueError(msg)
-        _validate_comment_text(c)
+        _validate_comment_entry(c, name)
         out.append(c)
     return tuple(out)
 
