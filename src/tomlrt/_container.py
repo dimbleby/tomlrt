@@ -57,8 +57,8 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    has_comment,
     retarget_trivia_newlines,
-    trivia_has_comment,
 )
 from tomlrt._typecheck import _validate_key, _validate_mapping
 from tomlrt._values import (
@@ -525,10 +525,6 @@ class Container(dict[str, Any]):
         path so the new view's Python identity becomes the live one.
         """
         current = dict.__getitem__(self, key)
-        # Fast-path: pure scalar → scalar (cheap, no synth alloc).
-        if is_scalar(current) and is_scalar(value):
-            self._scalar_replace(key, value)
-            return
         # Single-direct-KV-slot current → any synth-able value
         # (scalar or inline). The slot's `value` field is swapped
         # in place; ordering, comments, key spelling are preserved.
@@ -548,7 +544,7 @@ class Container(dict[str, Any]):
             or _is_section(value)
             or isinstance(value, Mapping)
         ):
-            self._structural_overwrite(key, value)
+            _layout_ops.reposition_install(self, key, value)
             return
         # Unsupported value type — TypeError, not NIE.
         msg = (
@@ -557,17 +553,9 @@ class Container(dict[str, Any]):
         )
         raise TypeError(msg)
 
-    def _structural_overwrite(self, key: str, value: Any) -> None:
-        """Replace ``key`` by deleting then reinstalling at the saved anchor."""
-        _layout_ops.reposition_install(self, key, value)
-
     def _insert_new(self, key: str, value: Any) -> None:
         """Bind ``key`` for the first time at the document tail."""
-        if is_scalar(value):
-            _layout_ops.append_direct_kv(self, key, coerce_scalar(value))
-            dict.__setitem__(self, key, value)
-            return
-        if _is_synth_inline(value):
+        if is_scalar(value) or _is_synth_inline(value):
             cst, decoded = _synth_value(
                 value,
                 layout_root=self._layout_root,
@@ -683,19 +671,6 @@ class Container(dict[str, Any]):
             msg = "internal: detached section source expected to be a Table"
             raise AssertionError(msg)  # noqa: TRY004
         _layout_ops.attach_section_at(self, (key,), value)
-
-    def _scalar_replace(self, key: str, value: Any) -> None:
-        refs = self._index.get(key)
-        if not refs:  # pragma: no cover  -- view/CST drift invariant guard
-            msg = f"internal: key {key!r} present in dict but missing from _index"
-            raise AssertionError(msg)
-        primary = refs[0]
-        slot = primary.slot
-        if not isinstance(slot, KVSlot):  # pragma: no cover  -- type invariant guard
-            msg = "internal: scalar replace expects KVSlot"
-            raise AssertionError(msg)  # noqa: TRY004
-        slot.value = coerce_scalar(value)
-        dict.__setitem__(self, key, value)
 
     def _inline_typed_replace(self, key: str, value: Any) -> None:
         """Swap an existing direct-KV slot's value to a synthesised inline value.
@@ -898,17 +873,13 @@ class Container(dict[str, Any]):
         # ``__setitem__`` has already rejected ``AoT`` / section values
         # for inline hosts. Non-coerceable types (``set``, custom
         # classes, …) reach ``_synth_value`` for the canonical TypeError.
-        if is_scalar(value):
-            cst: Value = coerce_scalar(value)
-            decoded: object = value
-        else:
-            cst, decoded = _synth_value(
-                value,
-                layout_root=self._layout_root,
-                parent=self,
-                path=(*self._path, key),
-                owner=self._owner_aot_entry,
-            )
+        cst, decoded = _synth_value(
+            value,
+            layout_root=self._layout_root,
+            parent=self,
+            path=(*self._path, key),
+            owner=self._owner_aot_entry,
+        )
         if key in self and isinstance(dict.__getitem__(self, key), Container):
             # Stay on the CST side when replacing a dotted-prefix
             # navigator; dict-level delete would prune the parent chain.
@@ -1475,12 +1446,12 @@ def _array_value_has_outer_comments(v: object) -> bool:
 
 
 def _comma_value_has_outer_comments(v: CommaValue[_ItemT]) -> bool:
-    if trivia_has_comment(v.header_trivia) or trivia_has_comment(v.final_trivia):
+    if has_comment(v.header_trivia.pieces) or has_comment(v.final_trivia.pieces):
         return True
     return any(
-        trivia_has_comment(p.leading)
-        or trivia_has_comment(p.trailing)
-        or trivia_has_comment(p.post_comma_trivia)
+        has_comment(p.leading.pieces)
+        or has_comment(p.trailing.pieces)
+        or has_comment(p.post_comma_trivia.pieces)
         for p in v.items
     )
 
@@ -1761,9 +1732,10 @@ def _is_synth_inline(v: object) -> bool:
         return True
     if isinstance(v, Mapping):
         return True
-    # `list` only — `tuple` is intentionally not accepted (TOML has no
-    # tuple, and accepting it would mask user typos).
-    return type(v) is list or (isinstance(v, list) and not isinstance(v, Array))
+    # `list` (or subclass) only — `tuple` is intentionally not accepted
+    # (TOML has no tuple, and accepting it would mask user typos). Array,
+    # a list subclass, was already accepted above.
+    return isinstance(v, list)
 
 
 def _synth_value(
@@ -1791,14 +1763,13 @@ def _synth_value(
         msg = "cannot store a section-style table inside an inline-style table"
         raise TOMLError(msg)
     # Live-attach unattached inline values so user identity is preserved.
-    # Displaced inline tables need a reset before reattach; arrays do not.
+    # For an inline Table, `_populate_inline_table` fully re-wires state
+    # (including a fresh `_value`), so no separate reset is needed.
     if (_is_inline_table(v) or isinstance(v, Array)) and not v._attached:  # noqa: SLF001
         if isinstance(v, Array):
             _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
-            _attach_array_view(v, layout_root, owner)
+            _attach_inline_view(v, layout_root, owner)
             return v._value, v  # noqa: SLF001
-        if v._layout_root is not None:  # noqa: SLF001
-            _reset_inline_for_rehome(v)
         return _populate_inline_table(
             v,
             list(v.items()),
@@ -1849,25 +1820,23 @@ def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
         retarget_value_newlines(val, layout_root._newline)  # noqa: SLF001
 
 
-def _attach_array_view(
-    arr: Array, layout_root: Document | None, owner: AoTEntry | None
-) -> None:
-    """Record the document attachment on an Array and its inline children."""
-    arr._layout_root = layout_root  # noqa: SLF001
-    for child in arr:
-        _attach_inline_child_view(child, layout_root, owner)
-
-
-def _attach_inline_child_view(
+def _attach_inline_view(
     value: object, layout_root: Document | None, owner: AoTEntry | None
 ) -> None:
+    """Record document attachment on an Array or inline Table, recursively.
+
+    Arrays have no `_owner_aot_entry` field; inline Tables do and
+    inherit ``owner`` from the outermost host.
+    """
     if isinstance(value, Array):
-        _attach_array_view(value, layout_root, owner)
+        value._layout_root = layout_root  # noqa: SLF001
+        for child in value:
+            _attach_inline_view(child, layout_root, owner)
     elif _is_inline_table(value):
         value._layout_root = layout_root  # noqa: SLF001
         value._owner_aot_entry = owner  # noqa: SLF001
         for child in value.values():
-            _attach_inline_child_view(child, layout_root, owner)
+            _attach_inline_view(child, layout_root, owner)
 
 
 def _populate_inline_table(
