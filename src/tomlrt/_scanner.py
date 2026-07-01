@@ -661,36 +661,29 @@ class _Scanner:
         if not token:
             msg = f"expected value, got {self.peek()!r}"
             raise self.error(msg)
+        self.pos = end
 
         # Whole-token keyword classification.
         if token == "true":  # noqa: S105
-            self.pos = end
             return BoolValue("true", value=True)
         if token == "false":  # noqa: S105
-            self.pos = end
             return BoolValue("false", value=False)
         if token in ("inf", "+inf"):
-            self.pos = end
             return FloatValue(lexeme=token, value=float("inf"))
         if token == "-inf":  # noqa: S105
-            self.pos = end
             return FloatValue(lexeme=token, value=float("-inf"))
         if token in ("nan", "+nan", "-nan"):
-            self.pos = end
             return FloatValue(lexeme=token, value=float("nan"))
 
         # Date/time literals always carry a fixed punctuation char in
         # a known position. Try them before numbers so e.g. ``1979-…``
         # is not mistaken for an integer.
         if self._looks_like_datetime(token):
-            self.pos = end
             return self._parse_datetime_token(token, at=start)
 
         if self._looks_like_float(token):
-            self.pos = end
             return self._parse_float_token(token, at=start)
 
-        self.pos = end
         return self._parse_integer_token(token, at=start)
 
     def _scan_value_end(self, start: int) -> int:
@@ -842,24 +835,17 @@ class _Scanner:
             extra_end = self._scan_value_end(pos)
             extra = src[pos:extra_end]
             self.pos = extra_end
-            full = token + " " + extra
-            return self._parse_datetime_text(full, at=at, raw=full)
-        return self._parse_datetime_text(token, at=at, raw=token)
+            return self._parse_datetime_text(token + " " + extra, at=at)
+        return self._parse_datetime_text(token, at=at)
 
-    def _parse_datetime_text(
-        self,
-        text: str,
-        *,
-        at: int,
-        raw: str,
-    ) -> DateTimeValue:
+    def _parse_datetime_text(self, text: str, *, at: int) -> DateTimeValue:
         if len(text) >= 3 and text[2] == ":":
             try:
                 value = self._parse_time_text(text)
             except ValueError as exc:
                 msg = f"invalid time {text!r}: {exc}"
                 raise self.error(msg, at=at) from exc
-            return DateTimeValue(raw, value)
+            return DateTimeValue(text, value)
 
         if len(text) < 10 or text[4] != "-" or text[7] != "-":
             msg = f"invalid date/datetime {text!r}"
@@ -881,7 +867,7 @@ class _Scanner:
 
         rest = text[10:]
         if not rest:
-            return DateTimeValue(raw, d)
+            return DateTimeValue(text, d)
         if rest[0] not in ("T", "t", " "):
             msg = f"expected date/time separator, got {rest[0]!r}"
             raise self.error(msg, at=at)
@@ -897,7 +883,7 @@ class _Scanner:
             except ValueError as exc:
                 msg = f"invalid time {time_part!r}: {exc}"
                 raise self.error(msg, at=at) from exc
-            return DateTimeValue(raw, datetime.combine(d, t))
+            return DateTimeValue(text, datetime.combine(d, t))
         try:
             t = self._parse_time_text(time_part[:offset_pos])
             tz = self._parse_offset(time_part[offset_pos:])
@@ -905,7 +891,7 @@ class _Scanner:
             msg = f"invalid datetime {text!r}: {exc}"
             raise self.error(msg, at=at) from exc
         dt = datetime.combine(d, t).replace(tzinfo=tz)
-        return DateTimeValue(raw, dt)
+        return DateTimeValue(text, dt)
 
     @staticmethod
     def _parse_time_text(text: str) -> time:
