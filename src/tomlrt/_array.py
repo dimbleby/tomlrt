@@ -322,7 +322,6 @@ class Array(list[Any]):
 
     @override
     def insert(self, index: SupportsIndex, value: Any) -> None:
-        cst, decoded = self._synth_cst(value)
         i = int(index)
         n = len(self)
         if i < 0:
@@ -331,6 +330,7 @@ class Array(list[Any]):
         if i == n:
             self.append(value)
             return
+        cst, decoded = self._synth_cst(value)
         style = self._style()
         new_item = _make_item(cst, has_comma=True)
         splice_insert(self._value, new_item, i, style, self._doc_newline)

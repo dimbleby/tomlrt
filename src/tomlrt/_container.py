@@ -77,7 +77,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
-    from tomlrt._trivia import TriviaPiece
+    from tomlrt._trivia import EolTrivia, TriviaPiece
     from tomlrt._values import (
         CommaItem,
         CommaValue,
@@ -478,6 +478,26 @@ class Container(dict[str, Any]):
             out[k] = _to_python(v)
         return out
 
+    def _synth_local_value(self, key: str, value: object) -> tuple[Value, object]:
+        """Synthesise ``value`` for direct storage under ``key`` on ``self``."""
+        return _synth_value(
+            value,
+            layout_root=self._layout_root,
+            parent=self,
+            path=(*self._path, key),
+            owner=self._owner_aot_entry,
+        )
+
+    def _require_promotable_entry(self, key: str, *, action: str) -> object:
+        """Return ``self[key]`` after the shared promotion pre-checks."""
+        if self._inline:
+            msg = f"{action} is not supported on inline tables"
+            raise TOMLError(msg)
+        if key not in self:
+            msg = f"key {key!r} not in table"
+            raise KeyError(msg)
+        return dict.__getitem__(self, key)
+
     # ------------------------------------------------------------------
     # Mutation
     # ------------------------------------------------------------------
@@ -556,13 +576,7 @@ class Container(dict[str, Any]):
     def _insert_new(self, key: str, value: Any) -> None:
         """Bind ``key`` for the first time at the document tail."""
         if is_scalar(value) or _is_synth_inline(value):
-            cst, decoded = _synth_value(
-                value,
-                layout_root=self._layout_root,
-                parent=self,
-                path=(*self._path, key),
-                owner=self._owner_aot_entry,
-            )
+            cst, decoded = self._synth_local_value(key, value)
             _layout_ops.append_direct_kv(self, key, cst)
             dict.__setitem__(self, key, decoded)
             return
@@ -696,13 +710,7 @@ class Container(dict[str, Any]):
             msg = "structural overwrite of header-bound binding is not supported"
             raise NotImplementedError(msg)
         old = dict.__getitem__(self, key)
-        cst, decoded = _synth_value(
-            value,
-            layout_root=self._layout_root,
-            parent=self,
-            path=(*self._path, key),
-            owner=self._owner_aot_entry,
-        )
+        cst, decoded = self._synth_local_value(key, value)
         slot.value = cst
         dict.__setitem__(self, key, decoded)
         # Detach the displaced view so it can be reattached live.
@@ -873,13 +881,7 @@ class Container(dict[str, Any]):
         # ``__setitem__`` has already rejected ``AoT`` / section values
         # for inline hosts. Non-coerceable types (``set``, custom
         # classes, …) reach ``_synth_value`` for the canonical TypeError.
-        cst, decoded = _synth_value(
-            value,
-            layout_root=self._layout_root,
-            parent=self,
-            path=(*self._path, key),
-            owner=self._owner_aot_entry,
-        )
+        cst, decoded = self._synth_local_value(key, value)
         if key in self and isinstance(dict.__getitem__(self, key), Container):
             # Stay on the CST side when replacing a dotted-prefix
             # navigator; dict-level delete would prune the parent chain.
@@ -940,23 +942,9 @@ class Container(dict[str, Any]):
         if (is_section or is_aot) and len(parts) > 1 and self._layout_root is not None:
             # Walk existing prefix; whatever's left is created with
             # implicit intermediates plus the final explicit binding.
-            cur: Container = self
-            i = 0
-            while i < len(parts) - 1:
-                p = parts[i]
-                if p not in cur:
-                    break
-                nxt = dict.__getitem__(cur, p)
-                if isinstance(nxt, AoT):
-                    msg = (
-                        f"cannot install through array-of-tables at {p!r}: "
-                        "no addressable target inside an AoT"
-                    )
-                    raise TOMLError(msg)
-                if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
-                    break
-                cur = nxt
-                i += 1
+            cur, i = _walk_existing_sections(
+                self, parts, limit=len(parts) - 1, stop_on_non_section=True
+            )
             # Drop conflicting inline-tail keys before installing the
             # section, or a stale inline value would shadow it.
             if (
@@ -996,33 +984,9 @@ class Container(dict[str, Any]):
         value or inline table that would have to be traversed.
         """
         parts = validate_path(key)
-        cur: Container = self
-        i = 0
-        while i < len(parts):
-            p = parts[i]
-            if p not in cur:
-                break
-            nxt = dict.__getitem__(cur, p)
-            if isinstance(nxt, AoT):
-                msg = (
-                    f"cannot ensure_table through array-of-tables at {p!r}: "
-                    "no addressable target inside an AoT"
-                )
-                raise TOMLError(msg)
-            if not isinstance(nxt, Container):
-                msg = (
-                    f"existing value at {p!r} is not section-backed "
-                    "(is an inline table or non-table value)"
-                )
-                raise TOMLError(msg)
-            if nxt._inline and i < len(parts) - 1:  # noqa: SLF001
-                msg = (
-                    f"existing value at {p!r} is not section-backed "
-                    "(is an inline table or non-table value)"
-                )
-                raise TOMLError(msg)
-            cur = nxt
-            i += 1
+        cur, i = _walk_existing_sections(
+            self, parts, limit=len(parts), stop_on_non_section=False
+        )
         if i == len(parts):
             assert isinstance(cur, Table)
             return cur
@@ -1050,13 +1014,7 @@ class Container(dict[str, Any]):
         ``KeyError`` if the key is missing, or ``TypeError`` if it
         doesn't refer to an inline-style table.
         """
-        if self._inline:
-            msg = "inline-table promotion is not supported on inline tables"
-            raise TOMLError(msg)
-        if key not in self:
-            msg = f"key {key!r} not in table"
-            raise KeyError(msg)
-        cur = dict.__getitem__(self, key)
+        cur = self._require_promotable_entry(key, action="inline-table promotion")
         if not (_is_inline_table(cur)):
             msg = f"{key!r} is not an inline table"
             raise TypeError(msg)
@@ -1067,9 +1025,7 @@ class Container(dict[str, Any]):
             )
             raise TOMLError(msg)
         # Transfer the existing KV slot's leading + eol to the header.
-        old_slot = _direct_kv_slot(self, key)
-        saved_leading = old_slot.leading if old_slot is not None else None
-        saved_eol = old_slot.eol if old_slot is not None else None
+        saved_leading, saved_eol = _direct_kv_trivia(self, key)
         snapshot = cur.to_dict()
         _layout_ops.delete_key(self, key)
         self[key] = Table.section(snapshot)
@@ -1101,13 +1057,7 @@ class Container(dict[str, Any]):
         ``TOMLError`` for an empty array or an array with
         non-inline-table elements.
         """
-        if self._inline:
-            msg = "array-of-tables promotion is not supported on inline tables"
-            raise TOMLError(msg)
-        if key not in self:
-            msg = f"key {key!r} not in table"
-            raise KeyError(msg)
-        cur = dict.__getitem__(self, key)
+        cur = self._require_promotable_entry(key, action="array-of-tables promotion")
         if not isinstance(cur, Array):
             msg = f"{key!r} is not an array"
             raise TypeError(msg)
@@ -1132,9 +1082,7 @@ class Container(dict[str, Any]):
                     raise TOMLError(msg)
         snapshot = cur.to_list()
         # Carry the original KV slot's leading/eol onto the promoted AoT.
-        old_slot = _direct_kv_slot(self, key)
-        saved_leading = old_slot.leading if old_slot is not None else None
-        saved_eol = old_slot.eol if old_slot is not None else None
+        saved_leading, saved_eol = _direct_kv_trivia(self, key)
         _layout_ops.delete_key(self, key)
         self[key] = AoT(snapshot)
         result = dict.__getitem__(self, key)
@@ -1181,6 +1129,49 @@ def _reorder_dict_storage(c: Container, new_key_order: list[str]) -> None:
     dict.clear(c)
     for k, v in values:
         dict.__setitem__(c, k, v)
+
+
+def _direct_kv_trivia(c: Container, key: str) -> tuple[Trivia | None, EolTrivia | None]:
+    """Return the direct-KV slot's leading/EOL trivia for ``key``, if any."""
+    slot = _direct_kv_slot(c, key)
+    if slot is None:
+        return None, None
+    return slot.leading, slot.eol
+
+
+def _walk_existing_sections(
+    start: Container,
+    parts: Sequence[str],
+    *,
+    limit: int,
+    stop_on_non_section: bool,
+) -> tuple[Container, int]:
+    """Walk the existing section-backed prefix of ``parts`` under ``start``."""
+    cur: Container = start
+    i = 0
+    while i < limit:
+        p = parts[i]
+        if p not in cur:
+            break
+        nxt = dict.__getitem__(cur, p)
+        if isinstance(nxt, AoT):
+            action = "install" if stop_on_non_section else "ensure_table"
+            msg = (
+                f"cannot {action} through array-of-tables at {p!r}: "
+                "no addressable target inside an AoT"
+            )
+            raise TOMLError(msg)
+        if not isinstance(nxt, Container) or (nxt._inline and i < len(parts) - 1):  # noqa: SLF001
+            if stop_on_non_section:
+                break
+            msg = (
+                f"existing value at {p!r} is not section-backed "
+                "(is an inline table or non-table value)"
+            )
+            raise TOMLError(msg)
+        cur = nxt
+        i += 1
+    return cur, i
 
 
 def _populate_unattached(t: Container, mapping: Mapping[str, Any]) -> None:
