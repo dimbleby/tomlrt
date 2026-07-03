@@ -488,12 +488,16 @@ def _default_eol(doc: Document) -> EolTrivia:
     )
 
 
-def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
-    """Splice ``new_slot`` immediately after ``anchor`` in ``doc``."""
-    nxt = anchor._next  # noqa: SLF001
-    new_slot._prev = anchor  # noqa: SLF001
+def _insert_between(
+    prev: Slot | None, new_slot: Slot, nxt: Slot | None, doc: Document
+) -> None:
+    """Splice ``new_slot`` between ``prev`` and ``nxt`` in ``doc``."""
+    new_slot._prev = prev  # noqa: SLF001
     new_slot._next = nxt  # noqa: SLF001
-    anchor._next = new_slot  # noqa: SLF001
+    if prev is not None:
+        prev._next = new_slot  # noqa: SLF001
+    else:
+        doc._head = new_slot  # noqa: SLF001
     if nxt is not None:
         nxt._prev = new_slot  # noqa: SLF001
     else:
@@ -501,17 +505,14 @@ def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
     _record_new_slot(doc, new_slot)
 
 
+def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
+    """Splice ``new_slot`` immediately after ``anchor`` in ``doc``."""
+    _insert_between(anchor, new_slot, anchor._next, doc)  # noqa: SLF001
+
+
 def insert_before(anchor: Slot, new_slot: Slot, doc: Document) -> None:
     """Splice ``new_slot`` immediately before ``anchor`` in ``doc``."""
-    p = anchor._prev  # noqa: SLF001
-    new_slot._prev = p  # noqa: SLF001
-    new_slot._next = anchor  # noqa: SLF001
-    anchor._prev = new_slot  # noqa: SLF001
-    if p is not None:
-        p._next = new_slot  # noqa: SLF001
-    else:
-        doc._head = new_slot  # noqa: SLF001
-    _record_new_slot(doc, new_slot)
+    _insert_between(anchor._prev, new_slot, anchor, doc)  # noqa: SLF001
 
 
 def insert_before_head(new_slot: Slot, doc: Document) -> None:
@@ -523,15 +524,7 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
     :attr:`Document.preamble` or parsed from a comment-only source)
     should follow up with :func:`_promote_trailing_to_preamble`.
     """
-    head = doc._head  # noqa: SLF001
-    new_slot._prev = None  # noqa: SLF001
-    new_slot._next = head  # noqa: SLF001
-    if head is not None:
-        head._prev = new_slot  # noqa: SLF001
-    else:
-        doc._tail = new_slot  # noqa: SLF001
-    doc._head = new_slot  # noqa: SLF001
-    _record_new_slot(doc, new_slot)
+    _insert_between(None, new_slot, doc._head, doc)  # noqa: SLF001
 
 
 def _promote_trailing_to_preamble(doc: Document) -> None:
@@ -844,6 +837,22 @@ def _replace_primary_in_place(
         insert_after(primary._prev, new_slot, doc)  # noqa: SLF001
 
 
+def _new_owned_section_header(
+    c: Container, *, leading: Trivia, doc: Document
+) -> StructuralHeaderSlot:
+    return _new_section_header(
+        c._path,  # noqa: SLF001
+        leading=leading,
+        doc=doc,
+        owner_aot_entry=c._owner_aot_entry,  # noqa: SLF001
+    )
+
+
+def _extend_entry_slots(owner: AoTEntry | None, *slots: Slot) -> None:
+    if owner is not None:
+        owner.entry_slots.extend(slots)
+
+
 def _materialise_empty_section_header(
     c: Container,
     primary: StructuralHeaderSlot,
@@ -862,18 +871,12 @@ def _materialise_empty_section_header(
     parent = c._parent  # noqa: SLF001
     assert parent is not None
     owner = c._owner_aot_entry  # noqa: SLF001
-    header = _new_section_header(
-        c._path,  # noqa: SLF001
-        leading=_build_section_leading(doc),
-        doc=doc,
-        owner_aot_entry=owner,
-    )
+    header = _new_owned_section_header(c, leading=_build_section_leading(doc), doc=doc)
     own_ref = SlotRef(slot=header, container=c)
     c._refs.append(own_ref)  # noqa: SLF001
     c._header_ref = own_ref  # noqa: SLF001
     _replace_primary_in_place(header, primary, doc)
-    if owner is not None:
-        owner.entry_slots.append(header)
+    _extend_entry_slots(owner, header)
     _file_header_binding_chain(parent, header)
     c._body_tail = header  # noqa: SLF001
 
@@ -936,8 +939,7 @@ def _materialise_empty_inline_table(
     c._value = val  # noqa: SLF001
     c._body_tail = None  # noqa: SLF001
 
-    if owner is not None:
-        owner.entry_slots.append(kv)
+    _extend_entry_slots(owner, kv)
 
 
 def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> None:
@@ -1560,10 +1562,9 @@ def install_dotted_kv_slot(
             # ``_body_tail`` is still empty).
             anc._body_tail = new_slot  # noqa: SLF001
 
-    if owner is not None:
-        # ``entry_slots`` is membership + header-first order only (doc
-        # order is derived on demand), so a plain append is enough.
-        owner.entry_slots.append(new_slot)
+    # ``entry_slots`` is membership + header-first order only (doc
+    # order is derived on demand), so a plain append is enough.
+    _extend_entry_slots(owner, new_slot)
 
 
 def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
@@ -1600,12 +1601,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     adopted_leading = anchor_slot.leading
     original_pred = anchor_slot._prev  # noqa: SLF001
     new_descendant_leading = _build_section_leading(doc)
-    header_slot = _new_section_header(
-        c._path,  # noqa: SLF001
-        leading=adopted_leading,
-        doc=doc,
-        owner_aot_entry=owner,
-    )
+    header_slot = _new_owned_section_header(c, leading=adopted_leading, doc=doc)
     insert_before(anchor_slot, header_slot, doc)
     recorder = doc._displaced_recorder  # noqa: SLF001
     if recorder is not None:
@@ -1637,9 +1633,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     # Add the synthesised header + KV to the entry's membership list
     # (order within ``entry_slots`` is not doc-significant; the entry's
     # own ``[[a]]`` header stays first because it was appended first).
-    if owner is not None:
-        owner.entry_slots.append(header_slot)
-        owner.entry_slots.append(new_kv)
+    _extend_entry_slots(owner, header_slot, new_kv)
 
 
 def _synthesise_header_then_insert_kv_at_doc_tail(
@@ -1654,11 +1648,8 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     doc = c._attached_doc  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
 
-    header_slot = _new_section_header(
-        c._path,  # noqa: SLF001
-        leading=_build_section_leading(doc),
-        doc=doc,
-        owner_aot_entry=owner,
+    header_slot = _new_owned_section_header(
+        c, leading=_build_section_leading(doc), doc=doc
     )
     # When ``c`` lives inside an AoT entry, the synthesised header
     # MUST sit physically inside that entry's slot region (before the
@@ -1683,12 +1674,12 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     if isinstance(header_slot._prev, StructuralHeaderSlot):  # noqa: SLF001
         header_slot.leading = Trivia()
 
-    ancestors = _ancestor_chain(c)
     # When ``c`` lives inside an AoT entry, the synthesised header sits
     # mid-doc-stream (between this entry's last slot and the next
     # sibling ``[[arr]]`` entry). Each ancestor's ``_refs`` is
     # doc-stream-ordered, so insert the binding ref after the entry's
     # last owned ref rather than appending.
+    ancestors = _ancestor_chain(c)
     entry_slot_set: set[Slot] | None = None
     if owner is not None and owner.entry_slots:
         entry_slot_set = set(owner.entry_slots)
@@ -1716,9 +1707,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         header_ref_index=len(c._refs),  # noqa: SLF001
     )
 
-    if owner is not None:
-        owner.entry_slots.append(header_slot)
-        owner.entry_slots.append(new_kv)
+    _extend_entry_slots(owner, header_slot, new_kv)
 
 
 def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
@@ -2534,6 +2523,17 @@ def _gather_subtree_slots(src_table: Container) -> list[Slot]:
     return _owned_slots_from(src_table, src_table._header_ref.slot)  # noqa: SLF001
 
 
+def _gather_headered_subtree_slots(
+    src_table: Container,
+) -> tuple[StructuralHeaderSlot, list[Slot]]:
+    src_slots = _gather_subtree_slots(src_table)
+    head = src_slots[0]
+    if not isinstance(head, StructuralHeaderSlot):  # pragma: no cover
+        msg = "source section's first owned slot is not a header"
+        raise AssertionError(msg)  # noqa: TRY004
+    return head, src_slots
+
+
 def clone_table_as_aot_entry(
     aot: AoT,
     src_table: Container,
@@ -2544,11 +2544,8 @@ def clone_table_as_aot_entry(
     ``[k]`` to ``[[aot._path]]`` and rebasing paths to ``aot._path``.
     Preserves per-slot leading / EOL / lexeme bytes.
     """
-    src_slots = _gather_subtree_slots(src_table)
-    if not isinstance(src_slots[0], StructuralHeaderSlot):  # pragma: no cover
-        msg = "source section's first owned slot is not a header"
-        raise AssertionError(msg)  # noqa: TRY004
-    if src_slots[0].kind != "table":  # pragma: no cover
+    head, src_slots = _gather_headered_subtree_slots(src_table)
+    if head.kind != "table":  # pragma: no cover
         msg = "clone_table_as_aot_entry: source must be a standard section"
         raise RuntimeError(msg)
     return _install_cloned_aot_entry(
@@ -2571,10 +2568,7 @@ def clone_section_as_section(
     ``[k]`` section. Preserves per-slot trivia and nested sub-sections
     while rebasing paths under ``parent._path + (key,)``.
     """
-    src_slots = _gather_subtree_slots(src_table)
-    if not isinstance(src_slots[0], StructuralHeaderSlot):  # pragma: no cover
-        msg = "source section's first owned slot is not a header"
-        raise AssertionError(msg)  # noqa: TRY004
+    _, src_slots = _gather_headered_subtree_slots(src_table)
     return _install_cloned_section(parent, key, src_slots, src_table._path)  # noqa: SLF001
 
 
@@ -2654,7 +2648,7 @@ def adopt_private_section(
     norm_entry = value._owner_aot_entry  # noqa: SLF001
 
     assert value._header_ref is not None  # noqa: SLF001
-    slots = _gather_subtree_slots(value)
+    _, slots = _gather_headered_subtree_slots(value)
     for s in slots:
         _retarget_slot_paths(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
         if norm_entry is not None and s.owner_aot_entry is norm_entry:
@@ -3129,7 +3123,7 @@ def attach_section_at(
         doc=doc,
         path=full_path,
         parent=deepest_parent,
-        owner=None,
+        owner=owner,
         header=header,
     )
 
@@ -3139,11 +3133,9 @@ def attach_section_at(
     # sibling of an implicit ``parent``) under the new header on re-parse.
     anchor = _parent_subtree_tail(_nearest_header_host(parent))
     _splice_block_after([header], anchor, doc)
-    if owner is not None:
-        # Own the new header on the AoT entry so a later delete of the
-        # entry takes the promoted section with it.
-        owner.entry_slots.append(header)
-        section._owner_aot_entry = owner  # noqa: SLF001
+    # Own the new header on the AoT entry so a later delete of the
+    # entry takes the promoted section with it.
+    _extend_entry_slots(owner, header)
 
     # File the binding ref under the deepest implicit parent and
     # propagate ancestor-prefix bindings up to the doc root.

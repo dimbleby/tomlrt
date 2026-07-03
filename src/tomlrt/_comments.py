@@ -125,6 +125,12 @@ class _SlotKeyedView(MutableMapping[str, _T]):
     def _slot(self, key: str) -> KVSlot | None:
         return _direct_kv_slot(self._c, key)
 
+    def _require_slot(self, key: str, *, missing_msg: str | None = None) -> KVSlot:
+        slot = self._slot(key)
+        if slot is None:
+            raise KeyError(key if missing_msg is None else missing_msg)
+        return slot
+
     def _present(self, slot: KVSlot) -> bool:
         raise NotImplementedError
 
@@ -165,26 +171,23 @@ class EolCommentView(_SlotKeyedView[str]):
 
     @override
     def __getitem__(self, key: str) -> str:
-        slot = self._slot(key)
-        if slot is None or slot.eol.comment is None:
+        slot = self._require_slot(key)
+        if slot.eol.comment is None:
             raise KeyError(key)
         return _decode_comment(slot.eol.comment.text)
 
     @override
     def __setitem__(self, key: str, value: str) -> None:
         _require_attached(self._c)
-        slot = self._slot(key)
-        if slot is None:
-            msg = f"key {key!r} not in container"
-            raise KeyError(msg)
+        slot = self._require_slot(key, missing_msg=f"key {key!r} not in container")
         _validate_comment_str(value, "comment")
         _write_eol_comment(slot.eol, value, self._c._doc_newline)  # noqa: SLF001
 
     @override
     def __delitem__(self, key: str) -> None:
         _require_attached(self._c)
-        slot = self._slot(key)
-        if slot is None or slot.eol.comment is None:
+        slot = self._require_slot(key)
+        if slot.eol.comment is None:
             raise KeyError(key)
         slot.eol.comment = None
         # Also drop the gap-whitespace that preceded the comment so we
@@ -283,18 +286,21 @@ def _validate_comment_entry(c: str, name: str) -> None:
     _validate_comment_text(c)
 
 
-def _validate_block_seq(value: object, name: str) -> tuple[str | None, ...]:
-    """Type-check a leading-block tuple; entries are ``str`` or ``None``."""
+def _validate_comment_entries(
+    value: object, name: str, *, allow_none: bool
+) -> tuple[str | None, ...]:
+    """Type-check a comment iterable, optionally allowing ``None`` entries."""
+    kind = "comment strings or None" if allow_none else "comment strings"
     if isinstance(value, str) or not isinstance(value, Iterable):
-        msg = f"{name} must be an iterable of comment strings or None"
+        msg = f"{name} must be an iterable of {kind}"
         raise TypeError(msg)
     out: list[str | None] = []
     for c in value:
-        if c is None:
+        if c is None and allow_none:
             out.append(None)
             continue
         if not isinstance(c, str):
-            msg = f"{name} entries must be strings or None"
+            msg = f"{name} entries must be strings{' or None' if allow_none else ''}"
             raise TypeError(msg)
         _validate_comment_entry(c, name)
         out.append(c)
@@ -326,27 +332,22 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
 
     @override
     def __getitem__(self, key: str) -> tuple[str, ...]:
-        slot = self._slot(key)
-        if slot is None or not _slot_has_attached_comments(slot):
+        slot = self._require_slot(key)
+        if not _slot_has_attached_comments(slot):
             raise KeyError(key)
         return _extract_leading_comments(slot.leading)
 
     @override
     def __setitem__(self, key: str, value: tuple[str, ...]) -> None:
         _require_attached(self._c)
-        slot = self._slot(key)
-        if slot is None:
-            msg = f"key {key!r} not in container"
-            raise KeyError(msg)
+        slot = self._require_slot(key, missing_msg=f"key {key!r} not in container")
         comments = _validate_comment_seq(value, "leading_comments")
         _set_attached_block(slot.leading, comments, self._c._doc_newline)  # noqa: SLF001
 
     @override
     def __delitem__(self, key: str) -> None:
         _require_attached(self._c)
-        slot = self._slot(key)
-        if slot is None:
-            raise KeyError(key)
+        slot = self._require_slot(key)
         if not _slot_has_attached_comments(slot):
             raise KeyError(key)
         above, _attached, indent = _split_attached_block(slot.leading)
@@ -376,9 +377,7 @@ class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
 
     @override
     def __getitem__(self, key: str) -> tuple[str | None, ...]:
-        slot = self._slot(key)
-        if slot is None:
-            raise KeyError(key)
+        slot = self._require_slot(key)
         block = _read_leading_block(self._c, slot)
         if not block:
             raise KeyError(key)
@@ -387,19 +386,14 @@ class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
     @override
     def __setitem__(self, key: str, value: tuple[str | None, ...]) -> None:
         _require_attached(self._c)
-        slot = self._slot(key)
-        if slot is None:
-            msg = f"key {key!r} not in container"
-            raise KeyError(msg)
-        block = _validate_block_seq(value, "leading_block")
+        slot = self._require_slot(key, missing_msg=f"key {key!r} not in container")
+        block = _validate_comment_entries(value, "leading_block", allow_none=True)
         _write_leading_block(self._c, slot, block)
 
     @override
     def __delitem__(self, key: str) -> None:
         _require_attached(self._c)
-        slot = self._slot(key)
-        if slot is None:
-            raise KeyError(key)
+        slot = self._require_slot(key)
         if not _read_leading_block(self._c, slot):
             raise KeyError(key)
         _write_leading_block(self._c, slot, ())
@@ -423,9 +417,16 @@ def _header_slot(c: Container) -> StructuralHeaderSlot | None:
     return slot
 
 
-def _header_comment_get(c: Container) -> str | None:
+def _require_header_slot(c: Container, msg: str) -> StructuralHeaderSlot:
+    """Return ``c``'s header slot or raise ``TOMLError`` with ``msg``."""
     h = _header_slot(c)
     if h is None:
+        raise TOMLError(msg)
+    return h
+
+
+def _header_comment_get(c: Container) -> str | None:
+    if (h := _header_slot(c)) is None:
         # No header line means no header comment; mirror the empty
         # state of an explicit section. Setters still raise; silently
         # dropping a write would be a footgun.
@@ -437,10 +438,7 @@ def _header_comment_get(c: Container) -> str | None:
 
 
 def _header_comment_set(c: Container, value: str | None) -> None:
-    h = _header_slot(c)
-    if h is None:
-        msg = "container has no header to attach a comment to"
-        raise TOMLError(msg)
+    h = _require_header_slot(c, "container has no header to attach a comment to")
     eol = h.eol
     if value is None:
         if eol.comment is not None:
@@ -453,51 +451,37 @@ def _header_comment_set(c: Container, value: str | None) -> None:
 
 
 def _header_leading_get(c: Container) -> tuple[str, ...]:
-    h = _header_slot(c)
-    if h is None:
+    if (h := _header_slot(c)) is None:
         # See _header_comment_get: no header line, no comments above it.
         return ()
     return _extract_leading_comments(h.leading)
 
 
 def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
-    h = _header_slot(c)
-    if h is None:
-        msg = "container has no header to attach leading comments to"
-        raise TOMLError(msg)
+    h = _require_header_slot(c, "container has no header to attach leading comments to")
     comments = _validate_comment_seq(value, "header_leading_comments")
     _set_attached_block(h.leading, comments, c._doc_newline)  # noqa: SLF001
 
 
 def _header_leading_block_get(c: Container) -> tuple[str | None, ...]:
-    h = _header_slot(c)
-    if h is None:
+    if (h := _header_slot(c)) is None:
         # See _header_comment_get: no header line, no block above it.
         return ()
     return _read_leading_block(c, h)
 
 
 def _header_leading_block_set(c: Container, value: tuple[str | None, ...]) -> None:
-    h = _header_slot(c)
-    if h is None:
-        msg = "container has no header to attach a leading block to"
-        raise TOMLError(msg)
-    block = _validate_block_seq(value, "header_leading_block")
+    h = _require_header_slot(c, "container has no header to attach a leading block to")
+    block = _validate_comment_entries(value, "header_leading_block", allow_none=True)
     _write_leading_block(c, h, block)
 
 
 def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
-    if isinstance(value, str) or not isinstance(value, Iterable):
-        msg = f"{name} must be an iterable of comment strings"
-        raise TypeError(msg)
-    out: list[str] = []
-    for c in value:
-        if not isinstance(c, str):
-            msg = f"{name} entries must be strings"
-            raise TypeError(msg)
-        _validate_comment_entry(c, name)
-        out.append(c)
-    return tuple(out)
+    return tuple(
+        c
+        for c in _validate_comment_entries(value, name, allow_none=False)
+        if c is not None
+    )
 
 
 def _line_to_comment(line: Iterable[TriviaPiece]) -> str | None:
@@ -542,6 +526,19 @@ def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
         eol.newline = NewlineNode(nl)
 
 
+def _render_doc_comment_lines(
+    block: tuple[str | None, ...], nl: str
+) -> list[TriviaPiece]:
+    """Render document-level comment lines, using ``None`` for blanks."""
+    pieces: list[TriviaPiece] = []
+    for entry in block:
+        if entry is None:
+            pieces.append(NewlineNode(nl))
+        else:
+            pieces.extend((CommentNode(_encode_comment(entry)), NewlineNode(nl)))
+    return pieces
+
+
 def _doc_preamble_get(doc: Document) -> tuple[str, ...]:
     lines = split_lines(doc._preamble.pieces)  # noqa: SLF001
     # Drop the trailing blank-line separator before the first slot.
@@ -556,9 +553,7 @@ def _doc_preamble_set(doc: Document, value: tuple[str, ...]) -> None:
     if not comments:
         doc._preamble.pieces = []  # noqa: SLF001
         return
-    pieces: list[TriviaPiece] = []
-    for c in comments:
-        pieces.extend((CommentNode(_encode_comment(c)), NewlineNode(nl)))
+    pieces = _render_doc_comment_lines(comments, nl)
     # Append a blank-line separator before the first slot.
     if doc._head is not None:  # noqa: SLF001
         pieces.append(NewlineNode(nl))
@@ -573,18 +568,12 @@ def _doc_epilogue_get(doc: Document) -> tuple[str | None, ...]:
 
 
 def _doc_epilogue_set(doc: Document, value: tuple[str | None, ...]) -> None:
-    block = _validate_block_seq(value, "epilogue")
+    block = _validate_comment_entries(value, "epilogue", allow_none=True)
     if doc._head is None and block:  # noqa: SLF001
         msg = "cannot set epilogue: document has no structural content"
         raise TOMLError(msg)
     nl = doc._newline  # noqa: SLF001
-    new_pieces: list[TriviaPiece] = []
-    for entry in block:
-        if entry is None:
-            new_pieces.append(NewlineNode(nl))
-        else:
-            new_pieces.extend((CommentNode(_encode_comment(entry)), NewlineNode(nl)))
-    doc._trailing.pieces = new_pieces  # noqa: SLF001
+    doc._trailing.pieces = _render_doc_comment_lines(block, nl)  # noqa: SLF001
 
 
 __all__ = ["EolCommentView", "LeadingBlockView", "LeadingCommentView"]
