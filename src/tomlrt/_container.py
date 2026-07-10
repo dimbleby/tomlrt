@@ -545,6 +545,9 @@ class Container(dict[str, Any]):
         path so the new view's Python identity becomes the live one.
         """
         current = dict.__getitem__(self, key)
+        if is_scalar(current) and is_scalar(value):
+            self._replace_scalar(key, value)
+            return
         # Single-direct-KV-slot current → any synth-able value
         # (scalar or inline). The slot's `value` field is swapped
         # in place; ordering, comments, key spelling are preserved.
@@ -575,7 +578,11 @@ class Container(dict[str, Any]):
 
     def _insert_new(self, key: str, value: Any) -> None:
         """Bind ``key`` for the first time at the document tail."""
-        if is_scalar(value) or _is_synth_inline(value):
+        if is_scalar(value):
+            _layout_ops.append_direct_kv(self, key, coerce_scalar(value))
+            dict.__setitem__(self, key, value)
+            return
+        if _is_synth_inline(value):
             cst, decoded = self._synth_local_value(key, value)
             _layout_ops.append_direct_kv(self, key, cst)
             dict.__setitem__(self, key, decoded)
@@ -685,6 +692,15 @@ class Container(dict[str, Any]):
             msg = "internal: detached section source expected to be a Table"
             raise AssertionError(msg)  # noqa: TRY004
         _layout_ops.attach_section_at(self, (key,), value)
+
+    def _replace_scalar(self, key: str, value: object) -> None:
+        """Replace a scalar while preserving its existing KV slot."""
+        refs = self._index.get(key)
+        assert refs is not None, "scalar value must have a slot"
+        slot = refs[0].slot
+        assert isinstance(slot, KVSlot), "scalar value must have a KV slot"
+        slot.value = coerce_scalar(value)
+        dict.__setitem__(self, key, value)
 
     def _inline_typed_replace(self, key: str, value: Any) -> None:
         """Swap an existing direct-KV slot's value to a synthesised inline value.
