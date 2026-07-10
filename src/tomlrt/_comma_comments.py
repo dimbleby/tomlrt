@@ -326,8 +326,9 @@ class _CommaView(MutableMapping[_KeyT, _ValueT]):
     def __init__(self, adapter: CommaCommentAdapter[_KeyT]) -> None:
         self._a = adapter
 
+    @abstractmethod
     def _get(self, idx: int) -> _ValueT | None:
-        raise NotImplementedError
+        """Return the value at ``idx``, or None when absent."""
 
     def _idx(self, key: _KeyT) -> int:
         idx = self._a.resolve(key)

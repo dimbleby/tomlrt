@@ -727,9 +727,6 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
             leaf_parent=c,
         )
         return
-    if c._owner_aot_entry is not None and c._header_ref is None:  # noqa: SLF001
-        msg = "insert into AoT entry sub-table body is not yet supported"
-        raise NotImplementedError(msg)
     doc = c._attached_doc  # noqa: SLF001
     # Capture the anchor *before* mutating any cache.
     body_tail = c._body_tail  # noqa: SLF001
@@ -959,9 +956,9 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     repopulated immediately, so a transient empty state must not grow a
     spurious header.
 
-    Held views of the deleted subtree retain stale ``_layout_root`` /
-    ``_path``; structural mutation through them raises
-    ``NotImplementedError`` rather than corrupting the live document.
+    Deleted structural views are transplanted to a private orphan document,
+    preserving safe mutation and later reattachment without touching the live
+    document.
     """
     val = dict.__getitem__(c, key)  # raises KeyError if absent
     doc = c._attached_doc  # noqa: SLF001

@@ -9,6 +9,7 @@ in one container.
 from __future__ import annotations
 
 import copy
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Literal
 
@@ -57,7 +58,7 @@ class AoTEntry:
 
 
 @dataclass(slots=True, eq=False)
-class Slot:
+class Slot(ABC):
     """Base for physical slots.
 
     Subclassed by `KVSlot` and `StructuralHeaderSlot`.
@@ -99,8 +100,9 @@ class Slot:
             setattr(new, f.name, value)
         return new
 
-    def render(self) -> str:  # pragma: no cover - overridden
-        raise NotImplementedError
+    @abstractmethod
+    def render(self) -> str:
+        """Render this physical slot."""
 
 
 @dataclass(slots=True, eq=False)

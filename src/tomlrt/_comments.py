@@ -10,6 +10,7 @@ no comment view because TOML forbids comments inside them.
 from __future__ import annotations
 
 import sys
+from abc import abstractmethod
 from collections.abc import Iterable, MutableMapping
 from typing import TYPE_CHECKING, TypeVar
 
@@ -131,8 +132,9 @@ class _SlotKeyedView(MutableMapping[str, _T]):
             raise KeyError(key if missing_msg is None else missing_msg)
         return slot
 
+    @abstractmethod
     def _present(self, slot: KVSlot) -> bool:
-        raise NotImplementedError
+        """Return whether ``slot`` carries this view's value."""
 
     @override
     def __repr__(self) -> str:
