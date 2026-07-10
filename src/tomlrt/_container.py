@@ -701,14 +701,11 @@ class Container(dict[str, Any]):
         cross-doc clone path).
         """
         refs = self._index.get(key)
-        if not refs or len(refs) != 1:
-            msg = "structural overwrite (multiple contributing refs) is not supported"
-            raise NotImplementedError(msg)
+        assert refs is not None, "inline value must have a slot"
+        assert len(refs) == 1, "inline value must be backed by exactly one slot"
         primary = refs[0]
         slot = primary.slot
-        if not isinstance(slot, KVSlot):
-            msg = "structural overwrite of header-bound binding is not supported"
-            raise NotImplementedError(msg)
+        assert isinstance(slot, KVSlot), "inline value must be backed by a KV slot"
         old = dict.__getitem__(self, key)
         cst, decoded = self._synth_local_value(key, value)
         slot.value = cst
