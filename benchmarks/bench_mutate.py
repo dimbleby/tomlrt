@@ -63,6 +63,12 @@ def _build_section_doc_with_trailing(trailing_kvs: int) -> str:
     )
 
 
+def _build_large_aot_entry_for_overwrite(kvs: int) -> str:
+    return (
+        "[[a]]\n" + "".join(f"k{i} = {i}\n" for i in range(kvs)) + "\n[a.b.c]\nx = 1\n"
+    )
+
+
 def _build_section_doc(sections: int, kvs: int) -> str:
     parts: list[str] = []
     for s in range(sections):
@@ -132,6 +138,10 @@ def main() -> None:
     section_src = _build_section_doc(50, 20)
     aot_trailing_src = _build_aot_with_trailing(50, 20_000)
     section_trailing_src = _build_section_doc_with_trailing(20_000)
+    large_aot_overwrite_src = _build_large_aot_entry_for_overwrite(20_000)
+    large_inline_array_src = (
+        "items = [{" + ", ".join(f"k{i} = {i}" for i in range(1_000)) + "}] # tail\n"
+    )
 
     def parse_and_render_pyproject() -> None:
         doc = tomlrt.loads(pyproject)
@@ -158,6 +168,12 @@ def main() -> None:
         target = doc.table("a")
         for i in range(20):
             target.install((f"s{i}",), tomlrt.Table.section({"x": i}))
+
+    def promote_large_inline_array(doc: Document) -> None:
+        doc.promote_array("items")
+
+    def overwrite_section_inside_aot_entry(doc: Document) -> None:
+        doc.aot("a")[0].table("b")["c"] = 5
 
     def deep_set_new_section() -> None:
         doc = tomlrt.loads(section_src)
@@ -207,6 +223,18 @@ def main() -> None:
         "install 20 new sections, non-tail (20k trailing)",
         lambda: tomlrt.loads(section_trailing_src),
         install_non_tail_new_sections,
+        repeats=50,
+    )
+    _bench_with_setup(
+        "promote inline table with 1k fields",
+        lambda: tomlrt.loads(large_inline_array_src),
+        promote_large_inline_array,
+        repeats=100,
+    )
+    _bench_with_setup(
+        "overwrite section in AoT entry (20k KVs)",
+        lambda: tomlrt.loads(large_aot_overwrite_src),
+        overwrite_section_inside_aot_entry,
         repeats=50,
     )
     _bench("install 20 new sections", deep_set_new_section, repeats=200)

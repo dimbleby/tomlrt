@@ -263,30 +263,23 @@ def _resort_and_recompute_tails(c: Container, doc: Document) -> None:
 def _anchor_in_parent_direct_body(parent: Container, anchor_prev: Slot | None) -> bool:
     """True iff a direct KV spliced after ``anchor_prev`` would belong to ``parent``.
 
-    A re-parser attributes a bare ``key = value`` line to whatever
-    header is open at its position — the most recent header at or
-    before it. So walking the doc-stream backward from ``anchor_prev``,
-    the first header encountered must be the binding's host header (or,
-    at the document root, none before the stream start). A descendant
-    sub-header (``[host.sub]``) or a foreign header would capture the
-    KV instead, so the reposition is unsafe and the binding is left at
-    its body tail.
-
     For an implicit (header-less, non-root) container the binding is
     emitted as a dotted key hosted by the nearest header-bearing
-    ancestor, so its scope is that host's — check against the host
-    header, not the implicit container itself.
+    ancestor, so its scope is that host's. Every KV records that physical
+    scope in ``host_path``; a header records it directly in ``path``.
     """
     host = _nearest_header_host(parent)
     host_header_ref = host._header_ref  # noqa: SLF001
     host_header = host_header_ref.slot if host_header_ref else None
-    cur: Slot | None = anchor_prev
-    while cur is not None:
-        if isinstance(cur, StructuralHeaderSlot):
-            return cur is host_header
-        cur = cur._prev  # noqa: SLF001
-    # Reached the stream start without a header → document-root scope.
-    return host_header is None
+    if anchor_prev is None:
+        return host_header is None
+    if isinstance(anchor_prev, StructuralHeaderSlot):
+        return anchor_prev is host_header
+    assert isinstance(anchor_prev, KVSlot)
+    return (
+        anchor_prev.host_path == host._path  # noqa: SLF001
+        and anchor_prev.owner_aot_entry is host._owner_aot_entry  # noqa: SLF001
+    )
 
 
 def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:
@@ -477,6 +470,14 @@ def _default_eol(doc: Document) -> EolTrivia:
         comment=None,
         newline=NewlineNode(text=doc._newline),  # noqa: SLF001
     )
+
+
+def _body_anchor(c: Container) -> Slot | None:
+    """Return the end of ``c``'s direct body, including its header fallback."""
+    if c._body_tail is not None:  # noqa: SLF001
+        return c._body_tail  # noqa: SLF001
+    header_ref = c._header_ref  # noqa: SLF001
+    return header_ref.slot if header_ref is not None else None
 
 
 def _insert_between(
@@ -1055,7 +1056,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         if transplanting and owned_slots
         else owned_slots
     )
-    for slot in owned_slots:
+    for slot in reversed(owned_slots):
         owner = slot.owner_aot_entry
         if (
             owner is not None
@@ -1063,7 +1064,8 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
             and id(owner) not in moving_aot_entry_ids
         ):
             with contextlib.suppress(ValueError):
-                owner.entry_slots.remove(slot)
+                _pop_or_remove(owner.entry_slots, slot)
+    for slot in owned_slots:
         unlink_slot(slot, doc)
 
     displaced_inlines: list[Container] = []
@@ -1548,7 +1550,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     doc = c._attached_doc  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
     anchor_slot = c._refs[0].slot if c._refs else None  # noqa: SLF001
-    entry_slot_set: set[Slot] | None = None
 
     if anchor_slot is not None:
         adopted_leading = anchor_slot.leading
@@ -1566,20 +1567,18 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         header_slot = _new_owned_section_header(
             c, leading=_build_section_leading(doc), doc=doc
         )
-        # Keep a new sub-section physically inside its owning AoT entry;
-        # otherwise append at document tail for the caller to reposition.
-        entry_last = _entry_last_slot(owner) if owner is not None else None
-        if entry_last is not None:
-            insert_after(entry_last, header_slot, doc)
-        elif doc._tail is None:  # noqa: SLF001
+        # An AoT-owned container reaches this state only while
+        # reposition_install is staging a replacement block. The completed
+        # block moves back to its saved anchor after this insertion.
+        if owner is not None:
+            assert doc._install_recorder is not None  # noqa: SLF001
+        if doc._tail is None:  # noqa: SLF001
             insert_before_head(header_slot, doc)
             header_slot.leading = Trivia()
         else:
             insert_after(doc._tail, header_slot, doc)  # noqa: SLF001
         if isinstance(header_slot._prev, StructuralHeaderSlot):  # noqa: SLF001
             header_slot.leading = Trivia()
-        if owner is not None and owner.entry_slots:
-            entry_slot_set = set(owner.entry_slots)
 
     # File a binding ref for the new header on every ancestor along
     # c._path. The ancestor d levels above c is keyed by c._path[-d].
@@ -1588,14 +1587,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         binding_ref = SlotRef(slot=header_slot, container=anc)
         if anchor_slot is not None:
             insert_idx = _find_ref_index_by_slot(anc, anchor_slot)
-            anc._refs.insert(insert_idx, binding_ref)  # noqa: SLF001
-            _rebuild_index_for_key(anc, local_key)
-        elif entry_slot_set is not None:
-            insert_idx = len(anc._refs)  # noqa: SLF001
-            for i in range(len(anc._refs) - 1, -1, -1):  # noqa: SLF001
-                if anc._refs[i].slot in entry_slot_set:  # noqa: SLF001
-                    insert_idx = i + 1
-                    break
             anc._refs.insert(insert_idx, binding_ref)  # noqa: SLF001
             _rebuild_index_for_key(anc, local_key)
         else:
@@ -2941,36 +2932,6 @@ def _aot_append_anchor(aot: AoT) -> Slot | None:
     # section or AoT-entry table) the host is ``parent``.
     host = _nearest_header_host(parent)
     return _parent_subtree_tail(host)
-
-
-def _entry_last_slot(entry: AoTEntry) -> Slot | None:
-    """Return the entry's own slot with the greatest doc-stream position.
-
-    Excludes slots owned by nested ``[[a.sub]]`` AoT entries (those
-    have their own, separate ``AoTEntry.entry_slots``) — unlike
-    :func:`_aot_append_anchor`, which deliberately wants the *whole*
-    subtree tail. Walks forward from the entry's own header, bounded
-    by ``_belongs_to_parent_extent`` (the same predicate
-    :func:`_parent_subtree_tail` uses) so the search never depends on
-    unrelated content elsewhere in the document — only on how much is
-    physically nested inside this one entry. ``entry_slots`` need not
-    be doc-stream-contiguous (nested AoT children may interleave), so
-    the last in-extent slot that is also one of ``entry``'s own is
-    tracked separately from the walk's stopping condition.
-    """
-    header = entry.entry_slots[0]
-    assert isinstance(header, StructuralHeaderSlot)
-    own_ids = {id(s) for s in entry.entry_slots}
-    result: Slot = header
-    cur: Slot = header
-    while cur._next is not None:  # noqa: SLF001
-        nxt = cur._next  # noqa: SLF001
-        if not _belongs_to_parent_extent(nxt, header.path, entry):
-            break
-        if id(nxt) in own_ids:
-            result = nxt
-        cur = nxt
-    return result
 
 
 _PopT = TypeVar("_PopT")
