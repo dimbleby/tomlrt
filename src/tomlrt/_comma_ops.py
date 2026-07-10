@@ -483,7 +483,6 @@ def splice_out(
     nl: str,
     *,
     is_multiline: bool,
-    strip_when_empty: bool = True,
 ) -> None:
     """Splice out ``removed_indices`` and run the boundary fixups.
 
@@ -495,8 +494,7 @@ def splice_out(
     removal transfers the removed tail's comma policy to the new tail
     while its row-attached EOL section survives the channel flip; the
     former internal tail's stale ``post_comma_trivia`` structural rest is
-    dropped. Empty values use :func:`strip_trailing_indent` unless the
-    caller supplies a different policy.
+    dropped. Empty values use :func:`strip_trailing_indent`.
 
     ``removed_indices`` must be a list of valid distinct indices into
     ``cv.items`` (not necessarily sorted on input; sorted internally).
@@ -536,8 +534,7 @@ def splice_out(
         items.pop(i)
 
     if not items:
-        if strip_when_empty:
-            strip_trailing_indent(cv.header_trivia, cv.final_trivia)
+        strip_trailing_indent(cv.header_trivia, cv.final_trivia)
         return
     if zero_removed:
         head_pad, _drop = split_above_block(cv.header_trivia)

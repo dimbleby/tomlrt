@@ -481,15 +481,10 @@ def _norm_int_index(index: SupportsIndex, n: int, action: str) -> int:
     return i
 
 
-def _make_item(
-    cst: Value, *, leading: Trivia | None = None, has_comma: bool
-) -> ArrayItem:
-    """Build a fresh ``ArrayItem`` with empty trailing/post_comma.
-
-    Most call sites only vary ``leading`` and ``has_comma``.
-    """
+def _make_item(cst: Value, *, has_comma: bool) -> ArrayItem:
+    """Build a fresh ``ArrayItem`` with empty trivia."""
     return ArrayItem(
-        leading=leading if leading is not None else Trivia(),
+        leading=Trivia(),
         value=cst,
         trailing=Trivia(),
         has_comma=has_comma,
@@ -561,9 +556,7 @@ class AoT(list["Table"]):
                 return _layout_ops.clone_table_as_aot_entry(self, value)
         return _layout_ops.add_aot_entry(self, value)
 
-    def _replace_entry_attached(
-        self, index: int, value: Mapping[str, Any] | None
-    ) -> None:
+    def _replace_entry_attached(self, index: int, value: Mapping[str, Any]) -> None:
         """Dispatch in-place replacement of an attached AoT entry."""
         from tomlrt._container import Table as TableType  # noqa: PLC0415
 
