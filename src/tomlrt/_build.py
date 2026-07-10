@@ -142,7 +142,7 @@ def _resolve_chain(root: Container, prefix: tuple[str, ...]) -> list[Container]:
     into the most recent entry. The returned list always has length
     ``len(prefix) + 1``.
     """
-    return _resolve_table_chain(root, prefix, descend_aot=True, inherit_owner=True)
+    return _resolve_table_chain(root, prefix, descend_aot=True)
 
 
 def _resolve_table_chain(
@@ -152,13 +152,12 @@ def _resolve_table_chain(
     owner: AoTEntry | None = None,
     inline: bool = False,
     descend_aot: bool = False,
-    inherit_owner: bool = False,
 ) -> list[Container]:
     """Resolve or create a table chain beneath ``start``.
 
-    Header paths may descend through the latest AoT entry and implicit
-    ancestors inherit that entry's owner. Dotted KV and inline-table paths
-    reject AoTs and use the slot/value owner supplied by their caller.
+    Header paths descend through the latest AoT entry and inherit its owner.
+    Dotted KV and inline-table paths reject AoTs and use the owner supplied
+    by their caller.
     """
     chain = [start]
     cur = start
@@ -168,7 +167,7 @@ def _resolve_table_chain(
             child = _make_table(
                 cur,
                 (*cur._path, name),  # noqa: SLF001
-                owner=cur._owner_aot_entry if inherit_owner else owner,  # noqa: SLF001
+                owner=cur._owner_aot_entry if descend_aot else owner,  # noqa: SLF001
             )
             child._inline = inline  # noqa: SLF001
             dict.__setitem__(cur, name, child)

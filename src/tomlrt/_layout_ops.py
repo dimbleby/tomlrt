@@ -759,14 +759,11 @@ def _invalidate_body_tail_chain(
     owned_slot_ids: set[int],
     *,
     min_depth: int = 0,
-    recompute: bool,
 ) -> None:
-    """Invalidate ``_body_tail`` on the ``start`` → root chain.
+    """Recompute invalidated ``_body_tail`` values on the path to root.
 
     For each container ``cc`` along the chain whose existing
-    ``_body_tail`` slot is in ``owned_slot_ids``, either
-    recompute the tail (eager) or clear it to ``None`` (lazy —
-    next mutation will recompute).
+    ``_body_tail`` slot is in ``owned_slot_ids``, recompute the tail.
 
     Walks until either the chain is exhausted or
     ``len(cc._path) < min_depth``. The depth bound is a
@@ -781,9 +778,7 @@ def _invalidate_body_tail_chain(
             cur._body_tail is not None  # noqa: SLF001
             and id(cur._body_tail) in owned_slot_ids  # noqa: SLF001
         ):
-            cur._body_tail = (  # noqa: SLF001
-                _recompute_body_tail(cur) if recompute else None
-            )
+            cur._body_tail = _recompute_body_tail(cur)  # noqa: SLF001
         cur = cur._parent  # noqa: SLF001
 
 
@@ -1030,7 +1025,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         d = len(s.host_path) if isinstance(s, KVSlot) else 0
         if d < min_owned_depth:
             min_owned_depth = d
-    _invalidate_body_tail_chain(c, owned_ids, min_depth=min_owned_depth, recompute=True)
+    _invalidate_body_tail_chain(c, owned_ids, min_depth=min_owned_depth)
 
     # Unlink owned slots; transplant user-referenced subtrees to an
     # orphan Document. Keep entry_slots for AoTEntries whose AoT moves
@@ -2049,7 +2044,7 @@ def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     slot = ref.slot
     _scrub_owned_slots_via_backptrs([slot])
     min_depth = len(slot.host_path) if isinstance(slot, KVSlot) else 0
-    _invalidate_body_tail_chain(parent, {id(slot)}, min_depth=min_depth, recompute=True)
+    _invalidate_body_tail_chain(parent, {id(slot)}, min_depth=min_depth)
     owner = slot.owner_aot_entry
     if owner is not None:
         with contextlib.suppress(ValueError):
@@ -3172,7 +3167,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     # exactly what we want, since a binding ref to an AoT entry
     # header lives at every prefix container.
     union_owned_ids = {id(s) for s in union_owned}
-    _invalidate_body_tail_chain(parent, union_owned_ids, recompute=True)
+    _invalidate_body_tail_chain(parent, union_owned_ids)
 
     for owned in owned_per_entry:
         # Unlink in reverse order so the entry's leftmost slot (the
@@ -3287,7 +3282,7 @@ def replace_aot_entry_with_clone(
     )
 
 
-def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, Any] | None) -> None:
+def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, Any]) -> None:
     """Replace ``aot[index]`` in place.
 
     Keeps the entry's header slot and live `Table` view; just clears
@@ -3300,7 +3295,7 @@ def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, Any] | None) -> N
     entry_table = aot[_norm_aot_index(aot, index)]
     if body is entry_table:
         return
-    items = list(body.items()) if body is not None else []
+    items = list(body.items())
     entry_table.clear()
     for k, v in items:
         entry_table[k] = v
