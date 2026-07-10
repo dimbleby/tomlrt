@@ -1570,123 +1570,59 @@ def install_dotted_kv_slot(
 def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
     """Promote a purely-implicit container ``c`` to an explicit section.
 
-    Synthesises a ``[c._path]`` header before the first descendant
-    slot in doc-stream order, adopts that descendant's old leading
-    onto the synthetic header (preserving the existing seam-from-
-    above), and rewrites the descendant's leading to the document's
-    current inter-section separator style (compact or blank-line).
-    Then inserts ``key = value`` directly after the synthetic header.
+    When ``c`` has a descendant, inserts ``[c._path]`` immediately before
+    it and transfers the existing seam to the header. Otherwise appends the
+    new block inside the owning AoT entry or at document tail; structural
+    replacement moves it to the caller's saved anchor afterward.
 
-    Pre-condition: ``c`` is non-root, header-less, body-less, and has at
-    least one descendant binding ref.
+    Pre-condition: ``c`` is non-root, header-less, and body-less.
     """
     doc = c._attached_doc  # noqa: SLF001
-
-    if not c._refs:  # noqa: SLF001
-        # No descendants left — typically the position-preserving
-        # structural-replace path: the previous binding's slots
-        # were just deleted, leaving ``c`` purely implicit and
-        # empty. Append at end of doc; the outer caller's
-        # ``_move_slots_to_anchor`` will reposition the synthesised
-        # block at the captured anchor.
-        _synthesise_header_then_insert_kv_at_doc_tail(c, key, value)
-        return
-    anchor_slot = c._refs[0].slot  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
+    anchor_slot = c._refs[0].slot if c._refs else None  # noqa: SLF001
+    entry_slot_set: set[Slot] | None = None
 
-    # Build the synthetic header, moving the descendant's existing
-    # leading onto it (so the descendant's preamble / inter-section
-    # separator now precedes the header) and giving the descendant a
-    # fresh inter-section leading in the doc's current style.
-    adopted_leading = anchor_slot.leading
-    original_pred = anchor_slot._prev  # noqa: SLF001
-    new_descendant_leading = _build_section_leading(doc)
-    header_slot = _new_owned_section_header(c, leading=adopted_leading, doc=doc)
-    insert_before(anchor_slot, header_slot, doc)
-    recorder = doc._displaced_recorder  # noqa: SLF001
-    if recorder is not None:
-        recorder.append((anchor_slot, list(anchor_slot.leading.pieces), original_pred))
-    anchor_slot.leading = new_descendant_leading
+    if anchor_slot is not None:
+        adopted_leading = anchor_slot.leading
+        original_pred = anchor_slot._prev  # noqa: SLF001
+        new_descendant_leading = _build_section_leading(doc)
+        header_slot = _new_owned_section_header(c, leading=adopted_leading, doc=doc)
+        insert_before(anchor_slot, header_slot, doc)
+        recorder = doc._displaced_recorder  # noqa: SLF001
+        if recorder is not None:
+            recorder.append(
+                (anchor_slot, list(anchor_slot.leading.pieces), original_pred)
+            )
+        anchor_slot.leading = new_descendant_leading
+    else:
+        header_slot = _new_owned_section_header(
+            c, leading=_build_section_leading(doc), doc=doc
+        )
+        # Keep a new sub-section physically inside its owning AoT entry;
+        # otherwise append at document tail for the caller to reposition.
+        entry_last = _entry_last_slot(owner, doc) if owner is not None else None
+        if entry_last is not None:
+            insert_after(entry_last, header_slot, doc)
+        elif doc._tail is None:  # noqa: SLF001
+            insert_before_head(header_slot, doc)
+            header_slot.leading = Trivia()
+        else:
+            insert_after(doc._tail, header_slot, doc)  # noqa: SLF001
+        if isinstance(header_slot._prev, StructuralHeaderSlot):  # noqa: SLF001
+            header_slot.leading = Trivia()
+        if owner is not None and owner.entry_slots:
+            entry_slot_set = set(owner.entry_slots)
 
     # File a binding ref for the new header on every ancestor along
     # c._path. The ancestor d levels above c is keyed by c._path[-d].
-    ancestors = _ancestor_chain(c)
-    for d, anc in enumerate(ancestors, start=1):
+    for d, anc in enumerate(_ancestor_chain(c), start=1):
         local_key = c._path[-d]  # noqa: SLF001
         binding_ref = SlotRef(slot=header_slot, container=anc)
-        anchor_idx_anc = _find_ref_index_by_slot(anc, anchor_slot)
-        anc._refs.insert(anchor_idx_anc, binding_ref)  # noqa: SLF001
-        # Rebuild rather than append: the new ref sits before the
-        # descendant's existing binding ref, so it becomes the primary.
-        _rebuild_index_for_key(anc, local_key)
-
-    new_kv = _file_synthetic_header_and_kv(
-        c,
-        header_slot=header_slot,
-        key=key,
-        value=value,
-        doc=doc,
-        owner=owner,
-        header_ref_index=0,
-    )
-
-    # Add the synthesised header + KV to the entry's membership list
-    # (order within ``entry_slots`` is not doc-significant; the entry's
-    # own ``[[a]]`` header stays first because it was appended first).
-    _extend_entry_slots(owner, header_slot, new_kv)
-
-
-def _synthesise_header_then_insert_kv_at_doc_tail(
-    c: Container, key: str, value: Value
-) -> None:
-    """Append ``[c._path]`` + ``key = value`` at the end of the doc.
-
-    Used by the structural-replace path when ``c``'s previous
-    contributors were just deleted, leaving ``c`` empty and implicit.
-    The outer caller repositions the block to the captured anchor.
-    """
-    doc = c._attached_doc  # noqa: SLF001
-    owner = c._owner_aot_entry  # noqa: SLF001
-
-    header_slot = _new_owned_section_header(
-        c, leading=_build_section_leading(doc), doc=doc
-    )
-    # When ``c`` lives inside an AoT entry, the synthesised header
-    # MUST sit physically inside that entry's slot region (before the
-    # next sibling [[arr]] header), otherwise a re-parse would
-    # attribute it to the next entry. Anchor after the entry's last
-    # slot rather than ``doc._tail``.
-    entry_last = _entry_last_slot(owner, doc) if owner is not None else None
-    if entry_last is not None:
-        insert_after(entry_last, header_slot, doc)
-    elif doc._tail is None:  # noqa: SLF001
-        insert_before_head(header_slot, doc)
-        # Empty doc → no preceding header → drop the leading.
-        header_slot.leading = Trivia()
-    else:
-        anchor = doc._tail  # noqa: SLF001
-        insert_after(anchor, header_slot, doc)
-    # If the synthesised header now sits immediately after another
-    # structural header (the parent entry's own ``[[arr]]`` after
-    # its body was emptied, or any back-to-back ``[a]`` / ``[a.sub]``
-    # pair), drop the inter-section blank — there's no body to
-    # separate from.
-    if isinstance(header_slot._prev, StructuralHeaderSlot):  # noqa: SLF001
-        header_slot.leading = Trivia()
-
-    # When ``c`` lives inside an AoT entry, the synthesised header sits
-    # mid-doc-stream (between this entry's last slot and the next
-    # sibling ``[[arr]]`` entry). Each ancestor's ``_refs`` is
-    # doc-stream-ordered, so insert the binding ref after the entry's
-    # last owned ref rather than appending.
-    ancestors = _ancestor_chain(c)
-    entry_slot_set: set[Slot] | None = None
-    if owner is not None and owner.entry_slots:
-        entry_slot_set = set(owner.entry_slots)
-    for d, anc in enumerate(ancestors, start=1):
-        local_key = c._path[-d]  # noqa: SLF001
-        binding_ref = SlotRef(slot=header_slot, container=anc)
-        if entry_slot_set is not None:
+        if anchor_slot is not None:
+            insert_idx = _find_ref_index_by_slot(anc, anchor_slot)
+            anc._refs.insert(insert_idx, binding_ref)  # noqa: SLF001
+            _rebuild_index_for_key(anc, local_key)
+        elif entry_slot_set is not None:
             insert_idx = len(anc._refs)  # noqa: SLF001
             for i in range(len(anc._refs) - 1, -1, -1):  # noqa: SLF001
                 if anc._refs[i].slot in entry_slot_set:  # noqa: SLF001
@@ -1704,9 +1640,10 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         value=value,
         doc=doc,
         owner=owner,
-        header_ref_index=len(c._refs),  # noqa: SLF001
+        header_ref_index=0,
     )
 
+    # ``entry_slots`` is membership + header-first order, not doc order.
     _extend_entry_slots(owner, header_slot, new_kv)
 
 
