@@ -48,7 +48,7 @@ def _synth_deep_array(depth: int) -> str:
 
 def _synth_big_aot(rows: int) -> str:
     """Stress array-of-tables parsing: `rows` `[[items]]` entries."""
-    lines = []
+    lines: list[str] = []
     for i in range(rows):
         lines.extend(
             (

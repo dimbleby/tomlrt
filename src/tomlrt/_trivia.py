@@ -70,6 +70,24 @@ def has_comment(pieces: Iterable[TriviaPiece]) -> bool:
     return any(isinstance(p, CommentNode) for p in pieces)
 
 
+def leading_has_blank_line(leading: Trivia) -> bool:
+    r"""Whether ``leading`` contains at least one blank physical line.
+
+    A blank line is a line in the leading-trivia stream that contains
+    no comment piece. A comment-line newline (e.g. ``# foo\n``) does
+    not count as a blank — the newline belongs to the comment.
+    """
+    has_comment_piece = False
+    for piece in leading.pieces:
+        if isinstance(piece, CommentNode):
+            has_comment_piece = True
+        elif isinstance(piece, NewlineNode):
+            if not has_comment_piece:
+                return True
+            has_comment_piece = False
+    return False
+
+
 def has_newline(pieces: Iterable[TriviaPiece]) -> bool:
     """True iff ``pieces`` contains any ``NewlineNode``."""
     return any(isinstance(p, NewlineNode) for p in pieces)
@@ -397,6 +415,7 @@ __all__ = [
     "join_above_block",
     "join_leading_above",
     "leading_break_index",
+    "leading_has_blank_line",
     "restamp_bracket_pad_for_first",
     "retarget_eol_newline",
     "retarget_trivia_newlines",

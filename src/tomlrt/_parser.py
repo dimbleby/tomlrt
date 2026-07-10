@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal
 
 from tomlrt._scanner import _Scanner
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import Trivia, split_eol_section
+from tomlrt._trivia import Trivia, leading_has_blank_line, split_eol_section
 from tomlrt._validator import _Validator
 from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
 
@@ -35,6 +35,7 @@ class ParseResult:
     trailing: Trivia = field(default_factory=Trivia)
     newline: str = "\n"
     prelude: str = ""
+    section_blank_separated: bool = True
 
 
 class _Parser:
@@ -52,6 +53,7 @@ class _Parser:
         sc = self._sc
         src = sc.src
         end = sc.end
+        seen_header = False
 
         # TOML 1.1 permits a leading UTF-8 BOM only at document start.
         # Store it as Document prelude so slot/trivia mutations cannot
@@ -71,6 +73,11 @@ class _Parser:
             slot: Slot
             if ch == "[":
                 slot = self._parse_header(leading)
+                if seen_header:
+                    result.section_blank_separated = leading_has_blank_line(
+                        slot.leading
+                    )
+                seen_header = True
             else:
                 slot = self._parse_key_value(leading)
             result.slots.append(slot)

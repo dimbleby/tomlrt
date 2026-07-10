@@ -1235,7 +1235,6 @@ def test_append_aot_entry_from_overwritten_section_keeps_body() -> None:
     out = tomlrt.dumps(doc)
     assert out == td("""
         demo = "gadget"
-
         [[dst]]
         id = "KEEP-ME"
         """)
@@ -1268,7 +1267,6 @@ def test_append_aot_entry_from_overwritten_noncontiguous_section() -> None:
         demo = "gadget"
         [other]
         y = 1
-
         [[dst]]
         id = "KEEP-ME"
         """)
