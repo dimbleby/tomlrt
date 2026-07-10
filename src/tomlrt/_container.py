@@ -576,15 +576,31 @@ class Container(dict[str, Any]):
         )
         raise TypeError(msg)
 
-    def _insert_new(self, key: str, value: Any) -> None:
+    def _insert_new(
+        self,
+        key: str,
+        value: Any,
+        *,
+        reinstall_as_dotted: bool = False,
+    ) -> None:
         """Bind ``key`` for the first time at the document tail."""
         if is_scalar(value):
-            _layout_ops.append_direct_kv(self, key, coerce_scalar(value))
+            _layout_ops.append_direct_kv(
+                self,
+                key,
+                coerce_scalar(value),
+                reinstall_as_dotted=reinstall_as_dotted,
+            )
             dict.__setitem__(self, key, value)
             return
         if _is_synth_inline(value):
             cst, decoded = self._synth_local_value(key, value)
-            _layout_ops.append_direct_kv(self, key, cst)
+            _layout_ops.append_direct_kv(
+                self,
+                key,
+                cst,
+                reinstall_as_dotted=reinstall_as_dotted,
+            )
             dict.__setitem__(self, key, decoded)
             return
         if isinstance(value, AoT):

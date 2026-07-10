@@ -21,7 +21,6 @@ Design notes:
 from __future__ import annotations
 
 import contextlib
-import contextvars
 import copy
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -53,15 +52,6 @@ if TYPE_CHECKING:
     from tomlrt._slots import Slot
     from tomlrt._trivia import TriviaPiece
     from tomlrt._values import Value
-
-
-# Set by ``reposition_install`` while it reinstalls a binding that is
-# *replacing a dotted key* (rather than a header). ``append_direct_kv``
-# reads it to keep the dotted form on an emptied implicit container
-# instead of promoting it to an explicit ``[c]`` header.
-_reinstall_as_dotted: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "_reinstall_as_dotted", default=False
-)
 
 
 # ---------------------------------------------------------------------------
@@ -169,12 +159,12 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     reinstall_as_dotted = isinstance(old_primary, KVSlot)
     delete_key(parent, key)
     doc = parent._attached_doc  # noqa: SLF001
-    token = _reinstall_as_dotted.set(reinstall_as_dotted)
-    try:
-        with _record_install(doc) as new_slots, _record_displacements(doc) as displaced:
-            parent[key] = value
-    finally:
-        _reinstall_as_dotted.reset(token)
+    with _record_install(doc) as new_slots, _record_displacements(doc) as displaced:
+        parent._insert_new(  # noqa: SLF001
+            key,
+            value,
+            reinstall_as_dotted=reinstall_as_dotted,
+        )
     # An install can record a slot and then unlink it again before the
     # block ends (e.g. a synthetic placeholder header demoted by
     # ``_maybe_demote_synthetic_empty_header``). Drop those orphans:
@@ -695,7 +685,13 @@ def _file_body_ref(
     return new_ref
 
 
-def append_direct_kv(c: Container, key: str, value: Value) -> None:
+def append_direct_kv(
+    c: Container,
+    key: str,
+    value: Value,
+    *,
+    reinstall_as_dotted: bool = False,
+) -> None:
     """Append a fresh direct (non-dotted) KV to ``c``.
 
     Updates ``c._refs`` / ``_index`` / ``_body_tail`` and dict storage.
@@ -708,15 +704,14 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         # the previous header (or the doc root) established, not in
         # ``c``'s logical scope — semantic mismatch. Insert via a
         # dotted KV under the nearest header-bearing ancestor instead.
-        if c._body_tail is None and not _reinstall_as_dotted.get():  # noqa: SLF001
+        if c._body_tail is None and not reinstall_as_dotted:  # noqa: SLF001
             # ``c`` has no dotted body to anchor a dotted KV. Promote it
             # to an explicit ``[c]`` header: before its first descendant
             # header when it has one (``[a.b]`` ⇒ synthesise ``[a]``), or
             # as a fresh header when fully empty. The exception is a
-            # structural overwrite that is *replacing a dotted binding*
-            # (``_reinstall_as_dotted``) — there the original form was
-            # dotted, so we keep it dotted rather than introduce a
-            # header (see ``reposition_install``).
+            # structural overwrite that is replacing a dotted binding;
+            # there the original form stays dotted rather than gaining
+            # a header (see ``reposition_install``).
             _synthesise_header_then_insert_kv(c, key, value)
             return
         host = _nearest_header_host(c)
