@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Newly synthesized section headers use a stable blank-line convention
+  learned from the parsed document, rather than changing style when
+  structural edits change which headers remain.
+
 ## [2.0.1] - 2026-06-28
 
 ### Fixed

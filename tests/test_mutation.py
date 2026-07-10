@@ -6217,3 +6217,204 @@ def test_demote_synthetic_placeholder_then_sort_aot() -> None:
         [[tool.poetry]]
         x = 3
         """)
+
+
+# ---------------------------------------------------------------------------
+# Non-tail AoT append / section creation
+# ---------------------------------------------------------------------------
+#
+# Appending to an AoT, or creating a new section, splices the new header
+# relative to its own target's position — via ``_parent_subtree_tail``
+# for AoT append and the document's stable section-spacing convention —
+# independent of how much unrelated content follows the target elsewhere
+# in the document. These tests pin correctness of those code paths;
+# performance is covered by ``benchmarks/bench_mutate.py``.
+
+
+def test_aot_append_before_nested_subtree_and_trailing_section() -> None:
+    """Appending to a non-tail AoT lands after the last entry's whole
+    subtree — including a nested AoT — and before unrelated trailing
+    content."""
+    src = td("""
+        [[items]]
+        name = "first"
+
+        [[items]]
+        name = "last"
+
+        [[items.tags]]
+        label = "x"
+
+        [other]
+        k = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("items").append({"name": "new"})
+    assert tomlrt.dumps(doc) == td("""
+        [[items]]
+        name = "first"
+
+        [[items]]
+        name = "last"
+
+        [[items.tags]]
+        label = "x"
+
+        [[items]]
+        name = "new"
+
+        [other]
+        k = 1
+        """)
+
+
+def test_aot_append_before_trailing_section_reparses_identically() -> None:
+    """A non-tail append round-trips and re-parses to the same model."""
+    src = td("""
+        [[items]]
+        name = "first"
+
+        [other]
+        k = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("items").append({"name": "second"})
+    out = tomlrt.dumps(doc)
+    assert _reparses(out)
+    assert tomlrt.loads(out).to_dict() == doc.to_dict()
+
+
+def test_promote_implicit_table_inside_non_tail_aot_entry() -> None:
+    """Promoting an implicit table inside a non-last-in-doc AoT entry
+    lands inside that entry, ahead of unrelated trailing content."""
+    src = td("""
+        [[items]]
+        name = "x"
+
+        [other]
+        k = 1
+        """)
+    doc = tomlrt.loads(src)
+    entry = doc.aot("items")[0]
+    entry.install(("sub",), Table.section({"y": 1}))
+    assert tomlrt.dumps(doc) == td("""
+        [[items]]
+        name = "x"
+
+        [items.sub]
+        y = 1
+
+        [other]
+        k = 1
+        """)
+
+
+def test_new_section_header_after_mid_doc_header_insert() -> None:
+    """A new section created after an earlier, non-tail header insertion
+    follows the document's section-spacing convention.
+    """
+    src = td("""
+        [a]
+        x = 1
+
+        [middle]
+        y = 1
+        [b]
+        z = 2
+        """)
+    doc = tomlrt.loads(src)
+    # Mid-document: promote an implicit table under [a], physically
+    # inserted before [middle]/[b], not at the doc tail.
+    doc["a"].install(("sub",), Table.section({"w": 1}))
+    doc.install(("c",), Table.section({"v": 3}))
+    out = tomlrt.dumps(doc)
+    assert _reparses(out)
+    reloaded = tomlrt.loads(out)
+    assert reloaded["a"]["sub"]["w"] == 1
+    assert reloaded["c"]["v"] == 3
+    assert out == td("""
+        [a]
+        x = 1
+        [a.sub]
+        w = 1
+
+        [middle]
+        y = 1
+        [b]
+        z = 2
+        [c]
+        v = 3
+        """)
+
+
+def test_section_spacing_convention_survives_last_header_delete() -> None:
+    """Section spacing remains the convention learned from the source."""
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+
+        [c]
+        z = 3
+        """)
+    )
+    del doc["c"]
+    doc.install(("d",), Table.section({"w": 4}))
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+
+        [d]
+        w = 4
+        """)
+
+
+def test_compact_section_spacing_survives_deleting_to_one_header() -> None:
+    """A learned compact convention does not depend on header count."""
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
+    )
+    del doc["b"]
+    doc.install(("c",), Table.section({"z": 3}))
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+        [c]
+        z = 3
+        """)
+
+
+def test_new_section_on_freshly_parsed_document_with_no_headers() -> None:
+    """A parsed document with only root KVs (no headers at all) still
+    computes the first synthesised header's leading correctly."""
+    doc = tomlrt.loads("x = 1\n")
+    doc.install(("a",), Table.section({"y": 2}))
+    assert tomlrt.dumps(doc) == td("""
+        x = 1
+
+        [a]
+        y = 2
+        """)
+
+
+def test_repeated_section_install_after_large_trailing_content() -> None:
+    """Bulk section creation stays correct regardless of how much
+    unrelated content follows the insertion point."""
+    src = "[a]\nx = 1\n\n[other]\n" + "".join(f"k{i} = {i}\n" for i in range(500))
+    doc = tomlrt.loads(src)
+    for i in range(10):
+        doc.install((f"s{i}",), Table.section({"v": i}))
+    out = tomlrt.dumps(doc)
+    assert _reparses(out)
+    reloaded = tomlrt.loads(out)
+    for i in range(10):
+        assert reloaded[f"s{i}"]["v"] == i

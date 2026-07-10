@@ -58,6 +58,7 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
     has_comment,
+    leading_has_blank_line,
     retarget_trivia_newlines,
 )
 from tomlrt._typecheck import _validate_key, _validate_mapping
@@ -1071,7 +1072,7 @@ class Container(dict[str, Any]):
             if (
                 self._body_tail is not None
                 and new_header._prev is self._body_tail  # noqa: SLF001
-                and not _layout_ops._leading_has_blank_line(new_header.leading)  # noqa: SLF001
+                and not leading_has_blank_line(new_header.leading)
             ):
                 layout_root = self._layout_root
                 nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
@@ -1133,9 +1134,7 @@ class Container(dict[str, Any]):
             last_entry = result[-1]
             entry_record = last_entry._owner_aot_entry  # noqa: SLF001
             if entry_record is not None and entry_record.entry_slots:
-                last_slot = _layout_ops._entry_last_slot(  # noqa: SLF001
-                    entry_record, self._attached_doc
-                )
+                last_slot = _layout_ops._entry_last_slot(entry_record)  # noqa: SLF001
                 if (
                     isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
                     and saved_eol.comment is not None
@@ -1338,6 +1337,7 @@ class Document(Container):
         "_newline",
         "_preamble",
         "_prelude",
+        "_section_blank_separated",
         "_tail",
         "_trailing",
     )
@@ -1368,6 +1368,7 @@ class Document(Container):
         self._displaced_recorder: (
             list[tuple[Slot, list[TriviaPiece], Slot | None]] | None
         ) = None
+        self._section_blank_separated = True
         self._layout_root = self
         if data is not None:
             validated = _validate_mapping(data, label="Document data argument")

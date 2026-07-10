@@ -331,6 +331,7 @@ def build_from_parse(result: ParseResult) -> Document:
     doc._is_private = False  # noqa: SLF001
     doc._install_recorder = None  # noqa: SLF001
     doc._displaced_recorder = None  # noqa: SLF001
+    doc._section_blank_separated = result.section_blank_separated  # noqa: SLF001
     doc._layout_root = doc  # noqa: SLF001
     if result.slots:
         # The opening comment paragraph is the document preamble; the rest of

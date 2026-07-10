@@ -41,6 +41,7 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
     has_comment,
+    leading_has_blank_line,
 )
 from tomlrt._values import ArrayValue, InlineTableValue, make_keyparts
 
@@ -543,7 +544,7 @@ def _promote_trailing_to_preamble(doc: Document) -> None:
 def unlink_slot(
     slot: Slot, doc: Document, *, strip_new_head_leading: bool = True
 ) -> None:
-    """Remove ``slot`` from ``doc``'s linked list (does not touch caches).
+    """Remove ``slot`` from ``doc``'s linked list.
 
     When ``strip_new_head_leading`` is True (default), if the unlink
     promotes a successor to be the new doc head, leading blank-line
@@ -1348,24 +1349,6 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     return None
 
 
-def _leading_has_blank_line(leading: Trivia) -> bool:
-    r"""Whether ``leading`` contains at least one blank physical line.
-
-    A blank line is a line in the leading-trivia stream that contains
-    no comment piece. A comment-line newline (e.g. ``# foo\n``) does
-    not count as a blank — the newline belongs to the comment.
-    """
-    has_comment = False
-    for p in leading.pieces:
-        if isinstance(p, CommentNode):
-            has_comment = True
-        elif isinstance(p, NewlineNode):
-            if not has_comment:
-                return True
-            has_comment = False
-    return False
-
-
 def _peer_separator(prev_leading: Trivia | None, doc: Document) -> Trivia:
     """Mirror a peer's blank-gap when emitting a new structural sibling.
 
@@ -1379,7 +1362,7 @@ def _peer_separator(prev_leading: Trivia | None, doc: Document) -> Trivia:
     it with kind-specific peer lookup and any extra decoration (e.g.
     KV indent).
     """
-    if prev_leading is None or _leading_has_blank_line(prev_leading):
+    if prev_leading is None or leading_has_blank_line(prev_leading):
         return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
     return Trivia()
 
@@ -1585,7 +1568,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         )
         # Keep a new sub-section physically inside its owning AoT entry;
         # otherwise append at document tail for the caller to reposition.
-        entry_last = _entry_last_slot(owner, doc) if owner is not None else None
+        entry_last = _entry_last_slot(owner) if owner is not None else None
         if entry_last is not None:
             insert_after(entry_last, header_slot, doc)
         elif doc._tail is None:  # noqa: SLF001
@@ -1927,31 +1910,15 @@ def _retarget_header_separator(
 def _build_section_leading(doc: Document) -> Trivia:
     """Trivia for a fresh section header.
 
-    Empty doc → no leading; non-empty → mirror the most recent
-    structural-header's blank-gap. The first header in the doc is
-    treated as having an "implicit blank" peer (its own leading is
-    the file preamble, not a separator), so subsequent headers get
-    one blank line by default.
+    Empty doc → no leading; otherwise use the document's stable
+    structural-header spacing convention learned when it was parsed
+    (or the canonical blank-separated default for a fresh document).
     """
     if doc._head is None:  # noqa: SLF001
         return Trivia()
-    cur: Slot | None = doc._tail  # noqa: SLF001
-    last_header: StructuralHeaderSlot | None = None
-    while cur is not None:
-        if isinstance(cur, StructuralHeaderSlot):
-            last_header = cur
-            break
-        cur = cur._prev  # noqa: SLF001
-    if last_header is None:
+    if doc._section_blank_separated:  # noqa: SLF001
         return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
-    p: Slot | None = last_header._prev  # noqa: SLF001
-    while p is not None:
-        if isinstance(p, StructuralHeaderSlot):
-            return _peer_separator(last_header.leading, doc)
-        p = p._prev  # noqa: SLF001
-    # last_header is the first header in the doc; its leading is the
-    # preamble, not a peer separator. Treat as no-peer.
-    return _peer_separator(None, doc)
+    return Trivia()
 
 
 def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
@@ -2124,7 +2091,7 @@ def add_aot_entry(
 
     # Splice header after the last existing AoT-owned slot if any,
     # else at end-of-doc.
-    anchor = _aot_append_anchor(aot, doc)
+    anchor = _aot_append_anchor(aot)
     if anchor is None:
         _splice_at_end(header, doc)
     else:
@@ -2291,7 +2258,7 @@ def _install_cloned_aot_entry(
         owner=new_entry,
         cloned_header=cloned_header,
         cloned_slots=cloned_slots,
-        anchor=_aot_append_anchor(aot, doc),
+        anchor=_aot_append_anchor(aot),
     )
 
     list.append(aot, entry_table)
@@ -2941,27 +2908,15 @@ def _subtree_membership(c: Container) -> set[int]:
     return owned
 
 
-def _last_slot_in(doc: Document, owned: set[int]) -> Slot | None:
-    """Return the greatest-doc-stream-position slot with ``id in owned``, or None."""
-    cur: Slot | None = doc._tail  # noqa: SLF001
-    while cur is not None:
-        if id(cur) in owned:
-            return cur
-        cur = cur._prev  # noqa: SLF001
-    return None  # pragma: no cover -- doc-stream/_refs invariant
-
-
-def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
+def _aot_append_anchor(aot: AoT) -> Slot | None:
     """Return the slot a newly-appended ``[[path]]`` entry splices after.
 
     For a non-empty AoT this is the last *physical* slot of the last
     entry's whole subtree — including slots owned by nested ``[[a.sub]]``
-    AoT entries, which ``entry_slots`` deliberately excludes.
-
-    Derived from the doc-stream rather than ``entry_slots[-1]`` so
-    ``entry_slots`` ordering and non-contiguous subtrees cannot misplace
-    the append. Membership comes from ``_subtree_membership``; order
-    comes from a backward doc-stream walk.
+    AoT entries, which ``entry_slots`` deliberately excludes. Found via
+    ``_parent_subtree_tail``, a forward walk bounded by the entry's own
+    subtree extent — not by how much unrelated content follows it in the
+    document — so repeated appends to a non-tail AoT stay cheap.
 
     For an empty AoT (no entries, or all entries slot-less) the anchor
     is the parent container's subtree tail, so the first materialised
@@ -2974,7 +2929,7 @@ def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
         e = entry_table._owner_aot_entry  # noqa: SLF001
         if e is None or not e.entry_slots:
             continue
-        return _last_slot_in(doc, _subtree_membership(entry_table))
+        return _parent_subtree_tail(entry_table)
     parent = aot._parent  # noqa: SLF001
     if parent is None:  # pragma: no cover -- attached AoT always has a parent
         return None
@@ -2988,16 +2943,34 @@ def _aot_append_anchor(aot: AoT, doc: Document) -> Slot | None:
     return _parent_subtree_tail(host)
 
 
-def _entry_last_slot(entry: AoTEntry, doc: Document) -> Slot | None:
+def _entry_last_slot(entry: AoTEntry) -> Slot | None:
     """Return the entry's own slot with the greatest doc-stream position.
 
-    Derived from the doc-stream (membership of ``entry_slots`` + a
-    backward walk) rather than ``entry_slots[-1]``, so it is correct
-    regardless of the ``entry_slots`` list order — ``entry_slots`` is
-    maintained for membership and header-first order only, not doc
-    order. O(1) amortised when the entry sits at the document tail.
+    Excludes slots owned by nested ``[[a.sub]]`` AoT entries (those
+    have their own, separate ``AoTEntry.entry_slots``) — unlike
+    :func:`_aot_append_anchor`, which deliberately wants the *whole*
+    subtree tail. Walks forward from the entry's own header, bounded
+    by ``_belongs_to_parent_extent`` (the same predicate
+    :func:`_parent_subtree_tail` uses) so the search never depends on
+    unrelated content elsewhere in the document — only on how much is
+    physically nested inside this one entry. ``entry_slots`` need not
+    be doc-stream-contiguous (nested AoT children may interleave), so
+    the last in-extent slot that is also one of ``entry``'s own is
+    tracked separately from the walk's stopping condition.
     """
-    return _last_slot_in(doc, {id(s) for s in entry.entry_slots})
+    header = entry.entry_slots[0]
+    assert isinstance(header, StructuralHeaderSlot)
+    own_ids = {id(s) for s in entry.entry_slots}
+    result: Slot = header
+    cur: Slot = header
+    while cur._next is not None:  # noqa: SLF001
+        nxt = cur._next  # noqa: SLF001
+        if not _belongs_to_parent_extent(nxt, header.path, entry):
+            break
+        if id(nxt) in own_ids:
+            result = nxt
+        cur = nxt
+    return result
 
 
 _PopT = TypeVar("_PopT")
