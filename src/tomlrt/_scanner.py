@@ -64,7 +64,7 @@ def _is_ascii_digits(s: str) -> bool:
     ``str.isdigit`` and ``int(s)`` accept non-ASCII decimal digits, but
     TOML integer / float literals are restricted to ASCII.
     """
-    return bool(s) and all(c in _DEC_DIGITS for c in s)
+    return bool(s) and s.isascii() and s.isdecimal()
 
 
 # First character that ends a bare-value token.
