@@ -6309,6 +6309,23 @@ def test_promote_implicit_table_inside_non_tail_aot_entry() -> None:
         """)
 
 
+def test_overwrite_section_inside_aot_owned_implicit_table() -> None:
+    """A structural overwrite stages and restores its replacement block."""
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        [a.b.c]
+        x = 1
+        """)
+    )
+    doc.aot("a")[0].table("b")["c"] = 5
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        [a.b]
+        c = 5
+        """)
+
+
 def test_new_section_header_after_mid_doc_header_insert() -> None:
     """A new section created after an earlier, non-tail header insertion
     follows the document's section-spacing convention.

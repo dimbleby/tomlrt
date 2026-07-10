@@ -3528,7 +3528,7 @@ def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
     src = td("""
         # header comment
 
-        servers = [{ name = "a" }, { name = "b" }]  # tail
+        servers = [{ name = "a" }, { meta = { version = 1 }, name = "b" }]  # tail
         """)
     doc = tomlrt.loads(src)
     doc.promote_array("servers")
@@ -3540,8 +3540,15 @@ def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
         name = "a"
 
         [[servers]]
+        meta = { version = 1 }
         name = "b"  # tail
         """)
+
+
+def test_promote_array_moves_trailing_comment_to_header_only_entry() -> None:
+    doc = tomlrt.loads("servers = [{}]  # tail\n")
+    doc.promote_array("servers")
+    assert tomlrt.dumps(doc) == "[[servers]]  # tail\n"
 
 
 def test_aot_insert_at_zero_separates_from_following_entry() -> None:

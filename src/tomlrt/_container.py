@@ -1132,17 +1132,16 @@ class Container(dict[str, Any]):
                     ]
         if saved_eol is not None and len(result) > 0:
             last_entry = result[-1]
-            entry_record = last_entry._owner_aot_entry  # noqa: SLF001
-            if entry_record is not None and entry_record.entry_slots:
-                last_slot = _layout_ops._entry_last_slot(entry_record)  # noqa: SLF001
-                if (
-                    isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
-                    and saved_eol.comment is not None
-                    and last_slot.eol.comment is None
-                ):
-                    last_slot.eol.comment = saved_eol.comment
-                    if saved_eol.trailing_ws is not None:
-                        last_slot.eol.trailing_ws = saved_eol.trailing_ws
+            last_slot = _layout_ops._body_anchor(last_entry)  # noqa: SLF001
+            assert last_slot is not None
+            if (
+                isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
+                and saved_eol.comment is not None
+                and last_slot.eol.comment is None
+            ):
+                last_slot.eol.comment = saved_eol.comment
+                if saved_eol.trailing_ws is not None:
+                    last_slot.eol.trailing_ws = saved_eol.trailing_ws
         return result
 
 
