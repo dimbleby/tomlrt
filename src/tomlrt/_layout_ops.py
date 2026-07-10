@@ -2928,153 +2928,17 @@ def _populate_entry_views(
     target_prefix: tuple[str, ...],
     doc: Document,
 ) -> None:
-    """Walk cloned non-header slots, building child Container views.
+    """Build child views from a cloned subtree's non-root slots.
 
-    Mirrors the parser's slot-builder for an entry: KVs file refs into
-    their host container, sub-section headers create child Containers,
-    and nested ``[[a.b]]`` headers create/extend an `AoT` at the rebased
-    path so cross-doc graft preserves AoT structure.
-
-    Owner inheritance: every newly created container inherits its
-    parent's ``_owner_aot_entry``, matching parser behaviour for
-    implicit containers under an entry. The caller wires the root.
-
-    Decoded Python values are derived from each slot's (already
-    deep-cloned) ``Value`` via ``_decode_value``, never aliased from the
-    source dict.
+    The same root-relative slot builder handles initial parses and cloned
+    structural blocks, so path creation, AoT descent, ref filing, and value
+    decoding have one implementation.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._build import _decode_value  # noqa: PLC0415
-    from tomlrt._container import Table  # noqa: PLC0415
+    from tomlrt._build import _build_containers  # noqa: PLC0415
 
-    # path -> Container for every container in the entry sub-tree.
-    # When a new AoT entry opens, its descendant entries are evicted
-    # so re-opened sub-paths (e.g. ``[a.x.sub]`` repeated under each
-    # ``[[a.x]]`` entry) resolve to a fresh container per entry.
-    containers: dict[tuple[str, ...], Container] = {target_prefix: entry_table}
-
-    def _ensure_container(path: tuple[str, ...]) -> Container:
-        if path in containers:
-            return containers[path]
-        cur: Container = entry_table
-        cur_path = target_prefix
-        for comp in path[len(target_prefix) :]:
-            cur_path = (*cur_path, comp)
-            if cur_path in containers:
-                cur = containers[cur_path]
-                continue
-            existing = cur.get(comp)
-            if isinstance(existing, AoT) and existing:
-                cur = existing[-1]
-                containers[cur_path] = cur
-                continue
-            child = _init_implicit_table(
-                doc,
-                cur_path,
-                cur,
-                cur._owner_aot_entry,  # noqa: SLF001
-            )
-            containers[cur_path] = child
-            dict.__setitem__(cur, comp, child)
-            cur = child
-        return cur
-
-    def _evict_subtree(prefix: tuple[str, ...]) -> None:
-        """Drop cached descendants of ``prefix`` (exclusive).
-
-        Called when a new AoT entry opens — the previous entry's
-        ``[a.x.sub]`` containers must not be reused by a later
-        ``[a.x.sub]`` belonging to the new entry.
-        """
-        n = len(prefix)
-        stale = [p for p in containers if len(p) > n and p[:n] == prefix]
-        for p in stale:
-            del containers[p]
-
-    for s in cloned_slots:
-        if isinstance(s, StructuralHeaderSlot):
-            if s.kind == "aot-entry":
-                assert s.entry is not None
-                aot_path = s.path
-                parent_view = _ensure_container(aot_path[:-1])
-                name = aot_path[-1]
-                aot = parent_view.get(name)
-                if aot is None:
-                    aot = AoT()
-                    aot._layout_root = doc  # noqa: SLF001
-                    aot._path = aot_path  # noqa: SLF001
-                    aot._parent = parent_view  # noqa: SLF001
-                    dict.__setitem__(parent_view, name, aot)
-                assert isinstance(aot, AoT)
-                ent_table = Table()
-                ent_table._wire(  # noqa: SLF001
-                    layout_root=doc,
-                    parent=parent_view,
-                    path=aot_path,
-                    owner=s.entry,
-                )
-                ent_table._header_ref = record_ref(ent_table, s)  # noqa: SLF001
-                ent_table._body_tail = s  # noqa: SLF001
-                record_ref(parent_view, s)
-                list.append(aot, ent_table)
-                _evict_subtree(aot_path)
-                containers[aot_path] = ent_table
-                continue
-            assert s.kind == "table"
-            container = _ensure_container(s.path)
-            container._header_ref = record_ref(container, s)  # noqa: SLF001
-            if s.path == target_prefix:
-                continue
-            parent_view = _ensure_container(s.path[:-1])
-            record_ref(parent_view, s)
-            continue
-        assert isinstance(s, KVSlot)
-        host = _ensure_container(s.host_path)
-        slot_value = s.value
-        host_owner = host._owner_aot_entry  # noqa: SLF001
-        if len(s.key_parts) == 1:
-            key = s.key_parts[0].value
-            kv_ref = SlotRef(slot=s, container=host)
-            _file_ref_at_tail(host, kv_ref)
-            decoded = _decode_value(
-                slot_value,
-                layout_root=doc,
-                parent=host,
-                path=(*host._path, key),  # noqa: SLF001
-                owner=host_owner,
-            )
-            dict.__setitem__(host, key, decoded)
-        else:
-            cur = host
-            for kp in s.key_parts[:-1]:
-                comp = kp.value
-                ref = SlotRef(slot=s, container=cur)
-                _file_ref_at_tail(cur, ref)
-                if comp not in cur:
-                    sub = _init_implicit_table(
-                        doc,
-                        (*cur._path, comp),  # noqa: SLF001
-                        cur,
-                        host_owner,
-                    )
-                    containers[sub._path] = sub  # noqa: SLF001
-                    dict.__setitem__(cur, comp, sub)
-                nxt = dict.__getitem__(cur, comp)
-                if not isinstance(nxt, Table):  # pragma: no cover
-                    msg = "internal: dotted KV traversal hit non-Table"
-                    raise AssertionError(msg)  # noqa: TRY004
-                cur = nxt
-            leaf_key = s.key_parts[-1].value
-            kv_ref = SlotRef(slot=s, container=cur)
-            _file_ref_at_tail(cur, kv_ref)
-            decoded = _decode_value(
-                slot_value,
-                layout_root=doc,
-                parent=cur,
-                path=(*cur._path, leaf_key),  # noqa: SLF001
-                owner=host_owner,
-            )
-            dict.__setitem__(cur, leaf_key, decoded)
+    assert entry_table._path == target_prefix  # noqa: SLF001
+    assert entry_table._layout_root is doc  # noqa: SLF001
+    _build_containers(entry_table, cloned_slots)
 
 
 def attach_section_at(
