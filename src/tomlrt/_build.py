@@ -76,10 +76,12 @@ def _resolve_parent(
     """Resolve ``path``'s parent + final component, recording ancestor refs."""
     root_path = root._path  # noqa: SLF001
     assert path[: len(root_path)] == root_path
-    parent_chain = _resolve_chain(root, path[len(root_path) : -1])
-    for ancestor in parent_chain:
-        record_ref(ancestor, header)
-    return parent_chain[-1], path[-1]
+    parent = root
+    record_ref(parent, header)
+    for name in path[len(root_path) : -1]:
+        parent = _resolve_table_child(parent, name, descend_aot=True)
+        record_ref(parent, header)
+    return parent, path[-1]
 
 
 def _finish_opened_table(table: Table, header: StructuralHeaderSlot) -> Table:
@@ -135,56 +137,39 @@ def _open_aot_entry(
     return _finish_opened_table(table, header)
 
 
-def _resolve_chain(root: Container, prefix: tuple[str, ...]) -> list[Container]:
-    """Return the container chain ``[root, root.a, root.a.b, ...]`` for prefix.
-
-    Creates implicit containers as needed. For an AoT prefix, descends
-    into the most recent entry. The returned list always has length
-    ``len(prefix) + 1``.
-    """
-    return _resolve_table_chain(root, prefix, descend_aot=True)
-
-
-def _resolve_table_chain(
-    start: Container,
-    parts: tuple[str, ...],
+def _resolve_table_child(
+    parent: Container,
+    name: str,
     *,
     owner: AoTEntry | None = None,
     inline: bool = False,
     descend_aot: bool = False,
-) -> list[Container]:
-    """Resolve or create a table chain beneath ``start``.
+) -> Table:
+    """Resolve or create one table step beneath ``parent``.
 
     Header paths descend through the latest AoT entry and inherit its owner.
-    Dotted KV and inline-table paths reject AoTs and use the owner supplied
-    by their caller.
+    Dotted KV and inline-table paths reject AoTs and use ``owner``.
     """
-    chain = [start]
-    cur = start
-    for name in parts:
-        sub = cur.get(name)
-        if sub is None:
-            child = _make_table(
-                cur,
-                (*cur._path, name),  # noqa: SLF001
-                owner=cur._owner_aot_entry if descend_aot else owner,  # noqa: SLF001
-            )
-            child._inline = inline  # noqa: SLF001
-            dict.__setitem__(cur, name, child)
-            cur = child
-        elif isinstance(sub, Table):
-            cur = sub
-        elif descend_aot and isinstance(sub, AoT):
-            assert sub, "validator should have rejected empty-AoT prefix"
-            cur = sub[-1]
-        else:  # pragma: no cover -- parser validator rejects path collisions
-            msg = (
-                f"path component {name!r} is bound to "
-                f"{type(sub).__name__}, not a table (validator drift)"
-            )
-            raise AssertionError(msg)
-        chain.append(cur)
-    return chain
+    sub = parent.get(name)
+    if sub is None:
+        child = _make_table(
+            parent,
+            (*parent._path, name),  # noqa: SLF001
+            owner=parent._owner_aot_entry if descend_aot else owner,  # noqa: SLF001
+        )
+        child._inline = inline  # noqa: SLF001
+        dict.__setitem__(parent, name, child)
+        return child
+    if isinstance(sub, Table):
+        return sub
+    if descend_aot and isinstance(sub, AoT):
+        assert sub, "validator should have rejected empty-AoT prefix"
+        return sub[-1]
+    msg = (  # pragma: no cover -- parser validator rejects path collisions
+        f"path component {name!r} is bound to "
+        f"{type(sub).__name__}, not a table (validator drift)"
+    )
+    raise AssertionError(msg)  # pragma: no cover
 
 
 def _make_table(
@@ -217,21 +202,22 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
     cascades through ``host._layout_root``.
     """
     parts = slot.key_parts
-    # Logical chain for dotted-KV intermediates: host -> ... -> leaf parent.
-    leaf_chain = _resolve_table_chain(
-        host,
-        tuple(part.value for part in parts[:-1]),
-        owner=slot.owner_aot_entry,
-    )
-    target = leaf_chain[-1]
+    target = host
+    record_ref(target, slot)
+    maybe_advance_body_tail(target, slot)
+    for part in parts[:-1]:
+        target = _resolve_table_child(
+            target,
+            part.value,
+            owner=slot.owner_aot_entry,
+        )
+        record_ref(target, slot)
+        maybe_advance_body_tail(target, slot)
     name = parts[-1].value
     assert name not in target, (
         f"duplicate key {name!r} reached builder under {target._path}; "  # noqa: SLF001
         "validator drift"
     )
-    for ancestor in leaf_chain:
-        record_ref(ancestor, slot)
-        maybe_advance_body_tail(ancestor, slot)
     dict.__setitem__(
         target,
         name,
@@ -311,9 +297,9 @@ def _decode_inline_table(
     table._value = value  # noqa: SLF001
     for entry in value.items:
         decoded_key = entry.key_path
-        cur = _resolve_table_chain(table, decoded_key[:-1], owner=owner, inline=True)[
-            -1
-        ]
+        cur = table
+        for name in decoded_key[:-1]:
+            cur = _resolve_table_child(cur, name, owner=owner, inline=True)
         leaf = decoded_key[-1]
         assert leaf not in cur, (
             f"duplicate inline-table key {leaf!r} reached builder; validator drift"
