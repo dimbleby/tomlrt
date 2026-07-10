@@ -370,6 +370,10 @@ class EolTrivia:
     newline: NewlineNode | None
 
     def render(self) -> str:
+        # Fast path: the overwhelming majority of lines carry no
+        # trailing whitespace or comment, just a bare newline (or EOF).
+        if self.trailing_ws is None and self.comment is None:
+            return self.newline.text if self.newline is not None else ""
         out: list[str] = []
         if self.trailing_ws is not None:
             out.append(self.trailing_ws.text)
