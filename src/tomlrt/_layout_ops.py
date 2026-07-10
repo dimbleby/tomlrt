@@ -613,9 +613,11 @@ def _splice_body_slot(
     (the seam case), where ancestor refs must go at index 0.
     """
     if anchor_body_tail is not None:
+        _ensure_terminator(anchor_body_tail, doc)
         insert_after(anchor_body_tail, new_slot, doc)
         return False
     if anchor_header_ref is not None:
+        _ensure_terminator(anchor_header_ref.slot, doc)
         insert_after(anchor_header_ref.slot, new_slot, doc)
         return False
     if doc._head is not None:  # noqa: SLF001
@@ -725,12 +727,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
             leaf_parent=c,
         )
         return
-    if c._owner_aot_entry is not None and c._header_ref is not None:  # noqa: SLF001
-        # Body inserts work like a normal header-bearing container, plus
-        # entry_slots membership maintenance.
-        _append_kv_in_aot_entry(c, key, value)
-        return
-    if c._owner_aot_entry is not None:  # noqa: SLF001
+    if c._owner_aot_entry is not None and c._header_ref is None:  # noqa: SLF001
         msg = "insert into AoT entry sub-table body is not yet supported"
         raise NotImplementedError(msg)
     doc = c._attached_doc  # noqa: SLF001
@@ -757,6 +754,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         local_key=key,
     )
     c._body_tail = new_slot  # noqa: SLF001
+    _extend_entry_slots(c._owner_aot_entry, new_slot)  # noqa: SLF001
 
 
 def _invalidate_body_tail_chain(
@@ -1647,38 +1645,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     _extend_entry_slots(owner, header_slot, new_kv)
 
 
-def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
-    """Append a direct KV in an AoT-entry root container's body.
-
-    Mirrors the header-bearing path in `append_direct_kv` but also
-    keeps the entry's `entry_slots` list in doc-stream order.
-    """
-    doc = c._attached_doc  # noqa: SLF001
-    owner = c._owner_aot_entry  # noqa: SLF001
-    assert owner is not None
-    body_tail = c._body_tail  # noqa: SLF001
-    header_ref = c._header_ref  # noqa: SLF001
-    assert header_ref is not None
-
-    new_slot = _build_kv_slot(c, key, value, doc)
-    anchor: Slot = body_tail if body_tail is not None else header_ref.slot
-    _ensure_terminator(anchor, doc)
-    insert_after(anchor, new_slot, doc)
-
-    new_ref = SlotRef(slot=new_slot, container=c)
-    if body_tail is not None:
-        anchor_idx = _find_ref_index_by_slot(c, body_tail)
-        c._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
-    else:
-        c._refs.append(new_ref)  # noqa: SLF001
-    c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
-    c._body_tail = new_slot  # noqa: SLF001
-
-    # Add to the entry's membership list (order is not doc-significant;
-    # see ``_entry_last_slot``).
-    owner.entry_slots.append(new_slot)
-
-
 def _ensure_terminator(slot: Slot, doc: Document) -> None:
     """Give ``slot`` a trailing newline if it lacks one (no-final-newline doc)."""
     if isinstance(slot, (KVSlot, StructuralHeaderSlot)) and slot.eol.newline is None:
@@ -2198,7 +2164,7 @@ def add_aot_entry(
             path=(*path, k),
             owner=entry,
         )
-        _append_kv_in_aot_entry(entry_table, k, cst)
+        append_direct_kv(entry_table, k, cst)
         dict.__setitem__(entry_table, k, dec)
     return entry_table
 
