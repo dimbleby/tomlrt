@@ -674,13 +674,19 @@ def _file_body_ref(
     new_ref = SlotRef(slot=new_slot, container=anc)
     assert new_ref.local_key == local_key
     refs = anc._refs  # noqa: SLF001
+    bucket = anc._index.setdefault(local_key, [])  # noqa: SLF001
+    if refs and refs[-1].slot is anchor_slot:
+        # Common case: sequential tail append. Skip the index search
+        # and bucket projection below.
+        refs.append(new_ref)
+        bucket.append(new_ref)
+        return new_ref
     if anchor_slot is not None and any(r.container is anc for r in anchor_slot._refs):  # noqa: SLF001
         insert_idx = _find_ref_index_by_slot(anc, anchor_slot) + 1
     elif inserted_at_head and refs:
         insert_idx = 0
     else:
         insert_idx = len(refs)
-    bucket = anc._index.setdefault(local_key, [])  # noqa: SLF001
     bucket_idx = _project_bucket_index(refs, bucket, insert_idx)
     refs.insert(insert_idx, new_ref)
     bucket.insert(bucket_idx, new_ref)
