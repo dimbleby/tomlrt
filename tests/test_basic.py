@@ -370,6 +370,10 @@ def test_parse_error_is_value_error() -> None:
         ("[a]\n[[a]]\n", r"cannot redefine table 'a' as an array-of-tables"),
         ("[[a]]\n[a]\n", r"cannot redefine array-of-tables 'a' as a normal table"),
         ("[a.b]\n[[a]]\n", r"already used as an implicit table"),
+        (
+            "[x]\na.b = 1\n[x.a.e]\n[x.a]\n",
+            r"cannot define 'x\.a' as a table: already created via dotted keys",
+        ),
         # Header / value-path conflicts.
         ("a = 1\n[a]\n", r"cannot define 'a' as a table: already defined as a value"),
         ("a = 1\n[a.b]\n", r"cannot use 'a' as a table: already defined as a value"),
