@@ -2856,6 +2856,94 @@ def test_promote_array_converts_inline_to_aot() -> None:
     assert isinstance(doc.aot("packages"), tomlrt.AoT)
 
 
+def test_promote_inline_preserves_entry_cst() -> None:
+    doc = tomlrt.loads(
+        "pkg = { hex = 0xFF, literal = 'text', "
+        'dotted . "key" = 1_000, nested = { value=0o17 }, values = [ 1,2 ] }\n',
+    )
+    doc.promote_inline("pkg")
+    assert tomlrt.dumps(doc) == td("""
+        [pkg]
+        hex = 0xFF
+        literal = 'text'
+        dotted . "key" = 1_000
+        nested = { value=0o17 }
+        values = [ 1,2 ]
+        """)
+
+
+def test_promote_array_preserves_entry_cst() -> None:
+    doc = tomlrt.loads(
+        "packages = [{hex=0xA, nested={ v = 1_000}}, "
+        "{literal='x', dotted.key=+1}] # tail\n",
+    )
+    doc.promote_array("packages")
+    assert tomlrt.dumps(doc) == td("""
+        [[packages]]
+        hex = 0xA
+        nested = { v = 1_000}
+
+        [[packages]]
+        literal = 'x'
+        dotted.key = +1 # tail
+        """)
+
+
+def test_promote_inline_preserves_dotted_composite_values() -> None:
+    doc = tomlrt.loads(
+        "pkg = { dotted.nested = {x=0x1}, dotted.values = [ 1,2] }\n",
+    )
+    doc.promote_inline("pkg")
+    assert tomlrt.dumps(doc) == td("""
+        [pkg]
+        dotted.nested = {x=0x1}
+        dotted.values = [ 1,2]
+        """)
+
+
+def test_promote_inline_preserves_crlf() -> None:
+    doc = tomlrt.loads("pkg = { hex = 0xFF, literal = 'text' }\r\n")
+    doc.promote_inline("pkg")
+    assert tomlrt.dumps(doc) == "[pkg]\r\nhex = 0xFF\r\nliteral = 'text'\r\n"
+
+
+def test_promoted_values_do_not_alias_displaced_views() -> None:
+    inline_doc = tomlrt.loads(
+        "pkg = { hex = 0xFF, values = [1], nested = {x=2}}\n",
+    )
+    old_inline = inline_doc.table("pkg")
+    old_inline_values = old_inline.array("values")
+    old_inline_nested = old_inline.table("nested")
+    inline_doc.promote_inline("pkg")
+    old_inline["hex"] = 5
+    old_inline_values.append(3)
+    old_inline_nested["x"] = 9
+    assert tomlrt.dumps(inline_doc) == td("""
+        [pkg]
+        hex = 0xFF
+        values = [1]
+        nested = {x=2}
+        """)
+
+    array_doc = tomlrt.loads(
+        "pkg = [{ hex = 0xFF, values = [1], nested = {x=2}}]\n",
+    )
+    old_array = array_doc.array("pkg")
+    old_entry = old_array.table(0)
+    old_array_values = old_entry.array("values")
+    old_array_nested = old_entry.table("nested")
+    array_doc.promote_array("pkg")
+    old_entry["hex"] = 5
+    old_array_values.append(3)
+    old_array_nested["x"] = 9
+    assert tomlrt.dumps(array_doc) == td("""
+        [[pkg]]
+        hex = 0xFF
+        values = [1]
+        nested = {x=2}
+        """)
+
+
 def test_promote_array_rejects_empty_array() -> None:
     doc = tomlrt.loads("a = []\n")
     with pytest.raises(tomlrt.TOMLError, match="empty array"):

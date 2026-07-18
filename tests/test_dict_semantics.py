@@ -276,15 +276,22 @@ def test_replace_value_invalidates_old_wrapper() -> None:
 
 def test_inline_promotion_returns_dict_storage_object() -> None:
     doc = tomlrt.loads('pkg = { name = "x" }\n')
+    previous = doc.table("pkg")
     promoted = doc.promote_inline("pkg")
     assert promoted is doc["pkg"]
+    assert promoted is not previous
     assert isinstance(doc["pkg"], dict)
 
 
 def test_aot_promotion_returns_dict_storage_object() -> None:
     doc = tomlrt.loads("xs = [{ k = 1 }, { k = 2 }]\n")
+    previous = doc.array("xs")
+    previous_entries = list(previous)
     promoted = doc.promote_array("xs")
     assert promoted is doc["xs"]
+    assert all(
+        new is not old for new, old in zip(promoted, previous_entries, strict=True)
+    )
 
 
 def test_del_then_assign_section_does_not_revive_held_ref() -> None:

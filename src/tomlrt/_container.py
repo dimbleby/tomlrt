@@ -1054,13 +1054,16 @@ class Container(dict[str, Any]):
                 f"comments that would be lost"
             )
             raise TOMLError(msg)
+        value = cur._value  # noqa: SLF001
+        assert isinstance(value, InlineTableValue)
+        entries = _layout_ops.prepare_promoted_inline_entries(value.items)
         # Transfer the existing KV slot's leading + eol to the header.
         saved_leading, saved_eol = _direct_kv_trivia(self, key)
-        snapshot = cur.to_dict()
         _layout_ops.delete_key(self, key)
-        self[key] = Table.section(snapshot)
+        self[key] = Table.section()
         result = dict.__getitem__(self, key)
         assert isinstance(result, Table)
+        _layout_ops.populate_promoted_inline_entries(result, entries)
         new_header = result._header_ref.slot if result._header_ref else None  # noqa: SLF001
         if isinstance(new_header, StructuralHeaderSlot):
             if saved_leading is not None:
@@ -1110,13 +1113,23 @@ class Container(dict[str, Any]):
                         f"comments that would be lost"
                     )
                     raise TOMLError(msg)
-        snapshot = cur.to_list()
+        value = cur._value  # noqa: SLF001
+        assert isinstance(value, ArrayValue)
+        entries: list[list[tuple[InlineTableEntry, Value]]] = []
+        for item in value.items:
+            assert isinstance(item.value, InlineTableValue)
+            entries.append(
+                _layout_ops.prepare_promoted_inline_entries(item.value.items)
+            )
         # Carry the original KV slot's leading/eol onto the promoted AoT.
         saved_leading, saved_eol = _direct_kv_trivia(self, key)
         _layout_ops.delete_key(self, key)
-        self[key] = AoT(snapshot)
+        self[key] = AoT()
         result = dict.__getitem__(self, key)
         assert isinstance(result, AoT)
+        for body in entries:
+            entry = _layout_ops.add_aot_entry(result, None)
+            _layout_ops.populate_promoted_inline_entries(entry, body)
         # Apply saved leading to the first entry header and saved eol to
         # the last entry's last slot.
         if saved_leading is not None and len(result) > 0:
