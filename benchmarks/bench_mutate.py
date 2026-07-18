@@ -2,10 +2,10 @@
 
 """Manipulation-throughput benchmark.
 
-Times common edit workflows over a parsed document — append AoT
-entry, deep set, scalar update, structural replace — followed by
-re-render. The aim is to surface regressions in the mutation path,
-which the parse-only benchmarks do not exercise.
+Times common edits over freshly parsed documents, with setup outside the
+timed region. Parse/render workflows are labelled explicitly. The aim is to
+surface regressions in the mutation path, which the parse-only benchmarks do
+not exercise.
 
 Usage:
 
@@ -105,10 +105,8 @@ def _bench_with_setup(
 ) -> None:
     """Like :func:`_bench`, but ``setup()`` runs *outside* the timer.
 
-    Used where the closure under test needs a freshly parsed document
-    each iteration (mutation is not idempotent) but a large trailing
-    document body would otherwise let one-time parse cost swamp the
-    mutation cost being measured.
+    Used where the closure under test needs fresh state each iteration
+    because mutation is not idempotent.
     """
     timings: list[float] = []
     for _ in range(repeats):
@@ -152,12 +150,10 @@ def main() -> None:
         doc["project"]["version"] = "9.9.9"
         tomlrt.dumps(doc)
 
-    def append_aot_entry() -> None:
-        doc = tomlrt.loads(aot_src)
+    def append_aot_entry(doc: Document) -> None:
         aot = doc.aot("items")
         for i in range(50):
             aot.append({"name": f"new-{i}", "value": 1000 + i})
-        tomlrt.dumps(doc)
 
     def append_non_tail_aot_entry(doc: Document) -> None:
         aot = doc.aot("items")
@@ -175,34 +171,26 @@ def main() -> None:
     def overwrite_section_inside_aot_entry(doc: Document) -> None:
         doc.aot("a")[0].table("b")["c"] = 5
 
-    def deep_set_new_section() -> None:
-        doc = tomlrt.loads(section_src)
+    def deep_set_new_section(doc: Document) -> None:
         for i in range(20):
             doc.install(("new", f"s{i}"), tomlrt.Table.section({"x": i}))
-        tomlrt.dumps(doc)
 
-    def bulk_kv_update() -> None:
-        doc = tomlrt.loads(section_src)
+    def bulk_kv_update(doc: Document) -> None:
         for s in range(50):
             sec = doc.table(f"s{s}")
             for k in range(20):
                 sec[f"k{k}"] = k * 10
-        tomlrt.dumps(doc)
 
-    def build_section_new_keys() -> None:
-        doc = tomlrt.loads("[t]\n")
+    def build_section_new_keys(doc: Document) -> None:
         sec = doc["t"]
         for i in range(1000):
             sec[f"k{i}"] = i
-        tomlrt.dumps(doc)
 
-    def delete_kvs() -> None:
-        doc = tomlrt.loads(section_src)
+    def delete_kvs(doc: Document) -> None:
         for s in range(50):
             sec = doc.table(f"s{s}")
             del sec["k0"]
             del sec["k1"]
-        tomlrt.dumps(doc)
 
     def render_only() -> None:
         tomlrt.dumps(doc_pyproject)
@@ -211,8 +199,13 @@ def main() -> None:
 
     _bench("parse + render: pyproject.toml", parse_and_render_pyproject, repeats=500)
     _bench("render only: pyproject.toml", render_only, repeats=2000)
-    _bench("update scalar in pyproject", update_scalar, repeats=500)
-    _bench("append 50 AoT entries (base 500)", append_aot_entry, repeats=200)
+    _bench("parse + update + render: pyproject", update_scalar, repeats=500)
+    _bench_with_setup(
+        "append 50 AoT entries (base 500)",
+        lambda: tomlrt.loads(aot_src),
+        append_aot_entry,
+        repeats=200,
+    )
     _bench_with_setup(
         "append 20 entries, non-tail AoT (20k trailing)",
         lambda: tomlrt.loads(aot_trailing_src),
@@ -237,10 +230,30 @@ def main() -> None:
         overwrite_section_inside_aot_entry,
         repeats=50,
     )
-    _bench("install 20 new sections", deep_set_new_section, repeats=200)
-    _bench("bulk update 1000 KVs", bulk_kv_update, repeats=100)
-    _bench("build section with 1000 new keys", build_section_new_keys, repeats=100)
-    _bench("delete 100 KVs", delete_kvs, repeats=200)
+    _bench_with_setup(
+        "install 20 new sections (base 1k KVs)",
+        lambda: tomlrt.loads(section_src),
+        deep_set_new_section,
+        repeats=200,
+    )
+    _bench_with_setup(
+        "bulk update 1000 KVs",
+        lambda: tomlrt.loads(section_src),
+        bulk_kv_update,
+        repeats=100,
+    )
+    _bench_with_setup(
+        "build section with 1000 new keys",
+        lambda: tomlrt.loads("[t]\n"),
+        build_section_new_keys,
+        repeats=100,
+    )
+    _bench_with_setup(
+        "delete 100 KVs (base 1k KVs)",
+        lambda: tomlrt.loads(section_src),
+        delete_kvs,
+        repeats=200,
+    )
 
 
 if __name__ == "__main__":
