@@ -226,7 +226,7 @@ def main() -> None:
         repeats=50,
     )
     _bench_with_setup(
-        "promote inline table with 1k fields",
+        "promote array: one table with 1k fields",
         lambda: tomlrt.loads(large_inline_array_src),
         promote_large_inline_array,
         repeats=100,

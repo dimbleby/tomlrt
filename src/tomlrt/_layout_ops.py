@@ -43,7 +43,11 @@ from tomlrt._trivia import (
     has_comment,
     leading_has_blank_line,
 )
-from tomlrt._values import ArrayValue, InlineTableValue, make_keyparts
+from tomlrt._values import (
+    ArrayValue,
+    InlineTableValue,
+    make_keyparts,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -52,7 +56,7 @@ if TYPE_CHECKING:
     from tomlrt._container import Container, Document, Table
     from tomlrt._slots import Slot
     from tomlrt._trivia import TriviaPiece
-    from tomlrt._values import Value
+    from tomlrt._values import InlineTableEntry, KeyPart, Value
 
 
 # ---------------------------------------------------------------------------
@@ -699,6 +703,8 @@ def append_direct_kv(
     value: Value,
     *,
     reinstall_as_dotted: bool = False,
+    key_parts: Sequence[KeyPart] | None = None,
+    key_seps: Sequence[str] | None = None,
 ) -> None:
     """Append a fresh direct (non-dotted) KV to ``c``.
 
@@ -735,7 +741,14 @@ def append_direct_kv(
     body_tail = c._body_tail  # noqa: SLF001
     header_ref = c._header_ref  # noqa: SLF001
 
-    new_slot = _build_kv_slot(c, key, value, doc)
+    new_slot = _build_kv_slot(
+        c,
+        key,
+        value,
+        doc,
+        key_parts=key_parts,
+        key_seps=key_seps,
+    )
 
     inserted_at_head = _splice_body_slot(
         new_slot,
@@ -1417,19 +1430,19 @@ def _new_kv_slot(
     doc: Document,
     owner: AoTEntry | None,
     leading: Trivia,
+    key_parts: Sequence[KeyPart] | None = None,
+    key_seps: Sequence[str] | None = None,
 ) -> KVSlot:
     """Synthesise a fresh KV slot (recorded when spliced, not here).
 
-    ``key_parts`` and ``key_seps`` are derived from ``key`` in the
-    canonical synthetic form (``make_keypart`` per segment, ``.`` as
-    separator). Mutation-side construction is the only caller, so the
-    parser's source-text-preserving spelling is not needed here.
+    By default ``key_parts`` and ``key_seps`` use canonical synthetic
+    spelling. Callers moving an existing value may supply source spelling.
     """
     return KVSlot(
         leading=leading,
         host_path=host_path,
-        key_parts=make_keyparts(key),
-        key_seps=["."] * (len(key) - 1),
+        key_parts=make_keyparts(key) if key_parts is None else list(key_parts),
+        key_seps=["."] * (len(key) - 1) if key_seps is None else list(key_seps),
         pre_eq=" ",
         post_eq=" ",
         value=value,
@@ -1438,19 +1451,16 @@ def _new_kv_slot(
     )
 
 
-def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlot:
+def _build_kv_slot(
+    c: Container,
+    key: str,
+    value: Value,
+    doc: Document,
+    *,
+    key_parts: Sequence[KeyPart] | None = None,
+    key_seps: Sequence[str] | None = None,
+) -> KVSlot:
     """Synthesise a new ``KVSlot`` carrying default trivia + style."""
-    # Promote a header without final newline: e.g. user parsed `a = 1`
-    # (no trailing newline) and now appends `b = 2`. The anchor's eol
-    # must terminate its line before our new slot starts.
-    body_tail = c._body_tail  # noqa: SLF001
-    header_ref = c._header_ref  # noqa: SLF001
-    anchor_slot: Slot | None = body_tail or (
-        header_ref.slot if header_ref is not None else None
-    )
-    if anchor_slot is not None:
-        _ensure_terminator(anchor_slot, doc)
-
     return _new_kv_slot(
         host_path=c._path,  # noqa: SLF001
         key=(key,),
@@ -1458,6 +1468,8 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
         doc=doc,
         owner=c._owner_aot_entry,  # noqa: SLF001
         leading=_kv_separator_leading(c, doc),
+        key_parts=key_parts,
+        key_seps=key_seps,
     )
 
 
@@ -1468,6 +1480,8 @@ def install_dotted_kv_slot(
     *,
     leaf_parent: Container,
     leading: Trivia | None = None,
+    key_parts: Sequence[KeyPart] | None = None,
+    key_seps: Sequence[str] | None = None,
 ) -> None:
     """Insert a single dotted-KV slot hosted by ``host``.
 
@@ -1495,8 +1509,6 @@ def install_dotted_kv_slot(
     body_tail = leaf_parent._body_tail or host._body_tail  # noqa: SLF001
     header_ref = host._header_ref  # noqa: SLF001
     owner = host._owner_aot_entry  # noqa: SLF001
-    if body_tail is not None:
-        _ensure_terminator(body_tail, doc)
 
     new_slot = _new_kv_slot(
         host_path=host._path,  # noqa: SLF001
@@ -1507,6 +1519,8 @@ def install_dotted_kv_slot(
         leading=leading
         if leading is not None
         else _kv_leading_after(_last_kv(host), doc),
+        key_parts=key_parts,
+        key_seps=key_seps,
     )
 
     inserted_at_head = _splice_body_slot(
@@ -2118,6 +2132,70 @@ def add_aot_entry(
         append_direct_kv(entry_table, k, cst)
         dict.__setitem__(entry_table, k, dec)
     return entry_table
+
+
+def prepare_promoted_inline_entries(
+    entries: Sequence[InlineTableEntry],
+) -> list[tuple[InlineTableEntry, Value]]:
+    """Capture inline entries for section-side installation.
+
+    Scalar value nodes are immutable after construction and can be shared
+    safely. Composite values are copied so held views displaced by promotion
+    remain detached from the new section.
+    """
+    return [
+        (
+            entry,
+            copy.deepcopy(entry.value)
+            if isinstance(entry.value, (ArrayValue, InlineTableValue))
+            else entry.value,
+        )
+        for entry in entries
+    ]
+
+
+def populate_promoted_inline_entries(
+    target: Container,
+    entries: Sequence[tuple[InlineTableEntry, Value]],
+) -> None:
+    """Install captured inline entries as section-backed KV slots."""
+    from tomlrt._build import _decode_value  # noqa: PLC0415
+
+    doc = target._attached_doc  # noqa: SLF001
+    owner = target._owner_aot_entry  # noqa: SLF001
+    for source, value in entries:
+        key_path = source.key_path
+        leaf_parent = (
+            target
+            if len(key_path) == 1
+            else ensure_implicit_chain(target, key_path[:-1])
+        )
+        leaf = key_path[-1]
+        decoded = _decode_value(
+            value,
+            layout_root=doc,
+            parent=leaf_parent,
+            path=(*leaf_parent._path, leaf),  # noqa: SLF001
+            owner=owner,
+        )
+        if len(key_path) == 1:
+            append_direct_kv(
+                target,
+                leaf,
+                value,
+                key_parts=source.key_parts,
+                key_seps=source.key_seps,
+            )
+        else:
+            install_dotted_kv_slot(
+                target,
+                key_path,
+                value,
+                leaf_parent=leaf_parent,
+                key_parts=source.key_parts,
+                key_seps=source.key_seps,
+            )
+        dict.__setitem__(leaf_parent, leaf, decoded)
 
 
 def clone_aot_entry(

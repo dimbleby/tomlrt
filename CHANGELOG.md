@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `promote_inline` and `promote_array` now preserve entry key and value
+  formatting
+
 ## [2.0.2] - 2026-07-10
 
 ### Fixed
