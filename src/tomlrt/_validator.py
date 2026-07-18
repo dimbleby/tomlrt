@@ -24,31 +24,22 @@ if TYPE_CHECKING:
 
 
 _HeaderKind = Literal["table", "aot-entry"]
+_PathKind = Literal["aot", "dotted", "explicit", "implicit", "value"]
 
 
 class _Validator:
     __slots__ = (
         "_active_aot_entries",
-        "_aot_paths",
         "_aot_subpaths",
         "_current_owner_aot_entry",
         "_current_section",
-        "_dotted_paths",
         "_error",
-        "_explicit_table_paths",
-        "_implicit_table_paths",
-        "_value_paths",
+        "_path_kinds",
     )
 
     def __init__(self, error_builder: ErrorBuilder) -> None:
         self._error = error_builder
-        # Persistent structural facts (not cleared when re-entering an AoT).
-        self._explicit_table_paths: set[tuple[str, ...]] = set()
-        self._implicit_table_paths: set[tuple[str, ...]] = set()
-        self._aot_paths: set[tuple[str, ...]] = set()
-        # Per-AoT-entry: cleared (for paths under H) when [[H]] opens a new entry.
-        self._value_paths: set[tuple[str, ...]] = set()
-        self._dotted_paths: set[tuple[str, ...]] = set()
+        self._path_kinds: dict[tuple[str, ...], _PathKind] = {}
         # Index from each active AoT path to all sub-paths registered under it.
         self._aot_subpaths: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
         self._current_section: tuple[str, ...] = ()
@@ -70,19 +61,21 @@ class _Validator:
 
         Returns the opened ``AoTEntry`` for ``[[H]]``, otherwise ``None``.
         """
+        path_kinds = self._path_kinds
         # Prefix overlaps with a bound value would mean overwriting a scalar
         # (or an inline-table value) with a table — always invalid.
         for i in range(1, len(path)):
             prefix = path[:i]
-            if prefix in self._value_paths:
+            if path_kinds.get(prefix) == "value":
                 joined = ".".join(prefix)
                 msg = f"cannot use {joined!r} as a table: already defined as a value"
                 raise self._error(msg, at=at)
-        if path in self._value_paths:
+        current_kind = path_kinds.get(path)
+        if current_kind == "value":
             joined = ".".join(path)
             msg = f"cannot define {joined!r} as a table: already defined as a value"
             raise self._error(msg, at=at)
-        if path in self._dotted_paths:
+        if current_kind == "dotted":
             joined = ".".join(path)
             msg = (
                 f"cannot define {joined!r} as a table: already created via dotted keys"
@@ -91,20 +84,19 @@ class _Validator:
 
         new_entry: AoTEntry | None = None
         if kind == "table":
-            if path in self._explicit_table_paths:
+            if current_kind == "explicit":
                 msg = f"redefinition of table {'.'.join(path)!r}"
                 raise self._error(msg, at=at)
-            if path in self._aot_paths:
+            if current_kind == "aot":
                 joined = ".".join(path)
                 msg = f"cannot redefine array-of-tables {joined!r} as a normal table"
                 raise self._error(msg, at=at)
-            self._explicit_table_paths.add(path)
-            self._track(path)
+            self._record_path(path, "explicit")
         else:  # aot-entry
-            if path in self._explicit_table_paths:
+            if current_kind == "explicit":
                 msg = f"cannot redefine table {'.'.join(path)!r} as an array-of-tables"
                 raise self._error(msg, at=at)
-            if path in self._implicit_table_paths and path not in self._aot_paths:
+            if current_kind == "implicit":
                 msg = (
                     f"cannot define {'.'.join(path)!r} as an array-of-tables: "
                     "already used as an implicit table"
@@ -112,21 +104,15 @@ class _Validator:
                 raise self._error(msg, at=at)
             # A new AoT entry invalidates per-entry tracking under it.
             self._reset_scope_under(path)
-            self._aot_paths.add(path)
-            self._track(path)
+            self._record_path(path, "aot")
             new_entry = AoTEntry()
             self._active_aot_entries[path] = new_entry
 
         # Intermediate prefixes become implicit tables.
         for i in range(1, len(path)):
             sub = path[:i]
-            if (
-                sub not in self._explicit_table_paths
-                and sub not in self._aot_paths
-                and sub not in self._implicit_table_paths
-            ):
-                self._implicit_table_paths.add(sub)
-                self._track(sub)
+            if sub not in path_kinds:
+                self._record_path(sub, "implicit")
 
         self._current_section = path
         self._current_owner_aot_entry = self._compute_owner_aot_entry(path)
@@ -155,16 +141,12 @@ class _Validator:
     ) -> None:
         section = self._current_section
         full = section + key_path if section else key_path
-        value_paths = self._value_paths
-        if full in value_paths:
+        path_kinds = self._path_kinds
+        current_kind = path_kinds.get(full)
+        if current_kind == "value":
             msg = f"duplicate key {'.'.join(full)!r}"
             raise self._error(msg, at=at)
-        if (
-            full in self._explicit_table_paths
-            or full in self._aot_paths
-            or full in self._implicit_table_paths
-            or full in self._dotted_paths
-        ):
+        if current_kind is not None:
             msg = f"key {'.'.join(full)!r} already defined as a table"
             raise self._error(msg, at=at)
         # Intermediate-prefix conflicts.
@@ -173,26 +155,25 @@ class _Validator:
         if flen > slen + 1:
             for i in range(slen + 1, flen):
                 sub = full[:i]
-                if sub in value_paths:
+                sub_kind = path_kinds.get(sub)
+                if sub_kind == "value":
                     msg = f"key {'.'.join(sub)!r} already defined as a value"
                     raise self._error(msg, at=at)
-                if sub in self._explicit_table_paths:
+                if sub_kind == "explicit":
                     joined = ".".join(sub)
                     msg = (
                         f"cannot extend explicitly-defined table {joined!r} "
                         "via dotted keys"
                     )
                     raise self._error(msg, at=at)
-                if sub in self._aot_paths:
+                if sub_kind == "aot":
                     msg = (
                         f"cannot extend array-of-tables {'.'.join(sub)!r} "
                         "via dotted keys"
                     )
                     raise self._error(msg, at=at)
-                self._dotted_paths.add(sub)
-                self._track(sub)
-        value_paths.add(full)
-        self._track(full)
+                self._record_path(sub, "dotted")
+        self._record_path(full, "value")
         if isinstance(value, InlineTableValue):
             self._register_inline_table(value, abs_prefix=full)
         elif isinstance(value, ArrayValue):
@@ -234,12 +215,10 @@ class _Validator:
             path = entry.key_path
             if abs_prefix is not None:
                 full = abs_prefix + path
-                self._value_paths.add(full)
-                self._track(full)
+                self._record_path(full, "value")
                 for i in range(1, len(path)):
                     sub = abs_prefix + path[:i]
-                    self._dotted_paths.add(sub)
-                    self._track(sub)
+                    self._record_path(sub, "dotted")
             sub_abs: tuple[str, ...] | None
             if isinstance(entry.value, InlineTableValue):
                 sub_abs = (abs_prefix + path) if abs_prefix is not None else None
@@ -249,14 +228,24 @@ class _Validator:
                     if isinstance(item.value, InlineTableValue):
                         self._register_inline_table(item.value, abs_prefix=None)
 
-    def _track(self, p: tuple[str, ...]) -> None:
-        aot_paths = self._aot_paths
-        if not aot_paths:
+    def _record_path(self, path: tuple[str, ...], kind: _PathKind) -> None:
+        previous = self._path_kinds.get(path)
+        assert (
+            previous is None
+            or previous == kind
+            or (previous == "implicit" and kind in ("dotted", "explicit"))
+        )
+        if previous is None:
+            self._track(path)
+        self._path_kinds[path] = kind
+
+    def _track(self, path: tuple[str, ...]) -> None:
+        if not self._active_aot_entries:
             return
-        for i in range(len(p) - 1, 0, -1):
-            prefix = p[:i]
-            if prefix in aot_paths:
-                self._aot_subpaths.setdefault(prefix, []).append(p)
+        for i in range(len(path) - 1, 0, -1):
+            prefix = path[:i]
+            if prefix in self._active_aot_entries:
+                self._aot_subpaths.setdefault(prefix, []).append(path)
                 return
 
     def _reset_scope_under(self, path: tuple[str, ...]) -> None:
@@ -264,15 +253,10 @@ class _Validator:
         if not subs:
             return
         nested_aots: list[tuple[str, ...]] = []
-        for p in subs:
-            if p in self._aot_paths:
-                nested_aots.append(p)
-            self._value_paths.discard(p)
-            self._dotted_paths.discard(p)
-            self._explicit_table_paths.discard(p)
-            self._implicit_table_paths.discard(p)
-            self._aot_paths.discard(p)
-            self._active_aot_entries.pop(p, None)
+        for sub in subs:
+            if self._path_kinds.pop(sub) == "aot":
+                nested_aots.append(sub)
+                self._active_aot_entries.pop(sub)
         for nested in nested_aots:
             self._reset_scope_under(nested)
 
