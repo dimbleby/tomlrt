@@ -38,10 +38,11 @@ from tomlrt._comments import (
 from tomlrt._errors import TOMLError
 from tomlrt._format import (
     _canon_header_slot,
-    _canon_inline_value,
     _canon_kv_slot,
     _canon_leading,
+    _resolve_format_options,
     format_document_trailing,
+    format_inline_root,
     format_subtree,
 )
 from tomlrt._inline_comments import InlineEolView, InlineLeadingView
@@ -77,6 +78,7 @@ if TYPE_CHECKING:
     from _typeshed import SupportsKeysAndGetItem, SupportsRichComparison
     from typing_extensions import Self
 
+    from tomlrt._format import FormatOptions
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._trivia import EolTrivia, TriviaPiece
     from tomlrt._values import (
@@ -266,7 +268,12 @@ class Container(dict[str, Any]):
         lr = self._layout_root
         return lr._newline if lr is not None else "\n"  # noqa: SLF001
 
-    def format(self, *, comments: bool = True) -> None:
+    def format(
+        self,
+        *,
+        options: FormatOptions | None = None,
+        comments: bool | None = None,
+    ) -> None:
         """Canonicalise this container's formatting in place.
 
         Rewrites this subtree to the canonical layout:
@@ -280,19 +287,21 @@ class Container(dict[str, Any]):
           multi-line stays multi-line).
         * Newlines use the owning document's style.
 
-        With ``comments=True``, ``#foo`` and ``#   foo`` both become
-        ``# foo`` and trailing comment whitespace is stripped.
+        ``comments=`` is deprecated; use
+        ``FormatOptions(normalize_comments=...)`` instead. Supplying both
+        arguments raises ``ValueError``.
 
         Detached factory-style containers (``Table.section()`` /
         ``Table.inline()`` not yet assigned anywhere) and inline dotted
         navigators are unsupported and raise `TOMLError`.
         """
+        resolved = _resolve_format_options(options=options, comments=comments)
         kind = self._kind
         nl = self._doc_newline
 
         if kind is _Kind.INLINE_ROOT:
             assert self._value is not None
-            _canon_inline_value(self._value, nl=nl, comments=comments)
+            format_inline_root(self._value, nl=nl, options=resolved)
             return
 
         if kind in (_Kind.INLINE_FACTORY, _Kind.INLINE_DOTTED_INNER):
@@ -306,10 +315,10 @@ class Container(dict[str, Any]):
                 path=(),
                 owner=None,
                 nl=nl,
-                comments=comments,
+                options=resolved,
             )
-            format_document_trailing(self._preamble, nl=nl, comments=comments)
-            format_document_trailing(self._trailing, nl=nl, comments=comments)
+            format_document_trailing(self._preamble, nl=nl, options=resolved)
+            format_document_trailing(self._trailing, nl=nl, options=resolved)
             return
 
         if kind is _Kind.SECTION:
@@ -319,7 +328,7 @@ class Container(dict[str, Any]):
                 path=self._path,
                 owner=self._owner_aot_entry,
                 nl=nl,
-                comments=comments,
+                options=resolved,
             )
             return
 
@@ -331,16 +340,16 @@ class Container(dict[str, Any]):
         for ref in list(self._refs):
             slot = ref.slot
             if isinstance(slot, KVSlot):
-                _canon_kv_slot(slot, nl=nl, comments=comments)
+                _canon_kv_slot(slot, nl=nl, options=resolved)
             elif isinstance(slot, StructuralHeaderSlot):
-                _canon_header_slot(slot, nl=nl, comments=comments)
-            _canon_leading(slot, nl=nl, target_blanks=None, comments=comments)
+                _canon_header_slot(slot, nl=nl, options=resolved)
+            _canon_leading(slot, nl=nl, target_blanks=None, options=resolved)
         for value in self.values():
             if isinstance(value, (Container, Array)):
-                value.format(comments=comments)
+                value.format(options=resolved)
             elif isinstance(value, AoT):
                 for entry in value:
-                    entry.format(comments=comments)
+                    entry.format(options=resolved)
 
     @property
     def _attached(self) -> bool:

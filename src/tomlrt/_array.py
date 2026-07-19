@@ -31,7 +31,8 @@ from tomlrt._comma_ops import (
 )
 from tomlrt._errors import TOMLError
 from tomlrt._format import (
-    _canon_inline_value,
+    _resolve_format_options,
+    format_inline_root,
     set_comma_value_multiline,
 )
 from tomlrt._trivia import (
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
     from tomlrt._comma_ops import (
         CommaStyle,
     )
+    from tomlrt._format import FormatOptions
     from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
         Value,
@@ -221,18 +223,24 @@ class Array(list[Any]):
         """Leading-comment view, indexed by item position."""
         return ArrayLeadingView(self)
 
-    def format(self, *, comments: bool = True) -> None:
+    def format(
+        self,
+        *,
+        options: FormatOptions | None = None,
+        comments: bool | None = None,
+    ) -> None:
         """Canonicalise this array's formatting in place.
 
         Rewrites whitespace, indentation, separators, and newlines
         while preserving shape (single-line stays single-line, multi-line
         stays multi-line) and orphan comment text.
 
-        When ``comments`` is true (the default), comment text is also
-        normalised: ``#foo`` and ``#   foo`` both become ``# foo``, and
-        trailing whitespace inside comments is stripped.
+        ``comments=`` is deprecated; use
+        ``FormatOptions(normalize_comments=...)`` instead. Supplying both
+        arguments raises ``ValueError``.
         """
-        _canon_inline_value(self._value, nl=self._doc_newline, comments=comments)
+        resolved = _resolve_format_options(options=options, comments=comments)
+        format_inline_root(self._value, nl=self._doc_newline, options=resolved)
 
     def set_multiline(self, *, multiline: bool, indent: int = 4) -> Array:
         """Switch this array between flush single-line and multi-line form.

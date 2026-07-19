@@ -8,7 +8,7 @@ Canonical layout enforced here:
 
 KV slot
     pre_eq=" ", post_eq=" ", key_seps=".", strip column-indent WS,
-    EOL trailing_ws = " " before any comment.
+    configurable EOL spacing before comments.
 
 Section / AoT-entry header
     inner_pre="", inner_post="", strip column-indent WS, EOL as for KV.
@@ -20,21 +20,21 @@ Sibling spacing (within the subtree of the container being formatted)
 
 Inline arrays / inline tables
     Single-line: ``[a, b, c]`` / ``{ a = 1, b = 2 }``.
-    Multi-line: each item on its own line, last item carries a
-    trailing comma. Indent inherited from the first item if present
-    else two spaces.
+    Multi-line: each item on its own line with configurable recursive
+    indentation and a configurable final comma.
 
 Orphan comment blocks (``# …`` runs separated from the slot/header
 by a blank line) and EOL / leading-attached comments are preserved
 in place — comment text is rewritten to ``# body`` form when
-``comments=True``.
+``normalize_comments`` is enabled.
 """
 
 from __future__ import annotations
 
+import warnings
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from tomlrt._comma_ops import _put_eol, _take_eol
 from tomlrt._errors import TOMLError
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
@@ -55,6 +55,7 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
+    item_eol_channel,
     item_has_any_comment,
 )
 
@@ -70,6 +71,65 @@ if TYPE_CHECKING:
         CommaItem,
         Value,
     )
+
+
+def _validate_non_negative(value: int, name: str) -> None:
+    if value < 0:
+        msg = f"{name} must be non-negative"
+        raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FormatOptions:
+    """Canonical formatting options shared by all ``format()`` methods.
+
+    ``normalize_comments`` rewrites comment text to canonical ``# body`` form
+    and strips trailing whitespace. Layout around comments is canonicalised
+    regardless.
+
+    ``indent`` is the number of spaces added at each nested multiline array
+    or inline-table level.
+
+    ``eol_comment_spaces`` is the number of spaces inserted before supported
+    end-of-line comments.
+
+    ``multiline_trailing_comma`` controls whether the final item in a multiline
+    array or inline table has a comma.
+    """
+
+    normalize_comments: bool = True
+    indent: int = 2
+    eol_comment_spaces: int = 1
+    multiline_trailing_comma: bool = True
+
+    def __post_init__(self) -> None:
+        _validate_non_negative(self.indent, "indent")
+        _validate_non_negative(self.eol_comment_spaces, "eol_comment_spaces")
+
+
+_DEFAULT_FORMAT_OPTIONS = FormatOptions()
+
+
+def _resolve_format_options(
+    *,
+    options: FormatOptions | None,
+    comments: bool | None,
+) -> FormatOptions:
+    """Resolve public formatting arguments and warn for ``comments=``."""
+    if options is not None and comments is not None:
+        msg = "cannot specify both options and deprecated comments"
+        raise ValueError(msg)
+    if comments is not None:
+        warnings.warn(
+            "comments= is deprecated; use "
+            "FormatOptions(normalize_comments=...) instead",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return FormatOptions(normalize_comments=comments)
+    if options is None:
+        return _DEFAULT_FORMAT_OPTIONS
+    return options
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +210,7 @@ def _canon_leading(
     *,
     nl: str,
     target_blanks: int | None,
-    comments: bool,
+    options: FormatOptions,
 ) -> None:
     """Rewrite ``slot.leading`` to canonical form.
 
@@ -177,7 +237,7 @@ def _canon_leading(
 
     middle_t = Trivia([p for line in middle for p in line])
     retarget_trivia_newlines(middle_t, nl)
-    _canon_trivia_text(middle_t, comments=comments)
+    _canon_trivia_text(middle_t, comments=options.normalize_comments)
 
     # Preamble/subtree boundaries keep authored head gaps; attached
     # comment blocks clamp to 0/1 so separation intent survives.
@@ -197,20 +257,27 @@ def _canon_leading(
 # ---------------------------------------------------------------------------
 
 
-def _canon_eol(eol: EolTrivia, *, nl: str, comments: bool) -> None:
+def _canon_eol(eol: EolTrivia, *, nl: str, options: FormatOptions) -> None:
     """Normalise an :class:`EolTrivia`.
 
     Retargets newline to ``nl`` (leaving ``None`` for a no-final-newline
-    tail), canonicalises optional comment text, and keeps exactly one
-    separator space before comments.
+    tail), canonicalises optional comment text, and applies the configured
+    separator before comments.
     """
     retarget_eol_newline(eol, nl)
     if eol.comment is None:
         eol.trailing_ws = None
         return
-    if comments:
+    if options.normalize_comments:
         eol.comment.text = _canon_comment_text(eol.comment.text)
-    eol.trailing_ws = WhitespaceNode(" ")
+    eol.trailing_ws = _comment_separator(options)
+
+
+def _comment_separator(options: FormatOptions) -> WhitespaceNode | None:
+    """Return the configured whitespace before an EOL comment."""
+    if options.eol_comment_spaces == 0:
+        return None
+    return WhitespaceNode(" " * options.eol_comment_spaces)
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +297,7 @@ def _canon_key_equals(node: KVSlot | InlineTableEntry) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _canon_kv_slot(slot: KVSlot, *, nl: str, comments: bool) -> None:
+def _canon_kv_slot(slot: KVSlot, *, nl: str, options: FormatOptions) -> None:
     """Normalise a KV slot's body (key/eq/value/eol).
 
     Leading is handled separately by :func:`_canon_leading` so that
@@ -238,15 +305,17 @@ def _canon_kv_slot(slot: KVSlot, *, nl: str, comments: bool) -> None:
     level.
     """
     _canon_key_equals(slot)
-    _canon_value(slot.value, nl=nl, comments=comments)
-    _canon_eol(slot.eol, nl=nl, comments=comments)
+    _canon_value(slot.value, nl=nl, options=options)
+    _canon_eol(slot.eol, nl=nl, options=options)
 
 
-def _canon_header_slot(slot: StructuralHeaderSlot, *, nl: str, comments: bool) -> None:
+def _canon_header_slot(
+    slot: StructuralHeaderSlot, *, nl: str, options: FormatOptions
+) -> None:
     slot.inner_pre = ""
     slot.inner_post = ""
     slot.key_seps = ["."] * (len(slot.key_parts) - 1)
-    _canon_eol(slot.eol, nl=nl, comments=comments)
+    _canon_eol(slot.eol, nl=nl, options=options)
 
 
 # ---------------------------------------------------------------------------
@@ -258,25 +327,29 @@ def _canon_inline_value(
     v: ArrayValue | InlineTableValue,
     *,
     nl: str,
-    comments: bool,
+    options: FormatOptions,
     parent_indent: str = "",
 ) -> None:
     """Canonicalise inline array/table layout while preserving shape."""
     items = v.items
     multi = v.is_multiline()
-    item_indent = parent_indent + "  " if multi else parent_indent
+    item_indent = parent_indent + (" " * options.indent) if multi else parent_indent
 
     for it in items:
         if isinstance(it, InlineTableEntry):
             _canon_key_equals(it)
-        _canon_value(it.value, nl=nl, comments=comments, parent_indent=item_indent)
+        _canon_value(it.value, nl=nl, options=options, parent_indent=item_indent)
 
     if not multi:
         _canon_single_line_inline(v)
         return
 
     _canon_multiline_shape(
-        v, nl=nl, comments=comments, item_indent=item_indent, outer_indent=parent_indent
+        v,
+        nl=nl,
+        options=options,
+        item_indent=item_indent,
+        outer_indent=parent_indent,
     )
 
 
@@ -284,7 +357,7 @@ def _canon_multiline_shape(
     v: ArrayValue | InlineTableValue,
     *,
     nl: str,
-    comments: bool,
+    options: FormatOptions,
     item_indent: str,
     outer_indent: str,
 ) -> None:
@@ -296,7 +369,12 @@ def _canon_multiline_shape(
     produces only empty/single-space trivia.
     """
     items = v.items
-    last_line_open = _canon_multi_line_items(items, nl=nl, indent=item_indent)
+    last_line_open = _canon_multi_line_items(
+        items,
+        nl=nl,
+        indent=item_indent,
+        options=options,
+    )
     if items:
         head_eol, _ = split_eol_section(v.header_trivia)
         _, head_above = split_above_block(v.header_trivia)
@@ -335,7 +413,7 @@ def _canon_multiline_shape(
     _finalise_inline_trivia(
         v,
         nl=nl,
-        comments=comments,
+        options=options,
         item_indent=item_indent,
         final_first_line_is_eol=final_eol_first,
     )
@@ -353,8 +431,8 @@ def _compose_pad(
 
     Layout is ``head_eol`` (already terminated when non-empty), optional
     structural ``\n``, above-block, then trailing indent. Skip the
-    structural newline when ``head_eol`` or upstream
-    ``post_comma_trivia`` already closed the line.
+    structural newline when ``head_eol`` or the upstream item EOL channel
+    already closed the line.
     """
     pieces: list[TriviaPiece] = list(head_eol.pieces)
     if not head_eol.pieces and not line_already_open:
@@ -393,7 +471,7 @@ def _finalise_inline_trivia(
     v: ArrayValue | InlineTableValue,
     *,
     nl: str,
-    comments: bool,
+    options: FormatOptions,
     item_indent: str = "",
     final_first_line_is_eol: bool = False,
 ) -> None:
@@ -411,13 +489,13 @@ def _finalise_inline_trivia(
     retarget_trivia_newlines(v.final_trivia, nl)
     _canon_trivia_text(
         v.header_trivia,
-        comments=comments,
+        comments=options.normalize_comments,
         comment_indent=item_indent,
         first_line_is_eol=True,
     )
     _canon_trivia_text(
         v.final_trivia,
-        comments=comments,
+        comments=options.normalize_comments,
         comment_indent=item_indent,
         first_line_is_eol=final_first_line_is_eol,
     )
@@ -425,13 +503,23 @@ def _finalise_inline_trivia(
         retarget_trivia_newlines(it.leading, nl)
         retarget_trivia_newlines(it.trailing, nl)
         retarget_trivia_newlines(it.post_comma_trivia, nl)
-        _canon_trivia_text(it.leading, comments=comments, comment_indent=item_indent)
+        _canon_trivia_text(
+            it.leading,
+            comments=options.normalize_comments,
+            comment_indent=item_indent,
+        )
         # ``trailing`` and ``post_comma_trivia`` are EOL contexts:
         # the space before ``#`` is the structural separator the
-        # callers have already canonicalised to one space.
-        _canon_trivia_text(it.trailing, comments=comments, strip_pre_comment_ws=False)
+        # caller has already canonicalised.
         _canon_trivia_text(
-            it.post_comma_trivia, comments=comments, strip_pre_comment_ws=False
+            it.trailing,
+            comments=options.normalize_comments,
+            strip_pre_comment_ws=False,
+        )
+        _canon_trivia_text(
+            it.post_comma_trivia,
+            comments=options.normalize_comments,
+            strip_pre_comment_ws=False,
         )
 
 
@@ -440,23 +528,25 @@ def _canon_multi_line_items(
     *,
     nl: str,
     indent: str,
+    options: FormatOptions,
 ) -> bool:
     r"""Canonicalise per-item trivia for a multi-line inline value.
 
-    Returns whether the last item's ``post_comma_trivia`` closed its row,
-    so the caller can avoid adding a duplicate ``final_trivia`` newline.
+    Returns whether the last item's EOL channel closed its row, so the caller
+    can avoid adding a duplicate ``final_trivia`` newline.
 
     Item 0's structural pad lives in ``header_trivia``, so its leading is
     empty. Later items keep their above-item comment block but get
     canonical newline+indent, suppressed when the previous item's
-    ``post_comma_trivia`` already closed the row.
+    upstream EOL channel already closed the row.
 
-    All items use trailing-comma style. If an item lacked a comma, move
-    its EOL comment from ``trailing`` to ``post_comma_trivia`` so the
-    comma renders before the comment; then shrink ``post_comma_trivia``
-    to an EOL section or empty.
+    Internal items and, when requested, the final item use commas. Any
+    EOL comment moves between ``trailing`` and ``post_comma_trivia`` as
+    the comma state changes; both channels are then reduced to the
+    canonical EOL section or empty.
     """
     prev_line_open = False
+    last_index = len(items) - 1
     for k, it in enumerate(items):
         if k == 0:
             it.leading = Trivia()
@@ -469,34 +559,56 @@ def _canon_multi_line_items(
                 trailing_indent=indent,
                 line_already_open=prev_line_open,
             )
-        # Synthesising a comma may shift the EOL row from ``trailing``
-        # to ``post_comma_trivia``; the take/put pair preserves the
-        # comment across any has_comma flip.
-        eol = _take_eol(it)
-        it.has_comma = True
+        # Changing comma state may shift comments between ``trailing``
+        # and ``post_comma_trivia``; collect both sides before clearing them.
+        comments = [
+            p
+            for trivia in (it.trailing, it.post_comma_trivia)
+            for p in trivia.pieces
+            if isinstance(p, CommentNode)
+        ]
+        it.has_comma = k < last_index or options.multiline_trailing_comma
         it.trailing = Trivia()
-        _put_eol(it, eol)
-        prev_line_open = _canon_post_comma_trivia(it, nl=nl)
+        it.post_comma_trivia = Trivia()
+        prev_line_open = _canon_item_eol(
+            it,
+            comments,
+            nl=nl,
+            options=options,
+            indent=indent,
+        )
     return prev_line_open
 
 
-def _canon_post_comma_trivia(item: CommaItem, *, nl: str) -> bool:
-    r"""Canonicalise ``post_comma_trivia``; return True if the line was closed.
+def _canon_item_eol(
+    item: CommaItem,
+    comments: Sequence[CommentNode],
+    *,
+    nl: str,
+    options: FormatOptions,
+    indent: str,
+) -> bool:
+    r"""Write ``comments`` onto the item's EOL channel.
 
-    If the first non-whitespace piece is a comment it is preserved as
-    an EOL row (``" # comment\\n"``) and we report the line as
-    closed; otherwise the channel is cleared and the line stays open
-    for the next item's leading pad to terminate.
+    Returns whether they close the row.
+
+    The first comment stays on the item row; further comments occupy indented
+    lines below it. With no comments, the row stays open for the next item's
+    leading pad to terminate.
     """
-    first = next(
-        (p for p in item.post_comma_trivia.pieces if not isinstance(p, WhitespaceNode)),
-        None,
-    )
-    if isinstance(first, CommentNode):
-        item.post_comma_trivia = Trivia([WhitespaceNode(" "), first, NewlineNode(nl)])
-        return True
-    item.post_comma_trivia = Trivia()
-    return False
+    if not comments:
+        return False
+    pieces: list[TriviaPiece] = []
+    for k, comment in enumerate(comments):
+        if k == 0:
+            separator = _comment_separator(options)
+            if separator is not None:
+                pieces.append(separator)
+        elif indent:
+            pieces.append(WhitespaceNode(indent))
+        pieces.extend((comment, NewlineNode(nl)))
+    item_eol_channel(item).pieces = pieces
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -504,9 +616,15 @@ def _canon_post_comma_trivia(item: CommaItem, *, nl: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _canon_value(v: Value, *, nl: str, comments: bool, parent_indent: str = "") -> None:
+def _canon_value(
+    v: Value,
+    *,
+    nl: str,
+    options: FormatOptions,
+    parent_indent: str = "",
+) -> None:
     if isinstance(v, (ArrayValue, InlineTableValue)):
-        _canon_inline_value(v, nl=nl, comments=comments, parent_indent=parent_indent)
+        _canon_inline_value(v, nl=nl, options=options, parent_indent=parent_indent)
     # Other value kinds carry no formattable trivia.
 
 
@@ -526,11 +644,7 @@ def set_comma_value_multiline(
     while inline tables keep their pad (``{ a = 1 }``).
     """
     items = value.items
-    outer_indent = ""
-    if value.is_multiline() and value.final_trivia.pieces:
-        final_piece = value.final_trivia.pieces[-1]
-        if isinstance(final_piece, WhitespaceNode):
-            outer_indent = final_piece.text
+    outer_indent = _closing_indent(value)
     # The explicit single<->multi toggle is the one operation that can flip
     # shape without removing an item; drop the memo so it recomputes.
     value.reset_multiline_cache()
@@ -553,13 +667,43 @@ def set_comma_value_multiline(
         _canon_single_line_inline(value)
         return
     for it in items:
-        _canon_value(it.value, nl=nl, comments=True, parent_indent=indent)
+        _canon_value(
+            it.value,
+            nl=nl,
+            options=_DEFAULT_FORMAT_OPTIONS,
+            parent_indent=indent,
+        )
     _canon_multiline_shape(
         value,
         nl=nl,
-        comments=True,
+        options=_DEFAULT_FORMAT_OPTIONS,
         item_indent=indent,
         outer_indent=outer_indent,
+    )
+
+
+def _closing_indent(value: ArrayValue | InlineTableValue) -> str:
+    """Return the whitespace immediately before a multiline closing bracket."""
+    if not value.is_multiline() or not value.final_trivia.pieces:
+        return ""
+    final_piece = value.final_trivia.pieces[-1]
+    return final_piece.text if isinstance(final_piece, WhitespaceNode) else ""
+
+
+def format_inline_root(
+    value: ArrayValue | InlineTableValue,
+    *,
+    nl: str,
+    options: FormatOptions,
+) -> None:
+    """Canonicalise an inline array/table formatted on its own.
+
+    Uses the value's existing closing-bracket column as the base indent,
+    so formatting it in isolation doesn't reset its position relative to
+    its enclosing document.
+    """
+    _canon_inline_value(
+        value, nl=nl, options=options, parent_indent=_closing_indent(value)
     )
 
 
@@ -603,7 +747,7 @@ def format_subtree(
     path: tuple[str, ...],
     owner: AoTEntry | None,
     nl: str,
-    comments: bool,
+    options: FormatOptions,
 ) -> None:
     """Canonicalise every slot in the subtree rooted at ``path``.
 
@@ -628,14 +772,14 @@ def format_subtree(
             if prev.eol.newline is None:
                 prev.eol.newline = NewlineNode(nl)
         if isinstance(slot, KVSlot):
-            _canon_kv_slot(slot, nl=nl, comments=comments)
+            _canon_kv_slot(slot, nl=nl, options=options)
         elif isinstance(slot, StructuralHeaderSlot):
-            _canon_header_slot(slot, nl=nl, comments=comments)
+            _canon_header_slot(slot, nl=nl, options=options)
         if prev is None:
             target: int | None = None
         else:
             target = 1 if isinstance(slot, StructuralHeaderSlot) else 0
-        _canon_leading(slot, nl=nl, target_blanks=target, comments=comments)
+        _canon_leading(slot, nl=nl, target_blanks=target, options=options)
         prev = slot
         slot = slot._next  # noqa: SLF001
 
@@ -644,7 +788,7 @@ def format_document_trailing(
     trailing: Trivia,
     *,
     nl: str,
-    comments: bool,
+    options: FormatOptions,
 ) -> None:
     """Canonicalise the trailing trivia of a :class:`Document`.
 
@@ -654,15 +798,19 @@ def format_document_trailing(
     preamble/epilogue split is unaffected.
     """
     retarget_trivia_newlines(trailing, nl)
-    _canon_trivia_text(trailing, comments=comments)
+    _canon_trivia_text(trailing, comments=options.normalize_comments)
 
 
 __all__ = [
+    "FormatOptions",
     "_canon_header_slot",
     "_canon_inline_value",
     "_canon_kv_slot",
     "_canon_leading",
+    "_closing_indent",
+    "_resolve_format_options",
     "format_document_trailing",
+    "format_inline_root",
     "format_subtree",
     "set_comma_value_multiline",
 ]
