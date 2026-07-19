@@ -1065,13 +1065,15 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     # links. ``owned_slots`` is in collection order (every ref bound under
     # ``key`` in ``c`` first — which front-loads nested headers — then the
     # subtree body), not doc-stream order; transplanting in that order
-    # would corrupt the orphan's linked list. ``owned_slots[0]`` is the
-    # binding's primary slot (``c._index[key][0]``), i.e. the owned set's
-    # doc-stream-first slot, from which the forward walk recovers true
-    # physical order (skipping any interleaved foreign slots).
+    # would corrupt the orphan's linked list. ``owned_slots[0]`` (the
+    # binding's primary slot, ``c._index[key][0]``) is the fast local
+    # start for the forward walk — correct unless a nested descendant was
+    # written physically *earlier* than it (legal TOML, e.g. ``[a.b]``
+    # followed later by ``[a]``), in which case ``_owned_slots_forward``
+    # falls back to a full walk from ``doc._head``.
     transplanting = bool(subtree_containers or subtree_aots)
     ordered_for_transplant = (
-        _owned_slots_in_doc_order(owned_slots[0], owned_ids)
+        _owned_slots_forward(owned_slots[0], owned_ids, doc._head)  # noqa: SLF001
         if transplanting and owned_slots
         else owned_slots
     )
@@ -1084,7 +1086,16 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         ):
             with contextlib.suppress(ValueError):
                 _pop_or_remove(owner.entry_slots, slot)
-    for slot in owned_slots:
+    # Unlink in *reverse* doc-stream order (see remove_aot_entry /
+    # remove_aot_entries for the same idiom): unlinking a doc-stream-first
+    # owned slot promotes its successor to be the new doc head, stripping
+    # that successor's leading blank line. If that successor is itself
+    # about to be unlinked too, the strip is wasted on a slot that's
+    # leaving anyway, and the *actually* surviving new head never gets
+    # stripped. Working back-to-front unlinks every later owned slot
+    # first, so the doc-stream-first one goes last and any head-promotion
+    # strip lands on the true surviving successor.
+    for slot in reversed(ordered_for_transplant):
         unlink_slot(slot, doc)
 
     displaced_inlines: list[Container] = []
@@ -1209,14 +1220,16 @@ def _collect_subtree(
             _collect_subtree(entry, containers_out, aots_out, add_slot)
 
 
-def _owned_slots_in_doc_order(start: Slot, owned_ids: set[int]) -> list[Slot]:
+def _owned_slots_in_doc_order(start: Slot | None, owned_ids: set[int]) -> list[Slot]:
     """Walk the doc-stream forward from ``start``, collecting owned slots.
 
-    ``start`` must be the owned set's doc-stream-first slot. The walk
-    skips interleaved foreign slots (a binding's slots need not be
-    contiguous — ``[[a]] … [b] … [[a]]`` is legal) and stops after every
-    owned slot has been seen. Used where physical order, not collection
-    order, is required.
+    ``start`` must be the owned set's doc-stream-first slot, or the walk
+    silently misses every owned slot physically preceding it — see
+    :func:`_owned_slots_forward` for a caller that cannot guarantee this.
+    The walk skips interleaved foreign slots (a binding's slots need not
+    be contiguous — ``[[a]] … [b] … [[a]]`` is legal) and stops after
+    every owned slot has been seen. Used where physical order, not
+    collection order, is required.
     """
     out: list[Slot] = []
     seen: set[int] = set()
@@ -1227,6 +1240,29 @@ def _owned_slots_in_doc_order(start: Slot, owned_ids: set[int]) -> list[Slot]:
             seen.add(id(cur))
         cur = cur._next  # noqa: SLF001
     return out
+
+
+def _owned_slots_forward(
+    start: Slot | None,
+    owned_ids: set[int],
+    doc_head: Slot | None,
+) -> list[Slot]:
+    """Doc-stream order for ``owned_ids``, fast in the common case.
+
+    Tries the cheap local walk from ``start`` (typically the binding's
+    own header/primary slot) first: this is O(distance from ``start``
+    to the last owned slot) and correct whenever ``start`` really is the
+    owned set's doc-stream-first slot, which holds unless a nested
+    descendant's header or dotted KV was written physically *earlier*
+    than ``start`` — legal, spec-conformant TOML (``[a.b]`` followed
+    later by ``[a]``), but rare. Only in that case does the local walk
+    come back short, and this falls back to a full walk from
+    ``doc_head``, which is guaranteed complete but O(document size).
+    """
+    out = _owned_slots_in_doc_order(start, owned_ids)
+    if len(out) == len(owned_ids):
+        return out
+    return _owned_slots_in_doc_order(doc_head, owned_ids)
 
 
 def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
@@ -2263,6 +2299,15 @@ def _install_cloned_structural_block(
     cloned_slots: list[Slot],
     anchor: Slot | None,
 ) -> None:
+    """Wire ``table``'s own-header ref, splice its slots, then build views.
+
+    ``cloned_slots`` includes ``table``'s own header — not necessarily at
+    index 0, since doc-stream order may put a forward-declared nested
+    descendant's header first — so the full list, header included, goes
+    to :func:`_populate_entry_views`; ``_build_containers`` recognises
+    and skips ``table``'s own header wherever it falls (already wired
+    above, not reopened).
+    """
     _wire_section_container(
         table,
         doc=doc,
@@ -2275,7 +2320,7 @@ def _install_cloned_structural_block(
     _file_header_binding_chain(parent, cloned_header)
     _populate_entry_views(
         entry_table=table,
-        cloned_slots=cloned_slots[1:],
+        cloned_slots=cloned_slots,
         target_prefix=target_path,
         doc=doc,
     )
@@ -2296,6 +2341,11 @@ def _install_cloned_aot_entry(
     entry container, splices after the AoT's last slot, files the parent
     binding ref, and populates child views.
 
+    ``src_slots[0]`` must be the entry's own header — an array entry's
+    content can never physically precede its own ``[[..]]``/``[..]``
+    header (unlike a plain table's, which a nested descendant can
+    forward-declare), so this holds for every caller without reordering.
+
     ``rewrite_separator``: if True, the source's structural leading
     is replaced with destination-style preamble (entry 0) or the
     AoT's inter-entry separator (entry > 0). :func:`clone_aot` sets this
@@ -2312,18 +2362,17 @@ def _install_cloned_aot_entry(
     _consume_first_entry_placeholder(aot, ordinal)
     new_entry = AoTEntry()
 
-    cloned_slots = _clone_entry_slots(
+    cloned_slots, cloned_header = _clone_entry_slots(
         src_slots,
         new_entry=new_entry,
         body_owner=new_entry,
         src_prefix=src_prefix,
         target_prefix=target_path,
         dst_newline=doc._newline,  # noqa: SLF001
+        head=src_slots[0],
     )
+    assert cloned_header is not None
 
-    head = cloned_slots[0]
-    assert isinstance(head, StructuralHeaderSlot)
-    cloned_header: StructuralHeaderSlot = head
     if ordinal == 0:
         _retarget_header_separator(cloned_header, _build_section_leading(doc))
     elif rewrite_separator:
@@ -2351,11 +2400,14 @@ def _install_cloned_section(
     key: str,
     src_slots: list[Slot],
     src_prefix: tuple[str, ...],
+    head: Slot,
 ) -> Table:
     """Common installer for ``parent[key] = <cloned section>``.
 
-    Deep-clones ``src_slots`` (rewriting head from ``[..]`` / ``[[..]]``
-    to ``[<key>]``, rebasing paths from ``src_prefix`` to
+    Deep-clones ``src_slots`` (rewriting ``head`` — the source's own
+    boundary header, identified by identity since doc-stream order may
+    put it after a forward-declared nested descendant — from ``[..]`` /
+    ``[[..]]`` to ``[<key>]``, rebasing paths from ``src_prefix`` to
     ``parent._path + (key,)``), wires the section container, splices at
     the parent's subtree anchor, and populates child views.
     """
@@ -2366,24 +2418,34 @@ def _install_cloned_section(
     doc = layout_root
     target_path = (*parent._path, key)  # noqa: SLF001
 
-    cloned_slots = _clone_entry_slots(
+    cloned_slots, cloned_head = _clone_entry_slots(
         src_slots,
         new_entry=None,
         body_owner=parent._owner_aot_entry,  # noqa: SLF001
         src_prefix=src_prefix,
         target_prefix=target_path,
         dst_newline=doc._newline,  # noqa: SLF001
+        head=head,
     )
+    assert cloned_head is not None
 
-    head = cloned_slots[0]
-    assert isinstance(head, StructuralHeaderSlot)
-    _retarget_header_separator(head, _build_section_leading(doc))
+    # The slot physically first in the spliced block is the one being
+    # detached from its original doc-stream predecessor, so it needs a
+    # destination-appropriate separator; doc-stream order can put a
+    # forward-declared nested descendant's header ahead of ``cloned_head``,
+    # in which case that header (not ``cloned_head``) is first. Either way
+    # it must be a header: a bare/dotted KV can never precede its own
+    # table's header in valid TOML, since defining an ancestor table via
+    # dotted keys before that table's own header would redefine it.
+    first = cloned_slots[0]
+    assert isinstance(first, StructuralHeaderSlot)
+    _retarget_header_separator(first, _build_section_leading(doc))
     return _finish_cloned_section(
         parent,
         key,
         doc=doc,
         target_path=target_path,
-        cloned_header=head,
+        cloned_header=cloned_head,
         cloned_slots=cloned_slots,
     )
 
@@ -2434,23 +2496,33 @@ def clone_aot_entry_as_table(
     if src_entry is None:  # pragma: no cover
         msg = "source entry has no owning AoTEntry"
         raise RuntimeError(msg)
+    assert src_entry_table._header_ref is not None  # noqa: SLF001
     # _gather_subtree_slots, not entry.entry_slots, for true doc-stream
     # order (entry_slots is membership order only) and to pull in
     # nested ``[[a.x]]`` entries physically inside this entry's body.
     src_slots = _gather_subtree_slots(src_entry_table)
-    return _install_cloned_section(parent, key, src_slots, src_entry.path)
+    return _install_cloned_section(
+        parent,
+        key,
+        src_slots,
+        src_entry.path,
+        src_entry_table._header_ref.slot,  # noqa: SLF001
+    )
 
 
 def _owned_slots_from(root: Container, start: Slot) -> list[Slot]:
-    """Collect ``root``'s owned slots in doc-stream order from ``start``.
+    """Collect ``root``'s owned slots in true doc-stream order.
 
-    ``start`` must be the subtree's doc-stream-first owned slot (the
-    header for a header-bearing section, the first dotted KV for a
-    header-less one).
+    ``start`` should be ``root``'s own header/first slot — the fast path
+    (see :func:`_owned_slots_forward`) — but need not actually be
+    doc-stream-first: a nested descendant (a sub-table header or a
+    dotted KV) may have been written physically *earlier* than
+    ``start``, legal TOML (``[a.b]`` followed later by ``[a]``), in
+    which case this transparently falls back to a full document walk.
     """
     owned: set[int] = set()
     _collect_subtree(root, [], [], lambda s: owned.add(id(s)))
-    return _owned_slots_in_doc_order(start, owned)
+    return _owned_slots_forward(start, owned, root._attached_doc._head)  # noqa: SLF001
 
 
 def _gather_subtree_slots(src_table: Container) -> list[Slot]:
@@ -2467,12 +2539,46 @@ def _gather_subtree_slots(src_table: Container) -> list[Slot]:
 def _gather_headered_subtree_slots(
     src_table: Container,
 ) -> tuple[StructuralHeaderSlot, list[Slot]]:
+    """Collect ``src_table``'s subtree slots plus its own header, by identity.
+
+    ``src_table._header_ref.slot`` — not ``src_slots[0]`` — is the
+    container's own header: doc-stream order may put a forward-declared
+    nested descendant's header earlier in the returned list.
+    """
     src_slots = _gather_subtree_slots(src_table)
-    head = src_slots[0]
-    if not isinstance(head, StructuralHeaderSlot):  # pragma: no cover
-        msg = "source section's first owned slot is not a header"
-        raise AssertionError(msg)  # noqa: TRY004
+    assert src_table._header_ref is not None  # noqa: SLF001
+    head = src_table._header_ref.slot  # noqa: SLF001
+    assert isinstance(head, StructuralHeaderSlot)
     return head, src_slots
+
+
+def _hoist_own_slots_first(slots: list[Slot], root_path: tuple[str, ...]) -> list[Slot]:
+    """Stable-partition ``slots`` so ``root_path``'s own slots precede nested ones.
+
+    A plain table's own header and direct/dotted keys may legally be
+    interleaved with a forward-declared nested descendant's block in
+    doc-stream order (e.g. ``[a.b]``, then ``[a]``, then ``a``'s own
+    ``better = 2``) — a table can always be reopened. An array-of-tables
+    entry can never be reopened this way (a later plain ``[..]`` for an
+    already-``[[..]]``-opened path is invalid TOML), so installing a
+    clone as a new AoT entry (:func:`clone_table_as_aot_entry`) must
+    gather all of the root's own slots to the front, ahead of any nested
+    descendant's content, unlike a plain-section install which keeps
+    true doc-stream order.
+    """
+
+    def is_own(s: Slot) -> bool:
+        return (
+            s.host_path == root_path
+            if isinstance(s, KVSlot)
+            else isinstance(s, StructuralHeaderSlot) and s.path == root_path
+        )
+
+    own = [s for s in slots if is_own(s)]
+    if own == slots[: len(own)]:
+        return slots
+    nested = [s for s in slots if not is_own(s)]
+    return own + nested
 
 
 def clone_table_as_aot_entry(
@@ -2491,7 +2597,7 @@ def clone_table_as_aot_entry(
         raise RuntimeError(msg)
     return _install_cloned_aot_entry(
         aot,
-        src_slots,
+        _hoist_own_slots_first(src_slots, src_table._path),  # noqa: SLF001
         src_table._path,  # noqa: SLF001
         target_path=aot._path,  # noqa: SLF001
         rewrite_separator=True,
@@ -2509,8 +2615,8 @@ def clone_section_as_section(
     ``[k]`` section. Preserves per-slot trivia and nested sub-sections
     while rebasing paths under ``parent._path + (key,)``.
     """
-    _, src_slots = _gather_headered_subtree_slots(src_table)
-    return _install_cloned_section(parent, key, src_slots, src_table._path)  # noqa: SLF001
+    head, src_slots = _gather_headered_subtree_slots(src_table)
+    return _install_cloned_section(parent, key, src_slots, src_table._path, head)  # noqa: SLF001
 
 
 def clone_document_as_section(
@@ -2542,14 +2648,13 @@ def clone_document_as_section(
         doc=doc,
         owner_aot_entry=parent._owner_aot_entry,  # noqa: SLF001
     )
-    cloned_body = _clone_entry_slots(
+    cloned_body, _ = _clone_entry_slots(
         src_slots,
         new_entry=None,
         body_owner=parent._owner_aot_entry,  # noqa: SLF001
         src_prefix=src_doc._path,  # noqa: SLF001
         target_prefix=target_path,
         dst_newline=doc._newline,  # noqa: SLF001
-        has_header=False,
     )
     return _finish_cloned_section(
         parent,
@@ -2602,7 +2707,14 @@ def adopt_private_section(
 
     header = value._header_ref.slot  # noqa: SLF001
     assert isinstance(header, StructuralHeaderSlot)
-    _retarget_header_separator(header, _build_section_leading(doc))
+    # As in _install_cloned_section: the slot physically first in ``slots``
+    # is the one being detached from its doc-stream predecessor and needs a
+    # destination-appropriate separator. Doc-stream order can put a
+    # forward-declared nested header ahead of ``value``'s own header, but
+    # either way it must be a header (see _install_cloned_section).
+    first = slots[0]
+    assert isinstance(first, StructuralHeaderSlot)
+    _retarget_header_separator(first, _build_section_leading(doc))
     _splice_block_after(slots, _parent_subtree_tail(dest_parent), doc)
     _file_header_binding_chain(dest_parent, header)
     dict.__setitem__(dest_parent, key, value)
@@ -2786,16 +2898,20 @@ def _clone_entry_slots(
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
     dst_newline: str,
-    has_header: bool = True,
-) -> list[Slot]:
+    head: Slot | None = None,
+) -> tuple[list[Slot], StructuralHeaderSlot | None]:
     r"""Deep-clone an entry's slot list with path/owner rebasing.
 
-    When ``has_header`` is True (default), the first slot must be the
-    entry header. Its ``entry`` is set to ``new_entry`` — so passing
-    ``new_entry=None`` converts an aot-entry header to a table
-    header, and passing a non-None ``new_entry`` does the inverse.
-    With ``has_header=False`` the list is body-only, used by in-place
-    body replacement that keeps the destination header.
+    ``head``, if given, identifies ``src_slots``' own boundary header —
+    by identity, not position: doc-stream order preserves a nested
+    descendant declared physically *before* the container's own header
+    (legal TOML, e.g. ``[a.b]`` before ``[a]``), so it need not be
+    ``src_slots[0]``. Its cloned counterpart is returned as the second
+    element, with its ``entry`` set to ``new_entry`` — so passing
+    ``new_entry=None`` converts an aot-entry header to a table header,
+    and passing a non-None ``new_entry`` does the inverse. ``head=None``
+    means the list is body-only (used by in-place body replacement that
+    keeps the destination header) and the second element is ``None``.
 
     ``body_owner`` is written to every slot's ``owner_aot_entry`` so
     cloning under another AoT entry keeps physical ownership coherent.
@@ -2814,21 +2930,20 @@ def _clone_entry_slots(
     cloned slot's structural-newline trivia is retargeted so a
     cross-document graft does not leave alien line endings behind.
     """
-    body_start = 1 if has_header else 0
     nested_entry_map: dict[int, AoTEntry] = {}
-    if has_header and new_entry is not None:
-        head_src = src_slots[0]
-        assert isinstance(head_src, StructuralHeaderSlot)
-        if head_src.entry is not None:
-            nested_entry_map[id(head_src.entry)] = new_entry
-    for s in src_slots[body_start:]:
-        if not isinstance(s, StructuralHeaderSlot) or s.entry is None:
+    if head is not None and new_entry is not None:
+        assert isinstance(head, StructuralHeaderSlot)
+        if head.entry is not None:
+            nested_entry_map[id(head.entry)] = new_entry
+    for s in src_slots:
+        if s is head or not isinstance(s, StructuralHeaderSlot) or s.entry is None:
             continue
         if id(s.entry) in nested_entry_map:
             continue
         nested_entry_map[id(s.entry)] = AoTEntry()
 
     cloned: list[Slot] = []
+    cloned_head: StructuralHeaderSlot | None = None
     for s in src_slots:
         c: Slot = copy.deepcopy(s)
         c._prev = None  # noqa: SLF001
@@ -2842,11 +2957,14 @@ def _clone_entry_slots(
             if s.entry is not None:
                 c.entry = nested_entry_map.get(id(s.entry))
         cloned.append(c)
+        if s is head:
+            assert isinstance(c, StructuralHeaderSlot)
+            cloned_head = c
         filing_entry = mapped if mapped is not None else new_entry
         if filing_entry is not None:
             filing_entry.entry_slots.append(c)
 
-    return cloned
+    return cloned, cloned_head
 
 
 def _rebase_path(
@@ -3252,6 +3370,11 @@ def replace_aot_entry_with_clone(
     assert src_entry is not None
 
     src_slots = _gather_subtree_slots(src_entry_table)
+    # src_slots[0] is guaranteed src_entry_table's own header: an array
+    # entry's content can never physically precede its own header (unlike
+    # a plain table's, which a nested descendant can forward-declare), so
+    # unlike _gather_headered_subtree_slots this never needs identity
+    # lookup.
     src_prefix = src_entry.path
 
     # Save the destination header (we keep it in place, only its body
@@ -3271,9 +3394,8 @@ def replace_aot_entry_with_clone(
             body_owner=dst_entry,
             src_prefix=src_prefix,
             target_prefix=path,
-            has_header=False,
             dst_newline=doc._newline,  # noqa: SLF001
-        )
+        )[0]
         if len(src_slots) > 1
         else []
     )

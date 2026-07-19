@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deleting an array containing an inline-table item and reassigning the
   same array back into a document no longer corrupts the nested item,
   which used to crash the next time it was mutated.
+- Cloning, moving, or deleting-and-reassigning a section whose nested
+  sub-table was declared before the section's own header no longer
+  silently drops that nested content.
 
 ## [2.0.2] - 2026-07-10
 

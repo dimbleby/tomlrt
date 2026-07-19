@@ -3960,6 +3960,82 @@ def test_del_top_level_array_orphans_held_reference() -> None:
     assert tomlrt.dumps(doc) == "[a]\ny = 1\n"
 
 
+def test_clone_section_with_forward_declared_nested_table_keeps_content() -> None:
+    # `[a.b.c]` is written *before* `a`'s own header — legal TOML — so
+    # `a`'s doc-stream-first owned slot is the nested header, not its own.
+    src = td("""
+        [a.b.c]
+        answer = 42
+
+        [a]
+        better = 43
+        """)
+    doc = tomlrt.loads(src)
+    doc2 = tomlrt.loads("")
+    doc2["moved"] = doc["a"]
+    out = tomlrt.dumps(doc2)
+    assert out == td("""
+        [moved.b.c]
+        answer = 42
+
+        [moved]
+        better = 43
+        """)
+    assert _reparses(out) == {"moved": {"better": 43, "b": {"c": {"answer": 42}}}}
+
+
+def test_clone_as_aot_entry_hoists_own_content_past_forward_declared_nested() -> None:
+    # Same forward-declaration hazard as above, but the destination is a
+    # *new AoT entry* rather than a plain section: an array-of-tables
+    # entry can never be reopened (unlike a plain table), so the source's
+    # own direct content (`better`) must be hoisted ahead of the nested
+    # descendant's block (`b`) rather than kept in true doc-stream order.
+    src = td("""
+        [a.b]
+        x = 1
+
+        [a]
+        better = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["arr"] = AoT()
+    doc["arr"].append(doc["a"])
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a.b]
+        x = 1
+
+        [a]
+        better = 2
+
+        [arr]
+        better = 2
+        [arr.b]
+        x = 1
+        """)
+    assert doc["arr"][0].to_dict() == {"better": 2, "b": {"x": 1}}
+    # `[arr]` rather than `[[arr]]` here is a separate, pre-existing gap in
+    # this conversion (unaffected by this fix); tomli faithfully parses
+    # what's written, i.e. as a plain table rather than a one-entry AoT.
+    assert _reparses(out)["arr"] == {"better": 2, "b": {"x": 1}}
+
+
+def test_del_and_readd_with_forward_declared_nested_table_keeps_content() -> None:
+    src = td("""
+        [t5.t1]
+
+        [t5]
+        t2 = 3.5
+        """)
+    doc = tomlrt.loads(src)
+    v = doc["t5"]
+    del doc["t5"]
+    doc["t5"] = v
+    out = tomlrt.dumps(doc)
+    assert out == src
+    assert _reparses(out) == {"t5": {"t1": {}, "t2": 3.5}}
+
+
 def test_del_loop_leaves_doc_empty() -> None:
     src = "".join(f"[s{i}]\nx = {i}\n" for i in range(20))
     doc = tomlrt.loads(src)
