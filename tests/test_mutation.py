@@ -7311,3 +7311,30 @@ def test_adopt_private_implicit_leaves_body_tail_stale() -> None:
     }
     assert doc.to_dict() == expected
     assert _reparses(out) == expected
+
+
+def test_materialise_empty_aot_anchors_within_owning_entry() -> None:
+    """When popping an AoT's last entry leaves its container empty,
+    ``_materialise_empty_aot`` synthesises a ``key = []`` placeholder
+    which, if the container had no header of its own, promotes it to
+    an explicit section via ``_synthesise_header_then_insert_kv``. That
+    promotion fell back to the document's absolute tail whenever no
+    anchor slot was available, ignoring that the container is nested
+    inside an AoT entry that is *not* the last thing in the document —
+    landing the new header after a later sibling entry, which a
+    re-parse then misattributes to that sibling."""
+    doc = tomlrt.loads(
+        td("""
+        [[a.b]]
+        [[a.b.x.songs]]
+        name = 1
+
+        [[a.b]]
+        name = 2
+        """)
+    )
+    doc["a"]["b"][0]["x"]["songs"].pop(0)
+    out = tomlrt.dumps(doc)
+    expected = {"a": {"b": [{"x": {"songs": []}}, {"name": 2}]}}
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
