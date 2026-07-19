@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import itertools
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from tomlrt._comments import _split_attached_block
@@ -2933,7 +2934,35 @@ def adopt_private_implicit(
         _rebase_implicit_slot_in_place(s, old_prefix, new_prefix, host_path, nl)
     _rehome_view_tree(value, dest_parent, old_prefix, new_prefix, doc)
 
-    _splice_block_after(slots, _parent_subtree_tail(host), doc)
+    # A dotted-KV block takes its scope from physical position, not
+    # from a header of its own, so it must anchor at ``host``'s own
+    # direct-KV extent (``_body_tail``, falling back to its header) —
+    # mirroring ``install_dotted_kv_slot`` / ``_splice_body_slot`` —
+    # rather than ``_parent_subtree_tail(host)``. For a headerless
+    # ``host`` (e.g. the document root), that function walks the
+    # *whole* physical subtree it owns as an ancestor — which, via the
+    # ancestor-chain ref every slot files on every ancestor, extends
+    # to the doc-stream tail of the entire document, not just of
+    # ``host``'s own body. Anchoring there would land the block after
+    # an unrelated later header's content, recapturing it on re-parse.
+    anchor = host._body_tail or (  # noqa: SLF001
+        host._header_ref.slot if host._header_ref is not None else None  # noqa: SLF001
+    )
+    if anchor is None and doc._head is not None:  # noqa: SLF001
+        # ``host`` has no direct-KV extent of its own yet, but the doc
+        # is not empty (some other header already exists) —
+        # ``_splice_block_after``'s own ``anchor=None`` case appends at
+        # the doc's absolute tail, which is unsafe here for the same
+        # reason: it can land inside an unrelated later header's scope.
+        # Splice before the doc head instead, mirroring
+        # ``_splice_body_slot``'s single-slot fallback for this case.
+        old_head = doc._head  # noqa: SLF001
+        insert_before_head(slots[0], doc)
+        for prev, s in itertools.pairwise(slots):
+            insert_after(prev, s, doc)
+        _ensure_leading_blank_line(old_head, doc)
+    else:
+        _splice_block_after(slots, anchor, doc)
     # As in adopt_private_section: the orphan's last slot may lack a
     # trailing newline (it was previously the last thing in its own
     # document); moved anywhere but this document's new tail, it needs
