@@ -4046,6 +4046,31 @@ def test_clone_section_with_forward_declared_nested_past_foreign_section() -> No
     assert _reparses(out) == {"moved": {"better": 2, "b": {"x": 1}}}
 
 
+def test_clone_section_into_aot_entry_registers_it_in_entry_slots() -> None:
+    """A section-style value cloned as a *new key inside an existing AoT
+    entry* (not the entry itself) must be registered in that entry's
+    ``entry_slots`` membership, not just have ``owner_aot_entry`` set.
+
+    ``remove_aot_entries`` enumerates an entry's owned slots via
+    ``entry.entry_slots``; a slot with the right ``owner_aot_entry`` but
+    missing from ``entry_slots`` survives entry removal as an orphaned,
+    still-rendered block even though the logical model correctly shows
+    the AoT as empty.
+    """
+    doc = tomlrt.loads("[[arr]]\n")
+    other = tomlrt.loads("[k40]\nval = 2\n")
+    doc["arr"][0]["k40"] = other["k40"]
+    assert tomlrt.dumps(doc) == td("""
+        [[arr]]
+
+        [arr.k40]
+        val = 2
+        """)
+    doc["arr"].pop(0)
+    assert tomlrt.dumps(doc) == "arr = []\n"
+    assert doc.to_dict() == {"arr": []}
+
+
 def test_clone_as_aot_entry_hoists_own_content_past_forward_declared_nested() -> None:
     # Same forward-declaration hazard as above, but the destination is a
     # *new AoT entry* rather than a plain section: an array-of-tables
