@@ -103,19 +103,28 @@ def _targets(node: object, out: list[tuple[str, Any]], depth: int = 0) -> None:
             _targets(node[key], out, depth + 1)
 
 
-def _mutate(doc: tomlrt.Document, rng: random.Random) -> None:
+def _mutate(
+    doc: tomlrt.Document, rng: random.Random, foreign_pool: list[tuple[str, Any]]
+) -> None:
+    """Apply one random mutation to ``doc``.
+
+    ``foreign_pool`` is a second document's targets, combined with
+    ``doc``'s own for clone/graft ops so they draw from either the same
+    or a different document uniformly through one code path.
+    """
     targets: list[tuple[str, Any]] = []
     _targets(doc, targets)
     if not targets:
         return
     kind, node = rng.choice(targets)
+    pool = targets + foreign_pool
     try:
         if kind == "container":
-            _mutate_container(node, rng)
+            _mutate_container(node, rng, pool)
         elif kind == "array":
-            _mutate_array(node, rng)
+            _mutate_array(node, rng, pool)
         else:
-            _mutate_aot(node, rng, targets)
+            _mutate_aot(node, rng, pool)
     except (KeyError, IndexError, TypeError, ValueError, tomlrt.TOMLError):
         # The fuzzer drives the API into unusual shapes; user-facing
         # errors are expected and tolerated. The invariant is that the
@@ -123,25 +132,56 @@ def _mutate(doc: tomlrt.Document, rng: random.Random) -> None:
         pass
 
 
-def _mutate_container(node: Container, rng: random.Random) -> None:
+def _mutate_container(
+    node: Container, rng: random.Random, pool: list[tuple[str, Any]]
+) -> None:
     keys = list(node.keys())
-    op = rng.choice(["set_new", "del", "overwrite", "sort"])
+    # "clone_table" / "clone_aot" assign an already-attached Table / AoT
+    # (same- or foreign-document) rather than a fresh dict, exercising
+    # `_attach_section` / `_attach_aot`'s clone paths.
+    tables = [t for kind, t in pool if kind == "container" and isinstance(t, Table)]
+    aots = [t for kind, t in pool if kind == "aot"]
+    ops = ["set_new", "del", "overwrite", "sort"]
+    if tables:
+        ops.append("clone_table")
+    if aots:
+        ops.append("clone_aot")
+    op = rng.choice(ops)
+    new_key = f"k{rng.randint(0, 99)}"
+    clone_key = rng.choice(keys) if keys and rng.random() < 0.5 else new_key
     if op == "set_new":
-        node[f"k{rng.randint(0, 99)}"] = _rand_value(rng)
+        node[new_key] = _rand_value(rng)
     elif op == "del" and keys:
         del node[rng.choice(keys)]
     elif op == "overwrite" and keys:
         node[rng.choice(keys)] = _rand_value(rng)
+    elif op == "clone_table":
+        node[clone_key] = rng.choice(tables)
+    elif op == "clone_aot":
+        node[clone_key] = rng.choice(aots)
     elif op == "sort":
         node.sort()
 
 
-def _mutate_array(node: Array, rng: random.Random) -> None:
-    op = rng.choice(["append", "insert", "pop", "setitem", "sort", "reverse"])
+def _mutate_array(node: Array, rng: random.Random, pool: list[tuple[str, Any]]) -> None:
+    # "clone_value" appends an already-attached inline Table or Array
+    # (same- or foreign-document) rather than a fresh scalar/dict/list.
+    clonables = [
+        t
+        for kind, t in pool
+        if kind == "array"
+        or (kind == "container" and isinstance(t, Table) and t.is_inline)
+    ]
+    ops = ["append", "insert", "pop", "setitem", "sort", "reverse"]
+    if clonables:
+        ops.append("clone_value")
+    op = rng.choice(ops)
     if op == "append":
         node.append(_rand_value(rng))
     elif op == "insert":
         node.insert(rng.randint(0, len(node)), _rand_value(rng))
+    elif op == "clone_value":
+        node.append(rng.choice(clonables))
     elif op == "pop" and node:
         node.pop(rng.randrange(len(node)))
     elif op == "setitem" and node:
@@ -152,10 +192,11 @@ def _mutate_array(node: Array, rng: random.Random) -> None:
         node.reverse()
 
 
-def _mutate_aot(node: AoT, rng: random.Random, targets: list[tuple[str, Any]]) -> None:
-    # "clone_table" appends an already-attached Table (from elsewhere in
-    # the doc) rather than a fresh dict, exercising the AoT clone path.
-    tables = [t for kind, t in targets if kind == "container" and isinstance(t, Table)]
+def _mutate_aot(node: AoT, rng: random.Random, pool: list[tuple[str, Any]]) -> None:
+    # "clone_table" appends an already-attached Table (same- or
+    # foreign-document) rather than a fresh dict, exercising the AoT
+    # clone path.
+    tables = [t for kind, t in pool if kind == "container" and isinstance(t, Table)]
     ops = ["append", "insert", "pop", "reverse", "sort"]
     if tables:
         ops.append("clone_table")
@@ -184,6 +225,18 @@ def test_mutation_keeps_model_consistent(path: Path) -> None:
     except tomli.TOMLDecodeError:
         pytest.skip("corpus entry not valid under tomli")
 
+    # A fixed foreign document (the next corpus file, wrapping around)
+    # gives clone/graft ops a cross-document source alongside
+    # same-document ones, through the same code path. Read-only, so
+    # parsed once and reused across every program below.
+    foreign_path = _CORPUS[(_CORPUS.index(path) + 1) % len(_CORPUS)]
+    try:
+        foreign_doc = tomlrt.loads(foreign_path.read_text(encoding="utf-8"))
+    except tomlrt.TOMLError:
+        foreign_doc = tomlrt.loads("")
+    foreign_pool: list[tuple[str, Any]] = []
+    _targets(foreign_doc, foreign_pool)
+
     for _ in range(_PROGRAMS):
         # A fresh random seed every run, so the fuzzer explores new
         # programs instead of re-checking a frozen grid. The seed is
@@ -193,7 +246,7 @@ def test_mutation_keeps_model_consistent(path: Path) -> None:
         rng = random.Random(seed)  # noqa: S311
         doc = tomlrt.loads(src)
         for _ in range(rng.randint(1, 15)):
-            _mutate(doc, rng)
+            _mutate(doc, rng, foreign_pool)
         out = tomlrt.dumps(doc)
         ctx = f"{path.relative_to(_VALID_ROOT).as_posix()} seed={seed}"
         # Valid TOML and a fixed point of dump -> load -> dump.

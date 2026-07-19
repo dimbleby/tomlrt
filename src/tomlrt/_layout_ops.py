@@ -2656,6 +2656,32 @@ def clone_document_as_section(
     )
 
 
+def _unfile_stale_same_orphan_ancestors(value: Container, header: Slot) -> None:
+    """Drop ``value``'s bindings from its old same-orphan ancestor chain.
+
+    ``value`` may be a nested descendant within its private orphan (e.g.
+    ``t["a"] = t["a"]["b"]``), not the orphan's own root. The orphan was
+    detached as one coherent unit, so its *internal* parent/child
+    bookkeeping was never scrubbed the way ``delete_key`` scrubs the live
+    tree: ``value``'s old parent chain (bounded to the same orphan root)
+    still carries a dict entry and binding refs pointing at ``header``,
+    which is about to move away with ``value``. Mirrors
+    ``_file_header_binding_chain``'s "file on every ancestor" in reverse.
+    """
+    old_parent = value._parent  # noqa: SLF001
+    if old_parent is None or old_parent._layout_root is not value._layout_root:  # noqa: SLF001
+        return  # `value` is the orphan's own root; nothing to clean up.
+    direct_key = value._path[len(old_parent._path) :]  # noqa: SLF001
+    if len(direct_key) == 1 and direct_key[0] in old_parent:
+        dict.__delitem__(old_parent, direct_key[0])
+    node: Container | None = old_parent
+    while node is not None and node._layout_root is value._layout_root:  # noqa: SLF001
+        for ref in list(node._refs):  # noqa: SLF001
+            if ref.slot is header:
+                unfile_ref(ref)
+        node = node._parent  # noqa: SLF001
+
+
 def adopt_private_section(
     dest_parent: Container,
     key: str,
@@ -2684,6 +2710,7 @@ def adopt_private_section(
     norm_entry = value._owner_aot_entry  # noqa: SLF001
 
     assert value._header_ref is not None  # noqa: SLF001
+    _unfile_stale_same_orphan_ancestors(value, value._header_ref.slot)  # noqa: SLF001
     _, slots = _gather_headered_subtree_slots(value)
     for s in slots:
         _retarget_slot_paths(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
