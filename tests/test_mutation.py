@@ -7231,3 +7231,28 @@ def test_overwrite_with_leading_dotted_kvs_anchors_past_foreign_scope() -> None:
     }
     assert doc.to_dict() == expected
     assert _reparses(out) == expected
+
+
+def test_clone_implicit_source_with_empty_string_header_child() -> None:
+    """``_install_attached_subtree`` recursively installs a headerless
+    source's structural children via ``Container.install()``'s tuple-
+    path API. That API validates each path *segment*, rejecting an
+    empty one — reasonable for a human-supplied dotted path (an empty
+    segment there is almost certainly a typo), but wrong for this
+    internal recursive use: the key comes from an already-live source
+    Container, where an empty string is a legal (if unusual) TOML key,
+    not user input to second-guess."""
+    doc = tomlrt.loads(
+        td("""
+        x = 1
+        src.k = 1
+
+        [src.""]
+        y = 1
+        """)
+    )
+    doc["a"] = doc["src"]
+    out = tomlrt.dumps(doc)
+    expected = {"x": 1, "src": {"k": 1, "": {"y": 1}}, "a": {"k": 1, "": {"y": 1}}}
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
