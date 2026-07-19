@@ -6967,3 +6967,27 @@ def test_repeated_section_install_after_large_trailing_content() -> None:
     reloaded = tomlrt.loads(out)
     for i in range(10):
         assert reloaded[f"s{i}"]["v"] == i
+
+
+def test_pop_aot_entry_removes_self_reference_section() -> None:
+    """An entry key assigned to the entry itself (turning a scalar into
+    a nested section snapshot via ``clone_document_as_section``) must be
+    fully removed, header included, when the owning entry is popped."""
+    doc = tomlrt.loads(
+        td("""
+        [fruit]
+        apple.color = "red"
+
+        [[fruit.apple.seeds]]
+        size = 2
+        """)
+    )
+    entry = doc["fruit"]["apple"]["seeds"][0]
+    entry["size"] = entry
+    doc["fruit"]["apple"]["seeds"].pop(0)
+    assert tomlrt.dumps(doc) == td("""
+        [fruit]
+        apple.color = "red"
+        apple.seeds = []
+        """)
+    assert doc.to_dict() == {"fruit": {"apple": {"color": "red", "seeds": []}}}
