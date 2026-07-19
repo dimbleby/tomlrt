@@ -4132,6 +4132,31 @@ def test_overwrite_scalar_survives_reinstall_demoting_its_own_header() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_overwrite_ancestor_into_own_descendant_snapshots_before_delete() -> None:
+    """``t[k] = ancestor`` as an *overwrite* (not a new key) where
+    ``ancestor`` is one of ``t``'s own ancestors must not lose the part
+    of ``ancestor`` that overwriting ``t[k]`` itself deletes.
+
+    The structural-overwrite path deletes the old ``t[k]`` subtree
+    before cloning from the source. When the source is ``t``'s own
+    ancestor and ``k`` is (transitively) one of that ancestor's own
+    children, the delete removes content out from under the source
+    before it's read, silently truncating the clone. Must snapshot the
+    source before anything is deleted.
+    """
+    doc = tomlrt.loads("[x.k16]\nw = {}\n")
+    node = doc["x"]["k16"]
+    node["w"] = node
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [x.k16]
+        [x.k16.w]
+        [x.k16.w.w]
+        """)
+    assert doc.to_dict() == {"x": {"k16": {"w": {"w": {}}}}}
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_clone_section_into_aot_entry_registers_it_in_entry_slots() -> None:
     """A section-style value cloned as a *new key inside an existing AoT
     entry* (not the entry itself) must be registered in that entry's
