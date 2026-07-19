@@ -2997,7 +2997,8 @@ def _clone_entry_slots(
         _retarget_slot_paths(c, src_prefix, target_prefix, dst_newline)
         src_owner = s.owner_aot_entry
         mapped = nested_entry_map.get(id(src_owner)) if src_owner else None
-        c.owner_aot_entry = mapped if mapped is not None else body_owner
+        owner_for_slot = mapped if mapped is not None else body_owner
+        c.owner_aot_entry = owner_for_slot
         if isinstance(c, StructuralHeaderSlot):
             assert isinstance(s, StructuralHeaderSlot)
             if s is head:
@@ -3010,9 +3011,13 @@ def _clone_entry_slots(
         if s is head:
             assert isinstance(c, StructuralHeaderSlot)
             cloned_head = c
-        filing_entry = mapped if mapped is not None else new_entry
-        if filing_entry is not None:
-            filing_entry.entry_slots.append(c)
+        # Whichever AoT entry ends up owning this slot (``owner_for_slot``,
+        # mirroring ``c.owner_aot_entry`` above) must also list it in its
+        # own ``entry_slots`` membership — callers like
+        # ``remove_aot_entries`` enumerate an entry's owned slots via
+        # ``entry_slots``, not by scanning for ``owner_aot_entry``.
+        if owner_for_slot is not None:
+            owner_for_slot.entry_slots.append(c)
 
     return cloned, cloned_head
 
