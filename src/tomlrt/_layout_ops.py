@@ -170,6 +170,18 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
             value,
             reinstall_as_dotted=reinstall_as_dotted,
         )
+    # The reinstall itself can unlink ``saved_anchor_prev`` as a side
+    # effect (e.g. an ancestor header emptied by the delete above, then
+    # demoted by ``_maybe_demote_synthetic_empty_header`` during the
+    # reinstall). Moving the new block there would attach it to a slot
+    # no longer part of the doc-stream, silently detaching it. The
+    # reinstall already placed it validly, so leave it there instead.
+    if saved_anchor_prev is not None and (
+        saved_anchor_prev is not doc._head  # noqa: SLF001
+        and saved_anchor_prev._prev is None  # noqa: SLF001
+        and saved_anchor_prev._next is None  # noqa: SLF001
+    ):
+        return
     # An install can record a slot and then unlink it again before the
     # block ends (e.g. a synthetic placeholder header demoted by
     # ``_maybe_demote_synthetic_empty_header``). Drop those orphans:
