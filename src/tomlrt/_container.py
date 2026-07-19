@@ -864,14 +864,14 @@ class Container(dict[str, Any]):
         _reorder_dict_storage(self, new_order)
 
     def has_header(self, key: str) -> bool:
-        """Whether ``key`` is bound to a child with a ``[header]`` line.
+        """Whether ``key``'s rendered block contains a structural header.
 
-        Returns ``True`` when this container's block for ``key`` contains
-        a structural header slot — i.e. a ``[header]`` section or a
-        ``[[header]]`` array-of-tables entry. Returns ``False`` for bare
-        ``key = value`` leaves, inline tables, implicit sections built
-        entirely from dotted keys (e.g. ``a.x = 1``, where ``a`` has no
-        header line of its own), and missing keys.
+        This describes the whole block, not the child table itself: with
+        ``[a.b]``, ``doc.has_header("a")`` is true although ``a`` is implicit
+        and only ``b`` owns the header. Structural headers are ``[header]``
+        sections and ``[[header]]`` array-of-tables entries. Returns ``False``
+        for bare ``key = value`` leaves, inline tables, implicit sections built
+        entirely from dotted keys (e.g. ``a.x = 1``), and missing keys.
         """
         refs = self._index.get(key, ())
         return any(isinstance(r.slot, StructuralHeaderSlot) for r in refs)
