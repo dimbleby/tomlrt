@@ -1618,11 +1618,12 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         header_slot = _new_owned_section_header(
             c, leading=_build_section_leading(doc), doc=doc
         )
-        # An AoT-owned container reaches this state only while
-        # reposition_install is staging a replacement block. The completed
-        # block moves back to its saved anchor after this insertion.
-        if owner is not None:
-            assert doc._install_recorder is not None  # noqa: SLF001
+        # An AoT-owned container reaches this anchor-less state either
+        # while `reposition_install` stages a replacement block (moved
+        # back to its saved anchor afterward), or when
+        # `_materialise_empty_aot` synthesises a `key = []` placeholder
+        # after an AoT's last entry was removed (no better anchor
+        # exists, so doc tail is final here, not interim).
         if doc._tail is None:  # noqa: SLF001
             insert_before_head(header_slot, doc)
             header_slot.leading = Trivia()
@@ -2942,7 +2943,11 @@ def _clone_entry_slots(
         c.owner_aot_entry = mapped if mapped is not None else body_owner
         if isinstance(c, StructuralHeaderSlot):
             assert isinstance(s, StructuralHeaderSlot)
-            if s.entry is not None:
+            if s is head:
+                # head's kind always comes from new_entry, not from
+                # source-entry lookup (which is None for a plain table).
+                c.entry = new_entry
+            elif s.entry is not None:
                 c.entry = nested_entry_map.get(id(s.entry))
         cloned.append(c)
         if s is head:

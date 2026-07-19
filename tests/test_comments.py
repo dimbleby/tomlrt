@@ -2475,7 +2475,7 @@ def test_aot_append_std_section_table_preserves_comments() -> None:
         [[a]]
         x = 0
 
-        [a]
+        [[a]]
         # leading
         k = 1  # eol
         """)

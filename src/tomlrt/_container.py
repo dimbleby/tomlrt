@@ -363,6 +363,21 @@ class Container(dict[str, Any]):
         return lr is not None and not lr._is_private  # noqa: SLF001
 
     @property
+    def _is_own_aot_entry(self) -> bool:
+        """True iff this container *is* an AoT entry, not merely nested inside one.
+
+        ``_owner_aot_entry`` is set on the entry's own table *and* on
+        every section, inline table, or implicit descendant physically
+        nested inside it — only the entry's own table has a header whose
+        ``entry`` matches ``_owner_aot_entry``.
+        """
+        if self._owner_aot_entry is None or self._header_ref is None:
+            return False
+        header = self._header_ref.slot
+        assert isinstance(header, StructuralHeaderSlot)
+        return header.entry is self._owner_aot_entry
+
+    @property
     def _attached_doc(self) -> Document:
         """The owning ``Document``, asserting the container is attached.
 
@@ -691,7 +706,7 @@ class Container(dict[str, Any]):
         if live_source:
             if key in self:
                 _layout_ops.delete_key(self, key)
-            if value._owner_aot_entry is not None and self._layout_root is not None:
+            if value._is_own_aot_entry and self._layout_root is not None:
                 _layout_ops.clone_aot_entry_as_table(self, key, value)
             elif value._header_ref is not None:
                 _layout_ops.clone_section_as_section(self, key, value)
@@ -1823,16 +1838,21 @@ def _synth_value(
     # Cross-document / same-doc live inline values clone CST so source
     # formatting survives. Plain Mapping / list inputs have no CST.
     if _is_inline_table(v) or isinstance(v, Array):
-        from tomlrt._build import _decode_value  # noqa: PLC0415
-
         src_val = v._value  # noqa: SLF001
-        assert src_val is not None
-        cloned = copy.deepcopy(src_val)
-        _retarget_to_doc(cloned, layout_root)
-        new = _decode_value(
-            cloned, layout_root=layout_root, parent=parent, path=path, owner=owner
-        )
-        return cloned, new
+        if src_val is not None:
+            from tomlrt._build import _decode_value  # noqa: PLC0415
+
+            cloned = copy.deepcopy(src_val)
+            _retarget_to_doc(cloned, layout_root)
+            new = _decode_value(
+                cloned, layout_root=layout_root, parent=parent, path=path, owner=owner
+            )
+            return cloned, new
+        # A dotted-key navigator view (`_Kind.INLINE_DOTTED_INNER`) owns
+        # no CST of its own — it's a live projection over an ancestor's
+        # inline value. Arrays always own `_value`, so only a Table
+        # falls through here, which the generic Mapping branch below
+        # handles by synthesising fresh from its logical items.
     # Plain ``Mapping`` → inline table (synthesise from items).
     if isinstance(v, Mapping):
         return _populate_inline_table(
