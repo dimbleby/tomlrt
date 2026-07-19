@@ -2520,13 +2520,21 @@ def _finish_cloned_section(
     """
     from tomlrt._container import Table  # noqa: PLC0415
 
-    # Anchor past the whole subtree of the nearest header-bearing
-    # ancestor, not just `parent`'s own (possibly headerless implicit)
-    # extent: a header re-parents everything after it, so landing it
-    # right after `parent`'s own last KV would capture an unrelated
-    # sibling implicit table's trailing KVs under the new header on
-    # re-parse (see `attach_section_at`, which anchors the same way).
+    # Anchor at ``parent``'s own extent when it has one; a freshly
+    # created implicit intermediate (no content of its own yet) has an
+    # empty ``_refs`` and ``_parent_subtree_tail`` returns None
+    # immediately — fall back to the nearest header-bearing ancestor's
+    # extent instead of letting a None anchor land the block at the
+    # doc's absolute tail (mirrors ``attach_section_at``, which anchors
+    # this same way for the same reason). Either way, ``_safe_header_anchor``
+    # still guards against stopping mid-way through an unrelated
+    # sibling's trailing KVs — a header re-parents everything after it,
+    # so landing right after ``parent``'s own last KV would capture
+    # such KVs under the new header on re-parse.
     section = Table.section()
+    anchor = _parent_subtree_tail(parent) or _parent_subtree_tail(
+        _nearest_header_host(parent)
+    )
     _install_cloned_structural_block(
         section,
         parent=parent,
@@ -2535,7 +2543,7 @@ def _finish_cloned_section(
         owner=parent._owner_aot_entry,  # noqa: SLF001
         cloned_header=cloned_header,
         cloned_slots=cloned_slots,
-        anchor=_safe_header_anchor(_parent_subtree_tail(parent)),
+        anchor=_safe_header_anchor(anchor),
     )
     dict.__setitem__(parent, key, section)
     return section
