@@ -47,7 +47,7 @@ import tomli
 
 import tomlrt
 from tomlrt import AoT, Array
-from tomlrt._container import Container
+from tomlrt._container import Container, Table
 
 pytestmark = pytest.mark.slow
 
@@ -115,7 +115,7 @@ def _mutate(doc: tomlrt.Document, rng: random.Random) -> None:
         elif kind == "array":
             _mutate_array(node, rng)
         else:
-            _mutate_aot(node, rng)
+            _mutate_aot(node, rng, targets)
     except (KeyError, IndexError, TypeError, ValueError, tomlrt.TOMLError):
         # The fuzzer drives the API into unusual shapes; user-facing
         # errors are expected and tolerated. The invariant is that the
@@ -152,12 +152,20 @@ def _mutate_array(node: Array, rng: random.Random) -> None:
         node.reverse()
 
 
-def _mutate_aot(node: AoT, rng: random.Random) -> None:
-    op = rng.choice(["append", "insert", "pop", "reverse", "sort"])
+def _mutate_aot(node: AoT, rng: random.Random, targets: list[tuple[str, Any]]) -> None:
+    # "clone_table" appends an already-attached Table (from elsewhere in
+    # the doc) rather than a fresh dict, exercising the AoT clone path.
+    tables = [t for kind, t in targets if kind == "container" and isinstance(t, Table)]
+    ops = ["append", "insert", "pop", "reverse", "sort"]
+    if tables:
+        ops.append("clone_table")
+    op = rng.choice(ops)
     if op == "append":
         node.append({"new": _rand_value(rng)})
     elif op == "insert":
         node.insert(rng.randint(0, len(node)), {"new": _rand_value(rng)})
+    elif op == "clone_table":
+        node.append(rng.choice(tables))
     elif op == "pop" and node:
         node.pop(rng.randrange(len(node)))
     elif op == "reverse":

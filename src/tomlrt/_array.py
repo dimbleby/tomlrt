@@ -558,7 +558,7 @@ class AoT(list["Table"]):
         from tomlrt._container import Table as TableType  # noqa: PLC0415
 
         if isinstance(value, TableType) and value._layout_root is not None:  # noqa: SLF001
-            if value._owner_aot_entry is not None:  # noqa: SLF001
+            if value._is_own_aot_entry:  # noqa: SLF001
                 return _layout_ops.clone_aot_entry(self, value)
             if value._header_ref is not None and not value._inline:  # noqa: SLF001
                 return _layout_ops.clone_table_as_aot_entry(self, value)
@@ -571,7 +571,7 @@ class AoT(list["Table"]):
         if (
             isinstance(value, TableType)
             and value._layout_root is not None  # noqa: SLF001
-            and value._owner_aot_entry is not None  # noqa: SLF001
+            and value._is_own_aot_entry  # noqa: SLF001
         ):
             _layout_ops.replace_aot_entry_with_clone(self, index, value)
             return

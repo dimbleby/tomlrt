@@ -4037,16 +4037,127 @@ def test_clone_as_aot_entry_hoists_own_content_past_forward_declared_nested() ->
         [a]
         better = 2
 
-        [arr]
+        [[arr]]
         better = 2
         [arr.b]
         x = 1
         """)
     assert doc["arr"][0].to_dict() == {"better": 2, "b": {"x": 1}}
-    # `[arr]` rather than `[[arr]]` here is a separate, pre-existing gap in
-    # this conversion (unaffected by this fix); tomli faithfully parses
-    # what's written, i.e. as a plain table rather than a one-entry AoT.
-    assert _reparses(out)["arr"] == {"better": 2, "b": {"x": 1}}
+    assert _reparses(out)["arr"] == [{"better": 2, "b": {"x": 1}}]
+
+
+def test_aot_append_inline_table_nested_in_other_aot_entry() -> None:
+    """Appending a value physically nested inside an AoT entry (but not
+    itself the entry) must synthesise it as ordinary content, not
+    dispatch through the AoT-entry clone path (which requires a header)."""
+    src = td("""
+        [[people]]
+        x = {a = 1}
+        """)
+    doc = tomlrt.loads(src)
+    inline = doc.aot("people")[0]["x"]
+    doc["arr"] = AoT()
+    doc["arr"].append(inline)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[people]]
+        x = {a = 1}
+
+        [[arr]]
+        a = 1
+        """)
+    assert doc["arr"][0].to_dict() == {"a": 1}
+    assert _reparses(out)["arr"] == [{"a": 1}]
+
+
+def test_assign_nested_section_of_aot_entry_as_plain_section() -> None:
+    """A section nested inside an AoT entry is not itself the entry.
+
+    Assigning it elsewhere must clone just that section, not the whole
+    owning entry with the nested section's key kept as an extra level.
+    """
+    src = td("""
+        [[people]]
+        x = 1
+
+        [people.nested]
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    nested = doc.aot("people")[0]["nested"]
+    doc2 = tomlrt.loads("")
+    doc2["copied"] = nested
+    out = tomlrt.dumps(doc2)
+    assert out == td("""
+        [copied]
+        y = 2
+        """)
+    assert doc2["copied"].to_dict() == {"y": 2}
+    assert _reparses(out) == {"copied": {"y": 2}}
+
+
+def test_assign_dotted_key_navigator_view_synthesises_fresh_inline_table() -> None:
+    """A dotted-key navigator view (e.g. the `a` in `t = {a.b = 1}`) owns
+    no CST of its own — it's a live projection over its parent's inline
+    value — so it must be synthesised fresh, not cloned, when used as a
+    value elsewhere."""
+    doc = tomlrt.loads("t = {a.b = 1, a.c = 2}\n")
+    inner = doc["t"]["a"]
+    doc2 = tomlrt.loads("")
+    doc2["x"] = inner
+    out = tomlrt.dumps(doc2)
+    assert out == "x = { b = 1, c = 2 }\n"
+    assert doc2["x"].to_dict() == {"b": 1, "c": 2}
+    assert _reparses(out) == {"x": {"b": 1, "c": 2}}
+
+
+def test_aot_append_dotted_key_navigator_view() -> None:
+    """As above, but appending the navigator view into an AoT."""
+    doc = tomlrt.loads("t = {a.b = 1}\n")
+    inner = doc["t"]["a"]
+    doc["arr"] = AoT()
+    doc["arr"].append(inner)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        t = {a.b = 1}
+
+        [[arr]]
+        b = 1
+        """)
+    assert doc["arr"][0].to_dict() == {"b": 1}
+    assert _reparses(out)["arr"] == [{"b": 1}]
+
+
+def test_pop_last_entry_of_dotted_nested_aot_inside_aot_entry() -> None:
+    """Emptying an AoT reached only via dotted keys, itself nested inside
+    another AoT entry, must synthesise the `key = []` placeholder's owning
+    header even with no active install transaction (unlike the
+    structural-overwrite path, there is nothing to reposition afterward)."""
+    src = td("""
+        [[fruit.apple.seeds]]
+        size = 2
+
+        [[fruit.apple.seeds]]
+
+        [[fruit.apple.seeds.apple.seeds]]
+        size = 2
+        """)
+    doc = tomlrt.loads(src)
+    nested = doc["fruit"]["apple"]["seeds"][1]["apple"]["seeds"]
+    nested.pop(0)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[fruit.apple.seeds]]
+        size = 2
+
+        [[fruit.apple.seeds]]
+        [fruit.apple.seeds.apple]
+        seeds = []
+        """)
+    assert doc.to_dict() == {
+        "fruit": {"apple": {"seeds": [{"size": 2}, {"apple": {"seeds": []}}]}}
+    }
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_del_and_readd_with_forward_declared_nested_table_keeps_content() -> None:
