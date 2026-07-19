@@ -122,6 +122,23 @@ def _record_displacements(
         doc._displaced_recorder = prev  # noqa: SLF001
 
 
+def _effective_header_path_before(anchor: Slot | None) -> tuple[str, ...] | None:
+    """The path of the header governing a bare KV placed right after ``anchor``.
+
+    Walks backward from ``anchor`` to the nearest preceding
+    ``StructuralHeaderSlot`` — a bare KV's scope comes from whichever
+    header most recently opened, not necessarily from ``anchor`` itself
+    (``anchor`` may be a KV physically inside some other table's own
+    body). Returns ``None`` for doc-root scope (no header precedes it).
+    """
+    cur = anchor
+    while cur is not None:
+        if isinstance(cur, StructuralHeaderSlot):
+            return tuple(cur.path)
+        cur = cur._prev  # noqa: SLF001
+    return None
+
+
 def reposition_install(parent: Container, key: str, value: Any) -> None:
     """Replace ``parent[key]`` while preserving its physical position.
 
@@ -221,7 +238,25 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
         succ = saved_anchor_prev._next if saved_anchor_prev is not None else doc._head  # noqa: SLF001
         while succ is not None and id(succ) in new_ids:
             succ = succ._next  # noqa: SLF001
-        anchor_safe = not isinstance(succ, KVSlot)
+        tail_safe = not isinstance(succ, KVSlot)
+        # The block's own *leading* edge needs the same protection in
+        # reverse: a block that starts with a bare KV (its header, if
+        # any, comes later — e.g. an implicit source with direct KVs
+        # ahead of its structural children) takes that KV's scope from
+        # whichever header is currently in effect at ``saved_anchor_prev``
+        # — not necessarily ``saved_anchor_prev`` itself, which may be a
+        # KV physically inside some *other* table's body (e.g. the old
+        # binding used to be header-bearing, so anchoring a fresh header
+        # there was fine, but the new binding's leading KV inherits
+        # whatever governs that position now). Landing the block there
+        # when that doesn't match re-parents the leading KV under the
+        # wrong table.
+        first = new_slots[0]
+        head_safe = not (
+            isinstance(first, KVSlot)
+            and _effective_header_path_before(saved_anchor_prev) != first.host_path
+        )
+        anchor_safe = tail_safe and head_safe
     else:
         anchor_safe = in_body
     if not anchor_safe:

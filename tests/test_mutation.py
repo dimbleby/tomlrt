@@ -7185,5 +7185,49 @@ def test_adopt_private_section_unfiles_stale_bindings_for_nested_headers() -> No
     )
     doc["albums"]["name"]["k2"] = foreign["y"]
     out = tomlrt.dumps(doc)
-    assert _reparses(out)
     assert doc.to_dict() == {"albums": {"name": {"k2": {"w": 1}}}}
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_with_leading_dotted_kvs_anchors_past_foreign_scope() -> None:
+    """Overwriting a header-bearing key with an implicit source whose
+    direct KVs precede its structural children must not anchor those
+    leading KVs at the destination's old position when that position
+    is physically inside some *other* table's own body.
+
+    ``breed.k40`` used to be header-bearing (``[breed.k40.apple]``),
+    sitting right after ``[breed.apple.taste.k78.taste]``'s own body —
+    a safe place for a *header* to land (headers carry their own
+    scope), but not for the new value's *leading dotted KVs*
+    (``sweet``, ``k78.color``), which take their scope from whatever
+    header precedes them. Reusing the old anchor for those bare KVs
+    would silently re-parent them under ``breed.apple.taste.k78.taste``
+    on re-parse.
+    """
+    doc = tomlrt.loads(
+        td("""
+        breed.apple.taste.sweet = true
+        breed.apple.taste.k78.color = "red"
+
+        [breed.apple.taste.k78.taste]
+        sweet = true
+
+        [breed.k40.apple]
+        color = "red"
+        """)
+    )
+    doc["breed"]["k40"] = doc["breed"]["apple"]["taste"]
+    out = tomlrt.dumps(doc)
+    expected = {
+        "breed": {
+            "apple": {
+                "taste": {
+                    "sweet": True,
+                    "k78": {"color": "red", "taste": {"sweet": True}},
+                }
+            },
+            "k40": {"sweet": True, "k78": {"color": "red", "taste": {"sweet": True}}},
+        }
+    }
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
