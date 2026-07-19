@@ -2772,7 +2772,14 @@ def adopt_private_section(
 
     A header-bearing orphan that is itself an AoT entry (``[[a]]``) is
     normalised to a plain ``[key]`` section: the head's ``[[..]]``
-    discriminator and the entry's slot / view ownership are cleared.
+    discriminator is cleared. Either way, everything directly owned by
+    the orphan's stale entry (its own AoT entry, if it was one, or
+    whichever entry hosted it as a nested private orphan) is re-owned
+    by ``dest_parent``'s own entry instead — not cleared to no owner,
+    which would be wrong whenever ``dest_parent`` itself lives inside
+    an AoT entry (e.g. adopting into a key of an existing array
+    entry): the moved content must still be found and removed if that
+    entry is later popped.
 
     Pre-condition (checked by the caller): ``value`` is a header-bearing
     section attached to a private orphan with intact slots.
@@ -2780,20 +2787,24 @@ def adopt_private_section(
     doc = dest_parent._attached_doc  # noqa: SLF001
     old_prefix = value._path  # noqa: SLF001
     new_prefix = (*dest_parent._path, key)  # noqa: SLF001
-    # Non-None iff the orphan is an AoT entry being normalised to a section.
-    norm_entry = value._owner_aot_entry  # noqa: SLF001
+    # The orphan's stale owner: non-None whenever it was itself an AoT
+    # entry, *or* nested inside one (e.g. a plain section that lived in
+    # the body of an ``[[a]]`` entry now being removed).
+    stale_owner = value._owner_aot_entry  # noqa: SLF001
+    new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
     assert value._header_ref is not None  # noqa: SLF001
     _unfile_stale_same_orphan_ancestors(value, [value._header_ref.slot])  # noqa: SLF001
     _, slots = _gather_headered_subtree_slots(value)
     for s in slots:
         _retarget_slot_paths(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
-        if norm_entry is not None and s.owner_aot_entry is norm_entry:
-            s.owner_aot_entry = None
-            if isinstance(s, StructuralHeaderSlot) and s.entry is norm_entry:
+        if stale_owner is not None and s.owner_aot_entry is stale_owner:
+            s.owner_aot_entry = new_owner
+            _extend_entry_slots(new_owner, s)
+            if isinstance(s, StructuralHeaderSlot) and s.entry is stale_owner:
                 s.entry = None  # [[a]] -> [a]
     _rehome_view_tree(
-        value, dest_parent, old_prefix, new_prefix, doc, clear_owner=norm_entry
+        value, dest_parent, old_prefix, new_prefix, doc, stale_owner=stale_owner
     )
 
     header = value._header_ref.slot  # noqa: SLF001
@@ -2853,7 +2864,7 @@ def _rehome_view_tree(
     new_prefix: tuple[str, ...],
     doc: Document,
     *,
-    clear_owner: AoTEntry | None = None,
+    stale_owner: AoTEntry | None = None,
 ) -> None:
     """Re-point ``root``'s existing view subtree at ``doc`` with rebased paths.
 
@@ -2864,12 +2875,15 @@ def _rehome_view_tree(
     (:func:`_walk_view_tree`) as the delete-side displacement walk, so
     every view that was re-pointed at the orphan is restored here.
 
-    When ``clear_owner`` is given (an AoT entry being normalised to a
-    plain section), any view owned by it has its ``_owner_aot_entry``
-    cleared; nested AoT entries keep their own ownership.
+    When ``stale_owner`` is given (the orphan's own AoT entry, if it had
+    one), any view owned by it is re-owned by ``dest_parent``'s own
+    entry instead (``None`` if ``dest_parent`` isn't itself inside one);
+    nested AoT entries keep their own ownership.
     """
     from tomlrt._array import AoT, Array  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
+
+    new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
     def visit(node: object) -> None:
         if isinstance(node, (Container, AoT)):
@@ -2877,10 +2891,10 @@ def _rehome_view_tree(
             node._path = _rebase_path(node._path, old_prefix, new_prefix)  # noqa: SLF001
             if (
                 isinstance(node, Container)
-                and clear_owner is not None
-                and node._owner_aot_entry is clear_owner  # noqa: SLF001
+                and stale_owner is not None
+                and node._owner_aot_entry is stale_owner  # noqa: SLF001
             ):
-                node._owner_aot_entry = None  # noqa: SLF001
+                node._owner_aot_entry = new_owner  # noqa: SLF001
         elif isinstance(node, Array):
             node._layout_root = doc  # noqa: SLF001
 
