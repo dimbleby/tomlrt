@@ -7280,3 +7280,34 @@ def test_adopt_private_section_anchors_past_unrelated_trailing_kv() -> None:
     expected = {"site": {"k97": -7, "google": {"x": 1}}, "k63": {"a": 1}}
     assert doc.to_dict() == expected
     assert _reparses(out) == expected
+
+
+def test_adopt_private_implicit_leaves_body_tail_stale() -> None:
+    """``adopt_private_implicit`` re-files ancestor-chain refs for the
+    rebased dotted KVs it adopts, but was not advancing those
+    ancestors' ``_body_tail``: a later direct append to the same
+    implicit ancestor then wrongly saw an empty body and tried to
+    synthesise a fresh header for it, crashing when its anchor slot
+    (deep inside a header-less chain) couldn't be found on the
+    document root's own refs."""
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        k61 = { a = 1 }
+
+        [a.few.dots]
+        polka.dot = "again?"
+        polka.dance-with = "Dot"
+        """)
+    )
+    doc["a"]["few"]["dots"] = doc["a"]["few"]["dots"]["polka"]
+    doc["a"]["few"]["k29"] = [1, 2]
+    out = tomlrt.dumps(doc)
+    expected = {
+        "a": {
+            "k61": {"a": 1},
+            "few": {"dots": {"dot": "again?", "dance-with": "Dot"}, "k29": [1, 2]},
+        }
+    }
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
