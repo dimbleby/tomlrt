@@ -1144,6 +1144,42 @@ def test_self_overlap_assign_replaces_with_child_block() -> None:
         """)
 
 
+def test_self_overlap_assign_nested_grandchild_then_del_stays_consistent() -> None:
+    """``t[k] = t[k][grandchild]`` must not leave the old parent's stale
+    binding to the (now relocated) grandchild dangling.
+
+    The grandchild is nested two levels deep in the orphaned subtree
+    ``t[k]`` transplants on overwrite; only ``t[k]`` itself is the
+    orphan's own root, so the grandchild's old ancestor-chain bindings
+    are not scrubbed by that transplant and must be cleaned up when it
+    is adopted at the new destination. Left stale, a later unrelated
+    delete crashes on a dangling slot back-pointer.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+
+        [a.extend]
+        key = "str"
+
+        [a.extend.more]
+        key = [1, 2]
+        """)
+    )
+    doc["a"]["extend"] = doc["a"]["extend"]["more"]
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+
+        [a.extend]
+        key = [1, 2]
+        """)
+    # A later, unrelated delete must not crash on stale bookkeeping left
+    # behind by the overlap-assign above.
+    del doc["a"]["extend"]
+    assert tomlrt.dumps(doc) == "[a]\n"
+    assert doc.to_dict() == {"a": {}}
+
+
 def test_cross_doc_splice_no_doubled_blank_lines() -> None:
     """Sequential cross-doc copies don't double the blank line between sections.
 
