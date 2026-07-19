@@ -3773,6 +3773,8 @@ def _move_slots_to_anchor(
     if head._prev is saved_anchor_prev:  # noqa: SLF001
         # Already at the saved position — only the leading needs fixing.
         head.leading.pieces = list(saved_leading_pieces)
+        if tail._next is not None:  # noqa: SLF001
+            _ensure_terminator(tail, doc)
         return
 
     # Detach [head .. tail] from its current position in the linked list.
@@ -3808,6 +3810,12 @@ def _move_slots_to_anchor(
             doc._tail = tail  # noqa: SLF001
 
     head.leading.pieces = list(saved_leading_pieces)
+    # A slot cloned from a no-final-newline source can arrive here with
+    # no trailing newline of its own (it was valid at its original
+    # doc's tail, where this check earlier passed). Moved to sit before
+    # ``next_after``, it now needs one.
+    if tail._next is not None:  # noqa: SLF001
+        _ensure_terminator(tail, doc)
 
     # Resort ancestor refs by linked-list position; also recompute
     # _body_tail on each (the move may have invalidated the cached
