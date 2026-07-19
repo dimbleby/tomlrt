@@ -7338,3 +7338,86 @@ def test_materialise_empty_aot_anchors_within_owning_entry() -> None:
     expected = {"a": {"b": [{"x": {"songs": []}}, {"name": 2}]}}
     assert doc.to_dict() == expected
     assert _reparses(out) == expected
+
+
+def test_dotted_kv_chain_ref_files_before_unrelated_descendant_header() -> None:
+    """``install_dotted_kv_slot``'s ancestor-chain ref-filing reused one
+    shared anchor slot (computed at ``host``'s level) for every ancestor
+    in the chain, including ones that don't themselves hold a ref to
+    it. When such an ancestor's only existing ref was a nested
+    descendant's header, the fallback filed the new ref *after* that
+    header — even though a headerless ancestor's own dotted content
+    always physically precedes any of its descendant headers. The
+    ancestor's ``_refs`` ended up out of doc-stream order, and a later
+    structural replacement keyed off that ordering silently detached
+    an entire cloned AoT from the document."""
+    doc = tomlrt.loads(
+        td("""
+        top.key = 1
+
+        [a.few.dots]
+        polka.dot = "again?"
+
+        [tbl]
+        a.b.c = 42.666
+        """)
+    )
+    doc["a"]["k6"] = doc["tbl"]["a"]["b"]
+    doc["a"]["few"]["k46"] = doc["a"]["k6"]
+    foreign = tomlrt.loads(
+        td("""
+        [[arr]]
+        a.b.c = 1
+        a.b.d = 2
+        [[arr]]
+        a.b.c = 3
+        a.b.d = 4
+        """)
+    )
+    doc["a"]["few"] = foreign["arr"]
+    out = tomlrt.dumps(doc)
+    expected = {
+        "top": {"key": 1},
+        "a": {
+            "k6": {"c": 42.666},
+            "few": [{"a": {"b": {"c": 1, "d": 2}}}, {"a": {"b": {"c": 3, "d": 4}}}],
+        },
+        "tbl": {"a": {"b": {"c": 42.666}}},
+    }
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
+
+
+def test_dotted_kv_chain_body_tail_propagation_ignores_unrelated_root_content() -> None:
+    """``install_dotted_kv_slot``'s ancestor-chain loop advanced each
+    ancestor's ``_body_tail`` only when it matched the *host*-level
+    anchor computed once at the top of the function. For an
+    intermediate ancestor whose own body_tail already diverged from
+    host's (e.g. host is the document root and some unrelated sibling
+    key's content is root's own latest, while this ancestor tracks only
+    its own subtree's latest), that condition never matched, so the
+    ancestor's ``_body_tail`` went stale after the very first KV filed
+    under it. A later structural overwrite of that ancestor's key,
+    which reads ``_body_tail`` to find its anchor, then silently
+    dropped the replacement content instead of installing it."""
+    doc = tomlrt.loads(
+        td("""
+        physical.color = "orange"
+        site.k1 = true
+        """)
+    )
+    foreign1 = tomlrt.loads('k74."google.com" = true\n')
+    doc["physical"]["k74"] = foreign1["k74"]
+    foreign2 = tomlrt.loads(
+        td("""
+        sub.name = "a"
+        sub.color = "b"
+        sub.flavor = "c"
+        """)
+    )
+    doc["physical"]["k74"]["google.com"] = foreign2["sub"]
+    doc["physical"]["k74"] = "x y"
+    out = tomlrt.dumps(doc)
+    expected = {"physical": {"color": "orange", "k74": "x y"}, "site": {"k1": True}}
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
