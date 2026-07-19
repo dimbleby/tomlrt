@@ -1061,17 +1061,17 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     surviving_aot_entries = (
         _surviving_aot_entries(doc, candidate_owners) if candidate_owners else set()
     )
-    # Capture doc-stream order *before* the unlink loop severs ``_next``
-    # links. ``owned_slots`` is in collection order (every ref bound under
+    # Capture doc-stream order *before* the unlink loop severs the linked
+    # list. ``owned_slots`` is in collection order (every ref bound under
     # ``key`` in ``c`` first — which front-loads nested headers — then the
     # subtree body), not doc-stream order; transplanting in that order
     # would corrupt the orphan's linked list. ``owned_slots[0]`` (the
-    # binding's primary slot, ``c._index[key][0]``) is the fast local
-    # start for the forward walk; see :func:`_owned_slots_forward` for
-    # when and why it falls back to a full walk.
+    # binding's primary slot, ``c._index[key][0]``) anchors the walk; see
+    # :func:`_owned_slots_ordered` for why that's usually but not always
+    # doc-stream-first.
     transplanting = bool(subtree_containers or subtree_aots)
     ordered_for_transplant = (
-        _owned_slots_forward(owned_slots[0], owned_ids, doc._head)  # noqa: SLF001
+        _owned_slots_ordered(owned_slots[0], owned_ids)
         if transplanting and owned_slots
         else owned_slots
     )
@@ -1218,49 +1218,46 @@ def _collect_subtree(
             _collect_subtree(entry, containers_out, aots_out, add_slot)
 
 
-def _owned_slots_in_doc_order(start: Slot | None, owned_ids: set[int]) -> list[Slot]:
-    """Walk the doc-stream forward from ``start``, collecting owned slots.
+def _owned_slots_ordered(start: Slot, owned_ids: set[int]) -> list[Slot]:
+    """Collect ``owned_ids`` in true doc-stream order, anchored at ``start``.
 
-    ``start`` must be the owned set's doc-stream-first slot, or the walk
-    silently misses every owned slot physically preceding it — see
-    :func:`_owned_slots_forward` for a caller that cannot guarantee this.
-    The walk skips interleaved foreign slots (a binding's slots need not
-    be contiguous — ``[[a]] … [b] … [[a]]`` is legal) and stops after
-    every owned slot has been seen. Used where physical order, not
-    collection order, is required.
+    ``start`` is typically a binding's own header/primary slot, and
+    usually — but not always — the owned set's doc-stream-first slot: a
+    nested descendant's header or dotted KV may have been written
+    physically *earlier* (legal, spec-conformant TOML, e.g. a sub-table
+    ``[a.b]`` followed later by its parent's own ``[a]``). Walking
+    forward from ``start`` finds every owned slot that follows it; any
+    owned slot forward can't reach must instead precede it, so the walk
+    back from ``start`` (via ``_prev``, needing no separate document-head
+    reference) collects exactly the shortfall. Interleaved foreign slots
+    are skipped either way (a binding's slots need not be contiguous —
+    ``[[a]] … [b] … [[a]]`` is legal).
+
+    Same cost as a plain forward walk in the common case (no backward
+    step at all once forward has found everything); the rare shortfall
+    only walks as far back as needed to find the missing slots, not the
+    whole document.
     """
-    out: list[Slot] = []
+    forward: list[Slot] = []
     seen: set[int] = set()
     cur: Slot | None = start
     while cur is not None and len(seen) < len(owned_ids):
-        if id(cur) in owned_ids and id(cur) not in seen:
-            out.append(cur)
+        if id(cur) in owned_ids:
+            forward.append(cur)
             seen.add(id(cur))
         cur = cur._next  # noqa: SLF001
-    return out
-
-
-def _owned_slots_forward(
-    start: Slot | None,
-    owned_ids: set[int],
-    doc_head: Slot | None,
-) -> list[Slot]:
-    """Doc-stream order for ``owned_ids``, fast in the common case.
-
-    Tries the cheap local walk from ``start`` (typically the binding's
-    own header/primary slot) first: this is O(distance from ``start``
-    to the last owned slot) and correct whenever ``start`` really is the
-    owned set's doc-stream-first slot, which holds unless a nested
-    descendant's header or dotted KV was written physically *earlier*
-    than ``start`` — legal, spec-conformant TOML (``[a.b]`` followed
-    later by ``[a]``), but rare. Only in that case does the local walk
-    come back short, and this falls back to a full walk from
-    ``doc_head``, which is guaranteed complete but O(document size).
-    """
-    out = _owned_slots_in_doc_order(start, owned_ids)
-    if len(out) == len(owned_ids):
-        return out
-    return _owned_slots_in_doc_order(doc_head, owned_ids)
+    missing = len(owned_ids) - len(seen)
+    if not missing:
+        return forward
+    backward: list[Slot] = []
+    cur = start._prev  # noqa: SLF001
+    while cur is not None and len(backward) < missing:
+        if id(cur) in owned_ids:
+            backward.append(cur)
+        cur = cur._prev  # noqa: SLF001
+    assert len(backward) == missing, "owned slot unreachable from start"
+    backward.reverse()
+    return backward + forward
 
 
 def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
@@ -2260,17 +2257,10 @@ def clone_aot_entry(
         # ``entry_slots`` is membership order (header first), not
         # doc-stream order — a later direct KV append lands at the tail
         # of the list even if it was spliced physically earlier in the
-        # doc. Recover true order via the header-first invariant (an
-        # AoT entry, unlike a plain table, can never be forward-declared:
-        # see _hoist_own_slots_first) and a forward walk, same primitive
-        # ``_gather_subtree_slots`` uses. No fallback is possible here —
-        # a private/orphan entry has no attached Document to walk from —
-        # so the invariant is checked rather than silently trusted.
+        # doc. Recover true order the same way ``_gather_subtree_slots``
+        # does, anchored on the header-first invariant.
         owned_ids = {id(s) for s in src_entry.entry_slots}
-        src_slots = _owned_slots_in_doc_order(src_entry.entry_slots[0], owned_ids)
-        assert len(src_slots) == len(owned_ids), (
-            "AoT entry content physically precedes its own header"
-        )
+        src_slots = _owned_slots_ordered(src_entry.entry_slots[0], owned_ids)
     else:
         owner = src._owner_aot_entry  # noqa: SLF001
         if owner is None:  # pragma: no cover
@@ -2517,12 +2507,12 @@ def _owned_slots_from(root: Container, start: Slot) -> list[Slot]:
     """Collect ``root``'s owned slots in true doc-stream order.
 
     ``start`` should be ``root``'s own header/first slot; see
-    :func:`_owned_slots_forward` for why that's usually but not always
-    doc-stream-first, and how the fallback handles it.
+    :func:`_owned_slots_ordered` for why that's usually but not always
+    doc-stream-first, and how it's handled either way.
     """
     owned: set[int] = set()
     _collect_subtree(root, [], [], lambda s: owned.add(id(s)))
-    return _owned_slots_forward(start, owned, root._attached_doc._head)  # noqa: SLF001
+    return _owned_slots_ordered(start, owned)
 
 
 def _gather_subtree_slots(src_table: Container) -> list[Slot]:
@@ -2557,7 +2547,7 @@ def _hoist_own_slots_first(slots: list[Slot], root_path: tuple[str, ...]) -> lis
 
     A plain table's own header and direct/dotted keys may legally be
     interleaved with a forward-declared nested descendant's block (see
-    :func:`_owned_slots_forward`) — a table can always be reopened. An
+    :func:`_owned_slots_ordered`) — a table can always be reopened. An
     array-of-tables entry can never be reopened this way (a later plain
     ``[..]`` for an already-``[[..]]``-opened path is invalid TOML), so
     installing a clone as a new AoT entry (:func:`clone_table_as_aot_entry`)
@@ -2903,7 +2893,7 @@ def _clone_entry_slots(
 
     ``head``, if given, identifies ``src_slots``' own boundary header —
     by identity, not position, since it need not be ``src_slots[0]``
-    (see :func:`_owned_slots_forward`). Its cloned counterpart is
+    (see :func:`_owned_slots_ordered`). Its cloned counterpart is
     returned as the second element, with its ``entry`` set to
     ``new_entry`` — so passing ``new_entry=None`` converts an aot-entry
     header to a table header, and passing a non-None ``new_entry`` does
