@@ -1684,9 +1684,17 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         # while `reposition_install` stages a replacement block (moved
         # back to its saved anchor afterward), or when
         # `_materialise_empty_aot` synthesises a `key = []` placeholder
-        # after an AoT's last entry was removed (no better anchor
-        # exists, so doc tail is final here, not interim).
-        if doc._tail is None:  # noqa: SLF001
+        # after an AoT's last entry was removed. The new header is a
+        # sub-section of the nearest header-bearing ancestor, so it
+        # must anchor at that host's own subtree tail (mirroring
+        # `_aot_append_anchor`'s own-entry fallback) rather than the
+        # document's absolute tail — otherwise it lands after whatever
+        # unrelated content / later AoT entry currently sits last,
+        # which a re-parse then misattributes it to.
+        host_tail = _parent_subtree_tail(_nearest_header_host(c))
+        if host_tail is not None:
+            insert_after(host_tail, header_slot, doc)
+        elif doc._tail is None:  # noqa: SLF001
             insert_before_head(header_slot, doc)
             header_slot.leading = Trivia()
         else:
