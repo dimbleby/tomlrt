@@ -1180,6 +1180,58 @@ def test_self_overlap_assign_nested_grandchild_then_del_stays_consistent() -> No
     assert doc.to_dict() == {"a": {}}
 
 
+def test_self_overlap_assign_nested_dotted_grandchild_then_del_stays_consistent() -> (
+    None
+):
+    """As above, but the overlapping subtree is header-less (dotted).
+
+    Exercises ``adopt_private_implicit`` rather than
+    ``adopt_private_section`` — the same stale-ancestor-binding hazard,
+    for the dotted-key variant.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        extend.key = "str"
+        extend.more.key = 5
+        """)
+    )
+    doc["a"]["extend"] = doc["a"]["extend"]["more"]
+    assert tomlrt.dumps(doc) == "[a]\nextend.key = 5\n"
+    del doc["a"]["extend"]
+    assert tomlrt.dumps(doc) == "[a]\n"
+    assert doc.to_dict() == {"a": {}}
+
+
+def test_new_key_assign_of_ancestor_into_its_own_descendant() -> None:
+    """``t[k] = ancestor`` (a *new* key, not an overwrite) where
+    ``ancestor`` is a same-document ancestor of ``t`` itself must not
+    infinite-loop.
+
+    Unlike the overwrite case above, nothing is deleted first, so
+    ``ancestor`` stays fully live throughout the install.
+    ``_install_attached_subtree`` reads it incrementally; since ``t`` is
+    nested inside ``ancestor``, installing into ``t`` is also live growth
+    of the very structure being walked, which must be snapshotted up
+    front rather than read incrementally.
+    """
+    doc = tomlrt.loads("x.a = 1\nx.b.c = 2\n")
+    x = doc["x"]
+    b = x["b"]
+    b["new"] = x
+    assert tomlrt.dumps(doc) == td("""
+        x.a = 1
+        x.b.c = 2
+        x.b.new.a = 1
+
+        [x.b.new.b]
+        c = 2
+        """)
+    assert doc.to_dict() == {
+        "x": {"a": 1, "b": {"c": 2, "new": {"a": 1, "b": {"c": 2}}}}
+    }
+
+
 def test_cross_doc_splice_no_doubled_blank_lines() -> None:
     """Sequential cross-doc copies don't double the blank line between sections.
 
