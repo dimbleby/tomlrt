@@ -35,11 +35,24 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
     each KV skips a root re-walk. The validator guarantees
     ``slot.host_path`` equals the most recent header path (or the
     supplied root's path for a cloned subtree).
+
+    A header whose path equals ``root``'s own is ``root``'s own header,
+    appearing mid-body rather than as ``slots[0]``: cloned/rehomed
+    subtrees preserve true doc-stream order, so a nested descendant
+    declared physically *earlier* than ``root``'s own header (legal
+    TOML, e.g. ``[a.b]`` before ``[a]``) puts that header later in
+    ``slots``. It cannot be reopened via ``_apply_header`` (``root`` is
+    already wired, not a fresh child to create/find), so it is handled
+    as a pure host-context reset back to ``root``.
     """
     current_host = root
     for slot in slots:
         if isinstance(slot, StructuralHeaderSlot):
-            current_host = _apply_header(root, slot)
+            current_host = (
+                root
+                if slot.path == root._path  # noqa: SLF001
+                else _apply_header(root, slot)
+            )
         else:
             assert isinstance(slot, KVSlot)
             assert slot.host_path == current_host._path, (  # noqa: SLF001
