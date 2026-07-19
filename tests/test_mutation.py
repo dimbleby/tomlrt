@@ -7099,3 +7099,41 @@ def test_overwrite_aot_entry_key_with_own_grandchild_then_pop_owning_entry() -> 
     doc["a"].pop(0)
     assert tomlrt.dumps(doc) == "a = []\n"
     assert doc.to_dict() == {"a": []}
+
+
+def test_clone_section_into_fresh_implicit_intermediate_anchors_locally() -> None:
+    """Cloning a live header-bearing section into a fresh implicit
+    intermediate (no ``_refs`` of its own yet, e.g. a key of an AoT
+    entry that has no other content) must anchor via the nearest
+    header-bearing ancestor's own extent, not fall through to a
+    ``None`` anchor that lands the block at the document's absolute
+    tail — letting a later sibling AoT entry capture it on re-parse."""
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        a.b.c = 1
+        a.b.d = 2
+
+        [[a]]
+        a.b = { x = 1 }
+        """)
+    )
+    doc["a"][0]["a"]["k34"] = doc["a"][0]["a"]
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        a.b.c = 1
+        a.b.d = 2
+
+        [a.a.k34.b]
+        c = 1
+        d = 2
+
+        [[a]]
+        a.b = { x = 1 }
+        """)
+    assert doc.to_dict() == {
+        "a": [
+            {"a": {"b": {"c": 1, "d": 2}, "k34": {"b": {"c": 1, "d": 2}}}},
+            {"a": {"b": {"x": 1}}},
+        ]
+    }
