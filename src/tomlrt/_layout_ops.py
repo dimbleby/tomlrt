@@ -2765,6 +2765,13 @@ def adopt_private_section(
     assert isinstance(first, StructuralHeaderSlot)
     _retarget_header_separator(first, _build_section_leading(doc))
     _splice_block_after(slots, _parent_subtree_tail(dest_parent), doc)
+    # As in _install_cloned_structural_block: the orphan's last slot may
+    # lack a trailing newline (it was previously the very last thing in
+    # its own document); moved anywhere but this document's new tail, it
+    # now needs one.
+    tail = slots[-1]
+    if tail is not doc._tail:  # noqa: SLF001
+        _ensure_terminator(tail, doc)
     _file_header_binding_chain(dest_parent, header)
     # As in _install_cloned_structural_block: a forward-declared nested
     # descendant's header was only filed up to ``value`` itself (its
@@ -2871,6 +2878,13 @@ def adopt_private_implicit(
     _rehome_view_tree(value, dest_parent, old_prefix, new_prefix, doc)
 
     _splice_block_after(slots, _parent_subtree_tail(host), doc)
+    # As in adopt_private_section: the orphan's last slot may lack a
+    # trailing newline (it was previously the last thing in its own
+    # document); moved anywhere but this document's new tail, it needs
+    # one now.
+    tail = slots[-1]
+    if tail is not doc._tail:  # noqa: SLF001
+        _ensure_terminator(tail, doc)
     # value's own subtree refs travelled intact; re-file only the ancestor
     # binding refs the delete scrubbed: dotted KVs hosted at ``host`` and
     # nested headers propagate up the chain, but KVs under a nested
