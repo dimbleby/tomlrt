@@ -1821,6 +1821,23 @@ def _parent_subtree_tail(parent: Container) -> Slot | None:
     return cur
 
 
+def _safe_header_anchor(anchor: Slot | None) -> Slot | None:
+    """Extend a subtree-tail anchor past any immediately-following bare KVs.
+
+    A dotted key inherits its scope from physical position rather than
+    from any header of its own, so a KV belonging to an unrelated
+    sibling (one that happens to sit right after ``parent``'s own
+    extent, e.g. another root-level implicit table's key) does not
+    bound a safe insertion point for a *header*-bearing block — landing
+    one there would recapture that KV under the new header on re-parse.
+    Skip forward past any such run to the next structural header, or
+    doc end, where insertion is unambiguous.
+    """
+    while anchor is not None and isinstance(anchor._next, KVSlot):  # noqa: SLF001
+        anchor = anchor._next  # noqa: SLF001
+    return anchor
+
+
 def _splice_at_end(slot: Slot, doc: Document) -> None:
     """Insert ``slot`` at the end of the doc-stream."""
     anchor = doc._tail  # noqa: SLF001
@@ -2502,6 +2519,12 @@ def _finish_cloned_section(
     """
     from tomlrt._container import Table  # noqa: PLC0415
 
+    # Anchor past the whole subtree of the nearest header-bearing
+    # ancestor, not just `parent`'s own (possibly headerless implicit)
+    # extent: a header re-parents everything after it, so landing it
+    # right after `parent`'s own last KV would capture an unrelated
+    # sibling implicit table's trailing KVs under the new header on
+    # re-parse (see `attach_section_at`, which anchors the same way).
     section = Table.section()
     _install_cloned_structural_block(
         section,
@@ -2511,7 +2534,7 @@ def _finish_cloned_section(
         owner=parent._owner_aot_entry,  # noqa: SLF001
         cloned_header=cloned_header,
         cloned_slots=cloned_slots,
-        anchor=_parent_subtree_tail(parent),
+        anchor=_safe_header_anchor(_parent_subtree_tail(parent)),
     )
     dict.__setitem__(parent, key, section)
     return section

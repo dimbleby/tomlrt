@@ -6991,3 +6991,51 @@ def test_pop_aot_entry_removes_self_reference_section() -> None:
         apple.seeds = []
         """)
     assert doc.to_dict() == {"fruit": {"apple": {"color": "red", "seeds": []}}}
+
+
+def test_clone_section_into_headerless_implicit_parent_anchors_past_siblings() -> None:
+    """Cloning a live section into a key of a headerless implicit table
+    must not land the new header between that table's own last KV and
+    an unrelated sibling implicit table's later KVs — doing so would
+    silently re-scope the sibling's keys under the new header."""
+    doc = tomlrt.loads(
+        td("""
+        apple.type = "fruit"
+        orange.type = "fruit"
+
+        apple.skin = "thin"
+        orange.skin = "thick"
+
+        apple.color = "red"
+        apple.k47 = -7
+
+        orange.color = -7
+        k20 = true
+        """)
+    )
+    foreign = tomlrt.loads(
+        td("""
+        [clients]
+        data = [[1, 2]]
+        """)
+    )
+    doc["orange"]["color"] = foreign["clients"]
+    assert tomlrt.dumps(doc) == td("""
+        apple.type = "fruit"
+        orange.type = "fruit"
+
+        apple.skin = "thin"
+        orange.skin = "thick"
+
+        apple.color = "red"
+        apple.k47 = -7
+        k20 = true
+
+        [orange.color]
+        data = [[1, 2]]
+        """)
+    assert doc.to_dict() == {
+        "apple": {"type": "fruit", "skin": "thin", "color": "red", "k47": -7},
+        "orange": {"type": "fruit", "skin": "thick", "color": {"data": [[1, 2]]}},
+        "k20": True,
+    }
