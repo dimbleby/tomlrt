@@ -714,7 +714,22 @@ class Container(dict[str, Any]):
                 _layout_ops.clone_document_as_section(self, key, value)
             else:
                 # Implicit source: tuple-path install preserves structural
-                # children and implicit chains.
+                # children and implicit chains. `_install_attached_subtree`
+                # reads `value` incrementally as it installs; if `value` is
+                # a same-document ancestor of the new destination, the
+                # destination's growth mid-install is also live growth of
+                # the (still being read) source nested inside it, causing
+                # unbounded recursion. Snapshot such an overlap into a
+                # freshly-synthesised, independently-attached Document up
+                # front instead (needs real slots to clone from, unlike a
+                # detached factory Table).
+                dest_path = (*self._path, key)
+                if (
+                    value._layout_root is self._layout_root
+                    and value._path
+                    and value._path == dest_path[: len(value._path)]
+                ):
+                    value = Document(data=value.to_dict())
                 _install_attached_subtree(self, (key,), value)
             return
         if src_root is not None and src_root._is_private:  # noqa: SLF001
@@ -722,7 +737,7 @@ class Container(dict[str, Any]):
             # document so identity and trivia both survive. A header-bearing
             # section (an AoT entry is normalised to a plain section) moves
             # its block; a header-less implicit section moves its dotted KVs.
-            if value._header_ref is not None:
+            if value._header_ref is not None:  # noqa: SLF001
                 _layout_ops.adopt_private_section(self, key, value)
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
