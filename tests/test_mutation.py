@@ -7256,3 +7256,27 @@ def test_clone_implicit_source_with_empty_string_header_child() -> None:
     expected = {"x": 1, "src": {"k": 1, "": {"y": 1}}, "a": {"k": 1, "": {"y": 1}}}
     assert doc.to_dict() == expected
     assert _reparses(out) == expected
+
+
+def test_adopt_private_section_anchors_past_unrelated_trailing_kv() -> None:
+    """``adopt_private_section`` had no safety check on its anchor at
+    all: the block it splices in always brings its own header, so
+    landing it right after a destination's own last KV — when an
+    unrelated bare KV (belonging to some other table entirely) happens
+    to sit physically right after that point — silently re-parents
+    that unrelated KV under the new header on re-parse."""
+    doc = tomlrt.loads(
+        td("""
+        site.k97 = -7
+        k63 = { a = 1 }
+
+        [tmp]
+        x = 1
+        """)
+    )
+    tmp = doc.pop("tmp")
+    doc["site"]["google"] = tmp
+    out = tomlrt.dumps(doc)
+    expected = {"site": {"k97": -7, "google": {"x": 1}}, "k63": {"a": 1}}
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
