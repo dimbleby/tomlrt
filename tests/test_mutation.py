@@ -4157,6 +4157,30 @@ def test_overwrite_ancestor_into_own_descendant_snapshots_before_delete() -> Non
     assert _reparses(out) == doc.to_dict()
 
 
+def test_clone_section_from_no_final_newline_source_gets_separator() -> None:
+    """A cloned section whose source document had no final newline (it
+    was previously the very last thing there) must get one when spliced
+    anywhere but the destination's own new tail — otherwise it runs
+    into whatever follows on the same physical line.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [d.e.f]
+        [g.h.i]
+        """)
+    )
+    other = tomlrt.loads("# No newline at end of file.\n[table]")
+    doc["d"]["e"]["k27"] = other["table"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [d.e.f]
+        # No newline at end of file.
+        [d.e.k27]
+        [g.h.i]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_clone_section_into_aot_entry_registers_it_in_entry_slots() -> None:
     """A section-style value cloned as a *new key inside an existing AoT
     entry* (not the entry itself) must be registered in that entry's
