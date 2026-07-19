@@ -36,12 +36,9 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
     ``slot.host_path`` equals the most recent header path (or the
     supplied root's path for a cloned subtree).
 
-    A header whose path equals ``root``'s own is ``root``'s own header,
-    appearing mid-body rather than as ``slots[0]``: cloned/rehomed
-    subtrees preserve true doc-stream order, so a nested descendant
-    declared physically *earlier* than ``root``'s own header (legal
-    TOML, e.g. ``[a.b]`` before ``[a]``) puts that header later in
-    ``slots``. It cannot be reopened via ``_apply_header`` (``root`` is
+    A header whose path equals ``root``'s own can appear mid-body
+    rather than as ``slots[0]`` (see :func:`tomlrt._layout_ops._owned_slots_forward`
+    for why); it cannot be reopened via ``_apply_header`` (``root`` is
     already wired, not a fresh child to create/find), so it is handled
     as a pure host-context reset back to ``root``.
     """
