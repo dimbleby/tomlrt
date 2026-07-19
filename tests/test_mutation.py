@@ -7039,3 +7039,34 @@ def test_clone_section_into_headerless_implicit_parent_anchors_past_siblings() -
         "orange": {"type": "fruit", "skin": "thick", "color": {"data": [[1, 2]]}},
         "k20": True,
     }
+
+
+def test_overwrite_with_own_grandchild_then_clone_elsewhere() -> None:
+    """Overwriting a key with one of its own (same-document) descendants
+    must snapshot before the old subtree is deleted — deleting it would
+    otherwise unlink the descendant's own backing slots before they are
+    read, corrupting the clone or (if it later becomes a clone source
+    itself) leaving stale host-path bookkeeping behind."""
+    doc = tomlrt.loads(
+        td("""
+        name.first = "Arthur"
+        "name".'last' = "Dent"
+
+        many.dots.dot.dot.dot = 42
+        """)
+    )
+    doc["k9"] = -7
+    doc["many"]["dots"] = doc["many"]["dots"]["dot"]["dot"]
+    doc["many"]["k96"] = 1
+    doc["name"]["k75"] = doc["many"]
+    out = tomlrt.dumps(doc)
+    assert _reparses(out)
+    assert doc.to_dict() == {
+        "name": {
+            "first": "Arthur",
+            "last": "Dent",
+            "k75": {"k96": 1, "dots": {"dot": 42}},
+        },
+        "many": {"dots": {"dot": 42}, "k96": 1},
+        "k9": -7,
+    }
