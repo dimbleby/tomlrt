@@ -94,13 +94,16 @@ class _Parser:
         return result
 
     def _parse_header(self, leading: Trivia) -> StructuralHeaderSlot:
+        """Parse a ``[a.b]`` / ``[[a.b]]`` header.
+
+        Precondition: cursor is at ``[``.
+        """
         sc = self._sc
         kind: _HeaderKind
         if sc.starts_with("[["):
             sc.advance(2)
             kind = "aot-entry"
         else:
-            assert sc.peek() == "["
             sc.advance(1)
             kind = "table"
 
@@ -208,9 +211,12 @@ class _Parser:
         return sc.scan_value_atom()
 
     def _parse_array(self) -> ArrayValue:
+        """Parse a ``[...]`` inline array.
+
+        Precondition: cursor is at ``[``.
+        """
         sc = self._sc
         src = sc.src
-        assert sc.peek() == "["
         sc.pos += 1
         node = ArrayValue()
         head = sc.scan_array_trivia()
@@ -251,8 +257,11 @@ class _Parser:
                 raise sc.error(msg)
 
     def _parse_inline_table(self) -> InlineTableValue:
+        """Parse a ``{...}`` inline table.
+
+        Precondition: cursor is at ``{``.
+        """
         sc = self._sc
-        assert sc.peek() == "{"
         sc.advance(1)
         node = InlineTableValue()
         head = sc.scan_array_trivia()

@@ -355,12 +355,10 @@ class _Scanner:
     def _scan_basic_string(self, *, allow_multiline: bool) -> StringValue:
         """Scan a basic string. Decodes escapes; never sets `raw`.
 
-        Precondition: cursor is at `"`. Callers route through
-        `scan_string`, which sets `raw`.
+        Precondition: cursor is at `"`.
         """
         if allow_multiline and self.starts_with('"""'):
             return self._scan_ml_basic_string()
-        assert self.peek() == '"'
         src = self.src
         end = self.end
         # Fast path: simple basic string with no escapes.
@@ -403,7 +401,7 @@ class _Scanner:
                 self.pos = m.end()
 
     def _scan_ml_basic_string(self) -> StringValue:
-        assert self.starts_with('"""')
+        """Scan a ``\"\"\"``-delimited string. Precondition: cursor is at ``\"\"\"``."""
         self.pos += 3
         # A newline immediately after the opening delimiter is trimmed.
         if self.peek() == "\n":
@@ -486,12 +484,10 @@ class _Scanner:
     def _scan_literal_string(self, *, allow_multiline: bool) -> StringValue:
         """Scan a literal string. No escapes; never sets `raw`.
 
-        Precondition: cursor is at `'`. Callers route through
-        `scan_string`, which sets `raw`.
+        Precondition: cursor is at `'`.
         """
         if allow_multiline and self.starts_with("'''"):
             return self._scan_ml_literal_string()
-        assert self.peek() == "'"
         self.pos += 1
         src = self.src
         end = self.end
@@ -518,7 +514,7 @@ class _Scanner:
         raise self.error(msg)
 
     def _scan_ml_literal_string(self) -> StringValue:
-        assert self.starts_with("'''")
+        """Scan a ``'''``-delimited string. Precondition: cursor is at ``'''``."""
         self.pos += 3
         if self.peek() == "\n":
             self.pos += 1
@@ -568,7 +564,7 @@ class _Scanner:
             raise self.error(msg)
 
     def _scan_escape(self) -> str:
-        assert self.peek() == "\\"
+        r"""Scan one ``\\``-escape. Precondition: cursor is at ``\\``."""
         self.pos += 1
         ch = self.peek()
         self.pos += 1
