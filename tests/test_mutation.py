@@ -7137,3 +7137,53 @@ def test_clone_section_into_fresh_implicit_intermediate_anchors_locally() -> Non
             {"a": {"b": {"x": 1}}},
         ]
     }
+
+
+def test_adopt_private_section_unfiles_stale_bindings_for_nested_headers() -> None:
+    """``adopt_private_section`` unfiled the stale ancestor bindings for
+    the orphan's own header, but not for any nested header within its
+    subtree.
+
+    Here ``songs[0]["name"] = songs[1]`` clones sibling entry 1 into a
+    new ``[albums.songs.0.name]`` section nested inside entry 0; then
+    ``doc["albums"] = songs[0]`` promotes that same entry (header and
+    all) to become the new ``[albums]``, detaching it (and everything
+    nested inside it, including "name") as one coherent private-orphan
+    unit before adopting it back in place.
+
+    "name"'s own ancestor bindings (onto its old host chain — the
+    entry / AoT / table hierarchy as it existed before the promotion)
+    are never scrubbed by that detach-and-adopt round trip, the way
+    ``delete_key`` scrubs the live tree. Left in place, they coexist
+    with the fresh bindings ``adopt_private_section`` files after the
+    rehome, corrupting "name"'s own back-pointer list with dangling
+    entries pointing at containers that are about to be discarded.
+    Deleting "name"'s old content and giving it a new section child
+    (forcing ``_maybe_demote_synthetic_empty_header`` to scrub one of
+    those dangling entries) then crashes trying to unfile a ref that
+    isn't where it's expected — silently swallowed if reached through
+    the public API's broader exception surface, but a hard crash here.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[albums]]
+          [[albums.songs]]
+          name = "Jungleland"
+          [[albums.songs]]
+          name = "Dancing in the Dark"
+        """)
+    )
+    songs = doc["albums"][0]["songs"]
+    songs[0]["name"] = songs[1]
+    doc["albums"] = songs[0]
+    del doc["albums"]["name"]["name"]
+    foreign = tomlrt.loads(
+        td("""
+        [y]
+        w = 1
+        """)
+    )
+    doc["albums"]["name"]["k2"] = foreign["y"]
+    out = tomlrt.dumps(doc)
+    assert _reparses(out)
+    assert doc.to_dict() == {"albums": {"name": {"k2": {"w": 1}}}}

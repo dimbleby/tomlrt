@@ -2803,8 +2803,23 @@ def adopt_private_section(
     new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
     assert value._header_ref is not None  # noqa: SLF001
-    _unfile_stale_same_orphan_ancestors(value, [value._header_ref.slot])  # noqa: SLF001
     _, slots = _gather_headered_subtree_slots(value)
+    # `value`'s own header isn't the only one with a stale ancestor
+    # chain to clean up: any nested header within its subtree (e.g.
+    # `[albums.songs.name]` inside an `[[albums.songs]]` entry) was
+    # bound to `value`'s *old* host chain too (its own parent AoT/Table
+    # containers as they existed before this rehome), and that old
+    # chain never gets scrubbed the way `delete_key` scrubs the live
+    # tree — the orphan was detached as one coherent unit. Left
+    # unfiled, those stale bindings coexist with the fresh ones
+    # `_file_header_binding_chain` adds below, corrupting `_refs` with
+    # dangling entries pointing at containers that are about to be
+    # discarded.
+    nested_headers = [s for s in slots if isinstance(s, StructuralHeaderSlot)]
+    _unfile_stale_same_orphan_ancestors(
+        value,
+        [value._header_ref.slot, *nested_headers],  # noqa: SLF001
+    )
     for s in slots:
         _retarget_slot_paths(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
         if stale_owner is not None and s.owner_aot_entry is stale_owner:
