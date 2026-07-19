@@ -2223,7 +2223,13 @@ def clone_aot_entry(
     """
     if isinstance(src, AoTEntry):
         src_entry = src
-        src_slots: list[Slot] = list(src_entry.entry_slots)
+        # ``entry_slots`` is membership order (header first), not
+        # doc-stream order — a later direct KV append lands at the tail
+        # of the list even if it was spliced physically earlier in the
+        # doc. Recover true order via the header-first invariant and a
+        # forward walk, same primitive ``_gather_subtree_slots`` uses.
+        owned_ids = {id(s) for s in src_entry.entry_slots}
+        src_slots = _owned_slots_in_doc_order(src_entry.entry_slots[0], owned_ids)
     else:
         owner = src._owner_aot_entry  # noqa: SLF001
         if owner is None:  # pragma: no cover
@@ -2428,7 +2434,10 @@ def clone_aot_entry_as_table(
     if src_entry is None:  # pragma: no cover
         msg = "source entry has no owning AoTEntry"
         raise RuntimeError(msg)
-    src_slots = list(src_entry.entry_slots)
+    # _gather_subtree_slots, not entry.entry_slots, for true doc-stream
+    # order (entry_slots is membership order only) and to pull in
+    # nested ``[[a.x]]`` entries physically inside this entry's body.
+    src_slots = _gather_subtree_slots(src_entry_table)
     return _install_cloned_section(parent, key, src_slots, src_entry.path)
 
 
