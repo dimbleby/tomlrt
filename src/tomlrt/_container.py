@@ -592,7 +592,7 @@ class Container(dict[str, Any]):
             or _is_section(value)
             or isinstance(value, Mapping)
         ):
-            value = _snapshot_if_ancestor_of_destination(self, key, value)
+            value = _snapshot_if_overlapping_destination(self, key, value)
             _layout_ops.reposition_install(self, key, value)
             return
         # Unsupported value type — TypeError, not NIE.
@@ -1733,21 +1733,40 @@ def _is_inline_table(v: object) -> TypeGuard[Container]:
     return isinstance(v, Container) and v._inline  # noqa: SLF001
 
 
-def _snapshot_if_ancestor_of_destination(
+def _snapshot_if_overlapping_destination(
     parent: Container, key: str, value: Any
 ) -> Any:
-    """Replace ``value`` with a snapshot if it is an ancestor of ``parent[key]``.
+    """Replace ``value`` with a snapshot if it overlaps ``parent[key]``'s subtree.
 
     A structural overwrite deletes the old ``parent[key]`` subtree
-    before cloning from ``value``. That deletion doesn't touch ``value``
-    itself when ``value`` is one of its *ancestors* (e.g.
-    ``t["a"]["b"] = t["a"]``) — but ``key`` is one of ``value``'s own
-    children, so reading ``value``'s slots afterwards misses whatever
-    was just deleted. Snapshotting before anything is deleted avoids
-    this, sacrificing trivia for this narrow direction only (the reverse
-    direction — a descendant overwriting its own ancestor — is already
-    handled correctly by the private-orphan adopt paths, since the
-    descendant's own slots survive being moved into their orphan).
+    before cloning from ``value``. That corrupts a same-document
+    ``value`` in either overlap direction:
+
+    * ``value`` is an *ancestor* of ``parent[key]`` (e.g.
+      ``t["a"]["b"] = t["a"]``) — the delete doesn't touch ``value``
+      itself, but ``_install_attached_subtree`` reads it incrementally
+      as the destination grows *inside* the still-being-read subtree,
+      causing unbounded recursion.
+    * ``parent[key]`` is an ancestor of a *headerless* ``value`` two or
+      more levels beneath it (e.g. ``t["a"] = t["a"]["b"]["c"]`` where
+      ``b``/``c`` are dotted keys, not ``[headers]``) — deleting
+      ``parent[key]`` resets the whole subtree being removed, which
+      includes ``value``'s own intermediate implicit ancestor(s)
+      (everything strictly between ``parent[key]`` and ``value``
+      itself); a later structural operation on the destination that
+      walks through one of those stale intermediates then corrupts
+      its bookkeeping. A header-bearing descendant doesn't need this:
+      its own header slot anchors its subtree independently of the
+      deleted ancestor's doc-stream position. Nor does an *immediate*
+      headerless child (only one level down, no intermediate to go
+      stale) — deleting `parent[key]` resets `value` itself, but not
+      anything `value` still depends on to be read correctly.
+
+    Snapshotting before anything is deleted avoids both, sacrificing
+    trivia for this narrow overlap (the private-orphan adopt paths
+    handle the general non-overlapping descendant-into-ancestor move
+    correctly already, since there the descendant's own slots survive
+    being moved into their orphan).
     """
     if not isinstance(value, (Container, AoT)):
         return value
@@ -1756,8 +1775,14 @@ def _snapshot_if_ancestor_of_destination(
         return value
     dest_path = (*parent._path, key)  # noqa: SLF001
     value_path = value._path  # noqa: SLF001
-    if len(value_path) >= len(dest_path) or dest_path[: len(value_path)] != value_path:
-        return value  # not a proper ancestor of dest_path
+    vlen, dlen = len(value_path), len(dest_path)
+    ancestor_overlap = vlen < dlen and dest_path[:vlen] == value_path
+    headerless_value = not isinstance(value, AoT) and value._header_ref is None  # noqa: SLF001
+    descendant_overlap = (
+        headerless_value and vlen - dlen >= 2 and value_path[:dlen] == dest_path
+    )
+    if not (ancestor_overlap or descendant_overlap):
+        return value
     if isinstance(value, AoT):
         return AoT(value.to_list())
     return Document(data=value.to_dict())
