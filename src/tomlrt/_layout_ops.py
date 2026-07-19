@@ -3430,7 +3430,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     # children belong to this subtree.
     for entry_table in popped_entries:
         entry_table._layout_root = doc  # noqa: SLF001
-        _reset_table_for_rehome(entry_table, recurse=True)
+        _reset_table_for_rehome(entry_table)
 
     last_key = aot._path[-1]  # noqa: SLF001
     if len(aot) == 0 and not parent._index.get(last_key):  # noqa: SLF001
