@@ -1657,7 +1657,14 @@ def _install_attached_subtree(
         if isinstance(v, AoT) or (
             isinstance(v, Container) and v._header_ref is not None  # noqa: SLF001
         ):
-            dst_parent.install(sub_path, v)
+            # Bypass Container.install()'s tuple-path validation here:
+            # `k` is a key already known valid on a live source Container
+            # (an empty string is a legal — if unusual — TOML key), not a
+            # human-supplied dotted path where an empty segment signals a
+            # typo. install() rejects the latter; ensure_implicit_chain +
+            # a direct assignment only validates `k` as a single key.
+            leaf_parent = _layout_ops.ensure_implicit_chain(dst_parent, sub_path[:-1])
+            leaf_parent[sub_path[-1]] = v
         elif isinstance(v, Container):
             _install_attached_subtree(dst_parent, sub_path, v)
 
