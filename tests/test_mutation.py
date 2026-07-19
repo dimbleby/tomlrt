@@ -4081,6 +4081,57 @@ def test_overwrite_scalar_anchors_past_forward_declared_nested_predecessor() -> 
     assert _reparses(out) == doc.to_dict()
 
 
+def test_overwrite_scalar_survives_reinstall_demoting_its_own_header() -> None:
+    """Overwriting the sole direct KV of a *synthetic* header with a
+    section-style value must not lose that value when the reinstall
+    itself empties and demotes the header the overwrite was anchored to.
+
+    ``t["k66"] = True`` on an implicit table synthesises a `[t]` header
+    to host it (its only body content). Overwriting `k66` with a section
+    deletes that KV, leaving `[t]` empty; the reinstall's clone install
+    then demotes that now-empty synthetic header as a matter of course.
+    ``reposition_install`` must detect that its saved anchor was
+    unlinked by this and leave the freshly-installed content where the
+    reinstall placed it, rather than anchoring it to a dead slot.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[albums.songs]]
+        new = ""
+
+        [[albums.songs]]
+        name = "Glory Days"
+        """)
+    )
+    foreign = tomlrt.loads(
+        td("""
+        [[people]]
+        first_name = "Bruce"
+        last_name = "Springsteen"
+
+        [[people]]
+        first_name = "Bob"
+        last_name = "Seger"
+        """)
+    )
+    albums = doc["albums"]
+    albums["k66"] = True
+    albums["k66"] = foreign["people"][1]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[albums.songs]]
+        new = ""
+
+        [[albums.songs]]
+        name = "Glory Days"
+
+        [albums.k66]
+        first_name = "Bob"
+        last_name = "Seger"
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_clone_section_into_aot_entry_registers_it_in_entry_slots() -> None:
     """A section-style value cloned as a *new key inside an existing AoT
     entry* (not the entry itself) must be registered in that entry's
