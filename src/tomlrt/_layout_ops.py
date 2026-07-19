@@ -2325,6 +2325,13 @@ def _install_cloned_structural_block(
         header=cloned_header,
     )
     _splice_block_after(cloned_slots, anchor, doc)
+    # A cloned slot's ``eol.newline`` can be None if its source document
+    # had no final newline (it was previously the very last slot there).
+    # Spliced anywhere but the new destination's own tail, it now needs
+    # one — otherwise it runs into whatever follows on the same line.
+    tail = cloned_slots[-1]
+    if tail is not doc._tail:  # noqa: SLF001
+        _ensure_terminator(tail, doc)
     _file_header_binding_chain(parent, cloned_header)
     _populate_entry_views(
         entry_table=table,
