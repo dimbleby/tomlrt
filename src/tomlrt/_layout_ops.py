@@ -194,12 +194,17 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     ]
     if not survivors:
         return
-    # The surviving recorded slots must form exactly one contiguous
-    # doc-stream span (the reinstall appends them as a block). Recover
-    # their true doc order by walking the linked list from the span head,
-    # and assert the single-span invariant so a future installer that
-    # breaks it fails loudly instead of silently moving the wrong range.
-    new_slots = _ordered_recorded_span(survivors)
+    # The surviving recorded slots usually form one contiguous doc-stream
+    # span (the reinstall appends them as a block); recover their true
+    # doc order by walking the linked list from the span head. An
+    # implicit source with both direct KVs and structural children can
+    # legitimately scatter across disjoint regions instead (see
+    # ``_ordered_recorded_span``) — repositioning isn't safe then, so
+    # leave the install where it landed.
+    ordered_slots = _ordered_recorded_span(survivors)
+    if ordered_slots is None:
+        return
+    new_slots = ordered_slots
     # A header-less new binding (scalar / synth-inline) takes its scope
     # from physical position, so it only needs its anchor inside
     # ``parent``'s body region. A binding that brings a structural
@@ -232,14 +237,21 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
             slot.leading.pieces = list(original)
 
 
-def _ordered_recorded_span(survivors: list[Slot]) -> list[Slot]:
-    """Return ``survivors`` in doc-stream order, asserting they are contiguous.
+def _ordered_recorded_span(survivors: list[Slot]) -> list[Slot] | None:
+    """Return ``survivors`` in doc-stream order, or ``None`` if not one span.
 
-    The recorded survivors of an install transaction must form exactly
-    one contiguous doc-stream span. Find the span head (the survivor with
-    no predecessor in the set) and walk forward; assert that the walk
-    reaches every survivor, so a non-contiguous or multi-span record
-    fails loudly rather than corrupting the subsequent move.
+    The recorded survivors of an install transaction usually form one
+    contiguous doc-stream span (the reinstall appends them as a block) —
+    but an implicit (headerless) source with both direct KVs and
+    structural children installs the two kinds at different anchors
+    (``_install_attached_subtree`` hosts dotted KVs at the nearest
+    header while structural children get their own section anchor), so
+    the recorded slots can legitimately land in disjoint regions. Find
+    the span head (the survivor with no predecessor in the set) and
+    walk forward; if more than one head exists, or the walk doesn't
+    reach every survivor, the record isn't a single span, and the
+    caller should leave the install where it landed rather than risk
+    moving the wrong range.
     """
     ids = {id(s) for s in survivors}
     heads = [
@@ -247,13 +259,15 @@ def _ordered_recorded_span(survivors: list[Slot]) -> list[Slot]:
         for s in survivors
         if s._prev is None or id(s._prev) not in ids  # noqa: SLF001
     ]
-    assert len(heads) == 1, "recorded install slots are not a single span"
+    if len(heads) != 1:
+        return None
     ordered: list[Slot] = []
     cur: Slot | None = heads[0]
     while cur is not None and id(cur) in ids:
         ordered.append(cur)
         cur = cur._next  # noqa: SLF001
-    assert len(ordered) == len(survivors), "recorded install slots are not contiguous"
+    if len(ordered) != len(survivors):
+        return None
     return ordered
 
 
