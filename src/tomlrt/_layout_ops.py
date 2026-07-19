@@ -2680,6 +2680,11 @@ def clone_document_as_section(
         doc=doc,
         owner_aot_entry=parent._owner_aot_entry,  # noqa: SLF001
     )
+    # Unlike a cloned header, this one is synthesised here rather than
+    # produced by `_clone_entry_slots` (which registers `entry_slots`
+    # membership for every slot it clones) — file it explicitly, or an
+    # AoT-entry owner never learns this header is part of it.
+    _extend_entry_slots(parent._owner_aot_entry, header)  # noqa: SLF001
     cloned_body, _ = _clone_entry_slots(
         src_slots,
         new_entry=None,
