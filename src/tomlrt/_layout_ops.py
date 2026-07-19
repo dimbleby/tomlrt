@@ -1616,34 +1616,36 @@ def install_dotted_kv_slot(
         key_seps=key_seps,
     )
 
-    inserted_at_head = _splice_body_slot(
+    _splice_body_slot(
         new_slot,
         anchor_body_tail=body_tail,
         anchor_header_ref=header_ref,
         doc=doc,
     )
 
-    # File a ref on every chain ancestor, anchored at host's body_tail
-    # or header (fresh implicit intermediates have empty ``_refs``).
-    anchor_slot: Slot | None = body_tail or (
-        header_ref.slot if header_ref is not None else None
-    )
+    # File a ref on every chain ancestor, anchored at *that ancestor's*
+    # own body_tail or header — not host's. A shared host-level anchor
+    # is wrong for an intermediate ancestor that doesn't itself carry a
+    # ref to it (e.g. host's own body_tail belongs to an unrelated
+    # sibling key): its fallback then mis-files the new ref after
+    # whatever the ancestor already holds (typically a descendant's
+    # header), even though a headerless ancestor's own dotted content
+    # always precedes any of its descendant headers physically.
     for i, anc in enumerate(chain):
+        anc_anchor = anc._body_tail or (  # noqa: SLF001
+            anc._header_ref.slot if anc._header_ref is not None else None  # noqa: SLF001
+        )
         _file_body_ref(
             anc,
             new_slot,
-            anchor_slot=anchor_slot,
-            inserted_at_head=inserted_at_head,
+            anchor_slot=anc_anchor,
+            inserted_at_head=anc_anchor is None,
             local_key=leaf_keypath[i],
         )
-        if anc._body_tail is body_tail or anc._body_tail is None:  # noqa: SLF001
-            # Propagate the body_tail bump up the chain. ``is body_tail``
-            # is the old-path case (every chain ancestor of an implicit
-            # ``c`` tracks the same body_tail as ``c``); ``is None`` is
-            # the fresh-intermediate case (``ensure_implicit_chain``
-            # may have minted new implicits below host whose own
-            # ``_body_tail`` is still empty).
-            anc._body_tail = new_slot  # noqa: SLF001
+        # ``new_slot`` was just filed immediately after ``anc_anchor``
+        # (``anc``'s own prior body_tail, or nothing) — either way it
+        # is now the latest body-region slot for ``anc``.
+        anc._body_tail = new_slot  # noqa: SLF001
 
     # ``entry_slots`` is membership + header-first order only (doc
     # order is derived on demand), so a plain append is enough.
