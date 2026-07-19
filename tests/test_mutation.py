@@ -4236,6 +4236,49 @@ def test_overwrite_with_scattered_implicit_source_skips_reposition() -> None:
     assert doc["name"]["first"].to_dict() == doc["animal"]["type"].to_dict()
 
 
+def test_overwrite_ancestor_with_own_nested_aot_preserves_nested_entries() -> None:
+    """Overwriting a key with its own descendant AoT (Case A: descendant
+    into ancestor) must preserve nested `[[a.x]]` entries living inside
+    that AoT's own entries, not just their own direct/dotted content.
+
+    ``_attach_aot``'s private-orphan rehome path gathers each preserved
+    entry's slots via ``clone_aot_entry``'s bare-``AoTEntry`` branch,
+    which only sees the entry's *own* ``entry_slots`` membership, not
+    slots owned by AoT entries nested inside its body. The full subtree
+    must be gathered while the entry is still live, before
+    ``_reset_table_for_rehome`` clears the ``_refs`` that gathering
+    depends on.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [fruit]
+
+        [[fruit.apple.seeds]]
+        [fruit.apple.seeds.size]
+        color = "red"
+
+        [[fruit.apple.seeds.size.seeds]]
+
+        [[fruit.apple.seeds.size.seeds]]
+        new = true
+
+        [[fruit.apple.seeds]]
+        new = true
+        """)
+    )
+    doc["fruit"]["apple"] = doc["fruit"]["apple"]["seeds"]
+    out = tomlrt.dumps(doc)
+    assert doc.to_dict() == {
+        "fruit": {
+            "apple": [
+                {"size": {"color": "red", "seeds": [{}, {"new": True}]}},
+                {"new": True},
+            ]
+        }
+    }
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_clone_section_into_aot_entry_registers_it_in_entry_slots() -> None:
     """A section-style value cloned as a *new key inside an existing AoT
     entry* (not the entry itself) must be registered in that entry's

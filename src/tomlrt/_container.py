@@ -669,6 +669,16 @@ class Container(dict[str, Any]):
         can_clone = bool(preserved_entries) and all(
             e is not None for e in preserved_entries
         )
+        # Gather each entry's full slot set (its own slots *and* any
+        # nested `[[a.x]]` entries physically inside its body) while it
+        # is still live — `_reset_table_for_rehome` below clears the
+        # `_refs` this gathering depends on, and the reset entry's own
+        # `entry_slots` alone doesn't include nested entries (see
+        # `clone_aot_entry`).
+        preserved_slots: list[list[Slot] | None] = [
+            _layout_ops._gather_subtree_slots(et) if pe is not None else None  # noqa: SLF001
+            for et, pe in zip(existing_entries, preserved_entries, strict=True)
+        ]
         for et in existing_entries:
             _reset_table_for_rehome(et)
         list.clear(value)
@@ -680,10 +690,17 @@ class Container(dict[str, Any]):
         if can_clone:
             # Clone CST from intact orphan slots. Entry-table identities
             # are replaced; the AoT object's identity is preserved.
-            for src_entry in preserved_entries:
+            for src_entry, slots in zip(
+                preserved_entries, preserved_slots, strict=True
+            ):
                 assert src_entry is not None
-                _layout_ops.clone_aot_entry(
-                    value, src_entry, preserve_source_separator=True
+                assert slots is not None
+                _layout_ops._install_cloned_aot_entry(  # noqa: SLF001
+                    value,
+                    slots,
+                    src_entry.path,
+                    target_path=value._path,  # noqa: SLF001
+                    rewrite_separator=False,
                 )
         else:
             for entry_table in existing_entries:
@@ -1549,7 +1566,7 @@ def _deep_clone(c: Container) -> Container:
     return out
 
 
-def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
+def _reset_table_for_rehome(t: Container) -> None:
     """Clear a Table's slot infrastructure so it can be reattached.
 
     Preserves dict storage (so post-detach mutations survive) but
@@ -1557,10 +1574,9 @@ def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
     / `_refs` / `_index` / `_header_ref` / `_body_tail` so the
     standard attach path treats `t` as if freshly constructed.
 
-    With ``recurse=True``, also resets nested non-inline ``Container`` /
-    ``AoT`` children from the same detached subtree. Children pointing
-    at a different doc are left for the cross-doc clone path. Recursion
-    is opt-in so single-table rehomes avoid a subtree walk.
+    Also resets nested non-inline ``Container`` / ``AoT`` children from
+    the same detached subtree. Children pointing at a different doc are
+    left for the cross-doc clone path.
 
     Used when re-installing a held view that was detached into a
     private orphan ``Document``.
@@ -1575,15 +1591,13 @@ def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
     t._header_ref = None  # noqa: SLF001
     t._body_tail = None  # noqa: SLF001
 
-    if not recurse:
-        return
     for child in dict.values(t):
         if _is_section(child):
             if child._layout_root is old_root:  # noqa: SLF001
-                _reset_table_for_rehome(child, recurse=True)
+                _reset_table_for_rehome(child)
         elif isinstance(child, AoT) and child._layout_root is old_root:  # noqa: SLF001
             for entry in list.__iter__(child):
-                _reset_table_for_rehome(entry, recurse=True)
+                _reset_table_for_rehome(entry)
             child._layout_root = None  # noqa: SLF001
             child._parent = None  # noqa: SLF001
             child._path = ()  # noqa: SLF001
