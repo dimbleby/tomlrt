@@ -3984,6 +3984,35 @@ def test_clone_section_with_forward_declared_nested_table_keeps_content() -> Non
     assert _reparses(out) == {"moved": {"better": 43, "b": {"c": {"answer": 42}}}}
 
 
+def test_clone_section_with_forward_declared_nested_past_foreign_section() -> None:
+    # As above, but with an unrelated section physically between the
+    # forward-declared nested descendant and `a`'s own header, so
+    # recovering doc-stream order must skip a foreign slot while
+    # walking backward from `a`'s header, not just forward from it.
+    src = td("""
+        [a.b]
+        x = 1
+
+        [unrelated]
+        y = 2
+
+        [a]
+        better = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc2 = tomlrt.loads("")
+    doc2["moved"] = doc["a"]
+    out = tomlrt.dumps(doc2)
+    assert out == td("""
+        [moved.b]
+        x = 1
+
+        [moved]
+        better = 2
+        """)
+    assert _reparses(out) == {"moved": {"better": 2, "b": {"x": 1}}}
+
+
 def test_clone_as_aot_entry_hoists_own_content_past_forward_declared_nested() -> None:
     # Same forward-declaration hazard as above, but the destination is a
     # *new AoT entry* rather than a plain section: an array-of-tables

@@ -37,7 +37,7 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
     supplied root's path for a cloned subtree).
 
     A header whose path equals ``root``'s own can appear mid-body
-    rather than as ``slots[0]`` (see :func:`tomlrt._layout_ops._owned_slots_forward`
+    rather than as ``slots[0]`` (see :func:`tomlrt._layout_ops._owned_slots_ordered`
     for why); it cannot be reopened via ``_apply_header`` (``root`` is
     already wired, not a fresh child to create/find), so it is handled
     as a pure host-context reset back to ``root``.
