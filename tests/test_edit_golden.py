@@ -1232,6 +1232,73 @@ def test_new_key_assign_of_ancestor_into_its_own_descendant() -> None:
     }
 
 
+def test_overlap_adopt_section_with_forward_declared_nested_supports_later_insert() -> (
+    None
+):
+    """As with the cross-doc clone case, a forward-declared nested
+    descendant adopted from a private orphan (the overlap-assign path)
+    must have its binding reach the root, not just the adopted section.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [p]
+        [p.q]
+        x = 1
+        [p.q.a.b.c]
+        answer = 42
+
+        [p.q.a]
+        better = 43
+        """)
+    )
+    doc["p"]["q"] = doc["p"]["q"]["a"]
+    doc["p"]["q"]["b"]["newkey"] = 99
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [p]
+        [p.q.b]
+        newkey = 99
+
+        [p.q.b.c]
+        answer = 42
+
+        [p.q]
+        better = 43
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overlap_adopt_implicit_forward_declared_supports_later_insert() -> None:
+    """As above, but the adopted overlapping subtree is header-less
+    (dotted) — exercises ``adopt_private_implicit`` rather than
+    ``adopt_private_section``.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [p]
+        [p.q]
+        x.y = 1
+
+        [p.q.x.m.n]
+        w = 2
+        """)
+    )
+    doc["p"]["q"] = doc["p"]["q"]["x"]
+    doc["p"]["q"]["m"]["newkey"] = 99
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [p]
+        q.y = 1
+
+        [p.q.m]
+        newkey = 99
+
+        [p.q.m.n]
+        w = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_cross_doc_splice_no_doubled_blank_lines() -> None:
     """Sequential cross-doc copies don't double the blank line between sections.
 

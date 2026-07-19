@@ -2320,6 +2320,15 @@ def _install_cloned_structural_block(
         target_prefix=target_path,
         doc=doc,
     )
+    # ``_build_containers`` (via ``_populate_entry_views``) files each
+    # nested descendant header's ancestor-chain refs only up to ``table``
+    # itself (its local root for that walk) — a forward-declared nested
+    # header's binding never reaches ``parent``'s own ancestors. Extend
+    # each one the rest of the way, mirroring ``table``'s own header just
+    # above.
+    for s in cloned_slots:
+        if isinstance(s, StructuralHeaderSlot) and s is not cloned_header:
+            _file_header_binding_chain(parent, s)
     _maybe_demote_synthetic_empty_header(parent)
 
 
@@ -2738,6 +2747,14 @@ def adopt_private_section(
     _retarget_header_separator(first, _build_section_leading(doc))
     _splice_block_after(slots, _parent_subtree_tail(dest_parent), doc)
     _file_header_binding_chain(dest_parent, header)
+    # As in _install_cloned_structural_block: a forward-declared nested
+    # descendant's header was only filed up to ``value`` itself (its
+    # local root while it lived in the orphan) — extend each one's
+    # ancestor-chain filing the rest of the way, up through
+    # ``dest_parent``'s own ancestors.
+    for s in slots:
+        if isinstance(s, StructuralHeaderSlot) and s is not header:
+            _file_header_binding_chain(dest_parent, s)
     dict.__setitem__(dest_parent, key, value)
     _maybe_demote_synthetic_empty_header(dest_parent)
     return value
@@ -2845,6 +2862,14 @@ def adopt_private_implicit(
             continue
         for anc in chain:
             record_ref(anc, s)
+        if isinstance(s, StructuralHeaderSlot):
+            # A nested header's binding was only filed down to ``host``
+            # (the chain above) — as with the header-bearing clone/adopt
+            # paths, extend it the rest of the way up ``host``'s own
+            # ancestors too, mirroring the parser's "every ancestor gets
+            # a ref" invariant.
+            for anc in _ancestor_chain(host):
+                record_ref(anc, s)
     dict.__setitem__(dest_parent, key, value)
     return value
 
