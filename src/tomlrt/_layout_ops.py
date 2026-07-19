@@ -2876,7 +2876,14 @@ def adopt_private_section(
     first = slots[0]
     assert isinstance(first, StructuralHeaderSlot)
     _retarget_header_separator(first, _build_section_leading(doc))
-    _splice_block_after(slots, _parent_subtree_tail(dest_parent), doc)
+    # The block being spliced brings its own header (`first`), so —
+    # exactly as in `_finish_cloned_section` / `attach_section_at` —
+    # landing it right after an anchor that's immediately followed by
+    # some unrelated bare KV would silently re-parent that KV under
+    # the new header on re-parse. Extend past any such trailing run.
+    _splice_block_after(
+        slots, _safe_header_anchor(_parent_subtree_tail(dest_parent)), doc
+    )
     # As in _install_cloned_structural_block: the orphan's last slot may
     # lack a trailing newline (it was previously the very last thing in
     # its own document); moved anywhere but this document's new tail, it
