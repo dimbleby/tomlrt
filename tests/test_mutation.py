@@ -4181,6 +4181,26 @@ def test_clone_section_from_no_final_newline_source_gets_separator() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_overwrite_with_no_final_newline_clone_moved_to_anchor_gets_separator() -> None:
+    """As above, but the overwrite's position-preserving move (not the
+    initial clone-install) is what relocates the no-final-newline
+    content away from the document's tail.
+
+    Overwriting `a.b.c` (the doc's very first binding) with a clone
+    from a no-final-newline source installs the clone at whatever
+    position is natural for a fresh key first, then
+    ``reposition_install`` moves it back to `a.b.c`'s original anchor
+    (doc head here) to preserve its physical position — that move must
+    also ensure a trailing newline if something now follows.
+    """
+    doc = tomlrt.loads('[a.b.c]\n[a."b.c"]\n')
+    other = tomlrt.loads("[table]")
+    doc["a"]["b"]["c"] = other["table"]
+    out = tomlrt.dumps(doc)
+    assert out == '[a.b.c]\n[a."b.c"]\n'
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_clone_section_into_aot_entry_registers_it_in_entry_slots() -> None:
     """A section-style value cloned as a *new key inside an existing AoT
     entry* (not the entry itself) must be registered in that entry's
