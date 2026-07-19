@@ -9,7 +9,6 @@ in one container.
 from __future__ import annotations
 
 import copy
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Literal
 
@@ -58,10 +57,18 @@ class AoTEntry:
 
 
 @dataclass(slots=True, eq=False)
-class Slot(ABC):
+class Slot:
     """Base for physical slots.
 
     Subclassed by `KVSlot` and `StructuralHeaderSlot`.
+
+    Deliberately not an `abc.ABC`: giving it an `ABCMeta` metaclass
+    would make every `isinstance(slot, KVSlot)` /
+    `isinstance(slot, StructuralHeaderSlot)` check on the parse /
+    mutation hot path go through the much slower ABC instance-check
+    machinery instead of the plain-type fast path. `render` still
+    raises rather than being left unimplemented so a missing override
+    fails loudly instead of silently.
     """
 
     leading: Trivia
@@ -100,9 +107,8 @@ class Slot(ABC):
             setattr(new, f.name, value)
         return new
 
-    @abstractmethod
-    def render(self) -> str:
-        """Render this physical slot."""
+    def render(self) -> str:  # pragma: no cover -- overridden
+        raise NotImplementedError
 
 
 @dataclass(slots=True, eq=False)
