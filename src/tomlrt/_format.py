@@ -526,6 +526,11 @@ def set_comma_value_multiline(
     while inline tables keep their pad (``{ a = 1 }``).
     """
     items = value.items
+    outer_indent = ""
+    if value.is_multiline() and value.final_trivia.pieces:
+        final_piece = value.final_trivia.pieces[-1]
+        if isinstance(final_piece, WhitespaceNode):
+            outer_indent = final_piece.text
     # The explicit single<->multi toggle is the one operation that can flip
     # shape without removing an item; drop the memo so it recomputes.
     value.reset_multiline_cache()
@@ -550,7 +555,11 @@ def set_comma_value_multiline(
     for it in items:
         _canon_value(it.value, nl=nl, comments=True, parent_indent=indent)
     _canon_multiline_shape(
-        value, nl=nl, comments=True, item_indent=indent, outer_indent=""
+        value,
+        nl=nl,
+        comments=True,
+        item_indent=indent,
+        outer_indent=outer_indent,
     )
 
 

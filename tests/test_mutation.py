@@ -4818,6 +4818,31 @@ def test_set_multiline_true_empty_array_aligns_close_to_outer_indent() -> None:
         """)
 
 
+def test_set_multiline_true_preserves_nested_array_outer_indent() -> None:
+    src = td("""
+        outer = [
+              { nested = [
+            1, # item
+              ] },
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("outer").table(0).array("nested").set_multiline(multiline=True, indent=4)
+    assert tomlrt.dumps(doc) == src
+
+
+def test_set_multiline_true_preserves_empty_nested_table_outer_indent() -> None:
+    src = td("""
+        outer = [
+            { nested = {
+            } },
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("outer").table(0).table("nested").set_multiline(multiline=True)
+    assert tomlrt.dumps(doc) == src
+
+
 def test_collapse_multiline_with_nested_array_comment_raises() -> None:
     src = td(
         """
