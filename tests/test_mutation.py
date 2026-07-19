@@ -3984,6 +3984,39 @@ def test_clone_section_with_forward_declared_nested_table_keeps_content() -> Non
     assert _reparses(out) == {"moved": {"better": 43, "b": {"c": {"answer": 42}}}}
 
 
+def test_clone_with_forward_declared_nested_supports_later_insert_into_it() -> None:
+    """A cloned forward-declared nested descendant's binding must reach
+    all the way to the document root, not just up to the clone's own
+    section — otherwise a later insert into the (implicit) intermediate
+    between the two can't find its anchor among the root's refs.
+    """
+    src = td("""
+        [a.b.c]
+        answer = 42
+
+        [a]
+        better = 43
+        """)
+    doc = tomlrt.loads(src)
+    doc2 = tomlrt.loads("x = 1\n")
+    doc2["y"] = doc["a"]
+    doc2["y"]["b"]["newkey"] = 99
+    out = tomlrt.dumps(doc2)
+    assert out == td("""
+        x = 1
+
+        [y.b]
+        newkey = 99
+
+        [y.b.c]
+        answer = 42
+
+        [y]
+        better = 43
+        """)
+    assert _reparses(out) == doc2.to_dict()
+
+
 def test_clone_section_with_forward_declared_nested_past_foreign_section() -> None:
     # As above, but with an unrelated section physically between the
     # forward-declared nested descendant and `a`'s own header, so
