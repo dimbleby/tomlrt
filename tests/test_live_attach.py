@@ -679,6 +679,50 @@ def test_detached_aot_reattaches_live() -> None:
     }
 
 
+def test_detached_aot_reattach_with_kv_before_nested_section() -> None:
+    """``entry_slots`` is membership order, not doc-stream order.
+
+    Adding a direct KV to an AoT entry that already has a nested
+    sub-section appends the new slot to the *tail* of ``entry_slots``
+    even though it is spliced physically *before* the nested header.
+    Deleting and re-attaching the same (now private-orphan) ``AoT``
+    must still walk the entry in true doc-stream order, not
+    ``entry_slots`` order.
+    """
+    src = td("""
+        [[arr]]
+        [arr.subtab]
+        val = 1
+
+        [[arr]]
+        [arr.subtab]
+        val = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["arr"][0]["newkey"] = 1
+    aot = doc["arr"]
+    del doc["arr"]
+    doc["arr"] = aot
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[arr]]
+        newkey = 1
+        [arr.subtab]
+        val = 1
+
+        [[arr]]
+        [arr.subtab]
+        val = 2
+        """)
+    parsed = _reparses(out)
+    assert parsed == {
+        "arr": [
+            {"newkey": 1, "subtab": {"val": 1}},
+            {"subtab": {"val": 2}},
+        ],
+    }
+
+
 def test_detached_table_writes_survive_reattach() -> None:
     """Writes to a detached ``_StdTable`` view must persist when the view
     is later re-assigned into a document.
@@ -715,6 +759,43 @@ def test_aot_entry_view_identity_preserved_through_attach() -> None:
         """)
     parsed = _reparses(out)
     assert parsed == {"servers": [{"name": "a", "extra": 1}]}
+
+
+def test_aot_entry_as_table_with_kv_before_nested_section() -> None:
+    """``clone_aot_entry_as_table`` must clone entry slots in doc-stream
+    order, not ``entry_slots`` membership order (same class of bug as
+    :func:`clone_aot_entry`'s private-orphan branch).
+    """
+    src = td("""
+        [[arr]]
+        [arr.subtab]
+        val = 1
+
+        [[arr]]
+        [arr.subtab]
+        val = 2
+        """)
+    doc = tomlrt.loads(src)
+    entry = doc["arr"][0]
+    entry["newkey"] = 1
+    doc["standalone"] = entry  # live entry reinstalled as a plain table
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[arr]]
+        newkey = 1
+        [arr.subtab]
+        val = 1
+
+        [[arr]]
+        [arr.subtab]
+        val = 2
+        [standalone]
+        newkey = 1
+        [standalone.subtab]
+        val = 1
+        """)
+    parsed = _reparses(out)
+    assert parsed["standalone"] == {"newkey": 1, "subtab": {"val": 1}}
 
 
 def test_aot_held_nested_section_under_entry_survives_attach() -> None:

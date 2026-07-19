@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arrays and inline tables.
 - `format()` now preserves closing-bracket indentation when called on a
   nested array or inline table directly.
+- Re-attaching a deleted array-of-tables (or reinstalling one of its
+  entries as a table) no longer crashes when an entry has a direct key
+  added ahead of an existing nested sub-section.
 
 ## [2.0.2] - 2026-07-10
 
