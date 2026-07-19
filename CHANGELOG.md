@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-attaching a deleted array-of-tables (or reinstalling one of its
   entries as a table) no longer crashes when an entry has a direct key
   added ahead of an existing nested sub-section.
+- Deleting an array containing an inline-table item and reassigning the
+  same array back into a document no longer corrupts the nested item,
+  which used to crash the next time it was mutated.
 
 ## [2.0.2] - 2026-07-10
 

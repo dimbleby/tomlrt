@@ -1868,11 +1868,19 @@ def _attach_inline_view(
     """Record document attachment on an Array or inline Table, recursively.
 
     Arrays have no `_owner_aot_entry` field; inline Tables do and
-    inherit ``owner`` from the outermost host.
+    inherit ``owner`` from the outermost host. An Array reattach reuses
+    its preserved `ArrayValue` wholesale rather than resynthesising each
+    item, so a nested inline-table item may still carry the `_value =
+    None` that `_reset_inline_for_rehome` set on delete (on the
+    assumption of a full rebuild on reattach, which this path skips) -
+    re-link it from the corresponding array item before recursing.
     """
     if isinstance(value, Array):
         value._layout_root = layout_root  # noqa: SLF001
-        for child in value:
+        for item, child in zip(value._value.items, value, strict=True):  # noqa: SLF001
+            if _is_inline_table(child) and child._value is None:  # noqa: SLF001
+                assert isinstance(item.value, InlineTableValue)
+                child._value = item.value  # noqa: SLF001
             _attach_inline_view(child, layout_root, owner)
     elif _is_inline_table(value):
         value._layout_root = layout_root  # noqa: SLF001
