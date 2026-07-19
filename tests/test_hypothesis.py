@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 
 import tomlrt
 from _helpers import td
-from tomlrt import Document
+from tomlrt import Document, FormatOptions
 
 pytestmark = pytest.mark.slow
 
@@ -245,6 +245,42 @@ _EDGE_CASES = [
 @settings(max_examples=len(_EDGE_CASES), database=None)
 def test_edge_cases_roundtrip(src: str) -> None:
     assert tomlrt.dumps(tomlrt.loads(src)) == src
+
+
+_FORMAT_OPTIONS = st.builds(
+    FormatOptions,
+    normalize_comments=st.booleans(),
+    indent=st.integers(min_value=0, max_value=4),
+    eol_comment_spaces=st.integers(min_value=0, max_value=3),
+    multiline_trailing_comma=st.booleans(),
+)
+
+
+@given(options=_FORMAT_OPTIONS)
+@settings(max_examples=100, database=None)
+def test_format_options_preserve_data_and_are_idempotent(
+    options: FormatOptions,
+) -> None:
+    src = td("""
+        root = 1 #   root
+        outer = [
+          {
+            values = [
+              1,
+              2, # final
+            ],
+          },
+        ]
+    """)
+    expected = tomli.loads(src)
+    doc = tomlrt.loads(src)
+    doc.format(options=options)
+    once = tomlrt.dumps(doc)
+    assert _deep_equal(doc.to_dict(), expected)
+    assert _deep_equal(tomli.loads(once), expected)
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == once
+    assert tomlrt.dumps(tomlrt.loads(once)) == once
 
 
 # ---------------------------------------------------------------------------

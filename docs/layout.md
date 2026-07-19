@@ -103,8 +103,19 @@ The operations above are format-preserving. When you instead want to
 _opt in_ to canonical formatting — to drop the original spacing of a
 single value, a section, or the whole document — call `format()`.
 
-`Container.format(*, comments=True)` and `Array.format(*, comments=True)`
-both mutate in place and return `None`, mirroring `list.sort()`.
+`Container.format()` and `Array.format()` both mutate in place and return
+`None`, mirroring `list.sort()`. Pass a `FormatOptions` object to configure
+canonical formatting consistently at any scope.
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `normalize_comments` | `True` | Normalize comment text. |
+| `indent` | `2` | Spaces added per nested multiline inline value. |
+| `eol_comment_spaces` | `1` | Spaces before supported EOL comments. |
+| `multiline_trailing_comma` | `True` | Emit a final comma in multiline arrays and inline tables. |
+
+For example, `doc.format(options=tomlrt.FormatOptions(indent=4))` uses a
+four-space step at every nested multiline level.
 
 ```python
 import tomlrt
@@ -163,11 +174,11 @@ x = { a = 1, b = 2 }
 - Slots outside the receiver's subtree are not touched: calling
   `format()` on a single section leaves sibling sections alone.
 
-### The `comments` flag
+### Comment normalization
 
-When `comments=True` (the default), every comment reached by the walk
-is rewritten so that there is exactly one space between `#` and the
-body, and any trailing whitespace inside the comment is stripped:
+By default, every comment reached by the walk is rewritten so that there is
+exactly one space between `#` and the body, and any trailing whitespace inside
+the comment is stripped:
 
 | Before | After |
 |--------|-------|
@@ -176,7 +187,12 @@ body, and any trailing whitespace inside the comment is stripped:
 | <code style="white-space: pre"># foo   </code> | <code style="white-space: pre"># foo</code> |
 | <code style="white-space: pre">#</code> (empty) | <code style="white-space: pre">#</code> |
 
-Pass `comments=False` to leave comment text untouched.
+Pass `FormatOptions(normalize_comments=False)` to leave comment text untouched.
+The former `comments=` keyword remains available for compatibility but is
+deprecated; do not pass it together with `options=`.
+
+`eol_comment_spaces` applies to key/value, section-header, array-item, and
+inline-table-entry comments. Opening-bracket comment spacing remains authored.
 
 ### Detached views
 

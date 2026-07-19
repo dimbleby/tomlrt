@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import warnings
+from dataclasses import FrozenInstanceError
+from inspect import Parameter, signature
+from typing import Any
+
 import pytest
 import tomli
 
@@ -12,7 +17,7 @@ from tomlrt import TOMLError
 
 def _roundtrip(src: str, *, comments: bool = True) -> str:
     doc = tomlrt.loads(src)
-    doc.format(comments=comments)
+    doc.format(options=tomlrt.FormatOptions(normalize_comments=comments))
     return tomlrt.dumps(doc)
 
 
@@ -191,6 +196,106 @@ def test_multiline_array_preserved_shape() -> None:
     """)
 
 
+def test_format_options_omit_multiline_trailing_comma() -> None:
+    src = td("""
+        items = [
+          1,
+          2,
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    options = tomlrt.FormatOptions(multiline_trailing_comma=False)
+    doc.format(options=options)
+    expected = td("""
+        items = [
+          1,
+          2
+        ]
+    """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomli.loads(expected) == {"items": [1, 2]}
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_no_trailing_comma_preserves_final_item_eol_comment() -> None:
+    src = td("""
+        items = [
+          1,
+          2, # final
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("items").format(
+        options=tomlrt.FormatOptions(multiline_trailing_comma=False)
+    )
+    assert tomlrt.dumps(doc) == td("""
+        items = [
+          1,
+          2 # final
+        ]
+    """)
+
+
+def test_no_trailing_comma_recurses_through_arrays_and_inline_tables() -> None:
+    src = td("""
+        outer = [
+          {
+            values = [
+              1,
+            ],
+            table = {
+              value = 2,
+            },
+          },
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=tomlrt.FormatOptions(multiline_trailing_comma=False))
+    assert tomlrt.dumps(doc) == td("""
+        outer = [
+          {
+            values = [
+              1
+            ],
+            table = {
+              value = 2
+            }
+          }
+        ]
+    """)
+
+
+def test_no_trailing_comma_preserves_empty_array_and_crlf() -> None:
+    src = td("""
+        items = [
+        ]
+    """).replace("\n", "\r\n")
+    doc = tomlrt.loads(src)
+    doc.format(options=tomlrt.FormatOptions(multiline_trailing_comma=False))
+    assert tomlrt.dumps(doc) == src
+
+
+def test_append_after_format_without_trailing_comma_preserves_style() -> None:
+    src = td("""
+        items = [
+          1,
+          2, # final
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    items = doc.array("items")
+    items.format(options=tomlrt.FormatOptions(multiline_trailing_comma=False))
+    items.append(3)
+    assert tomlrt.dumps(doc) == td("""
+        items = [
+          1,
+          2, # final
+          3
+        ]
+    """)
+
+
 def test_comma_first_array_keeps_comment() -> None:
     # A comma-first layout parks the item's EOL comment in ``trailing``
     # *before* the comma, even though ``has_comma`` is set. format()
@@ -222,6 +327,182 @@ def test_comma_first_inline_table_keeps_comment() -> None:
           a = 1, # comma is on the next line
           b = 2,
         }
+    """)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        tomlrt.FormatOptions(multiline_trailing_comma=True),
+        tomlrt.FormatOptions(multiline_trailing_comma=False),
+    ],
+)
+def test_comma_first_array_keeps_post_comma_comment(
+    options: tomlrt.FormatOptions,
+) -> None:
+    src = td("""
+        a = [
+          1
+          , # after comma
+          2
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=options)
+    expected = (
+        td("""
+            a = [
+              1, # after comma
+              2,
+            ]
+        """)
+        if options.multiline_trailing_comma
+        else td("""
+            a = [
+              1, # after comma
+              2
+            ]
+        """)
+    )
+    assert tomlrt.dumps(doc) == expected
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        tomlrt.FormatOptions(multiline_trailing_comma=True),
+        tomlrt.FormatOptions(multiline_trailing_comma=False),
+    ],
+)
+def test_comma_first_inline_table_keeps_post_comma_comment(
+    options: tomlrt.FormatOptions,
+) -> None:
+    src = td("""
+        t = {
+          a = 1
+          , # after comma
+          b = 2
+        }
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=options)
+    expected = (
+        td("""
+            t = {
+              a = 1, # after comma
+              b = 2,
+            }
+        """)
+        if options.multiline_trailing_comma
+        else td("""
+            t = {
+              a = 1, # after comma
+              b = 2
+            }
+        """)
+    )
+    assert tomlrt.dumps(doc) == expected
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        tomlrt.FormatOptions(multiline_trailing_comma=True),
+        tomlrt.FormatOptions(multiline_trailing_comma=False),
+    ],
+)
+def test_comma_first_array_keeps_comments_on_both_sides(
+    options: tomlrt.FormatOptions,
+) -> None:
+    src = td("""
+        a = [
+          1 # before comma
+          , # after comma
+          2
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=options)
+    expected = (
+        td("""
+            a = [
+              1, # before comma
+              # after comma
+              2,
+            ]
+        """)
+        if options.multiline_trailing_comma
+        else td("""
+            a = [
+              1, # before comma
+              # after comma
+              2
+            ]
+        """)
+    )
+    assert tomlrt.dumps(doc) == expected
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        tomlrt.FormatOptions(multiline_trailing_comma=True),
+        tomlrt.FormatOptions(multiline_trailing_comma=False),
+    ],
+)
+def test_comma_first_inline_table_keeps_comments_on_both_sides(
+    options: tomlrt.FormatOptions,
+) -> None:
+    src = td("""
+        t = {
+          a = 1 # before comma
+          , # after comma
+          b = 2
+        }
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=options)
+    expected = (
+        td("""
+            t = {
+              a = 1, # before comma
+              # after comma
+              b = 2,
+            }
+        """)
+        if options.multiline_trailing_comma
+        else td("""
+            t = {
+              a = 1, # before comma
+              # after comma
+              b = 2
+            }
+        """)
+    )
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_comma_first_multiple_comments_with_zero_indent() -> None:
+    src = td("""
+        a = [
+          1 # before comma
+          , # after comma
+          2
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(
+        options=tomlrt.FormatOptions(
+            indent=0,
+            multiline_trailing_comma=False,
+        )
+    )
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+        1, # before comma
+        # after comma
+        2
+        ]
     """)
 
 
@@ -325,6 +606,86 @@ def test_nested_table_in_multiline_array_indents() -> None:
     """)
 
 
+def test_format_options_indent_recurses_through_inline_values() -> None:
+    src = td("""
+        outer = [
+        { nested = [
+        1,
+        ] },
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=tomlrt.FormatOptions(indent=4))
+    assert tomlrt.dumps(doc) == td("""
+        outer = [
+            { nested = [
+                1,
+            ] },
+        ]
+    """)
+
+
+def test_array_scoped_format_preserves_outer_indent_with_custom_step() -> None:
+    src = td("""
+        outer = [
+          { nested = [
+             1,
+          ] },
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("outer").table(0).array("nested").format(
+        options=tomlrt.FormatOptions(indent=4)
+    )
+    assert tomlrt.dumps(doc) == td("""
+        outer = [
+          { nested = [
+              1,
+          ] },
+        ]
+    """)
+
+
+def test_table_scoped_format_preserves_outer_indent_with_custom_step() -> None:
+    src = td("""
+        outer = [
+          { nested = {
+             value=1,
+          } },
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("outer").table(0).table("nested").format(
+        options=tomlrt.FormatOptions(indent=4)
+    )
+    assert tomlrt.dumps(doc) == td("""
+        outer = [
+          { nested = {
+              value = 1,
+          } },
+        ]
+    """)
+
+
+def test_format_options_zero_indent() -> None:
+    src = td("""
+        outer = [
+          [
+            1,
+          ],
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=tomlrt.FormatOptions(indent=0))
+    assert tomlrt.dumps(doc) == td("""
+        outer = [
+        [
+        1,
+        ],
+        ]
+    """)
+
+
 def test_aot_recursion() -> None:
     src = td("""
         [[a]]
@@ -359,6 +720,229 @@ def test_comments_true_normalises_text() -> None:
         a = 1 # foo
         b = 2 # bar
         c = 3 # baz
+    """)
+
+
+def test_format_options_eol_comment_spaces_cover_supported_comments() -> None:
+    src = td("""
+        top=1#top
+        array = [
+          1,#array
+        ]
+        table = {
+          value=1,#entry
+        }
+        [section]#header
+        x=1
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=tomlrt.FormatOptions(eol_comment_spaces=3))
+    assert tomlrt.dumps(doc) == td("""
+        top = 1   # top
+        array = [
+          1,   # array
+        ]
+        table = {
+          value = 1,   # entry
+        }
+
+        [section]   # header
+        x = 1
+    """)
+
+
+def test_format_options_zero_eol_comment_spaces() -> None:
+    src = td("""
+        key = 1   # key
+        values = [
+          1,   # item
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=tomlrt.FormatOptions(eol_comment_spaces=0))
+    assert tomlrt.dumps(doc) == td("""
+        key = 1# key
+        values = [
+          1,# item
+        ]
+    """)
+
+
+def test_comment_spacing_is_independent_of_text_normalization() -> None:
+    src = td("""
+        key=1#   text
+        values = [
+          1,#   item
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(
+        options=tomlrt.FormatOptions(
+            normalize_comments=False,
+            eol_comment_spaces=2,
+        )
+    )
+    assert tomlrt.dumps(doc) == td("""
+        key = 1  #   text
+        values = [
+          1,  #   item
+        ]
+    """)
+
+
+def test_eol_comment_spacing_preserves_opening_bracket_spacing() -> None:
+    src = td("""
+        values = [   # opening
+          1, # item
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format(options=tomlrt.FormatOptions(eol_comment_spaces=2))
+    assert tomlrt.dumps(doc) == td("""
+        values = [   # opening
+          1,  # item
+        ]
+    """)
+
+
+def test_eol_comment_spacing_preserves_crlf() -> None:
+    src = td("""
+        values = [
+          1,# item
+        ]
+    """).replace("\n", "\r\n")
+    doc = tomlrt.loads(src)
+    doc.array("values").format(options=tomlrt.FormatOptions(eol_comment_spaces=2))
+    assert tomlrt.dumps(doc) == td("""
+        values = [
+          1,  # item
+        ]
+    """).replace("\n", "\r\n")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        pytest.param(
+            {"indent": -1},
+            "indent must be non-negative",
+            id="indent",
+        ),
+        pytest.param(
+            {"eol_comment_spaces": -1},
+            "eol_comment_spaces must be non-negative",
+            id="eol-comment-spaces",
+        ),
+    ],
+)
+def test_format_options_rejects_negative_values(
+    kwargs: Any,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        tomlrt.FormatOptions(**kwargs)
+
+
+def test_format_options_is_frozen_and_keyword_only() -> None:
+    options = tomlrt.FormatOptions()
+    assert options.normalize_comments is True
+    attribute = "normalize_comments"
+    with pytest.raises(FrozenInstanceError):
+        setattr(options, attribute, False)
+    parameters = signature(tomlrt.FormatOptions).parameters
+    assert all(p.kind is Parameter.KEYWORD_ONLY for p in parameters.values())
+
+
+def test_all_format_options_interact_without_changing_data() -> None:
+    src = td("""
+        root=1#   root
+        outer = [
+          {
+            values = [
+              1,
+              2,#   final
+            ],
+            table = {
+              value=3,#   entry
+            },
+          },
+        ]
+        [section]#   header
+        key=4
+    """)
+    doc = tomlrt.loads(src)
+    before = doc.to_dict()
+    options = tomlrt.FormatOptions(
+        normalize_comments=False,
+        indent=4,
+        eol_comment_spaces=2,
+        multiline_trailing_comma=False,
+    )
+    doc.format(options=options)
+    expected = td("""
+        root = 1  #   root
+        outer = [
+            {
+                values = [
+                    1,
+                    2  #   final
+                ],
+                table = {
+                    value = 3  #   entry
+                }
+            }
+        ]
+
+        [section]  #   header
+        key = 4
+    """)
+    assert tomlrt.dumps(doc) == expected
+    assert doc.to_dict() == before
+    assert tomli.loads(expected) == before
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_legacy_comments_warns_at_caller_for_each_receiver() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = { x=1 }
+        b = [1,2 ]
+    """)
+    )
+    receivers = (doc, doc.table("a"), doc.array("b"))
+    for receiver in receivers:
+        with pytest.warns(
+            DeprecationWarning, match="comments= is deprecated"
+        ) as caught:
+            receiver.format(comments=False)
+        assert caught[0].filename == __file__
+
+
+def test_format_rejects_options_with_legacy_comments_without_mutating() -> None:
+    src = "a   =1\n"
+    doc = tomlrt.loads(src)
+    with pytest.raises(ValueError, match="cannot specify both"):
+        doc.format(options=tomlrt.FormatOptions(), comments=False)
+    assert tomlrt.dumps(doc) == src
+
+
+def test_recursive_format_with_options_emits_no_deprecation_warning() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a.x   =1
+        [a.b]
+        y=2
+    """)
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        doc.table("a").format(options=tomlrt.FormatOptions())
+    assert caught == []
+    assert tomlrt.dumps(doc) == td("""
+        a.x = 1
+        [a.b]
+        y = 2
     """)
 
 

@@ -12,6 +12,7 @@ semver-stable API:
 | `loads`, `load`                     | function   |
 | `dumps`, `dump`                     | function   |
 | `Document`, `Table`, `Array`, `AoT` | class      |
+| `FormatOptions`                     | class      |
 | `TomlInput`                         | type alias |
 | `TOMLError`, `TOMLParseError`       | exception  |
 
@@ -25,6 +26,16 @@ code.
 ::: tomlrt.load
 ::: tomlrt.dumps
 ::: tomlrt.dump
+
+## Formatting
+
+::: tomlrt.FormatOptions
+    options:
+      members:
+        - normalize_comments
+        - indent
+        - eol_comment_spaces
+        - multiline_trailing_comma
 
 ## Containers
 

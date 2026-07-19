@@ -7,12 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `FormatOptions` for configuring canonical formatting.
+
+### Deprecated
+
+- The `comments` argument to `format()`; use
+  `FormatOptions(normalize_comments=...)`.
+
 ### Fixed
 
 - `promote_inline` and `promote_array` now preserve entry key and value
   formatting
 - `set_multiline()` now preserves closing-bracket indentation for nested
   arrays and inline tables.
+- `format()` now preserves closing-bracket indentation when called on a
+  nested array or inline table directly.
 
 ## [2.0.2] - 2026-07-10
 
