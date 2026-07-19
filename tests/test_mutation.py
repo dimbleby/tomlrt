@@ -4201,6 +4201,41 @@ def test_overwrite_with_no_final_newline_clone_moved_to_anchor_gets_separator() 
     assert _reparses(out) == doc.to_dict()
 
 
+def test_overwrite_with_scattered_implicit_source_skips_reposition() -> None:
+    """Overwriting an existing key with an implicit source that has both
+    direct KVs and structural children must not crash.
+
+    ``_install_attached_subtree`` hosts the source's direct KVs at the
+    destination's nearest header but gives structural children their
+    own section anchor — the two kinds land in physically disjoint
+    doc-stream regions, not one contiguous block.
+    ``reposition_install``'s position-preserving move assumes a single
+    contiguous span; it must detect this and leave the install where it
+    landed instead of asserting.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [name]
+        first = "Tom"
+        last = "Preston-Werner"
+
+        [animal]
+        type.name = "pug"
+        type.k56 = 1
+
+        [animal.type.k20.personal]
+        email = "a@b.com"
+
+        [animal.type.k20.work]
+        name = "x"
+        """)
+    )
+    doc["name"]["first"] = doc["animal"]["type"]
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == doc.to_dict()
+    assert doc["name"]["first"].to_dict() == doc["animal"]["type"].to_dict()
+
+
 def test_clone_section_into_aot_entry_registers_it_in_entry_slots() -> None:
     """A section-style value cloned as a *new key inside an existing AoT
     entry* (not the entry itself) must be registered in that entry's
