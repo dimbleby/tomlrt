@@ -7070,3 +7070,32 @@ def test_overwrite_with_own_grandchild_then_clone_elsewhere() -> None:
         "many": {"dots": {"dot": 42}, "k96": 1},
         "k9": -7,
     }
+
+
+def test_overwrite_aot_entry_key_with_own_grandchild_then_pop_owning_entry() -> None:
+    """Overwriting an AoT entry's key with a nested (same-entry) section
+    stales the content's old owning entry when that key's whole old
+    binding is deleted first. The adopted content must be re-owned by
+    the *destination*'s entry, not left with no owner (or the deleted
+    one) — otherwise popping the destination entry later leaves the
+    adopted section behind instead of removing it."""
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        [[a.b]]
+        [a.b.c]
+        d = 1
+        [[a.b]]
+        [a.b.c]
+        d = 2
+        """)
+    )
+    doc["a"][0]["b"] = doc["a"][0]["b"][0]["c"]
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        [a.b]
+        d = 1
+        """)
+    doc["a"].pop(0)
+    assert tomlrt.dumps(doc) == "a = []\n"
+    assert doc.to_dict() == {"a": []}
