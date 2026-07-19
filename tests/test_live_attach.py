@@ -493,6 +493,49 @@ def test_reassign_array_after_detach_attaches_again() -> None:
     assert _reparses(out)["ys"] == [1, 2, 3]
 
 
+def test_deleted_array_with_inline_table_item_reattaches_live() -> None:
+    # Regression: deleting an Array containing an inline-table item and
+    # reassigning the same (now-detached) Array back into a document used
+    # to leave the nested inline-table item's `_value` null (an internal
+    # invariant violation) because the array-reuse reattach path never
+    # restored it — mutating the nested item then crashed. Covers both
+    # reassignment at the same key and at a different one.
+    doc = tomlrt.loads(
+        td("""
+        mixed = [{ q = 1 }]
+    """)
+    )
+    arr = doc["mixed"]
+    del doc["mixed"]
+    doc["mixed"] = arr
+    item = doc["mixed"].table(0)
+    item["q"] = 99
+    item["r"] = "added"
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        mixed = [{ q = 99, r = "added" }]
+    """)
+    assert _reparses(out) == {"mixed": [{"q": 99, "r": "added"}]}
+
+
+def test_deleted_array_with_nested_array_of_inline_tables_reattaches_live() -> None:
+    doc = tomlrt.loads(
+        td("""
+        mixed = [[{ q = 1 }]]
+    """)
+    )
+    arr = doc["mixed"]
+    del doc["mixed"]
+    doc["other"] = arr
+    item = doc["other"].array(0).table(0)
+    item["q"] = 99
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        other = [[{ q = 99 }]]
+    """)
+    assert _reparses(out) == {"other": [[{"q": 99}]]}
+
+
 # ---------------------------------------------------------------------------
 # Mixed: Array inside an inline table, both live-attached
 # ---------------------------------------------------------------------------
