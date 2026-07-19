@@ -3045,6 +3045,7 @@ def adopt_private_implicit(
             continue
         for anc in chain:
             record_ref(anc, s)
+            maybe_advance_body_tail(anc, s)
         if isinstance(s, StructuralHeaderSlot):
             # A nested header's binding was only filed down to ``host``
             # (the chain above) — as with the header-bearing clone/adopt
