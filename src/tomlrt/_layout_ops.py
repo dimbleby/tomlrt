@@ -145,7 +145,7 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     """
     primary_ref = parent._index[key][0]  # noqa: SLF001
     old_primary = primary_ref.slot
-    saved_anchor_prev = old_primary._prev  # noqa: SLF001
+    saved_anchor_prev = _find_binding_predecessor(parent, key)
     saved_leading_pieces = list(old_primary.leading.pieces)
     successor_slot = _find_binding_successor(parent, key)
     successor_leading = (
@@ -3633,6 +3633,41 @@ def _splice_blocks_in_order(
     for new_pos, phys_idx in enumerate(new_order_indices):
         head_slot = physical_blocks[phys_idx][0]
         head_slot.leading = Trivia(list(new_head_leadings[new_pos].pieces))
+
+
+def _find_binding_predecessor(parent: Container, key: str) -> Slot | None:
+    """Return the slot just before the contiguous run bound under ``parent[key]``.
+
+    Mirrors :func:`_find_binding_successor`: walks the doc-stream
+    *backward* from ``parent._index[key][0].slot``, consuming consecutive
+    slots whose binding root starts with ``(*parent._path, key)`` — a
+    forward-declared nested descendant can precede the key's own primary
+    slot in doc-stream order — and returns the first non-matching slot
+    (or ``None`` if the run extends to doc head).
+
+    Using ``old_primary._prev`` directly as the anchor is wrong whenever
+    such a descendant precedes ``old_primary``: that predecessor is
+    itself about to be unlinked by the caller's ``delete_key``, so
+    anchoring the reinstalled binding there would splice it after a
+    slot that's no longer part of the live doc-stream.
+    """
+    refs = parent._index.get(key)  # noqa: SLF001
+    if not refs:
+        return None
+    path_prefix = (*parent._path, key)  # noqa: SLF001
+    plen = len(path_prefix)
+    cur: Slot | None = refs[0].slot
+    prev: Slot | None = cur._prev if cur is not None else None  # noqa: SLF001
+    while prev is not None:
+        if isinstance(prev, StructuralHeaderSlot):
+            root: tuple[str, ...] = tuple(prev.path)
+        else:
+            assert isinstance(prev, KVSlot)
+            root = (*prev.host_path, prev.key_parts[0].value)
+        if root[:plen] != path_prefix:
+            return prev
+        prev = prev._prev  # noqa: SLF001
+    return None
 
 
 def _find_binding_successor(parent: Container, key: str) -> Slot | None:

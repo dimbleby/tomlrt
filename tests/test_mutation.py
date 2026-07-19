@@ -4046,6 +4046,41 @@ def test_clone_section_with_forward_declared_nested_past_foreign_section() -> No
     assert _reparses(out) == {"moved": {"better": 2, "b": {"x": 1}}}
 
 
+def test_overwrite_scalar_anchors_past_forward_declared_nested_predecessor() -> None:
+    """Overwriting a key whose subtree's doc-stream predecessor is itself
+    part of that same subtree (a forward-declared nested descendant)
+    must not anchor the reinstalled binding there.
+
+    ``reposition_install`` saves the slot physically preceding the key's
+    primary slot as the anchor to splice the replacement back at. If
+    that predecessor is a forward-declared descendant of the very key
+    being replaced (as `k23.sub` is of `k23` here), it gets unlinked by
+    the same operation's `delete_key` call, silently detaching the
+    reinstalled binding from the live document.
+    """
+    doc = tomlrt.loads("x = 1\n")
+    other = tomlrt.loads(
+        td("""
+        [k.z.w.k23.sub]
+        val = 1
+
+        [k.z.w.k23]
+        better = 2
+        """)
+    )
+    doc["y"] = other["k"]
+    node = doc["y"]["z"]["w"]
+    node["k23"] = 999
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 1
+
+        [y.z.w]
+        k23 = 999
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_clone_section_into_aot_entry_registers_it_in_entry_slots() -> None:
     """A section-style value cloned as a *new key inside an existing AoT
     entry* (not the entry itself) must be registered in that entry's
