@@ -7455,3 +7455,49 @@ def test_dotted_kv_chain_anchors_by_physical_position_not_cached_tail() -> None:
     }
     assert doc.to_dict() == expected
     assert _reparses(out) == expected
+
+
+def test_sort_rejects_mixed_key_whose_headerless_leaf_would_be_captured() -> None:
+    """``reorder_container``'s validation that a leaf KV cannot follow a
+    structural key checked ``slot.host_path == c_path`` to decide
+    whether a KV counted as "leaf content" of the mixed key being
+    reordered. That equality never holds when ``c`` itself is
+    headerless (a dotted-key navigator, not a physical host): such a
+    KV's ``host_path`` is ``c``'s own nearest enclosing header (or the
+    document root), shallower than ``c_path``. So a mixed key's
+    genuinely-vulnerable leading dotted content silently passed the
+    check as "safe", and sorting two such mixed keys spliced one's
+    leading dotted KVs directly after the other's nested header body —
+    with no header of their own to re-establish scope, a re-parse
+    captured them as further nested content instead of dropping them
+    back at the document root."""
+    doc = tomlrt.loads(
+        td("""
+        3.14159 = "x y"
+        3.k91.14159 = "x y"
+        3.k91.k24.14159 = "x y"
+        3.k91.k24.k81 = -7
+        3.k61.14159 = "x y"
+
+        [3.k61.k91]
+        14159 = "x y"
+        k81 = -7
+
+        [3.k61.k91.k24]
+        14159 = "x y"
+        k81 = -7
+        k49 = 3.5
+
+        [3.k91.k56]
+        14159 = "x y"
+        k81 = -7
+        k5 = 1
+
+        [3.k91.k56.k24]
+        14159 = "x y"
+        k81 = -7
+        k49 = 3.5
+        """)
+    )
+    with pytest.raises(ValueError, match="cannot follow a structural"):
+        doc["3"].sort()
