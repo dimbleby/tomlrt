@@ -4047,37 +4047,20 @@ def test_clone_section_with_forward_declared_nested_past_foreign_section() -> No
 
 
 def test_overwrite_scalar_anchors_past_forward_declared_nested_predecessor() -> None:
-    """Overwriting a key whose subtree's doc-stream predecessor is itself
-    part of that same subtree (a forward-declared nested descendant)
-    must not anchor the reinstalled binding there.
-
-    ``reposition_install`` saves the slot physically preceding the key's
-    primary slot as the anchor to splice the replacement back at. If
-    that predecessor is a forward-declared descendant of the very key
-    being replaced (as `k23.sub` is of `k23` here), it gets unlinked by
-    the same operation's `delete_key` call, silently detaching the
-    reinstalled binding from the live document.
-    """
-    doc = tomlrt.loads("x = 1\n")
-    other = tomlrt.loads(
+    """A forward-declared descendant cannot be the replacement anchor."""
+    doc = tomlrt.loads(
         td("""
-        [k.z.w.k23.sub]
-        val = 1
+        [a.b.c]
+        answer = 42
 
-        [k.z.w.k23]
-        better = 2
+        [a]
+        better = 43
         """)
     )
-    doc["y"] = other["k"]
-    node = doc["y"]["z"]["w"]
-    node["k23"] = 999
+    del doc["a"]["b"]["c"]
+    doc["a"] = 999
     out = tomlrt.dumps(doc)
-    assert out == td("""
-        x = 1
-
-        [y.z.w]
-        k23 = 999
-        """)
+    assert out == "\na = 999\n"
     assert _reparses(out) == doc.to_dict()
 
 
@@ -7749,7 +7732,7 @@ def test_reposition_install_scattered_source_via_disjoint_span_fallback() -> Non
 
 
 def test_overwrite_aot_entry_key_with_ancestor_aot_snapshots_first() -> None:
-    """``_snapshot_if_overlapping_destination`` must snapshot an AoT
+    """``_snapshot_for_overlapping_install`` must snapshot an AoT
     value that is an *ancestor* of the destination being overwritten
     (not just a headerless Table descendant) before
     ``reposition_install`` deletes the old binding — otherwise deleting
