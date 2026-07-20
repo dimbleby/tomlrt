@@ -283,7 +283,8 @@ class Container(dict[str, Any]):
           whitespace.
         * Sibling key/value slots have no blank line between them;
           section / array-of-tables headers get one.
-        * Orphan comment blocks above slots are preserved verbatim.
+        * Orphan comment blocks above slots are preserved, with each
+          blank-line run collapsed to one.
         * Inline values keep their shape (single-line stays single-line,
           multi-line stays multi-line).
         * Newlines use the owning document's style.
@@ -317,6 +318,7 @@ class Container(dict[str, Any]):
                 owner=None,
                 nl=nl,
                 options=resolved,
+                preserve_start_boundary=False,
             )
             format_document_trailing(self._preamble, nl=nl, options=resolved)
             format_document_trailing(self._trailing, nl=nl, options=resolved)

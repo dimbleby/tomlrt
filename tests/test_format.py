@@ -153,6 +153,28 @@ def test_orphan_comment_block_preserved() -> None:
     """)
 
 
+def test_blank_runs_between_comment_blocks_collapse() -> None:
+    src = td("""
+        a = 1
+
+
+        # orphan
+
+
+
+        # attached
+        b = 2
+    """)
+    assert _roundtrip(src) == td("""
+        a = 1
+
+        # orphan
+
+        # attached
+        b = 2
+    """)
+
+
 def test_blank_above_orphan_preserved_when_collapsing() -> None:
     # The structural blank between sibling KVs normally collapses to
     # zero, but if there's an orphan / attached comment block above
@@ -1083,6 +1105,10 @@ def test_format_canonicalises_epilogue_no_comments_flag() -> None:
     assert _roundtrip(src, comments=False) == "key = 1\n#trailing  \n\n"
 
 
+def test_format_collapses_document_boundary_blank_runs() -> None:
+    assert _roundtrip("\n\n\nkey=1\n\n\n") == "\nkey = 1\n\n"
+
+
 def test_format_canonicalises_empty_doc_preamble() -> None:
     # Empty doc: everything lives in _trailing and surfaces as preamble.
     src = "#hello  \n#  world\n"
@@ -1139,6 +1165,72 @@ def test_format_preserves_orphan_comment_indent_in_multiline_array() -> None:
         ]
         """)
     assert _roundtrip(src) == src
+
+
+def test_multiline_item_comment_separation_collapses_to_one_blank() -> None:
+    src = td("""
+        arr = [
+          'g',
+
+
+
+        # attached
+          'w', # inline
+
+
+          # orphan
+
+
+          # attached
+          'a', # final inline
+
+
+
+          # trailing
+        ]
+        table = {
+          g = 1,
+
+
+
+        # attached
+          w = 2, # inline
+
+
+          # orphan
+          a = 3, # final inline
+
+
+
+          # trailing
+        }
+    """)
+    assert _roundtrip(src) == td("""
+        arr = [
+          'g',
+
+          # attached
+          'w', # inline
+
+          # orphan
+
+          # attached
+          'a', # final inline
+
+          # trailing
+        ]
+        table = {
+          g = 1,
+
+          # attached
+          w = 2, # inline
+
+          # orphan
+          a = 3, # final inline
+
+          # trailing
+        }
+    """)
 
 
 def test_format_returns_none() -> None:
