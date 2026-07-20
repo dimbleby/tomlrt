@@ -7421,3 +7421,37 @@ def test_dotted_kv_chain_body_tail_propagation_ignores_unrelated_root_content() 
     expected = {"physical": {"color": "orange", "k74": "x y"}, "site": {"k1": True}}
     assert doc.to_dict() == expected
     assert _reparses(out) == expected
+
+
+def test_dotted_kv_chain_anchors_by_physical_position_not_cached_tail() -> None:
+    """``install_dotted_kv_slot``'s ancestor-chain ref-filing used each
+    ancestor's own cached ``_body_tail`` as its anchor. That cache can
+    be *later* (physically) than the slot actually being spliced —
+    here the document root's cached tail is a sibling key positioned
+    after the dotted branch a nested clone is extending — so filing the
+    new ref there rewound the root's already-correct tail instead of
+    advancing it, leaving the ancestor's refs (and thus a later
+    structural overwrite's saved anchor) out of doc-stream order and
+    silently dropping the replacement content on render."""
+    doc = tomlrt.loads(
+        td("""
+        a.p.q = 8
+        d1.a.x = 9
+
+        [tbl]
+        k = 12
+        """)
+    )
+    doc["a"]["p"]["r"] = -7
+    doc["k47"] = 1
+    doc["d1"]["a"]["k76"] = doc["a"]
+    doc["d1"]["a"] = doc["a"]["p"]
+    out = tomlrt.dumps(doc)
+    expected = {
+        "a": {"p": {"q": 8, "r": -7}},
+        "d1": {"a": {"q": 8, "r": -7}},
+        "tbl": {"k": 12},
+        "k47": 1,
+    }
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected

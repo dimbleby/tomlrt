@@ -720,6 +720,25 @@ def _project_bucket_index(
     return 0
 
 
+def _nearest_filed_predecessor(anc: Container, slot: Slot) -> Slot | None:
+    """Walk the doc-stream backward from ``slot`` for ``anc``'s nearest ref.
+
+    Returns the nearest preceding slot that ``anc`` already holds a ref
+    to (via that slot's own ``_refs`` back-pointer list), or ``None`` if
+    the doc head is reached first. Used to anchor a freshly-spliced
+    slot's ref on ``anc`` at the position that actually matches its
+    physical placement, rather than trusting a cached anchor (``anc``'s
+    own ``_body_tail``, or one borrowed from a different container in
+    the chain) that may have gone stale in either direction.
+    """
+    cur = slot._prev  # noqa: SLF001
+    while cur is not None:
+        if any(r.container is anc for r in cur._refs):  # noqa: SLF001
+            return cur
+        cur = cur._prev  # noqa: SLF001
+    return None
+
+
 def _file_body_ref(
     anc: Container,
     new_slot: Slot,
@@ -1623,29 +1642,31 @@ def install_dotted_kv_slot(
         doc=doc,
     )
 
-    # File a ref on every chain ancestor, anchored at *that ancestor's*
-    # own body_tail or header — not host's. A shared host-level anchor
-    # is wrong for an intermediate ancestor that doesn't itself carry a
-    # ref to it (e.g. host's own body_tail belongs to an unrelated
-    # sibling key): its fallback then mis-files the new ref after
-    # whatever the ancestor already holds (typically a descendant's
-    # header), even though a headerless ancestor's own dotted content
-    # always precedes any of its descendant headers physically.
+    # File a ref on every chain ancestor, anchored at the nearest slot
+    # *physically before* ``new_slot`` that ``anc`` itself already has a
+    # ref to. A single shared anchor (borrowed from host or leaf_parent)
+    # is wrong for other ancestors in the chain: it may not be filed on
+    # them at all (their fallback then mis-files after whatever they
+    # *do* hold, e.g. a descendant's header, even though this new
+    # content precedes it physically), or — the reverse hazard — their
+    # own cached body_tail may sit *after* ``new_slot``'s actual splice
+    # point (e.g. host is the document root and some unrelated sibling
+    # key is root's own later content), in which case reusing it would
+    # file the new ref too early and rewind an already-correct tail.
+    # Walking the doc-stream backward from the just-spliced ``new_slot``
+    # finds the true predecessor for each ancestor directly, immune to
+    # either kind of staleness.
     for i, anc in enumerate(chain):
-        anc_anchor = anc._body_tail or (  # noqa: SLF001
-            anc._header_ref.slot if anc._header_ref is not None else None  # noqa: SLF001
-        )
+        anchor = _nearest_filed_predecessor(anc, new_slot)
         _file_body_ref(
             anc,
             new_slot,
-            anchor_slot=anc_anchor,
-            inserted_at_head=anc_anchor is None,
+            anchor_slot=anchor,
+            inserted_at_head=anchor is None,
             local_key=leaf_keypath[i],
         )
-        # ``new_slot`` was just filed immediately after ``anc_anchor``
-        # (``anc``'s own prior body_tail, or nothing) — either way it
-        # is now the latest body-region slot for ``anc``.
-        anc._body_tail = new_slot  # noqa: SLF001
+        if anchor is anc._body_tail or anc._body_tail is None:  # noqa: SLF001
+            anc._body_tail = new_slot  # noqa: SLF001
 
     # ``entry_slots`` is membership + header-first order only (doc
     # order is derived on demand), so a plain append is enough.
