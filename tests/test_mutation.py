@@ -4232,6 +4232,28 @@ def test_overwrite_with_scattered_implicit_source_skips_reposition() -> None:
     )
     doc["name"]["first"] = doc["animal"]["type"]
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        [name]
+        last = "Preston-Werner"
+        first.name = "pug"
+        first.k56 = 1
+
+        [name.first.k20.personal]
+        email = "a@b.com"
+
+        [name.first.k20.work]
+        name = "x"
+
+        [animal]
+        type.name = "pug"
+        type.k56 = 1
+
+        [animal.type.k20.personal]
+        email = "a@b.com"
+
+        [animal.type.k20.work]
+        name = "x"
+        """)
     assert _reparses(out) == doc.to_dict()
     assert doc["name"]["first"].to_dict() == doc["animal"]["type"].to_dict()
 
@@ -4268,14 +4290,21 @@ def test_overwrite_ancestor_with_own_nested_aot_preserves_nested_entries() -> No
     )
     doc["fruit"]["apple"] = doc["fruit"]["apple"]["seeds"]
     out = tomlrt.dumps(doc)
-    assert doc.to_dict() == {
-        "fruit": {
-            "apple": [
-                {"size": {"color": "red", "seeds": [{}, {"new": True}]}},
-                {"new": True},
-            ]
-        }
-    }
+    assert out == td("""
+        [fruit]
+
+        [[fruit.apple]]
+        [fruit.apple.size]
+        color = "red"
+
+        [[fruit.apple.size.seeds]]
+
+        [[fruit.apple.size.seeds]]
+        new = true
+
+        [[fruit.apple]]
+        new = true
+        """)
     assert _reparses(out) == doc.to_dict()
 
 
@@ -7060,16 +7089,24 @@ def test_overwrite_with_own_grandchild_then_clone_elsewhere() -> None:
     doc["many"]["k96"] = 1
     doc["name"]["k75"] = doc["many"]
     out = tomlrt.dumps(doc)
-    assert _reparses(out)
-    assert doc.to_dict() == {
-        "name": {
-            "first": "Arthur",
-            "last": "Dent",
-            "k75": {"k96": 1, "dots": {"dot": 42}},
-        },
-        "many": {"dots": {"dot": 42}, "k96": 1},
-        "k9": -7,
-    }
+    assert out == td("""
+        name.first = "Arthur"
+        "name".'last' = "Dent"
+        k9 = -7
+
+        [name.k75]
+        k96 = 1
+
+        [name.k75.dots]
+        dot = 42
+
+        [many]
+        k96 = 1
+
+        [many.dots]
+        dot = 42
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_overwrite_aot_entry_key_with_own_grandchild_then_pop_owning_entry() -> None:
@@ -7185,7 +7222,11 @@ def test_adopt_private_section_unfiles_stale_bindings_for_nested_headers() -> No
     )
     doc["albums"]["name"]["k2"] = foreign["y"]
     out = tomlrt.dumps(doc)
-    assert doc.to_dict() == {"albums": {"name": {"k2": {"w": 1}}}}
+    assert out == td("""
+        [albums]
+          [albums.name.k2]
+        w = 1
+        """)
     assert _reparses(out) == doc.to_dict()
 
 
@@ -7218,19 +7259,19 @@ def test_overwrite_with_leading_dotted_kvs_anchors_past_foreign_scope() -> None:
     )
     doc["breed"]["k40"] = doc["breed"]["apple"]["taste"]
     out = tomlrt.dumps(doc)
-    expected = {
-        "breed": {
-            "apple": {
-                "taste": {
-                    "sweet": True,
-                    "k78": {"color": "red", "taste": {"sweet": True}},
-                }
-            },
-            "k40": {"sweet": True, "k78": {"color": "red", "taste": {"sweet": True}}},
-        }
-    }
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        breed.apple.taste.sweet = true
+        breed.apple.taste.k78.color = "red"
+        breed.k40.sweet = true
+        breed.k40.k78.color = "red"
+
+        [breed.k40.k78.taste]
+        sweet = true
+
+        [breed.apple.taste.k78.taste]
+        sweet = true
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_clone_implicit_source_with_empty_string_header_child() -> None:
@@ -7253,9 +7294,18 @@ def test_clone_implicit_source_with_empty_string_header_child() -> None:
     )
     doc["a"] = doc["src"]
     out = tomlrt.dumps(doc)
-    expected = {"x": 1, "src": {"k": 1, "": {"y": 1}}, "a": {"k": 1, "": {"y": 1}}}
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        x = 1
+        src.k = 1
+        a.k = 1
+
+        [a.""]
+        y = 1
+
+        [src.""]
+        y = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_adopt_private_section_anchors_past_unrelated_trailing_kv() -> None:
@@ -7277,9 +7327,14 @@ def test_adopt_private_section_anchors_past_unrelated_trailing_kv() -> None:
     tmp = doc.pop("tmp")
     doc["site"]["google"] = tmp
     out = tomlrt.dumps(doc)
-    expected = {"site": {"k97": -7, "google": {"x": 1}}, "k63": {"a": 1}}
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        site.k97 = -7
+        k63 = { a = 1 }
+
+        [site.google]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_adopt_private_implicit_leaves_body_tail_stale() -> None:
@@ -7303,14 +7358,15 @@ def test_adopt_private_implicit_leaves_body_tail_stale() -> None:
     doc["a"]["few"]["dots"] = doc["a"]["few"]["dots"]["polka"]
     doc["a"]["few"]["k29"] = [1, 2]
     out = tomlrt.dumps(doc)
-    expected = {
-        "a": {
-            "k61": {"a": 1},
-            "few": {"dots": {"dot": "again?", "dance-with": "Dot"}, "k29": [1, 2]},
-        }
-    }
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        [a]
+        k61 = { a = 1 }
+
+        few.dots.dot = "again?"
+        few.dots.dance-with = "Dot"
+        few.k29 = [1, 2]
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_materialise_empty_aot_anchors_within_owning_entry() -> None:
@@ -7335,9 +7391,15 @@ def test_materialise_empty_aot_anchors_within_owning_entry() -> None:
     )
     doc["a"]["b"][0]["x"]["songs"].pop(0)
     out = tomlrt.dumps(doc)
-    expected = {"a": {"b": [{"x": {"songs": []}}, {"name": 2}]}}
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        [[a.b]]
+        [a.b.x]
+        songs = []
+
+        [[a.b]]
+        name = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_dotted_kv_chain_ref_files_before_unrelated_descendant_header() -> None:
@@ -7376,16 +7438,20 @@ def test_dotted_kv_chain_ref_files_before_unrelated_descendant_header() -> None:
     )
     doc["a"]["few"] = foreign["arr"]
     out = tomlrt.dumps(doc)
-    expected = {
-        "top": {"key": 1},
-        "a": {
-            "k6": {"c": 42.666},
-            "few": [{"a": {"b": {"c": 1, "d": 2}}}, {"a": {"b": {"c": 3, "d": 4}}}],
-        },
-        "tbl": {"a": {"b": {"c": 42.666}}},
-    }
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        top.key = 1
+        a.k6.c = 42.666
+        [[a.few]]
+        a.b.c = 1
+        a.b.d = 2
+        [[a.few]]
+        a.b.c = 3
+        a.b.d = 4
+
+        [tbl]
+        a.b.c = 42.666
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_dotted_kv_chain_body_tail_propagation_ignores_unrelated_root_content() -> None:
@@ -7418,9 +7484,12 @@ def test_dotted_kv_chain_body_tail_propagation_ignores_unrelated_root_content() 
     doc["physical"]["k74"]["google.com"] = foreign2["sub"]
     doc["physical"]["k74"] = "x y"
     out = tomlrt.dumps(doc)
-    expected = {"physical": {"color": "orange", "k74": "x y"}, "site": {"k1": True}}
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        physical.color = "orange"
+        site.k1 = true
+        physical.k74 = "x y"
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_dotted_kv_chain_anchors_by_physical_position_not_cached_tail() -> None:
@@ -7447,14 +7516,17 @@ def test_dotted_kv_chain_anchors_by_physical_position_not_cached_tail() -> None:
     doc["d1"]["a"]["k76"] = doc["a"]
     doc["d1"]["a"] = doc["a"]["p"]
     out = tomlrt.dumps(doc)
-    expected = {
-        "a": {"p": {"q": 8, "r": -7}},
-        "d1": {"a": {"q": 8, "r": -7}},
-        "tbl": {"k": 12},
-        "k47": 1,
-    }
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        a.p.q = 8
+        a.p.r = -7
+        d1.a.q = 8
+        d1.a.r = -7
+        k47 = 1
+
+        [tbl]
+        k = 12
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_sort_rejects_mixed_key_whose_headerless_leaf_would_be_captured() -> None:
@@ -7523,9 +7595,17 @@ def test_reposition_install_leaf_kv_with_no_preceding_header_is_left_unmoved() -
     )
     doc["top"] = doc["a"]
     out = tomlrt.dumps(doc)
-    expected = {"a": {"x": 1, "sub": {"y": 2}}, "top": {"x": 1, "sub": {"y": 2}}}
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        a.x = 1
+        top.x = 1
+
+        [top.sub]
+        y = 2
+
+        [a.sub]
+        y = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_adopt_private_implicit_splices_before_head_when_host_body_empty() -> None:
@@ -7547,9 +7627,47 @@ def test_adopt_private_implicit_splices_before_head_when_host_body_empty() -> No
     )
     doc["animal"] = doc["animal"]["type"]
     out = tomlrt.dumps(doc)
-    expected = {"animal": {"name": "pug", "breed": "corgi"}, "name": {"first": "Tom"}}
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        animal.name = "pug"
+        animal.breed = "corgi"
+
+        [name]
+        first = "Tom"
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_private_implicit_anchors_before_unrelated_later_header() -> None:
+    """``adopt_private_implicit`` anchored a rehomed headerless block at
+    ``_parent_subtree_tail(host)``. For a headerless ``host`` with no
+    direct-KV extent of its own (the document root, once some other
+    unrelated section already has content), that function walks the
+    *whole* physical subtree reachable via the ancestor-chain ref every
+    slot files on every ancestor — spanning the entire document, not
+    just ``host``'s own body. Anchoring there lands the rehomed block
+    after an unrelated later header's own content, silently
+    re-parenting it under that header on re-parse.
+    """
+    doc = tomlrt.loads(
+        td("""
+        a.b = 1
+        a.c = 2
+
+        [other]
+        x = 1
+        """)
+    )
+    orphan = doc.pop("a")
+    doc["z"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        z.b = 1
+        z.c = 2
+
+        [other]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_adopt_private_section_adds_terminator_when_not_at_doc_tail() -> None:
@@ -7573,12 +7691,17 @@ def test_adopt_private_section_adds_terminator_when_not_at_doc_tail() -> None:
     orphan = doc.pop("other")
     doc["dest"]["sub"] = orphan
     out = tomlrt.dumps(doc)
-    expected = {
-        "dest": {"k": 1, "sub": {"x": 1}},
-        "trailing": {"y": 1},
-    }
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        [dest]
+        k = 1
+
+        [dest.sub]
+        x = 1
+
+        [trailing]
+        y = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_reposition_install_scattered_source_via_disjoint_span_fallback() -> None:
@@ -7605,6 +7728,23 @@ def test_reposition_install_scattered_source_via_disjoint_span_fallback() -> Non
     doc["site"].sort()
     doc["name"] = doc["site"]
     out = tomlrt.dumps(doc)
+    assert out == td("""
+        physical.color = "orange"
+        physical.shape."google.com" = true
+        site."google.com" = true
+        name."google.com" = true
+        [site.k96."google.com"]
+        "google.com" = true
+
+        [site.k96."google.com".k96]
+        "google.com" = true
+
+        [name.k96."google.com"]
+        "google.com" = true
+
+        [name.k96."google.com".k96]
+        "google.com" = true
+        """)
     assert _reparses(out) == doc.to_dict()
 
 
@@ -7625,6 +7765,14 @@ def test_overwrite_aot_entry_key_with_ancestor_aot_snapshots_first() -> None:
     )
     doc["a"][0]["b"] = doc["a"]
     out = tomlrt.dumps(doc)
-    expected = {"a": [{"b": [{"b": 1}, {"b": 2}]}, {"b": 2}]}
-    assert doc.to_dict() == expected
-    assert _reparses(out) == expected
+    assert out == td("""
+        [[a]]
+        [[a.b]]
+        b = 1
+
+        [[a.b]]
+        b = 2
+        [[a]]
+        b = 2
+        """)
+    assert _reparses(out) == doc.to_dict()

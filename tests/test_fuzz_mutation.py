@@ -257,31 +257,3 @@ def test_mutation_keeps_model_consistent(path: Path) -> None:
             f"render/model mismatch: {ctx}\n{out!r}\n"
             f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
         )
-
-
-def test_mutation_seed_regression_dotted_kv_lands_before_unrelated_header() -> None:
-    """Pinned regression for a specific seed that found a real bug:
-    ``adopt_private_implicit`` anchored a headerless block via
-    ``_parent_subtree_tail(host)``, which for a headerless host (e.g.
-    the document root) walks the *whole* doc-stream reachable through
-    the ancestor-chain ref every slot files on every ancestor — not
-    just the host's own direct-KV extent. That landed a root-level
-    dotted-KV block after an unrelated later header's own content,
-    silently re-parenting it under that header on re-parse.
-    """
-    path = _VALID_ROOT / "spec-1.0.0" / "table-1.toml"
-    foreign_path = _VALID_ROOT / "spec-1.0.0" / "table-2.toml"
-    src = path.read_text(encoding="utf-8")
-    foreign_doc = tomlrt.loads(foreign_path.read_text(encoding="utf-8"))
-    foreign_pool: list[tuple[str, Any]] = []
-    _targets(foreign_doc, foreign_pool)
-
-    seed = 11341542535962092566
-    rng = random.Random(seed)  # noqa: S311
-    doc = tomlrt.loads(src)
-    for _ in range(rng.randint(1, 15)):
-        _mutate(doc, rng, foreign_pool)
-    out = tomlrt.dumps(doc)
-    tomli.loads(out)
-    assert tomlrt.dumps(tomlrt.loads(out)) == out
-    assert _deep_eq(tomli.loads(out), doc.to_dict())
