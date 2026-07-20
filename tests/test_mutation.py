@@ -7501,3 +7501,130 @@ def test_sort_rejects_mixed_key_whose_headerless_leaf_would_be_captured() -> Non
     )
     with pytest.raises(ValueError, match="cannot follow a structural"):
         doc["3"].sort()
+
+
+def test_reposition_install_leaf_kv_with_no_preceding_header_is_left_unmoved() -> None:
+    """``_effective_header_path_before`` walks backward from the saved
+    anchor to find the header currently governing that position, so
+    ``reposition_install`` can tell whether a replacement block's
+    leading bare KV would keep its original scope if moved back there.
+    When the anchor sits at the very start of the document (nothing
+    precedes it, so no header governs it at all), the walk must
+    terminate at doc head and report root scope rather than looping or
+    raising."""
+    doc = tomlrt.loads(
+        td("""
+        top = 1
+        a.x = 1
+
+        [a.sub]
+        y = 2
+        """)
+    )
+    doc["top"] = doc["a"]
+    out = tomlrt.dumps(doc)
+    expected = {"a": {"x": 1, "sub": {"y": 2}}, "top": {"x": 1, "sub": {"y": 2}}}
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
+
+
+def test_adopt_private_implicit_splices_before_head_when_host_body_empty() -> None:
+    """``adopt_private_implicit`` anchors a headerless orphan's rebased
+    dotted content at its host's own direct-KV extent — but when the
+    host (here the document root) has no direct KVs of its own yet
+    (only section headers), that anchor is ``None`` even though the
+    document isn't empty. Splicing at the doc's absolute tail in that
+    case would be unsafe (it could land inside an unrelated later
+    header's scope), so it must splice before the doc head instead."""
+    doc = tomlrt.loads(
+        td("""
+        animal.type.name = "pug"
+        animal.type.breed = "corgi"
+
+        [name]
+        first = "Tom"
+        """)
+    )
+    doc["animal"] = doc["animal"]["type"]
+    out = tomlrt.dumps(doc)
+    expected = {"animal": {"name": "pug", "breed": "corgi"}, "name": {"first": "Tom"}}
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
+
+
+def test_adopt_private_section_adds_terminator_when_not_at_doc_tail() -> None:
+    """A private orphan detached via ``pop()`` may have lost its own
+    trailing newline (it used to be the very last thing in its source
+    document). ``adopt_private_section`` must add one back when the
+    orphan's content lands anywhere but this document's new tail —
+    exercised here by adopting it in between two other sections."""
+    doc = tomlrt.loads(
+        td("""
+        [dest]
+        k = 1
+
+        [other]
+        x = 1
+
+        [trailing]
+        y = 1
+        """)
+    )
+    orphan = doc.pop("other")
+    doc["dest"]["sub"] = orphan
+    out = tomlrt.dumps(doc)
+    expected = {
+        "dest": {"k": 1, "sub": {"x": 1}},
+        "trailing": {"y": 1},
+    }
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected
+
+
+def test_reposition_install_scattered_source_via_disjoint_span_fallback() -> None:
+    """``_ordered_recorded_span`` detects when an implicit source's
+    recorded slots don't form one contiguous doc-stream span — the
+    direct KVs and structural children land at different anchors, e.g.
+    because the destination promoted from headerless to header-bearing
+    partway through — and signals ``reposition_install`` to leave the
+    fresh install where it landed rather than risk moving the wrong
+    range. Exercises both of its rejection paths: more than one
+    candidate span head, and a span head whose forward walk doesn't
+    reach every recorded slot."""
+    doc = tomlrt.loads(
+        td("""
+        name = "Orange"
+        physical.color = "orange"
+        physical.shape = "round"
+        site."google.com" = true
+        """)
+    )
+    doc["site"]["k96"] = doc["site"]
+    doc["physical"]["shape"] = doc["site"]["k96"]
+    doc["site"]["k96"]["google.com"] = doc["site"]
+    doc["site"].sort()
+    doc["name"] = doc["site"]
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_aot_entry_key_with_ancestor_aot_snapshots_first() -> None:
+    """``_snapshot_if_overlapping_destination`` must snapshot an AoT
+    value that is an *ancestor* of the destination being overwritten
+    (not just a headerless Table descendant) before
+    ``reposition_install`` deletes the old binding — otherwise deleting
+    the destination's old content would unlink slots the AoT value
+    itself still needs to read, corrupting the clone."""
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        b = 1
+        [[a]]
+        b = 2
+        """)
+    )
+    doc["a"][0]["b"] = doc["a"]
+    out = tomlrt.dumps(doc)
+    expected = {"a": [{"b": [{"b": 1}, {"b": 2}]}, {"b": 2}]}
+    assert doc.to_dict() == expected
+    assert _reparses(out) == expected

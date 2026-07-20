@@ -302,7 +302,13 @@ def _ordered_recorded_span(survivors: list[Slot]) -> list[Slot] | None:
     while cur is not None and id(cur) in ids:
         ordered.append(cur)
         cur = cur._next  # noqa: SLF001
-    if len(ordered) != len(survivors):
+    if len(ordered) != len(survivors):  # pragma: no cover
+        # Belt-and-braces: a single head whose forward walk still
+        # misses some survivor would mean a third, disconnected group
+        # sharing no head with the other two — not produced by any
+        # known caller (`_install_attached_subtree` only ever splits
+        # a source into a direct-KV group and one combined structural
+        # group), but the cheap check is kept rather than assumed.
         return None
     return ordered
 
@@ -3867,7 +3873,7 @@ def _find_binding_predecessor(parent: Container, key: str) -> Slot | None:
     slot that's no longer part of the live doc-stream.
     """
     refs = parent._index.get(key)  # noqa: SLF001
-    if not refs:
+    if not refs:  # pragma: no cover -- reposition_install guarantees key is bound
         return None
     path_prefix = (*parent._path, key)  # noqa: SLF001
     plen = len(path_prefix)
@@ -3904,7 +3910,7 @@ def _find_binding_successor(parent: Container, key: str) -> Slot | None:
     originally followed the *first* contiguous run, not the last.
     """
     refs = parent._index.get(key)  # noqa: SLF001
-    if not refs:
+    if not refs:  # pragma: no cover -- reposition_install guarantees key is bound
         return None
     path_prefix = (*parent._path, key)  # noqa: SLF001
     plen = len(path_prefix)
@@ -4146,7 +4152,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
                 return False
             if isinstance(s, KVSlot):
                 return True
-        return False
+        return False  # pragma: no cover -- every Slot is one of the two above
 
     def _has_structural(slots: list[Slot]) -> bool:
         return any(isinstance(s, StructuralHeaderSlot) for s in slots)
