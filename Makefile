@@ -12,16 +12,15 @@ test: ## run the test suite (excludes slow/fuzz)
 	pytest -q
 
 .PHONY: fuzz
-fuzz: ## run the slow property-based suite"
+fuzz: ## run the slow property-based suite
 	pytest -q -m slow
 
 .PHONY: coverage
-coverage: ## tests + branch coverage"
+coverage: ## tests + branch coverage
 	pytest --cov
 
 .PHONY: lint
-lint: ## formatting, typechecking, etc"
-	fmt ruff ty mypy
+lint:fmt ruff ty mypy ## formatting, typechecking, etc
 
 .PHONY: fmt
 fmt:
@@ -40,15 +39,15 @@ mypy:
 	mypy
 
 .PHONY: docs
-docs: ## build the MkDocs site (strict)"
+docs: ## build the MkDocs site (strict)
 	$(UV) run --group docs zensical build
 
 .PHONY: docs-serve
-docs-serve: ## preview the docs locally"
+docs-serve: ## preview the docs locally
 	$(UV) run --group docs zensical serve
 
 .PHONY: bench
-bench: ## run the parse-throughput benchmark"
+bench: ## run the parse-throughput benchmark
 	benchmarks/bench_parse.py
 	benchmarks/bench_mutate.py
 	benchmarks/bench_pyproject.py
