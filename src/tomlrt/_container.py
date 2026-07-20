@@ -657,31 +657,25 @@ class Container(dict[str, Any]):
         # The generic add_aot_entry(rehome=) path rebuilds from dict
         # storage and drops that CST.
         existing_entries: list[Table] = list(value)
-        can_clone = bool(existing_entries) and all(
-            et._owner_aot_entry is not None  # noqa: SLF001
-            and bool(et._owner_aot_entry.entry_slots)  # noqa: SLF001
-            for et in existing_entries
-        )
         list.clear(value)
         value._layout_root = None  # noqa: SLF001
         value._parent = None  # noqa: SLF001
         value._path = ()  # noqa: SLF001
         attached = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, attached)
-        if can_clone:
-            # Gathering includes nested AoTs and requires the live view,
-            # so clone each entry before resetting it.
-            for et in existing_entries:
+        for entry_table in existing_entries:
+            owner = entry_table._owner_aot_entry  # noqa: SLF001
+            preserve_cst = owner is not None and bool(owner.entry_slots)
+            if preserve_cst:
+                # Gathering includes nested AoTs and requires the live view.
                 _layout_ops.clone_aot_entry(
                     value,
-                    et,
+                    entry_table,
                     dst_path=value._path,  # noqa: SLF001
                     preserve_source_separator=True,
                 )
-                _reset_table_for_rehome(et)
-        else:
-            for entry_table in existing_entries:
-                _reset_table_for_rehome(entry_table)
+            _reset_table_for_rehome(entry_table)
+            if not preserve_cst:
                 _layout_ops.add_aot_entry(value, None, rehome=entry_table)
 
     def _attach_section(self, key: str, value: Container) -> None:
@@ -1359,9 +1353,8 @@ class Document(Container):
     """
 
     __slots__ = (
-        "_displaced_recorder",
         "_head",
-        "_install_recorder",
+        "_install_recorders",
         "_is_private",
         "_newline",
         "_preamble",
@@ -1393,9 +1386,12 @@ class Document(Container):
         self._newline: str = "\n"
         self._prelude: str = ""
         self._is_private: bool = False
-        self._install_recorder: list[Slot] | None = None
-        self._displaced_recorder: (
-            list[tuple[Slot, list[TriviaPiece], Slot | None]] | None
+        self._install_recorders: (
+            tuple[
+                list[Slot],
+                list[tuple[Slot, list[TriviaPiece], Slot | None]],
+            ]
+            | None
         ) = None
         self._section_blank_separated = True
         self._layout_root = self
