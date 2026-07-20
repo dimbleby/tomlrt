@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cloning, moving, or deleting-and-reassigning a section whose nested
   sub-table was declared before the section's own header no longer
   silently drops that nested content.
+- Cross-document cloning and reuse of deleted or nested tables and
+  arrays-of-tables now preserve formatting, ordering, and ownership more
+  reliably, including when source and destination subtrees overlap.
 
 ## [2.0.2] - 2026-07-10
 
