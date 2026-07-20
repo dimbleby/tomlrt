@@ -200,6 +200,44 @@ def test_multiline_array_preserved_shape() -> None:
     """)
 
 
+def test_multiline_array_drops_blank_only_line_before_closing_bracket() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1,
+
+        ]
+        """)
+    )
+
+    doc.array("a").format()
+
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+        ]
+    """)
+
+
+def test_multiline_inline_table_drops_blank_only_line_before_closing_brace() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = {
+          x = 1,
+
+        }
+        """)
+    )
+
+    doc.table("a").format()
+
+    assert tomlrt.dumps(doc) == td("""
+        a = {
+          x = 1,
+        }
+    """)
+
+
 def test_format_options_omit_multiline_trailing_comma() -> None:
     src = td("""
         items = [
