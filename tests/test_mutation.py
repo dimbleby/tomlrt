@@ -1193,6 +1193,33 @@ def test_assigning_list_creates_inline_array() -> None:
     assert _reparses(out) == {"nums": [1, 2, 3]}
 
 
+def test_overwrite_aot_with_implicit_table_containing_empty_aot() -> None:
+    doc = tomlrt.loads(
+        td("""
+            source.zchild.leaf = 1
+
+            [[target]]
+            x = 1
+            """)
+    )
+    source = doc["source"]
+    source["aempty"] = AoT()
+    source.sort()
+
+    doc["target"] = source
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        source.aempty = []
+        source.zchild.leaf = 1
+
+        [target]
+        aempty = []
+        zchild.leaf = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_replace_scalar_with_array() -> None:
     doc = tomlrt.loads("x = 1\n")
     doc["x"] = [True, False]
@@ -7460,6 +7487,37 @@ def test_adopt_private_implicit_leaves_body_tail_stale() -> None:
         few.dots.dot = "again?"
         few.dots.dance-with = "Dot"
         few.k29 = [1, 2]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_private_implicit_transfers_aot_entry_ownership() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [tbl]
+            a.b.c = 42
+
+            [[arr]]
+            a.b.c = 3
+            a.b.d = 4
+            """)
+    )
+    target = doc["tbl"]["a"]
+    target["b"] = doc["arr"]
+    target["b"] = target["b"][0]["a"]
+
+    target["k"] = "str"
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [tbl]
+        a.b.b.c = 3
+        a.b.b.d = 4
+        a.k = "str"
+
+        [[arr]]
+        a.b.c = 3
+        a.b.d = 4
         """)
     assert _reparses(out) == doc.to_dict()
 

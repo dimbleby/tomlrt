@@ -877,6 +877,17 @@ def _extend_entry_slots(owner: AoTEntry | None, *slots: Slot) -> None:
         owner.entry_slots.extend(slots)
 
 
+def _transfer_stale_owner(
+    slot: Slot, stale_owner: AoTEntry | None, new_owner: AoTEntry | None
+) -> None:
+    if stale_owner is None or slot.owner_aot_entry is not stale_owner:
+        return
+    slot.owner_aot_entry = new_owner
+    _extend_entry_slots(new_owner, slot)
+    if isinstance(slot, StructuralHeaderSlot) and slot.entry is stale_owner:
+        slot.entry = None
+
+
 def _materialise_empty_section_header(
     c: Container,
     primary: StructuralHeaderSlot,
@@ -2740,11 +2751,7 @@ def adopt_private_section(
     )
     for s in slots:
         _retarget_slot_paths(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
-        if stale_owner is not None and s.owner_aot_entry is stale_owner:
-            s.owner_aot_entry = new_owner
-            _extend_entry_slots(new_owner, s)
-            if isinstance(s, StructuralHeaderSlot) and s.entry is stale_owner:
-                s.entry = None  # [[a]] -> [a]
+        _transfer_stale_owner(s, stale_owner, new_owner)
     _rehome_view_tree(
         value, dest_parent, old_prefix, new_prefix, doc, stale_owner=stale_owner
     )
@@ -2837,6 +2844,8 @@ def adopt_private_implicit(
     new_prefix = (*dest_parent._path, key)  # noqa: SLF001
     host = _nearest_header_host(dest_parent)
     host_path = host._path  # noqa: SLF001
+    stale_owner = value._owner_aot_entry  # noqa: SLF001
+    new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
     # An implicit table always owns at least one slot (an emptied one
     # materialises to an inline table and never reaches here).
@@ -2847,7 +2856,15 @@ def adopt_private_implicit(
     nl = doc._newline  # noqa: SLF001
     for s in slots:
         _rebase_implicit_slot_in_place(s, old_prefix, new_prefix, host_path, nl)
-    _rehome_view_tree(value, dest_parent, old_prefix, new_prefix, doc)
+        _transfer_stale_owner(s, stale_owner, new_owner)
+    _rehome_view_tree(
+        value,
+        dest_parent,
+        old_prefix,
+        new_prefix,
+        doc,
+        stale_owner=stale_owner,
+    )
 
     # Dotted KVs inherit scope from position, so anchor at the host's
     # direct body rather than its descendant-inclusive subtree.
