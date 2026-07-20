@@ -592,7 +592,7 @@ class Container(dict[str, Any]):
             or _is_section(value)
             or isinstance(value, Mapping)
         ):
-            value = _snapshot_if_overlapping_destination(self, key, value)
+            value = _snapshot_for_overlapping_install(self, key, value)
             _layout_ops.reposition_install(self, key, value)
             return
         # Unsupported value type — TypeError, not NIE.
@@ -649,8 +649,6 @@ class Container(dict[str, Any]):
         """
         src_root = value._layout_root  # noqa: SLF001
         if src_root is not None and not src_root._is_private:  # noqa: SLF001
-            if key in self:
-                _layout_ops.delete_key(self, key)
             _layout_ops.clone_aot(self, key, value)
             return
         # Private orphans may still own intact entry_slots from a
@@ -659,15 +657,10 @@ class Container(dict[str, Any]):
         # The generic add_aot_entry(rehome=) path rebuilds from dict
         # storage and drops that CST.
         existing_entries: list[Table] = list(value)
-        preserved_entries: list[AoTEntry | None] = [
-            et._owner_aot_entry  # noqa: SLF001
-            if et._owner_aot_entry is not None  # noqa: SLF001
-            and et._owner_aot_entry.entry_slots  # noqa: SLF001
-            else None
+        can_clone = bool(existing_entries) and all(
+            et._owner_aot_entry is not None  # noqa: SLF001
+            and bool(et._owner_aot_entry.entry_slots)  # noqa: SLF001
             for et in existing_entries
-        ]
-        can_clone = bool(preserved_entries) and all(
-            e is not None for e in preserved_entries
         )
         list.clear(value)
         value._layout_root = None  # noqa: SLF001
@@ -676,13 +669,8 @@ class Container(dict[str, Any]):
         attached = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, attached)
         if can_clone:
-            # Clone CST from each still-live orphan entry, entry-table
-            # identities replaced but the AoT object's identity
-            # preserved. `clone_aot_entry` gathers a source's full
-            # subtree — including any nested `[[a.x]]` entries physically
-            # inside its body — from its live view tree, so each entry
-            # must be cloned before `_reset_table_for_rehome` clears the
-            # `_header_ref` / `_refs` that gathering depends on.
+            # Gathering includes nested AoTs and requires the live view,
+            # so clone each entry before resetting it.
             for et in existing_entries:
                 _layout_ops.clone_aot_entry(
                     value,
@@ -712,8 +700,6 @@ class Container(dict[str, Any]):
         src_root = value._layout_root
         live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
         if live_source:
-            if key in self:
-                _layout_ops.delete_key(self, key)
             if value._is_own_aot_entry and self._layout_root is not None:
                 _layout_ops.clone_aot_entry_as_table(self, key, value)
             elif value._header_ref is not None:
@@ -721,23 +707,7 @@ class Container(dict[str, Any]):
             elif isinstance(value, Document):
                 _layout_ops.clone_document_as_section(self, key, value)
             else:
-                # Implicit source: tuple-path install preserves structural
-                # children and implicit chains. `_install_attached_subtree`
-                # reads `value` incrementally as it installs; if `value` is
-                # a same-document ancestor of the new destination, the
-                # destination's growth mid-install is also live growth of
-                # the (still being read) source nested inside it, causing
-                # unbounded recursion. Snapshot such an overlap into a
-                # freshly-synthesised, independently-attached Document up
-                # front instead (needs real slots to clone from, unlike a
-                # detached factory Table).
-                dest_path = (*self._path, key)
-                if (
-                    value._layout_root is self._layout_root
-                    and value._path
-                    and value._path == dest_path[: len(value._path)]
-                ):
-                    value = Document(data=value.to_dict())
+                value = _snapshot_for_overlapping_install(self, key, value)
                 _install_attached_subtree(self, (key,), value)
             return
         if src_root is not None and src_root._is_private:  # noqa: SLF001
@@ -1730,40 +1700,13 @@ def _is_inline_table(v: object) -> TypeGuard[Container]:
     return isinstance(v, Container) and v._inline  # noqa: SLF001
 
 
-def _snapshot_if_overlapping_destination(
-    parent: Container, key: str, value: Any
-) -> Any:
-    """Replace ``value`` with a snapshot if it overlaps ``parent[key]``'s subtree.
+def _snapshot_for_overlapping_install(parent: Container, key: str, value: Any) -> Any:
+    """Snapshot ``value`` if an overlapping install cannot safely read it.
 
-    A structural overwrite deletes the old ``parent[key]`` subtree
-    before cloning from ``value``. That corrupts a same-document
-    ``value`` in either overlap direction:
-
-    * ``value`` is an *ancestor* of ``parent[key]`` (e.g.
-      ``t["a"]["b"] = t["a"]``) — the delete doesn't touch ``value``
-      itself, but ``_install_attached_subtree`` reads it incrementally
-      as the destination grows *inside* the still-being-read subtree,
-      causing unbounded recursion.
-    * ``parent[key]`` is an ancestor of a *headerless* ``value`` two or
-      more levels beneath it (e.g. ``t["a"] = t["a"]["b"]["c"]`` where
-      ``b``/``c`` are dotted keys, not ``[headers]``) — deleting
-      ``parent[key]`` resets the whole subtree being removed, which
-      includes ``value``'s own intermediate implicit ancestor(s)
-      (everything strictly between ``parent[key]`` and ``value``
-      itself); a later structural operation on the destination that
-      walks through one of those stale intermediates then corrupts
-      its bookkeeping. A header-bearing descendant doesn't need this:
-      its own header slot anchors its subtree independently of the
-      deleted ancestor's doc-stream position. Nor does an *immediate*
-      headerless child (only one level down, no intermediate to go
-      stale) — deleting `parent[key]` resets `value` itself, but not
-      anything `value` still depends on to be read correctly.
-
-    Snapshotting before anything is deleted avoids both, sacrificing
-    trivia for this narrow overlap (the private-orphan adopt paths
-    handle the general non-overlapping descendant-into-ancestor move
-    correctly already, since there the descendant's own slots survive
-    being moved into their orphan).
+    An ancestor source would grow while it is read. During overwrite, a
+    headerless grandchild also depends on implicit intermediates that
+    deletion resets. Other descendants retain independent slot anchors
+    and use the trivia-preserving private-orphan adopt path.
     """
     if not isinstance(value, (Container, AoT)):
         return value
