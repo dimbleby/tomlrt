@@ -643,7 +643,7 @@ class Container(dict[str, Any]):
         """Install ``value`` (an AoT) under ``key``.
 
         Live-attached sources or private orphans with intact entry
-        slots route through :func:`clone_aot` to preserve per-entry
+        slots route through :func:`clone_aot_entry` to preserve per-entry
         trivia and nested sub-sections. Detached AoTs without preserved
         slots are rehomed entry-by-entry.
         """
@@ -669,18 +669,6 @@ class Container(dict[str, Any]):
         can_clone = bool(preserved_entries) and all(
             e is not None for e in preserved_entries
         )
-        # Gather each entry's full slot set (its own slots *and* any
-        # nested `[[a.x]]` entries physically inside its body) while it
-        # is still live — `_reset_table_for_rehome` below clears the
-        # `_refs` this gathering depends on, and the reset entry's own
-        # `entry_slots` alone doesn't include nested entries (see
-        # `clone_aot_entry`).
-        preserved_slots: list[list[Slot] | None] = [
-            _layout_ops._gather_subtree_slots(et) if pe is not None else None  # noqa: SLF001
-            for et, pe in zip(existing_entries, preserved_entries, strict=True)
-        ]
-        for et in existing_entries:
-            _reset_table_for_rehome(et)
         list.clear(value)
         value._layout_root = None  # noqa: SLF001
         value._parent = None  # noqa: SLF001
@@ -688,22 +676,24 @@ class Container(dict[str, Any]):
         attached = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, attached)
         if can_clone:
-            # Clone CST from intact orphan slots. Entry-table identities
-            # are replaced; the AoT object's identity is preserved.
-            for src_entry, slots in zip(
-                preserved_entries, preserved_slots, strict=True
-            ):
-                assert src_entry is not None
-                assert slots is not None
-                _layout_ops._install_cloned_aot_entry(  # noqa: SLF001
+            # Clone CST from each still-live orphan entry, entry-table
+            # identities replaced but the AoT object's identity
+            # preserved. `clone_aot_entry` gathers a source's full
+            # subtree — including any nested `[[a.x]]` entries physically
+            # inside its body — from its live view tree, so each entry
+            # must be cloned before `_reset_table_for_rehome` clears the
+            # `_header_ref` / `_refs` that gathering depends on.
+            for et in existing_entries:
+                _layout_ops.clone_aot_entry(
                     value,
-                    slots,
-                    src_entry.path,
-                    target_path=value._path,  # noqa: SLF001
-                    rewrite_separator=False,
+                    et,
+                    dst_path=value._path,  # noqa: SLF001
+                    preserve_source_separator=True,
                 )
+                _reset_table_for_rehome(et)
         else:
             for entry_table in existing_entries:
+                _reset_table_for_rehome(entry_table)
                 _layout_ops.add_aot_entry(value, None, rehome=entry_table)
 
     def _attach_section(self, key: str, value: Container) -> None:
