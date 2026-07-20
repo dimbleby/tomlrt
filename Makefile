@@ -3,31 +3,25 @@ UV ?= uv
 .DEFAULT_GOAL := help
 
 .PHONY: help
-help:
-	@echo "Common targets:"
-	@echo "  make test         # run the test suite (excludes slow/fuzz)"
-	@echo "  make fuzz         # run the slow property-based suite"
-	@echo "  make coverage     # tests + branch coverage"
-	@echo "  make lint         # formatting, typechecking, etc"
-	@echo "  make docs         # build the MkDocs site (strict)"
-	@echo "  make docs-serve   # preview the docs locally"
-	@echo "  make bench        # run the parse-throughput benchmark"
-	@echo "  make clean        # remove caches and build artefacts"
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: test
-test:
+test: ## run the test suite (excludes slow/fuzz)
 	pytest -q
 
 .PHONY: fuzz
-fuzz:
+fuzz: ## run the slow property-based suite"
 	pytest -q -m slow
 
 .PHONY: coverage
-coverage:
+coverage: ## tests + branch coverage"
 	pytest --cov
 
 .PHONY: lint
-lint: fmt ruff ty mypy
+lint: ## formatting, typechecking, etc"
+	fmt ruff ty mypy
 
 .PHONY: fmt
 fmt:
@@ -46,20 +40,20 @@ mypy:
 	mypy
 
 .PHONY: docs
-docs:
+docs: ## build the MkDocs site (strict)"
 	$(UV) run --group docs zensical build
 
 .PHONY: docs-serve
-docs-serve:
+docs-serve: ## preview the docs locally"
 	$(UV) run --group docs zensical serve
 
 .PHONY: bench
-bench:
+bench: ## run the parse-throughput benchmark"
 	benchmarks/bench_parse.py
 	benchmarks/bench_mutate.py
 	benchmarks/bench_pyproject.py
 
 .PHONY: clean
-clean:
+clean: ## remove caches and build artefacts
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov site dist build
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
