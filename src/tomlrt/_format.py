@@ -49,6 +49,7 @@ from tomlrt._trivia import (
     split_above_block,
     split_eol_section,
     split_item_above,
+    split_leading_above,
     split_lines,
 )
 from tomlrt._values import (
@@ -384,9 +385,9 @@ def _canon_multiline_shape(
             trailing_indent=item_indent,
         )
         # Unlike ``header_trivia``, ``final_trivia`` has no bracket-EOL first
-        # line, so use ``split_item_above`` (keeps a leading comment) rather
+        # line, so use ``split_leading_above`` (keeps a leading comment) rather
         # than ``split_above_block`` (would drop it as framing).
-        _, final_above, _ = split_item_above(v.final_trivia)
+        _, final_above = split_leading_above(v.final_trivia)
         v.final_trivia = _compose_pad(
             head_eol=Trivia(),
             above=final_above,
