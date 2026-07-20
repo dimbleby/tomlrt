@@ -4130,11 +4130,23 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     # "mixed" key that owns both a leaf and a sub-section, whose leaf
     # part would be captured.
     def _has_leaf(slots: list[Slot]) -> bool:
-        # Only a KV hosted directly by ``c`` (a bare or dotted leaf of
-        # ``c``) can be captured by a preceding header; a KV under the
-        # block's own section header (``host_path`` deeper than ``c``)
-        # is correctly scoped and does not count.
-        return any(isinstance(s, KVSlot) and s.host_path == c_path for s in slots)
+        # A block's own leading run — before its first structural
+        # header, if any — is unprotected: a KV there is vulnerable to
+        # capture by whatever header immediately precedes the block
+        # once spliced. Checking ``host_path == c_path`` instead is
+        # wrong whenever ``c`` itself is headerless (a dotted-key
+        # navigator, not a physical host): such a KV's ``host_path`` is
+        # ``c``'s own nearest enclosing header (or root), shallower
+        # than ``c_path``, so the equality never matches and a
+        # genuinely-vulnerable leading KV silently passes as safe.
+        # Once the block's own header appears, everything after it is
+        # scoped there and no longer at risk.
+        for s in slots:
+            if isinstance(s, StructuralHeaderSlot):
+                return False
+            if isinstance(s, KVSlot):
+                return True
+        return False
 
     def _has_structural(slots: list[Slot]) -> bool:
         return any(isinstance(s, StructuralHeaderSlot) for s in slots)
