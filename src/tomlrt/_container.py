@@ -1631,15 +1631,16 @@ def _install_dotted_direct_kvs(
     from tomlrt._build import _decode_value  # noqa: PLC0415
 
     doc = dst_parent._attached_doc  # noqa: SLF001
-    host: Container = dst_parent
+    destination = _layout_ops.ensure_implicit_chain(dst_parent, dst_path)
+    host = destination
     while host._header_ref is None and host._parent is not None:  # noqa: SLF001
         host = host._parent  # noqa: SLF001
-    parent_to_host = dst_parent._path[len(host._path) :]  # noqa: SLF001
     owner = host._owner_aot_entry  # noqa: SLF001
+    destination_to_host = destination._path[len(host._path) :]  # noqa: SLF001
+    destination_path = destination._path  # noqa: SLF001
     for k, _v in direct_kvs:
-        leaf_keypath = (*parent_to_host, *dst_path, k)
-        leaf_parent = _layout_ops.ensure_implicit_chain(host, leaf_keypath[:-1])
-        path = (*host._path, *leaf_keypath)  # noqa: SLF001
+        leaf_keypath = (*destination_to_host, k)
+        path = (*destination_path, k)
         # A direct (non-structural) key of an attached source is always
         # backed by a single KVSlot; clone its value + leading so style
         # and standalone comments survive (re-synthesis would drop them).
@@ -1650,12 +1651,16 @@ def _install_dotted_direct_kvs(
         leading = copy.deepcopy(src_slot.leading)
         retarget_trivia_newlines(leading, doc._newline)  # noqa: SLF001
         decoded = _decode_value(
-            cst, layout_root=doc, parent=leaf_parent, path=path, owner=owner
+            cst, layout_root=doc, parent=destination, path=path, owner=owner
         )
         _layout_ops.install_dotted_kv_slot(
-            host, leaf_keypath, cst, leaf_parent=leaf_parent, leading=leading
+            host,
+            leaf_keypath,
+            cst,
+            leaf_parent=destination,
+            leading=leading,
         )
-        dict.__setitem__(leaf_parent, k, decoded)
+        dict.__setitem__(destination, k, decoded)
 
 
 def _to_python(v: Any) -> Any:
