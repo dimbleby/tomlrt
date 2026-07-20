@@ -521,8 +521,6 @@ def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
     """Set the EOL comment on ``eol``, ensuring a separator and newline."""
     if eol.trailing_ws is None:
         eol.trailing_ws = WhitespaceNode(" ")
-    elif eol.trailing_ws.text == "":
-        eol.trailing_ws.text = " "
     eol.comment = CommentNode(_encode_comment(text))
     if eol.newline is None:
         eol.newline = NewlineNode(nl)

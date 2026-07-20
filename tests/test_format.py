@@ -64,6 +64,10 @@ def test_kv_spacing() -> None:
     """)
 
 
+def test_top_level_key_indent_is_removed() -> None:
+    assert _roundtrip("  a=1\n") == "a = 1\n"
+
+
 def test_dotted_key_normalised() -> None:
     src = "a . b   .  c = 1\n"
     assert _roundtrip(src) == "a.b.c = 1\n"

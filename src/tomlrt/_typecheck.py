@@ -11,15 +11,9 @@ validation, not parse-time TOML semantics.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import Any, TypeVar
 
-if TYPE_CHECKING:
-    import sys
-
-    if sys.version_info >= (3, 13):
-        from typing import TypeIs
-    else:  # pragma: no cover -- backport for Python < 3.13
-        from typing_extensions import TypeIs
+_MappingT = TypeVar("_MappingT", bound=Mapping[Any, Any])
 
 
 def _validate_key(key: object) -> str:
@@ -34,31 +28,22 @@ def _validate_key(key: object) -> str:
     return key
 
 
-def _validate_mapping(value: object, *, label: str) -> Mapping[str, Any]:
+def _validate_mapping(value: _MappingT, *, label: str) -> _MappingT:
     """Reject a non-Mapping ``value`` or any Mapping with non-string keys.
 
-    Returns the mapping unchanged so downstream paths that branch on
+    Returns the same mapping so downstream paths that branch on
     concrete type (e.g. ``Table`` vs ``dict``) keep working. Centralise
     this so every factory / mutator boundary reports the same errors
     instead of leaking layout-pipeline ``AttributeError``s.
     """
-    if _check_str_mapping(value, label=label):
-        return value
-    raise AssertionError  # pragma: no cover -- _check_str_mapping never returns False
+    _require_mapping(value, label=label)
+    for k in value:
+        _validate_key(k)
+    return value
 
 
-def _check_str_mapping(value: object, *, label: str) -> TypeIs[Mapping[str, Any]]:
-    """Validate-or-raise ``TypeIs`` predicate for ``Mapping[str, Any]``.
-
-    Raises a labelled ``TypeError`` on failure. The ``TypeIs`` return
-    lets callers narrow ``value`` in the ``True`` branch.
-
-    Never returns ``False``; every rejection raises. Don't replace this
-    with ``assert``, which ``python -O`` would strip.
-    """
+def _require_mapping(value: object, *, label: str) -> None:
+    """Reject a non-mapping passed despite the public type signature."""
     if not isinstance(value, Mapping):
         msg = f"{label} must be a Mapping, got {type(value).__name__}"
         raise TypeError(msg)
-    for k in value:
-        _validate_key(k)
-    return True

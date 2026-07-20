@@ -633,6 +633,23 @@ def test_array_append_to_empty_with_tab_indented_comment_preserves_tab() -> None
     assert tomlrt.dumps(doc) == "a = [\n\t# hi\n\t1,\n]\n"
 
 
+def test_array_append_to_empty_with_unindented_comment() -> None:
+    doc = tomlrt.loads(
+        td("""
+            a = [
+            # hi
+            ]
+            """)
+    )
+    doc.array("a").append(1)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+        # hi
+            1,
+        ]
+        """)
+
+
 def test_array_pop() -> None:
     doc = tomlrt.loads("xs = [10, 20, 30]\n")
     xs = doc.array("xs")
@@ -773,6 +790,13 @@ def test_array_delitem_slice() -> None:
     out = tomlrt.dumps(doc)
     assert out == "xs = [1, 4]\n"
     assert _reparses(out) == {"xs": [1, 4]}
+
+
+def test_array_delitem_empty_slice_is_noop() -> None:
+    src = "xs = [1, 2, 3]\n"
+    doc = tomlrt.loads(src)
+    del doc.array("xs")[1:1]
+    assert tomlrt.dumps(doc) == src
 
 
 def test_array_setitem_slice_preserves_eol_comments() -> None:
@@ -919,6 +943,13 @@ def test_array_extend_self_duplicates_once() -> None:
     xs.extend(xs)
     assert list(xs) == [1, 2, 1, 2]
     assert tomlrt.dumps(doc) == "xs = [1, 2, 1, 2]\n"
+
+
+def test_array_extend_empty_is_noop() -> None:
+    src = "xs = [1, 2]\n"
+    doc = tomlrt.loads(src)
+    doc.array("xs").extend([])
+    assert tomlrt.dumps(doc) == src
 
 
 def test_array_iadd_self_duplicates_once() -> None:
@@ -1526,6 +1557,13 @@ def test_aot_imul_detached_deep_copies_entries() -> None:
     aot *= 2
     aot[0]["a"] = 99
     assert aot[1]["a"] == 1
+
+
+def test_aot_detached_add_without_body_returns_empty_entry() -> None:
+    aot = AoT()
+    entry = aot.add()
+    assert entry == {}
+    assert list(aot) == [{}]
 
 
 def test_aot_detached_accepts_generic_mapping() -> None:
@@ -2420,6 +2458,32 @@ def test_aot_slice_replace_contiguous() -> None:
     ]
 
 
+def test_aot_slice_replace_before_surviving_entries() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[items]]
+            name = "a"
+
+            [[items]]
+            name = "b"
+
+            [[items]]
+            name = "c"
+            """)
+    )
+    doc.aot("items")[0:1] = [{"name": "A"}]
+    assert tomlrt.dumps(doc) == td("""
+        [[items]]
+        name = "A"
+
+        [[items]]
+        name = "b"
+
+        [[items]]
+        name = "c"
+        """)
+
+
 def test_aot_slice_replace_extended_matching_length() -> None:
     doc = tomlrt.loads(
         td("""
@@ -2467,6 +2531,16 @@ def test_aot_reverse_on_empty_is_noop() -> None:
     assert list(items) == []
 
 
+def test_aot_empty_mutations_are_noops() -> None:
+    doc = tomlrt.loads("[[items]]\n")
+    items = doc.aot("items")
+    items.clear()
+    src = tomlrt.dumps(doc)
+    del items[:]
+    items.clear()
+    assert tomlrt.dumps(doc) == src
+
+
 def test_aot_sort_on_empty_is_noop() -> None:
     doc = tomlrt.loads("[[items]]\n")
     items = doc.aot("items")
@@ -2487,6 +2561,13 @@ def test_array_sort_with_key_callable() -> None:
     out = tomlrt.dumps(doc)
     assert out == 'xs = ["a", "bb", "ccc"]\n'
     assert _reparses(out) == {"xs": ["a", "bb", "ccc"]}
+
+
+def test_array_sort_empty_is_noop() -> None:
+    src = "xs = []\n"
+    doc = tomlrt.loads(src)
+    doc.array("xs").sort()
+    assert tomlrt.dumps(doc) == src
 
 
 def test_array_imul_zero_clears() -> None:
