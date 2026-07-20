@@ -25,8 +25,8 @@ Inline arrays / inline tables
 
 Orphan comment blocks (``# …`` runs separated from the slot/header
 by a blank line) and EOL / leading-attached comments are preserved
-in place — comment text is rewritten to ``# body`` form when
-``normalize_comments`` is enabled.
+in place. Runs of blank lines collapse to one; comment text is
+rewritten to ``# body`` form when ``normalize_comments`` is enabled.
 """
 
 from __future__ import annotations
@@ -44,12 +44,12 @@ from tomlrt._trivia import (
     WhitespaceNode,
     has_comment,
     has_newline,
+    leading_break_index,
     retarget_eol_newline,
     retarget_trivia_newlines,
     split_above_block,
     split_eol_section,
     split_item_above,
-    split_leading_above,
     split_lines,
 )
 from tomlrt._values import (
@@ -175,14 +175,20 @@ def _canon_trivia_text(
     new: list[TriviaPiece] = []
     line: list[TriviaPiece] = []
     in_eol = first_line_is_eol
+    previous_line_blank = False
+    line_has_comment = False
     for p in pieces:
         if isinstance(p, NewlineNode):
             while line and isinstance(line[-1], WhitespaceNode):
                 line.pop()
-            new.extend(line)
-            new.append(p)
+            line_blank = not in_eol and not line and not line_has_comment
+            if not (line_blank and previous_line_blank):
+                new.extend(line)
+                new.append(p)
             line = []
             in_eol = False
+            previous_line_blank = line_blank
+            line_has_comment = False
             continue
         if isinstance(p, CommentNode):
             if strip_pre_comment_ws and not in_eol:
@@ -195,6 +201,7 @@ def _canon_trivia_text(
             new.extend(line)
             new.append(p)
             line = []
+            line_has_comment = True
             continue
         line.append(p)
     new.extend(line)
@@ -212,6 +219,7 @@ def _canon_leading(
     nl: str,
     target_blanks: int | None,
     options: FormatOptions,
+    max_preserved_blanks: int | None = None,
 ) -> None:
     """Rewrite ``slot.leading`` to canonical form.
 
@@ -220,9 +228,10 @@ def _canon_leading(
     newline/comment cleanup), drops the column indent, and applies
     ``target_blanks`` to the head.
 
-    ``target_blanks=None`` preserves preamble/subtree-boundary blanks.
-    When ``middle`` is non-empty, clamp the head gap to 0/1 so
-    comment-block separation intent survives.
+    ``target_blanks=None`` preserves preamble/subtree-boundary blanks,
+    optionally capped by ``max_preserved_blanks``. When ``middle`` is
+    non-empty, clamp the head gap to 0/1 so comment-block separation
+    intent survives.
     """
     lines = split_lines(slot.leading.pieces)
 
@@ -243,6 +252,8 @@ def _canon_leading(
     # comment blocks clamp to 0/1 so separation intent survives.
     if target_blanks is None:
         n_blanks = head_count
+        if max_preserved_blanks is not None:
+            n_blanks = min(n_blanks, max_preserved_blanks)
     elif middle:
         n_blanks = min(head_count, 1)
     else:
@@ -369,7 +380,7 @@ def _canon_multiline_shape(
     produces only empty/single-space trivia.
     """
     items = v.items
-    last_line_open = _canon_multi_line_items(
+    last_row_closed = _canon_multi_line_items(
         items,
         nl=nl,
         indent=item_indent,
@@ -385,15 +396,18 @@ def _canon_multiline_shape(
             trailing_indent=item_indent,
         )
         # Unlike ``header_trivia``, ``final_trivia`` has no bracket-EOL first
-        # line, so use ``split_leading_above`` (keeps a leading comment) rather
-        # than ``split_above_block`` (would drop it as framing).
-        _, final_above = split_leading_above(v.final_trivia)
+        # line, so split it as an item boundary rather than treating its
+        # leading comment as bracket framing.
+        final_above = _format_above(
+            v.final_trivia,
+            row_already_closed=last_row_closed,
+        )
         v.final_trivia = _compose_pad(
             head_eol=Trivia(),
             above=final_above,
             nl=nl,
             trailing_indent=outer_indent,
-            line_already_open=last_line_open,
+            row_already_closed=last_row_closed,
         )
         final_eol_first = False
     else:
@@ -416,7 +430,23 @@ def _canon_multiline_shape(
         options=options,
         item_indent=item_indent,
         final_first_line_is_eol=final_eol_first,
+        final_row_already_closed=last_row_closed if items else False,
     )
+
+
+def _format_above(t: Trivia, *, row_already_closed: bool) -> Trivia:
+    """Return an above-item block with any authored separator it owns.
+
+    When the upstream EOL channel already closed the row, the leading
+    newline belongs to the blank-line separator rather than the row
+    terminator, so keep it with the above block.
+    """
+    head, above, _ = split_item_above(t)
+    if not has_comment(above.pieces):
+        return Trivia()
+    if row_already_closed:
+        above.pieces[:0] = head.pieces
+    return above
 
 
 def _compose_pad(
@@ -425,17 +455,17 @@ def _compose_pad(
     above: Trivia,
     nl: str,
     trailing_indent: str,
-    line_already_open: bool = False,
+    row_already_closed: bool = False,
 ) -> Trivia:
     r"""Compose a bracket-pad from (row-attached EOL, above-block, indent).
 
     Layout is ``head_eol`` (already terminated when non-empty), optional
     structural ``\n``, above-block, then trailing indent. Skip the
     structural newline when ``head_eol`` or the upstream item EOL channel
-    already closed the line.
+    already closed the row.
     """
     pieces: list[TriviaPiece] = list(head_eol.pieces)
-    if not head_eol.pieces and not line_already_open:
+    if not head_eol.pieces and not row_already_closed:
         pieces.append(NewlineNode(nl))
     pieces.extend(above.pieces)
     if trailing_indent:
@@ -474,6 +504,7 @@ def _finalise_inline_trivia(
     options: FormatOptions,
     item_indent: str = "",
     final_first_line_is_eol: bool = False,
+    final_row_already_closed: bool = False,
 ) -> None:
     """Retarget newlines + canonicalise comment / blank-WS text across ``v``.
 
@@ -497,16 +528,29 @@ def _finalise_inline_trivia(
         v.final_trivia,
         comments=options.normalize_comments,
         comment_indent=item_indent,
-        first_line_is_eol=final_first_line_is_eol,
+        first_line_is_eol=(
+            final_first_line_is_eol
+            or (
+                leading_break_index(v.final_trivia.pieces) is not None
+                and not final_row_already_closed
+            )
+        ),
     )
-    for it in v.items:
+    for k, it in enumerate(v.items):
         retarget_trivia_newlines(it.leading, nl)
         retarget_trivia_newlines(it.trailing, nl)
         retarget_trivia_newlines(it.post_comma_trivia, nl)
+        previous_row_closed = k > 0 and has_newline(
+            item_eol_channel(v.items[k - 1]).pieces
+        )
         _canon_trivia_text(
             it.leading,
             comments=options.normalize_comments,
             comment_indent=item_indent,
+            first_line_is_eol=(
+                leading_break_index(it.leading.pieces) is not None
+                and not previous_row_closed
+            ),
         )
         # ``trailing`` and ``post_comma_trivia`` are EOL contexts:
         # the space before ``#`` is the structural separator the
@@ -545,19 +589,22 @@ def _canon_multi_line_items(
     the comma state changes; both channels are then reduced to the
     canonical EOL section or empty.
     """
-    prev_line_open = False
+    previous_row_closed = False
     last_index = len(items) - 1
     for k, it in enumerate(items):
         if k == 0:
             it.leading = Trivia()
         else:
-            _, above, _ = split_item_above(it.leading)
+            above = _format_above(
+                it.leading,
+                row_already_closed=previous_row_closed,
+            )
             it.leading = _compose_pad(
                 head_eol=Trivia(),
                 above=above,
                 nl=nl,
                 trailing_indent=indent,
-                line_already_open=prev_line_open,
+                row_already_closed=previous_row_closed,
             )
         # Changing comma state may shift comments between ``trailing``
         # and ``post_comma_trivia``; collect both sides before clearing them.
@@ -570,14 +617,14 @@ def _canon_multi_line_items(
         it.has_comma = k < last_index or options.multiline_trailing_comma
         it.trailing = Trivia()
         it.post_comma_trivia = Trivia()
-        prev_line_open = _canon_item_eol(
+        previous_row_closed = _canon_item_eol(
             it,
             comments,
             nl=nl,
             options=options,
             indent=indent,
         )
-    return prev_line_open
+    return previous_row_closed
 
 
 def _canon_item_eol(
@@ -746,15 +793,17 @@ def format_subtree(
     owner: AoTEntry | None,
     nl: str,
     options: FormatOptions,
+    preserve_start_boundary: bool = True,
 ) -> None:
     """Canonicalise every slot in the subtree rooted at ``path``.
 
     Walks the doc-stream from ``start`` until the first outside slot.
     ``owner`` disambiguates AoT-entry subtrees that share ``path``.
 
-    The first slot's leading head-blanks belong to the document preamble
-    or parent subtree and are preserved. Later slots get the canonical
-    count: 1 blank line before a structural header, 0 otherwise.
+    The first slot's leading head-blanks belong to the parent subtree and
+    are preserved when ``preserve_start_boundary`` is true. A whole-document
+    walk instead caps an opening run at one blank line. Later slots get the
+    canonical count: 1 blank line before a structural header, 0 otherwise.
     """
     prev: Slot | None = None
     slot = start
@@ -778,7 +827,15 @@ def format_subtree(
             target: int | None = None
         else:
             target = 1 if isinstance(slot, StructuralHeaderSlot) else 0
-        _canon_leading(slot, nl=nl, target_blanks=target, options=options)
+        _canon_leading(
+            slot,
+            nl=nl,
+            target_blanks=target,
+            options=options,
+            max_preserved_blanks=(
+                1 if prev is None and not preserve_start_boundary else None
+            ),
+        )
         prev = slot
         slot = slot._next  # noqa: SLF001
 
@@ -791,9 +848,9 @@ def format_document_trailing(
 ) -> None:
     """Canonicalise the trailing trivia of a :class:`Document`.
 
-    Retargets newlines, strips blank-line trailing whitespace, strips
-    column-indent whitespace before orphan comments, and optionally
-    rewrites comment text. Structural shape is preserved, so the
+    Retargets newlines, collapses blank-line runs, strips blank-line
+    trailing whitespace and column-indent whitespace before orphan
+    comments, and optionally rewrites comment text. The
     preamble/epilogue split is unaffected.
     """
     retarget_trivia_newlines(trailing, nl)

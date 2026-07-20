@@ -158,6 +158,7 @@ x = { a = 1, b = 2 }
 - **Blank lines between sibling KVs** collapse to none.
 - **Blank lines before structural section / array-of-tables headers**
   collapse to exactly one.
+- Other runs of blank lines reached by the formatter collapse to one.
 - **All newlines** are retargeted to the owning document's newline
   style (LF or CRLF), including newlines inside multi-line inline
   values.
@@ -167,7 +168,8 @@ x = { a = 1, b = 2 }
 - The document **preamble** (any leading comments above the first
   section).
 - **Orphan comment blocks** — comment runs separated from a key or
-  header by at least one blank line — are kept verbatim in place.
+  header by at least one blank line — are kept in place. Multiple
+  separating blank lines collapse to one.
 - Each key's **attached comment block** (the comments immediately
   above the key, with no intervening blank line) stays attached.
 - Multi-line inline values keep their multi-line shape.
