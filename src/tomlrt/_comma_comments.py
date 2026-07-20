@@ -157,11 +157,11 @@ def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
 def _above_owner(value: CommaValue[_ItemT], i: int) -> tuple[Trivia, int]:
     """Return ``(owner, prefix_len)`` for item ``i``'s above-region.
 
-    The first ``prefix_len`` owner pieces must be preserved. Comma-first
-    parks the block in ``items[i-1].trailing`` after that item's EOL.
+    Precondition: ``i > 0``. The first ``prefix_len`` owner pieces must be
+    preserved. Comma-first parks the block in ``items[i-1].trailing`` after
+    that item's EOL.
     """
-    if i == 0:
-        return value.header_trivia, 0
+    assert i > 0
     prev = value.items[i - 1]
     if item_breaks_before_comma(prev):
         eol, _rest = split_eol_section(prev.trailing)

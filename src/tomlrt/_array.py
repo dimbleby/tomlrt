@@ -123,12 +123,6 @@ class Array(list[Any]):
                 it.post_comma_trivia = Trivia()
                 it.trailing = Trivia()
                 it.has_comma = True
-        elif multiline and not val.items:
-            # Empty multiline factory: final_trivia carries the pre-`]`
-            # break + indent so a later first append slots in correctly.
-            val.final_trivia = Trivia(
-                [NewlineNode(text="\n"), WhitespaceNode(text=indent_str)]
-            )
 
     def to_list(self) -> list[Any]:
         """Materialise a plain-Python ``list`` (recursive)."""
@@ -623,7 +617,7 @@ class AoT(list["Table"]):
     def __setitem__(
         self,
         index: SupportsIndex | slice,
-        value: Mapping[str, TomlInput] | Iterable[Mapping[str, TomlInput]],
+        value: Any,
     ) -> None:
         if isinstance(index, slice):
             try:

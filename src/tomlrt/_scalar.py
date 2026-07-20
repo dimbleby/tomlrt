@@ -8,6 +8,15 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime, time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import sys
+
+    if sys.version_info >= (3, 13):
+        from typing import TypeIs
+    else:  # pragma: no cover -- backport for Python < 3.13
+        from typing_extensions import TypeIs
 
 from tomlrt._values import (
     BoolValue,
@@ -17,8 +26,10 @@ from tomlrt._values import (
     StringValue,
 )
 
+Scalar = bool | int | float | str | datetime | date | time
 
-def is_scalar(v: object) -> bool:
+
+def is_scalar(v: object) -> TypeIs[Scalar]:
     """True iff ``v`` is a TOML scalar (and not an array / table)."""
     # `bool` is an `int` subclass; keep the gate explicit.
     if isinstance(v, bool):
@@ -29,7 +40,7 @@ def is_scalar(v: object) -> bool:
 
 
 def coerce_scalar(
-    v: object,
+    v: Scalar,
 ) -> StringValue | IntegerValue | FloatValue | BoolValue | DateTimeValue:
     """Coerce a Python scalar to a fresh `Value` with a default lexeme."""
     if isinstance(v, bool):
@@ -40,10 +51,7 @@ def coerce_scalar(
         return FloatValue(lexeme=float_lexeme(v), value=v)
     if isinstance(v, str):
         return StringValue(lexeme=basic_string_lexeme(v), value=v)
-    if isinstance(v, (datetime, date, time)):
-        return DateTimeValue(lexeme=v.isoformat(), value=v)
-    msg = f"cannot coerce {type(v).__name__} to a TOML scalar"
-    raise TypeError(msg)
+    return DateTimeValue(lexeme=v.isoformat(), value=v)
 
 
 def float_lexeme(v: float) -> str:

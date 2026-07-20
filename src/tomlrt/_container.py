@@ -79,6 +79,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from tomlrt._format import FormatOptions
+    from tomlrt._scalar import Scalar
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._trivia import EolTrivia, TriviaPiece
     from tomlrt._values import (
@@ -716,12 +717,12 @@ class Container(dict[str, Any]):
             return
         # A Container with no layout root can't be a Document (which is
         # always its own root), so it must be an unattached Table.
-        if not isinstance(value, Table):  # pragma: no cover  -- type invariant guard
-            msg = "internal: detached section source expected to be a Table"
-            raise AssertionError(msg)  # noqa: TRY004
+        assert isinstance(value, Table), (
+            "internal: detached section source expected to be a Table"
+        )
         _layout_ops.attach_section_at(self, (key,), value)
 
-    def _replace_scalar(self, key: str, value: object) -> None:
+    def _replace_scalar(self, key: str, value: Scalar) -> None:
         """Replace a scalar while preserving its existing KV slot."""
         refs = self._index.get(key)
         assert refs is not None, "scalar value must have a slot"
@@ -928,13 +929,7 @@ class Container(dict[str, Any]):
             # navigator; dict-level delete would prune the parent chain.
             _inline_ops.overwrite_entry(self, key, cst)
         elif key in self:
-            ok = _inline_ops.replace_entry_value(self, key, cst)
-            if not ok:  # pragma: no cover  -- view/CST drift invariant guard
-                msg = (
-                    f"internal: key {key!r} present on inline view but no "
-                    "matching entry in the backing InlineTableValue"
-                )
-                raise AssertionError(msg)
+            _inline_ops.replace_entry_value(self, key, cst)
         else:
             _inline_ops.append_entry(self, key, cst)
         dict.__setitem__(self, key, decoded)
@@ -942,13 +937,7 @@ class Container(dict[str, Any]):
     def _inline_delitem(self, key: str) -> None:
         if key not in self:
             raise KeyError(key)
-        ok = _inline_ops.delete_entry(self, key)
-        if not ok:  # pragma: no cover  -- view/CST drift invariant guard
-            msg = (
-                f"internal: key {key!r} present on inline view but no "
-                "matching entry in the backing InlineTableValue"
-            )
-            raise AssertionError(msg)
+        _inline_ops.delete_entry(self, key)
         dict.__delitem__(self, key)
         # Empty dotted-prefix navigators have no backing CST entry; prune
         # them from the dict chain too.
@@ -1185,8 +1174,7 @@ def _reorder_dict_storage(c: Container, new_key_order: list[str]) -> None:
 def _direct_kv_trivia(c: Container, key: str) -> tuple[Trivia | None, EolTrivia | None]:
     """Return the direct-KV slot's leading/EOL trivia for ``key``, if any."""
     slot = _direct_kv_slot(c, key)
-    if slot is None:
-        return None, None
+    assert slot is not None, "inline promotion source must have a direct KV slot"
     return slot.leading, slot.eol
 
 

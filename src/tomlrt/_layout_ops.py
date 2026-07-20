@@ -218,8 +218,7 @@ def _recorded_install_span(recorded: list[Slot], doc: Document) -> list[Slot] | 
     while cur is not None and id(cur) in ids:
         ordered.append(cur)
         cur = cur._next  # noqa: SLF001
-    if len(ordered) != len(survivors):  # pragma: no cover
-        return None
+    assert len(ordered) == len(survivors), "linked slot span must be contiguous"
     return ordered
 
 
@@ -1720,8 +1719,8 @@ def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
             return lo
         lo += 1
         hi -= 1
-    msg = "internal: anchor slot not found in c._refs"  # pragma: no cover
-    raise AssertionError(msg)  # pragma: no cover
+    msg = "internal: anchor slot not found in c._refs"
+    raise AssertionError(msg)
 
 
 def _recompute_body_tail(c: Container) -> Slot | None:
@@ -2018,9 +2017,7 @@ def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
     placeholder and materialises the first ``[[path]]`` header in its
     stead. The ``source_aot`` is rehomed in place (identity preserved).
     """
-    if len(source_aot) > 0:  # pragma: no cover
-        msg = "non-empty AoT live-attach has its own routing"
-        raise AssertionError(msg)
+    assert len(source_aot) == 0, "non-empty AoT live-attach has its own routing"
     # Rehome the orphan AoT into this parent's logical scope.
     source_aot._layout_root = parent._layout_root  # noqa: SLF001
     source_aot._path = (*parent._path, key)  # noqa: SLF001
@@ -2064,8 +2061,10 @@ def _empty_aot_placeholder_ref(aot: AoT) -> SlotRef | None:
         return None
     ref = bucket[0]
     slot = ref.slot
-    if not (isinstance(slot, KVSlot) and isinstance(slot.value, ArrayValue)):
-        return None  # pragma: no cover -- key invariant: one value per key
+    assert isinstance(slot, KVSlot), "empty AoT placeholder must be a KV slot"
+    assert isinstance(slot.value, ArrayValue), (
+        "empty AoT key must be bound to an array placeholder"
+    )
     return ref
 
 
@@ -2282,9 +2281,7 @@ def clone_aot_entry(
     ``preserve_source_separator`` is true.
     """
     owner = src._owner_aot_entry  # noqa: SLF001
-    if owner is None:  # pragma: no cover
-        msg = "source entry has no owning AoTEntry"
-        raise RuntimeError(msg)
+    assert owner is not None, "source entry has no owning AoTEntry"
     src_slots = _gather_subtree_slots(src)
 
     target_path = dst_path if dst_path is not None else aot._path  # noqa: SLF001
@@ -2424,9 +2421,9 @@ def _install_cloned_section(
     the parent's subtree anchor, and populates child views.
     """
     layout_root = parent._layout_root  # noqa: SLF001
-    if layout_root is None:  # pragma: no cover
-        msg = "cloned-section install requires parent attached to a document"
-        raise RuntimeError(msg)
+    assert layout_root is not None, (
+        "cloned-section install requires parent attached to a document"
+    )
     doc = layout_root
     target_path = (*parent._path, key)  # noqa: SLF001
 
@@ -2506,9 +2503,7 @@ def clone_aot_entry_as_table(
     to ``parent._path + (key,)``.
     """
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if src_entry is None:  # pragma: no cover
-        msg = "source entry has no owning AoTEntry"
-        raise RuntimeError(msg)
+    assert src_entry is not None, "source entry has no owning AoTEntry"
     assert src_entry_table._header_ref is not None  # noqa: SLF001
     # _gather_subtree_slots, not entry.entry_slots, for true doc-stream
     # order (entry_slots is membership order only) and to pull in
@@ -2606,9 +2601,9 @@ def clone_table_as_aot_entry(
     Preserves per-slot leading / EOL / lexeme bytes.
     """
     head, src_slots = _gather_headered_subtree_slots(src_table)
-    if head.kind != "table":  # pragma: no cover
-        msg = "clone_table_as_aot_entry: source must be a standard section"
-        raise RuntimeError(msg)
+    assert head.kind == "table", (
+        "clone_table_as_aot_entry source must be a standard section"
+    )
     return _install_cloned_aot_entry(
         aot,
         _hoist_own_slots_first(src_slots, src_table._path),  # noqa: SLF001
@@ -3182,8 +3177,7 @@ def _aot_append_anchor(aot: AoT) -> Slot | None:
             continue
         return _parent_subtree_tail(entry_table)
     parent = aot._parent  # noqa: SLF001
-    if parent is None:  # pragma: no cover -- attached AoT always has a parent
-        return None
+    assert parent is not None, "attached AoT must have a parent"
     # A document-tail anchor could place the first entry under a later sibling.
     return _host_subtree_tail(parent)
 
@@ -3448,8 +3442,6 @@ def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, Any]) -> None:
     because no slot splicing is involved.
     """
     entry_table = aot[_norm_aot_index(aot, index)]
-    if body is entry_table:
-        return
     items = list(body.items())
     entry_table.clear()
     for k, v in items:
@@ -3609,8 +3601,7 @@ def _binding_run_neighbours(
     by path rather than by treating the first indexed ref as the run head.
     """
     refs = parent._index.get(key)  # noqa: SLF001
-    if not refs:  # pragma: no cover -- reposition_install guarantees key is bound
-        return None, None
+    assert refs, "repositioned key must be bound"
     path_prefix = (*parent._path, key)  # noqa: SLF001
     plen = len(path_prefix)
     primary = refs[0].slot
@@ -3716,10 +3707,9 @@ def _direct_child_key(
     """
     if isinstance(slot, StructuralHeaderSlot):
         root: tuple[str, ...] = tuple(slot.path)
-    elif isinstance(slot, KVSlot):
-        root = (*slot.host_path, *slot.key)
     else:
-        return None
+        assert isinstance(slot, KVSlot), "unknown slot type"
+        root = (*slot.host_path, *slot.key)
     if len(root) > parent_plen and root[:parent_plen] == parent_path:
         return root[parent_plen]
     return None
@@ -3840,9 +3830,9 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         for s in slots:
             if isinstance(s, StructuralHeaderSlot):
                 return False
-            if isinstance(s, KVSlot):
-                return True
-        return False  # pragma: no cover -- every Slot is one of the two above
+            assert isinstance(s, KVSlot), "unknown slot type"
+            return True
+        return False
 
     def _has_structural(slots: list[Slot]) -> bool:
         return any(isinstance(s, StructuralHeaderSlot) for s in slots)

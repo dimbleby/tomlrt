@@ -40,16 +40,12 @@ def _outermost_inline(t: Container) -> Container:
     cur = t
     while cur._kind is _Kind.INLINE_DOTTED_INNER:  # noqa: SLF001
         parent = cur._parent  # noqa: SLF001
-        if parent is None:  # pragma: no cover -- invariant
-            msg = "internal: inline-dotted-inner without _parent"
-            raise AssertionError(msg)
+        assert parent is not None, "internal: inline-dotted-inner without _parent"
         cur = parent
-    if cur._kind is not _Kind.INLINE_ROOT:  # noqa: SLF001  # pragma: no cover -- invariant
-        msg = (
-            f"internal: inline-table chain reached {cur._kind.name}; "  # noqa: SLF001
-            "expected INLINE_ROOT"
-        )
-        raise AssertionError(msg)
+    assert cur._kind is _Kind.INLINE_ROOT, (  # noqa: SLF001
+        f"internal: inline-table chain reached {cur._kind.name}; "  # noqa: SLF001
+        "expected INLINE_ROOT"
+    )
     return cur
 
 
@@ -88,21 +84,18 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
 # ---------------------------------------------------------------------------
 
 
-def replace_entry_value(t: Container, key: str, new_value: Value) -> bool:
+def replace_entry_value(t: Container, key: str, new_value: Value) -> None:
     """Replace the value of an existing entry in place.
 
-    Returns True iff an entry was found and replaced. No trivia is
-    altered.
+    The logical inline view must already contain ``key``. No trivia is altered.
     """
     root = _outermost_inline(t)
     iv = root._value  # noqa: SLF001
     assert iv is not None
     found = _find_entry(iv, _entry_key_path(t, key))
-    if found is None:
-        return False
+    assert found is not None, "inline view key must have a backing entry"
     _, entry = found
     entry.value = new_value
-    return True
 
 
 def append_entry(t: Container, key: str, new_value: Value) -> None:
@@ -156,11 +149,11 @@ def overwrite_entry(t: Container, key: str, new_value: Value) -> None:
         iv.header_trivia, iv.final_trivia = keep_pad
 
 
-def delete_entry(t: Container, key: str) -> bool:
+def delete_entry(t: Container, key: str) -> None:
     """Remove the entry (or all dotted-prefix entries) matching `key`.
 
-    Returns True iff at least one entry was removed. When ``key`` names
-    a synthetic dotted-prefix container (e.g. ``a`` in
+    The logical inline view must already contain ``key``. When ``key`` names a
+    synthetic dotted-prefix container (e.g. ``a`` in
     ``{a.b = 1, a.c = 2}``), every entry whose ``key_parts`` start with
     that prefix is removed.
     """
@@ -174,15 +167,13 @@ def delete_entry(t: Container, key: str) -> bool:
         indices: list[int] = [found[0]]
     else:
         indices = _find_prefix_entries(iv, full_path)
-        if not indices:
-            return False
+        assert indices, "inline view key must have backing prefix entries"
     splice_out(
         iv,
         indices,
         root._doc_newline,  # noqa: SLF001
         is_multiline=iv.is_multiline(),
     )
-    return True
 
 
 def reorder_inline(c: Container, new_key_order: list[str]) -> None:

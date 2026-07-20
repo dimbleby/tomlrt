@@ -99,8 +99,7 @@ class _InlineAdapter(CommaCommentAdapter[str]):
             if len(kp) != plen + 1 or kp[:plen] != prefix:
                 continue
             leaf = kp[plen]
-            if leaf in seen:  # pragma: no cover - duplicate leaves impossible
-                continue
+            assert leaf not in seen, "inline table cannot contain duplicate leaves"
             seen.add(leaf)
             yield leaf
 

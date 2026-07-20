@@ -107,7 +107,7 @@ class Slot:
             setattr(new, f.name, value)
         return new
 
-    def render(self) -> str:  # pragma: no cover -- overridden
+    def render(self) -> str:
         raise NotImplementedError
 
 

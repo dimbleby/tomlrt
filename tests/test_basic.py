@@ -285,6 +285,9 @@ def test_datetime_values() -> None:
         "x = 1E+_1\n",
         "x = 1E-_1\n",
         "x = 1.2e+_3\n",
+        # Unterminated multi-line strings after a non-empty body.
+        'x = """abc',
+        "x = '''abc",
         # Stray CR (no following LF) inside multi-line strings.
         'x = """ab\rcd"""\n',
         "x = '''ab\rcd'''\n",

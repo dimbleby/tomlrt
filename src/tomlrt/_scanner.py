@@ -478,8 +478,8 @@ class _Scanner:
             if cp == 0x7F:
                 msg = "invalid control character U+007F in string"
                 raise self.error(msg)
-            out.append(ch)
-            self.pos += 1
+            msg = "multi-line basic body regex left an ordinary character"
+            raise AssertionError(msg)
 
     def _scan_literal_string(self, *, allow_multiline: bool) -> StringValue:
         """Scan a literal string. No escapes; never sets `raw`.

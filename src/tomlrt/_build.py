@@ -175,11 +175,11 @@ def _resolve_table_child(
     if descend_aot and isinstance(sub, AoT):
         assert sub, "validator should have rejected empty-AoT prefix"
         return sub[-1]
-    msg = (  # pragma: no cover -- parser validator rejects path collisions
+    msg = (
         f"path component {name!r} is bound to "
         f"{type(sub).__name__}, not a table (validator drift)"
     )
-    raise AssertionError(msg)  # pragma: no cover
+    raise AssertionError(msg)
 
 
 def _make_table(

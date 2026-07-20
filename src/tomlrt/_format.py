@@ -230,8 +230,7 @@ def _canon_leading(
 
     head_count = 0
     while head_count < len(lines) and not has_comment(lines[head_count]):
-        if not has_newline(lines[head_count]):
-            break
+        assert has_newline(lines[head_count])
         head_count += 1
     middle = lines[head_count:]
 
@@ -724,8 +723,7 @@ def _in_subtree(
     belong to ``owner`` or to a descendant AoT entry under ``owner.path``.
     """
     if isinstance(slot, KVSlot):
-        if slot.host_path[: len(path)] != path:
-            return False
+        assert slot.host_path[: len(path)] == path
     else:
         assert isinstance(slot, StructuralHeaderSlot)
         if slot.path[: len(path)] != path:
@@ -735,8 +733,7 @@ def _in_subtree(
     slot_owner = slot.owner_aot_entry
     if slot_owner is owner:
         return True
-    if slot_owner is None:
-        return False
+    assert slot_owner is not None
     op = owner.path
     return len(slot_owner.path) > len(op) and slot_owner.path[: len(op)] == op
 
@@ -773,7 +770,8 @@ def format_subtree(
                 prev.eol.newline = NewlineNode(nl)
         if isinstance(slot, KVSlot):
             _canon_kv_slot(slot, nl=nl, options=options)
-        elif isinstance(slot, StructuralHeaderSlot):
+        else:
+            assert isinstance(slot, StructuralHeaderSlot), "unknown slot type"
             _canon_header_slot(slot, nl=nl, options=options)
         if prev is None:
             target: int | None = None

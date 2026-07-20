@@ -92,8 +92,8 @@ them. Read roughly in this order:
   (the `t["a", "b"]` / `t[("a", "b")]` shapes used by the public
   API).
 - **`_typecheck.py`** — runtime type-checks for user-supplied keys
-  and mappings (`_validate_key`, `_validate_mapping`,
-  `_check_str_mapping`). Pure helpers with no dependency on the
+  and mappings (`_validate_key`, `_validate_mapping`). Pure helpers
+  with no dependency on the
   container / array layers, so any module that accepts user-supplied
   data at a public boundary can import them without participating
   in the circular-import graph that `_container` / `_array` form

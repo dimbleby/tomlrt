@@ -244,8 +244,6 @@ def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
         return
     eol = _take_eol(item)
     item.has_comma = style.trailing_comma
-    if not style.trailing_comma:
-        item.post_comma_trivia = Trivia()
     _put_eol(item, eol)
 
 
@@ -499,11 +497,9 @@ def splice_out(
     ``removed_indices`` must be a list of valid distinct indices into
     ``cv.items`` (not necessarily sorted on input; sorted internally).
     """
-    if not removed_indices:
-        return
+    assert removed_indices
     items = cv.items
-    if not items:
-        return
+    assert items
     # A single-line value cannot gain a newline by removal, so only a
     # currently multi-line value can flip (the removed item may hold the
     # sole newline, or emptying may collapse the pads).

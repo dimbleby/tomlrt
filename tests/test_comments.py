@@ -133,6 +133,12 @@ def test_set_eol_comment_replaces_existing() -> None:
     assert tomlrt.dumps(doc) == 'name = "ada"  # new\n'
 
 
+def test_set_adjacent_eol_comment_without_final_newline() -> None:
+    doc = tomlrt.loads("a = 1#old")
+    doc.comments["a"] = "new"
+    assert tomlrt.dumps(doc) == "a = 1 # new\n"
+
+
 def test_set_eol_comment_to_empty_string_writes_bare_hash() -> None:
     # An empty comment string is content (a bare '#'), not a delete:
     # the API is symmetric with the reader, which returns "" for a
@@ -264,6 +270,27 @@ def test_del_leading_comments_clears_block() -> None:
     doc = tomlrt.loads(src)
     del doc.leading_comments["name"]
     assert tomlrt.dumps(doc) == "name = 1\n"
+
+
+def test_del_leading_comments_preserves_older_detached_block() -> None:
+    doc = tomlrt.loads(
+        td("""
+            first = 0
+
+            # older
+
+            # attached
+            name = 1
+            """)
+    )
+    del doc.leading_comments["name"]
+    assert tomlrt.dumps(doc) == td("""
+        first = 0
+
+        # older
+
+        name = 1
+        """)
 
 
 def test_set_leading_comments_preserves_indent_in_subtable() -> None:
@@ -2822,6 +2849,12 @@ def test_blank_block_on_non_head_key_round_trips() -> None:
         # attached
         y = 2
         """)
+
+
+def test_delete_absent_leading_block_raises_keyerror() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(KeyError, match="x"):
+        del doc.leading_block["x"]
 
 
 def test_header_leading_block_delete_first_section_preserves_preamble() -> None:
