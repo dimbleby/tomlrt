@@ -7159,6 +7159,37 @@ def test_clone_section_into_fresh_implicit_intermediate_anchors_locally() -> Non
     }
 
 
+def test_adopt_section_into_fresh_implicit_aot_parent_anchors_locally() -> None:
+    """A private section adopted into an earlier AoT entry stays in that entry."""
+    doc = tomlrt.loads(
+        td("""
+        [[arr]]
+
+        [[arr]]
+        y = 2
+
+        [donor]
+        d = 10
+        """)
+    )
+    orphan = doc["donor"]
+    doc["donor"] = {"replaced": True}
+    doc.aot("arr")[0].install(("sub", "leaf"), orphan)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        donor = { replaced = true }
+
+        [[arr]]
+
+        [arr.sub.leaf]
+        d = 10
+
+        [[arr]]
+        y = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_adopt_private_section_unfiles_stale_bindings_for_nested_headers() -> None:
     """``adopt_private_section`` unfiled the stale ancestor bindings for
     the orphan's own header, but not for any nested header within its
