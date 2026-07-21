@@ -1364,9 +1364,13 @@ class Document(Container):
         * lists of mappings become ``[[array.of.tables]]`` blocks;
         * everything else is set with ordinary key-value assignment.
 
-        Existing [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
-        [`Array`][tomlrt.Array] views are deep-cloned, so the returned
-        document shares no mutable state with ``data``.
+        A [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
+        [`Array`][tomlrt.Array] view that is not already attached to a
+        document *attaches live*: the returned document keeps your
+        object, so later mutations through either reference are visible
+        on the other. A view already attached to another document is
+        deep-cloned instead, so the two never share state. Plain
+        ``dict`` / ``list`` values are always snapshot-copied.
         """
         super().__init__()
         self._head: Slot | None = None

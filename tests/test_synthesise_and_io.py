@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 import tomlrt
-from _helpers import td
-from tomlrt import Document, Table, TOMLError
+from _helpers import reparses, td
+from tomlrt import AoT, Array, Document, Table, TOMLError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -591,6 +591,73 @@ def test_document_factory_with_data_passes_container_through() -> None:
         [sub]
         x = 1
         """)
+
+
+# A detached (factory-created) view is *not* deep-cloned by ``Document(...)``:
+# it attaches live, so it stays identity-equal to the caller's reference and
+# later mutations through either side are visible on the other. Only a view
+# already attached to *another* document is deep-cloned. These pin that down.
+
+
+def test_document_factory_detached_array_attaches_live() -> None:
+    arr = Array([1, 2, 3])
+    doc = Document({"xs": arr})
+    assert doc["xs"] is arr
+    arr.append(4)  # mutate through the caller's reference after construction
+    out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 2, 3, 4]\n"
+    assert reparses(out) == {"xs": [1, 2, 3, 4]}
+
+
+def test_document_factory_detached_inline_table_attaches_live() -> None:
+    obj = Table.inline({"x": 1})
+    doc = Document({"obj": obj})
+    assert doc["obj"] is obj
+    obj["y"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == "obj = { x = 1, y = 2 }\n"
+    assert reparses(out) == {"obj": {"x": 1, "y": 2}}
+
+
+def test_document_factory_detached_section_attaches_live() -> None:
+    sec = Table.section({"x": 1})
+    doc = Document({"sec": sec})
+    assert doc["sec"] is sec
+    sec["y"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [sec]
+        x = 1
+        y = 2
+        """)
+    assert reparses(out) == {"sec": {"x": 1, "y": 2}}
+
+
+def test_document_factory_detached_aot_attaches_live() -> None:
+    aot = AoT([{"x": 1}])
+    doc = Document({"srv": aot})
+    assert doc["srv"] is aot
+    aot.append({"y": 2})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[srv]]
+        x = 1
+
+        [[srv]]
+        y = 2
+        """)
+    assert reparses(out) == {"srv": [{"x": 1}, {"y": 2}]}
+
+
+def test_document_factory_view_from_another_document_is_deep_cloned() -> None:
+    src = tomlrt.loads("v = [1, 2, 3]\n")
+    view = src.array("v")
+    doc = Document({"xs": view})
+    assert doc["xs"] is not view
+    view.append(99)  # source view is detached from doc, so this is invisible
+    out = tomlrt.dumps(doc)
+    assert out == "xs = [1, 2, 3]\n"
+    assert reparses(out) == {"xs": [1, 2, 3]}
 
 
 def test_deepcopy_preserves_document_structure() -> None:
