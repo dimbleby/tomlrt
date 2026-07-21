@@ -1192,6 +1192,37 @@ def test_format_restores_newline_after_sort_of_last_section() -> None:
     """)
 
 
+def test_format_inserts_blank_before_commented_aot_header_after_sort() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [c]
+        x = 1
+
+        # start
+        [[a.hello]]
+        x = 1
+
+        [a]
+        name = "x"
+        """)
+    )
+
+    doc.table("a").sort()
+    doc.format()
+
+    assert tomlrt.dumps(doc) == td("""
+        [c]
+        x = 1
+
+        [a]
+        name = "x"
+
+        # start
+        [[a.hello]]
+        x = 1
+    """)
+
+
 def test_format_preserves_above_item_comment_indent_in_multiline_array() -> None:
     src = td("""
         arr = [

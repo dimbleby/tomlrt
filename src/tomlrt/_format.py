@@ -230,8 +230,9 @@ def _canon_leading(
 
     ``target_blanks=None`` preserves preamble/subtree-boundary blanks,
     optionally capped by ``max_preserved_blanks``. When ``middle`` is
-    non-empty, clamp the head gap to 0/1 so comment-block separation
-    intent survives.
+    non-empty, clamp the authored head gap to 0/1, but never below the
+    canonical target, so comment-block separation intent survives without
+    suppressing structural-header spacing.
     """
     lines = split_lines(slot.leading.pieces)
 
@@ -255,7 +256,7 @@ def _canon_leading(
         if max_preserved_blanks is not None:
             n_blanks = min(n_blanks, max_preserved_blanks)
     elif middle:
-        n_blanks = min(head_count, 1)
+        n_blanks = max(target_blanks, min(head_count, 1))
     else:
         n_blanks = target_blanks
     head_t = Trivia([NewlineNode(nl)] * n_blanks)
