@@ -312,13 +312,16 @@ class Container(dict[str, Any]):
 
         if kind is _Kind.DOCUMENT:
             assert isinstance(self, Document)
+            # A non-empty preamble already ends in one blank-line
+            # separator, so the first slot must contribute none;
+            # otherwise the document opens with at most one blank line.
             format_subtree(
                 start=self._head,
                 path=(),
                 owner=None,
                 nl=nl,
                 options=resolved,
-                preserve_start_boundary=False,
+                head_blank_cap=0 if self._preamble.pieces else 1,
             )
             format_document_trailing(self._preamble, nl=nl, options=resolved)
             format_document_trailing(self._trailing, nl=nl, options=resolved)

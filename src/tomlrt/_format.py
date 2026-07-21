@@ -793,17 +793,20 @@ def format_subtree(
     owner: AoTEntry | None,
     nl: str,
     options: FormatOptions,
-    preserve_start_boundary: bool = True,
+    head_blank_cap: int | None = None,
 ) -> None:
     """Canonicalise every slot in the subtree rooted at ``path``.
 
     Walks the doc-stream from ``start`` until the first outside slot.
     ``owner`` disambiguates AoT-entry subtrees that share ``path``.
 
-    The first slot's leading head-blanks belong to the parent subtree and
-    are preserved when ``preserve_start_boundary`` is true. A whole-document
-    walk instead caps an opening run at one blank line. Later slots get the
-    canonical count: 1 blank line before a structural header, 0 otherwise.
+    The first slot's leading head-blanks belong to the parent subtree.
+    ``head_blank_cap`` bounds how many survive: ``None`` preserves them
+    (a nested subtree owns its opening boundary), while a whole-document
+    walk passes the count that leaves one blank line between the document
+    start -- or a preamble, which already supplies one -- and the first
+    slot. Later slots get the canonical count: 1 blank line before a
+    structural header, 0 otherwise.
     """
     prev: Slot | None = None
     slot = start
@@ -832,9 +835,7 @@ def format_subtree(
             nl=nl,
             target_blanks=target,
             options=options,
-            max_preserved_blanks=(
-                1 if prev is None and not preserve_start_boundary else None
-            ),
+            max_preserved_blanks=head_blank_cap if prev is None else None,
         )
         prev = slot
         slot = slot._next  # noqa: SLF001
