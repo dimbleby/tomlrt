@@ -11,7 +11,7 @@ import pytest
 import tomli
 
 import tomlrt
-from _helpers import td
+from _helpers import reparses, td
 from tomlrt import TOMLError
 
 
@@ -1035,6 +1035,62 @@ def test_preamble_preserved() -> None:
         [a]
         x = 1
     """)
+
+
+def test_preamble_blank_run_collapses_before_kv() -> None:
+    # A preamble separated from the first slot by 2+ blank lines must
+    # collapse to a single blank line, like any other blank run.
+    src = td("""
+        # pre
+
+
+
+        k = 1
+    """)
+    out = _roundtrip(src)
+    assert out == td("""
+        # pre
+
+        k = 1
+    """)
+    assert reparses(out) == {"k": 1}
+
+
+def test_preamble_blank_run_collapses_before_section() -> None:
+    src = td("""
+        # pre
+
+
+
+        [a]
+        x = 1
+    """)
+    out = _roundtrip(src)
+    assert out == td("""
+        # pre
+
+        [a]
+        x = 1
+    """)
+    assert reparses(out) == {"a": {"x": 1}}
+
+
+def test_preamble_blank_run_collapses_before_orphan_comment() -> None:
+    src = td("""
+        # pre
+
+
+        # orphan
+        k = 1
+    """)
+    out = _roundtrip(src)
+    assert out == td("""
+        # pre
+
+        # orphan
+        k = 1
+    """)
+    assert reparses(out) == {"k": 1}
 
 
 def test_detached_section_raises() -> None:
