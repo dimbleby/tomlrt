@@ -1171,15 +1171,12 @@ def test_format_canonicalises_empty_doc_preamble() -> None:
     assert _roundtrip(src) == "# hello\n# world\n"
 
 
-def test_format_restores_newline_after_sort_of_last_section() -> None:
-    # The original last section lacks a trailing newline; sort moves it
-    # into the middle. format() must restore the eol newline so the
-    # canonical inter-section blank line materialises.
+def test_format_and_sort_commute_when_last_section_lacks_newline() -> None:
     src = '# Header\n\ntitle = "X"\n\n[a]\nx = 1\n\n[b]\ny = 2'
     doc = tomlrt.loads(src)
-    doc.sort(reverse=True)
     doc.format()
-    assert tomlrt.dumps(doc) == td("""
+    doc.sort(reverse=True)
+    expected = td("""
         # Header
 
         title = "X"
@@ -1190,6 +1187,12 @@ def test_format_restores_newline_after_sort_of_last_section() -> None:
         [a]
         x = 1
     """)
+    assert tomlrt.dumps(doc) == expected
+
+    doc = tomlrt.loads(src)
+    doc.sort(reverse=True)
+    doc.format()
+    assert tomlrt.dumps(doc) == expected
 
 
 def test_format_inserts_blank_before_commented_aot_header_after_sort() -> None:
