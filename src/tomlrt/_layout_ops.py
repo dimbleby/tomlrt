@@ -326,21 +326,84 @@ def maybe_advance_body_tail(c: Container, slot: Slot) -> None:
         c._body_tail = slot  # noqa: SLF001
 
 
+def _host_tail_predecessors(
+    chain: list[Container],
+    host: Container,
+) -> list[Slot | None]:
+    """Derive filed predecessors for a header appended after ``host``."""
+    host_index = next((i for i, c in enumerate(chain) if c is host), None)
+    if host_index is None:
+        host_ancestors = _ancestor_chain(host)
+        assert len(chain) <= len(host_ancestors)
+        assert all(c is a for c, a in zip(chain, host_ancestors, strict=False))
+        tail_count = 0
+    else:
+        tail_count = host_index + 1
+
+    last = host._refs[-1].slot if host._refs else None  # noqa: SLF001
+    header_ref = host._header_ref  # noqa: SLF001
+    host_predecessor: Slot | None
+    if isinstance(last, StructuralHeaderSlot):
+        host_predecessor = last
+    elif header_ref is not None:
+        host_predecessor = header_ref.slot
+    else:
+        host_predecessor = None
+    predecessor_container_ids = (
+        {id(ref.container) for ref in host_predecessor._refs}  # noqa: SLF001
+        if host_predecessor is not None
+        else set()
+    )
+
+    predecessors: list[Slot | None] = []
+    for i, c in enumerate(chain):
+        if i < tail_count:
+            refs = c._refs  # noqa: SLF001
+            predecessors.append(refs[-1].slot if refs else None)
+        else:
+            predecessors.append(
+                host_predecessor if id(c) in predecessor_container_ids else None
+            )
+    return predecessors
+
+
 def _file_header_binding_chain(
-    deepest: Container, header: StructuralHeaderSlot
+    deepest: Container,
+    header: StructuralHeaderSlot,
+    *,
+    host: Container | None = None,
 ) -> None:
-    """File ``header`` in doc order on ``deepest`` and every ancestor."""
+    """File ``header`` in doc order on ``deepest`` and every ancestor.
+
+    ``host`` identifies the subtree whose physical tail immediately
+    precedes ``header``. Its cached projection supplies the predecessors
+    without a doc-stream walk; arbitrary insertion positions omit it.
+    """
     chain = [deepest, *_ancestor_chain(deepest)]
-    predecessors = _nearest_filed_predecessors(chain, header)
+    predecessors = (
+        _nearest_filed_predecessors(chain, header)
+        if host is None
+        else _host_tail_predecessors(chain, host)
+    )
     for c, predecessor in zip(chain, predecessors, strict=True):
         _file_ordered_ref(c, header, predecessor=predecessor)
 
 
-def _extend_header_bindings_to_root(parent: Container, slots: Iterable[Slot]) -> None:
-    """Extend every header among ``slots`` through ``parent``'s ancestors."""
+def _extend_header_bindings_to_root(
+    parent: Container,
+    slots: Iterable[Slot],
+    *,
+    host: Container | None = None,
+) -> None:
+    """Extend headers through ``parent``'s ancestors in physical order.
+
+    ``host`` applies only to the first header; later headers are interior
+    to the installed block and use their actual doc-stream predecessors.
+    """
     for s in slots:
         if isinstance(s, StructuralHeaderSlot):
-            _file_header_binding_chain(parent, s)
+            _file_header_binding_chain(parent, s, host=host)
+            host = None
 
 
 def _file_synthetic_header_and_kv(
@@ -1608,6 +1671,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     doc = c._attached_doc  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
     anchor_slot = c._refs[0].slot if c._refs else None  # noqa: SLF001
+    host: Container | None = None
 
     if anchor_slot is not None:
         adopted_leading = anchor_slot.leading
@@ -1622,19 +1686,19 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
             )
         anchor_slot.leading = new_descendant_leading
     else:
+        host, host_tail = _header_host_and_tail(c)
         header_slot = _new_owned_section_header(
             c, leading=_build_section_leading(doc), doc=doc
         )
         # Keep an anchorless promoted header inside its nearest
         # header-bearing host, not under an unrelated document tail.
-        host_tail = _host_subtree_tail(c)
         _splice_block_after([header_slot], host_tail, doc)
         if isinstance(header_slot._prev, StructuralHeaderSlot):  # noqa: SLF001
             header_slot.leading = Trivia()
 
     parent = c._parent  # noqa: SLF001
     assert parent is not None
-    _file_header_binding_chain(parent, header_slot)
+    _file_header_binding_chain(parent, header_slot, host=host)
 
     new_kv = _file_synthetic_header_and_kv(
         c,
@@ -1765,6 +1829,10 @@ def _belongs_to_parent_extent(
     its own ``owner_aot_entry`` is irrelevant). A slot at exactly
     ``base_path`` is in-extent only if it shares ``base_owner`` —
     otherwise it is a sibling AoT entry at the same level.
+
+    The descendant rule is valid only while walking a physically
+    contiguous doc-stream region. It must not filter an ``_index``
+    bucket, which can interleave descendants from sibling AoT entries.
     """
     if isinstance(slot, KVSlot):
         path = slot.host_path
@@ -1800,9 +1868,10 @@ def _parent_subtree_tail(parent: Container) -> Slot | None:
     return cur
 
 
-def _host_subtree_tail(c: Container) -> Slot | None:
-    """Return the subtree tail of ``c``'s nearest header-bearing host."""
-    return _parent_subtree_tail(_nearest_header_host(c))
+def _header_host_and_tail(c: Container) -> tuple[Container, Slot | None]:
+    """Return ``c``'s nearest header-bearing host and its subtree tail."""
+    host = _nearest_header_host(c)
+    return host, _parent_subtree_tail(host)
 
 
 def _safe_header_anchor(anchor: Slot | None) -> Slot | None:
@@ -1825,7 +1894,7 @@ def _safe_header_anchor(anchor: Slot | None) -> Slot | None:
 def _child_header_anchor(parent: Container) -> Slot | None:
     """Return a safe anchor for a new header-backed child of ``parent``."""
     return _safe_header_anchor(
-        _parent_subtree_tail(parent) or _host_subtree_tail(parent)
+        _parent_subtree_tail(parent) or _header_host_and_tail(parent)[1]
     )
 
 
@@ -2166,8 +2235,9 @@ def add_aot_entry(
     )
     _file_own_header(entry_table, header)
 
-    _splice_block_after([header], _aot_append_anchor(aot), doc)
-    _file_header_binding_chain(parent, header)
+    append_host, append_anchor = _aot_append_position(aot)
+    _splice_block_after([header], append_anchor, doc)
+    _file_header_binding_chain(parent, header, host=append_host)
     list.append(aot, entry_table)
 
     # First entry under a synthetic placeholder section makes the
@@ -2293,6 +2363,7 @@ def _install_cloned_structural_block(
     owner: AoTEntry | None,
     cloned_slots: list[Slot],
     anchor: Slot | None,
+    host: Container | None = None,
 ) -> None:
     """Wire ``table``'s own-header ref, splice its slots, then build views.
 
@@ -2320,7 +2391,7 @@ def _install_cloned_structural_block(
         target_prefix=target_path,
         doc=doc,
     )
-    _extend_header_bindings_to_root(parent, cloned_slots)
+    _extend_header_bindings_to_root(parent, cloned_slots, host=host)
     _maybe_demote_synthetic_empty_header(parent)
 
 
@@ -2376,6 +2447,7 @@ def _install_cloned_aot_entry(
         _retarget_header_separator(cloned_header, _aot_separator(aot, doc))
     # else: keep source leading verbatim (bulk-clone past entry 0).
 
+    append_host, append_anchor = _aot_append_position(aot)
     entry_table = Table()
     _install_cloned_structural_block(
         entry_table,
@@ -2384,7 +2456,8 @@ def _install_cloned_aot_entry(
         target_path=target_path,
         owner=new_entry,
         cloned_slots=cloned_slots,
-        anchor=_aot_append_anchor(aot),
+        anchor=append_anchor,
+        host=append_host,
     )
 
     list.append(aot, entry_table)
@@ -3109,7 +3182,7 @@ def attach_section_at(
     # ancestor: a header re-parents everything after it, so landing it
     # mid-section would capture that host's trailing KVs (e.g. a ``d = 4``
     # sibling of an implicit ``parent``) under the new header on re-parse.
-    anchor = _host_subtree_tail(parent)
+    host, anchor = _header_host_and_tail(parent)
     _splice_block_after([header], anchor, doc)
     # Own the new header on the AoT entry so a later delete of the
     # entry takes the promoted section with it.
@@ -3117,7 +3190,7 @@ def attach_section_at(
 
     # File the binding ref under the deepest implicit parent and
     # propagate ancestor-prefix bindings up to the doc root.
-    _file_header_binding_chain(deepest_parent, header)
+    _file_header_binding_chain(deepest_parent, header, host=host)
     dict.__setitem__(deepest_parent, sub[-1], section)
 
     _maybe_demote_synthetic_empty_header(parent)
@@ -3154,8 +3227,8 @@ def attach_section_at(
     return section
 
 
-def _aot_append_anchor(aot: AoT) -> Slot | None:
-    """Return the slot a newly-appended ``[[path]]`` entry splices after.
+def _aot_append_position(aot: AoT) -> tuple[Container, Slot | None]:
+    """Return the host and anchor for a newly-appended ``[[path]]`` entry.
 
     Non-empty AoTs anchor after the last entry's complete subtree,
     including nested AoTs. Empty AoTs anchor in their nearest
@@ -3165,11 +3238,11 @@ def _aot_append_anchor(aot: AoT) -> Slot | None:
         e = entry_table._owner_aot_entry  # noqa: SLF001
         if e is None or not e.entry_slots:
             continue
-        return _parent_subtree_tail(entry_table)
+        return entry_table, _parent_subtree_tail(entry_table)
     parent = aot._parent  # noqa: SLF001
     assert parent is not None, "attached AoT must have a parent"
     # A document-tail anchor could place the first entry under a later sibling.
-    return _host_subtree_tail(parent)
+    return _header_host_and_tail(parent)
 
 
 _PopT = TypeVar("_PopT")
@@ -3570,9 +3643,8 @@ def _replace_ref_projection(
     new: list[SlotRef],
 ) -> None:
     """Replace one reordered physical-region projection in doc order."""
-    if old == new:
-        return
     assert old
+    assert old != new
     assert len(old) == len(new)
     start = refs.index(old[0])
     end = start + len(old)
@@ -3580,14 +3652,40 @@ def _replace_ref_projection(
     refs[start:end] = new
 
 
-def _refs_by_local_key(refs: list[SlotRef]) -> dict[str, list[SlotRef]]:
-    """Group refs by derived local key, preserving their input order."""
-    grouped: dict[str, list[SlotRef]] = {}
-    for ref in refs:
+def _changed_key_projections(
+    old_refs: list[SlotRef],
+    new_refs: list[SlotRef],
+) -> tuple[dict[str, list[SlotRef]], dict[str, list[SlotRef]]]:
+    """Return only keyed projections whose relative order changed."""
+    first_by_key: dict[str, SlotRef] = {}
+    old_multiple: dict[str, list[SlotRef]] = {}
+    for ref in old_refs:
         local_key = ref.local_key
-        if local_key is not None:
-            grouped.setdefault(local_key, []).append(ref)
-    return grouped
+        if local_key is None:
+            continue
+        first = first_by_key.get(local_key)
+        if first is None:
+            first_by_key[local_key] = ref
+            continue
+        old_multiple.setdefault(local_key, [first]).append(ref)
+
+    if not old_multiple:
+        return {}, {}
+
+    new_multiple: dict[str, list[SlotRef]] = {key: [] for key in old_multiple}
+    for ref in new_refs:
+        local_key = ref.local_key
+        if local_key is not None and local_key in new_multiple:
+            new_multiple[local_key].append(ref)
+
+    old_changed: dict[str, list[SlotRef]] = {}
+    new_changed: dict[str, list[SlotRef]] = {}
+    for key, old_key_refs in old_multiple.items():
+        new_key_refs = new_multiple[key]
+        if old_key_refs != new_key_refs:
+            old_changed[key] = old_key_refs
+            new_changed[key] = new_key_refs
+    return old_changed, new_changed
 
 
 def _reorder_region_refs(
@@ -3608,9 +3706,7 @@ def _reorder_region_refs(
             old_refs,
             new_refs,
         )
-        old_by_key = _refs_by_local_key(old_refs)
-        new_by_key = _refs_by_local_key(new_refs)
-        assert old_by_key.keys() == new_by_key.keys()
+        old_by_key, new_by_key = _changed_key_projections(old_refs, new_refs)
         for key, old_key_refs in old_by_key.items():
             _replace_ref_projection(
                 c._index[key],  # noqa: SLF001

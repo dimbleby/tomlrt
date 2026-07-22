@@ -1780,7 +1780,7 @@ def test_append_aot_entry_after_sorting_an_entrys_keys() -> None:
 
     Regression: ``reorder_container`` permuted the entry's KV slots in
     the doc-stream but left ``AoTEntry.entry_slots`` in its old order.
-    ``_aot_append_anchor`` trusts ``entry_slots[-1]`` as the append anchor,
+    ``_aot_append_position`` trusts ``entry_slots[-1]`` as the append anchor,
     so the new ``[[p]]`` header was spliced *inside* the reordered
     entry, splitting it and re-parenting the trailing key on re-parse.
     """
@@ -1823,7 +1823,7 @@ def test_append_aot_entry_when_last_entry_owns_nested_aot() -> None:
     """Appending a new ``[[p]]`` must anchor after the last entry's whole
     subtree, including a nested ``[[p.sub]]`` it owns.
 
-    Regression: ``_aot_append_anchor`` returned ``entry_slots[-1]``, which
+    Regression: ``_aot_append_position`` returned ``entry_slots[-1]``, which
     excludes slots owned by nested AoT entries, so the new ``[[p]]``
     header was spliced *before* the nested ``[[p.sub]]`` block — which
     re-parse then attributed to the new entry.
@@ -7104,6 +7104,32 @@ def test_promote_implicit_table_inside_non_tail_aot_entry() -> None:
 
         [other]
         k = 1
+        """)
+
+
+def test_attach_section_inside_non_last_nested_aot_entry_then_reverse() -> None:
+    """A host-tail insert files refs before later same-path AoT siblings."""
+    doc = tomlrt.loads(
+        td("""
+        [[a.b]]
+        x = 1
+
+        [[a.b]]
+        [a.b.c]
+        z = 3
+        """)
+    )
+    doc.aot(("a", "b"))[0]["c"] = Table.section({"w": 4})
+    doc.aot(("a", "b")).reverse()
+    assert tomlrt.dumps(doc) == td("""
+        [[a.b]]
+        [a.b.c]
+        z = 3
+
+        [[a.b]]
+        x = 1
+        [a.b.c]
+        w = 4
         """)
 
 
