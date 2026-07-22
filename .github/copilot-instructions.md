@@ -167,7 +167,7 @@ them. Read roughly in this order:
   doc-stream-first-occurrence order. The *one* place that derives
   implicit containers from slot paths.
 - **`_layout_ops.py`** — section-side mutation primitives: insert
-  / delete on the doc-stream linked list; `_index` and `_refs`
+  / delete / sort on the doc-stream linked list; `_index` and `_refs`
   bookkeeping; KV / section / AoT-entry append; subtree rehome.
   By far the largest file. Internal hot-path conventions:
   - **Reverse-walks of `c._refs`** go through `_last_kv(c, predicate)`.
@@ -175,9 +175,14 @@ them. Read roughly in this order:
     where the same predicate composition is reused or carries a
     fast-path; one-off walks pass the predicate inline. Don't add a
     third ad-hoc walk.
-  - **Bulk ref removal** goes through `_remove_owned_refs(c,
-    candidate_keys, owned_ids)`. Callers own only the body-tail
-    policy (clear vs recompute).
+  - **Ordered ref filing** goes through `_file_ordered_ref`; physical
+    region permutations finish through `_finish_region_permutation`,
+    which updates every affected `_refs` / `_index` projection.
+  - **Container sorting is region-local** and keeps leaf / dotted-KV
+    blocks before structural section / AoT blocks so re-parsing cannot
+    change ownership. `key` / `reverse` apply within those partitions.
+  - **Bulk ref removal** walks each slot's back-pointers through
+    `_scrub_owned_slots_via_backptrs`, not ancestor-wide cache scans.
   - **`Container._body_tail`** is the cached doc-stream-tail of
     the container's region; treat it as ground truth for
     "what's the latest body slot of `c`?". `_last_direct_kv`
@@ -215,10 +220,11 @@ them. Read roughly in this order:
   subtree of slots / values and rewrites trivia to a canonical
   shape (KV `key = value` spacing, header inner-pad, sibling-
   spacing rules, single-line vs multi-line inline shape, EOL
-  comment placement). Shape-preserving for inline values
-  (single-line stays single-line; multi-line stays multi-line)
-  and idempotent. The structural counterpart is `_comma_ops`,
-  which owns *changing* layout; this module owns
+  comment placement), configured by the public `FormatOptions` (the
+  old `comments=` argument is deprecated). Shape-preserving for
+  inline values (single-line stays single-line; multi-line stays
+  multi-line) and idempotent. The structural counterpart is
+  `_comma_ops`, which owns *changing* layout; this module owns
   *canonicalising* the layout you already have. Re-uses
   `flip_to_*` / `_take_eol` / `_put_eol` from `_comma_ops` for
   the bits that touch the comma-value boundary. Also owns
@@ -302,8 +308,10 @@ wrong.
   fast at the property boundary rather than corrupting an
   `_index` bucket.
 - **`Container._index[k]`** is the in-order list of refs in
-  `_refs` whose `local_key == k`. Use `_rebuild_index_for_key`
-  after any mid-stream insertion under `k`.
+  `_refs` whose `local_key == k`. File mid-stream refs through
+  `_file_ordered_ref`; after block reordering, update the contiguous
+  region and its per-key projections through
+  `_finish_region_permutation`.
 - **`Container._body_tail`** ≡ "the most recent slot in `_refs`
   belonging to the body region" (KV with matching owner; or, for
   a header-bearing container with no body, the header itself).
@@ -322,10 +330,11 @@ wrong.
   doc-ordered one: it records which slots belong to the entry (with
   its `[[a]]` header kept first because it is appended first), but
   its order is *not* the doc-stream order. Anything that needs the
-  entry's doc-stream-latest slot must **derive** it by walking the
-  doc-stream (`_entry_last_slot`, `_aot_append_anchor`), never read
-  `entry_slots[-1]`. Reversed-unlink and clone slicing, in turn, rely
-  on the append-order (header first), not on doc order.
+  entry's doc-stream order or subtree tail must **derive** it from
+  the linked stream (`_owned_slots_ordered`, `_parent_subtree_tail`,
+  `_aot_append_position`), never read `entry_slots[-1]`. Clone
+  bookkeeping, in turn, relies on append-order slices and
+  `entry_slots[0]` being the header.
 - **Container shape** is named explicitly by the `_Kind` enum in
   `_kind.py` and surfaced as `Container._kind`. The six kinds —
   `DOCUMENT`, `SECTION`, `IMPLICIT_SECTION`, `INLINE_ROOT`,
