@@ -5927,6 +5927,60 @@ def test_sort_handles_non_contiguous_key_blocks() -> None:
     assert _reparses(tomlrt.dumps(doc))
 
 
+def test_sort_headerless_child_refreshes_ancestor_primary_ref() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [outer.z]
+            value = 1
+
+            [other]
+            value = 0
+
+            [outer.a]
+            value = 2
+            """)
+    )
+    doc.table("outer").sort()
+    doc["outer"] = Table.section({"value": 3})
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [outer]
+        value = 3
+
+        [other]
+        value = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_sort_headerless_child_refreshes_ancestor_body_tail() -> None:
+    doc = tomlrt.loads(
+        td("""
+            outer.z = 1
+            foreign = 0
+            outer.a = 2
+
+            [tail]
+            value = 3
+            """)
+    )
+    doc.table("outer").sort()
+    doc["new"] = 4
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        foreign = 0
+        outer.a = 2
+        outer.z = 1
+        new = 4
+
+        [tail]
+        value = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_sort_empty_and_single_are_noops() -> None:
     empty = tomlrt.loads("")
     empty.sort()
@@ -6149,6 +6203,98 @@ def test_sort_aot_element_with_nested_section_preserves_siblings() -> None:
         x = 3
         """)
     assert _reparses(tomlrt.dumps(doc))
+
+
+def test_repeated_sort_of_aot_entry_refiles_noncontiguous_ancestor_refs() -> None:
+    src = td("""
+        [[arr]]
+        [arr.z]
+        value = 1
+        [arr.a]
+        value = 2
+
+        [[arr]]
+        name = "sibling"
+        """)
+    doc = tomlrt.loads(src)
+    entry = doc.aot("arr")[0]
+
+    entry.sort()
+    entry.sort(reverse=True)
+    entry.sort()
+    doc["tail"] = 3
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        tail = 3
+
+        [[arr]]
+        [arr.a]
+        value = 2
+        [arr.z]
+        value = 1
+
+        [[arr]]
+        name = "sibling"
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_live_section_clone_files_ancestor_refs_at_physical_position() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [x.y.z.w]
+
+            [x]
+
+            [tail]
+            """)
+    )
+    w = doc.table(("x", "y", "z", "w"))
+    w["k68"] = w
+    doc.table("x")["a"] = 1
+
+    doc.table("x").sort()
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [x]
+        a = 1
+        [x.y.z.w]
+
+        [x.y.z.w.k68]
+
+        [tail]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_forward_declared_clone_files_own_refs_in_physical_order() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [src.child]
+            z = 1
+            [src]
+            x = 2
+            [tail]
+            """)
+    )
+    doc["clone"] = doc.table("src")
+
+    doc.table("clone").sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [src.child]
+        z = 1
+        [src]
+        x = 2
+        [tail]
+        [clone]
+        x = 2
+        [clone.child]
+        z = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_sort_super_table_with_aot_preserves_explicit_header() -> None:

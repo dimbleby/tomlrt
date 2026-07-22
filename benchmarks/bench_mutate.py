@@ -78,6 +78,24 @@ def _build_section_doc(sections: int, kvs: int) -> str:
     return "".join(parts)
 
 
+def _build_nested_section_doc(sections: int) -> str:
+    return "".join(
+        f"[s{section}]\n"
+        "leaf = 1\n"
+        f"[s{section}.z]\n"
+        "value = 1\n"
+        f"[s{section}.a]\n"
+        "value = 2\n"
+        for section in range(sections)
+    )
+
+
+def _build_forward_declared_sort_doc(trailing_sections: int) -> str:
+    return "[target.z]\nvalue = 1\n[target]\na = 2\n" + "".join(
+        f"[trailing_{i}]\nvalue = {i}\n" for i in range(trailing_sections)
+    )
+
+
 def _bench(name: str, work: Callable[[], None], *, repeats: int) -> None:
     """Run ``work`` ``repeats`` times and print best/median wall time."""
     timings: list[float] = []
@@ -134,6 +152,9 @@ def main() -> None:
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     aot_src = _build_aot_doc(500)
     section_src = _build_section_doc(50, 20)
+    sortable_section_src = _build_section_doc(800, 20)
+    nested_section_src = _build_nested_section_doc(400)
+    forward_declared_sort_src = _build_forward_declared_sort_doc(20_000)
     aot_trailing_src = _build_aot_with_trailing(50, 20_000)
     section_trailing_src = _build_section_doc_with_trailing(20_000)
     large_aot_overwrite_src = _build_large_aot_entry_for_overwrite(20_000)
@@ -191,6 +212,19 @@ def main() -> None:
             sec = doc.table(f"s{s}")
             del sec["k0"]
             del sec["k1"]
+
+    def sort_all_sections(doc: Document) -> None:
+        for section in doc.values():
+            assert isinstance(section, tomlrt.Table)
+            section.sort()
+
+    def reverse_sort_all_sections(doc: Document) -> None:
+        for section in doc.values():
+            assert isinstance(section, tomlrt.Table)
+            section.sort(reverse=True)
+
+    def sort_forward_declared_table(doc: Document) -> None:
+        doc.table("target").sort()
 
     def render_only() -> None:
         tomlrt.dumps(doc_pyproject)
@@ -253,6 +287,24 @@ def main() -> None:
         lambda: tomlrt.loads(section_src),
         delete_kvs,
         repeats=200,
+    )
+    _bench_with_setup(
+        "sort 800 sections (20 keys each)",
+        lambda: tomlrt.loads(sortable_section_src),
+        reverse_sort_all_sections,
+        repeats=20,
+    )
+    _bench_with_setup(
+        "sort 400 sections (2 nested sections)",
+        lambda: tomlrt.loads(nested_section_src),
+        sort_all_sections,
+        repeats=20,
+    )
+    _bench_with_setup(
+        "sort forward-declared table (20k trailing)",
+        lambda: tomlrt.loads(forward_declared_sort_src),
+        sort_forward_declared_table,
+        repeats=50,
     )
 
 
