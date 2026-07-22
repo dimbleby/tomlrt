@@ -63,10 +63,12 @@ def _build_section_doc_with_trailing(trailing_kvs: int) -> str:
     )
 
 
+def _build_large_aot_entry(kvs: int) -> str:
+    return "[[a]]\n" + "".join(f"k{i} = {i}\n" for i in range(kvs))
+
+
 def _build_large_aot_entry_for_overwrite(kvs: int) -> str:
-    return (
-        "[[a]]\n" + "".join(f"k{i} = {i}\n" for i in range(kvs)) + "\n[a.b.c]\nx = 1\n"
-    )
+    return _build_large_aot_entry(kvs) + "\n[a.b.c]\nx = 1\n"
 
 
 def _build_section_doc(sections: int, kvs: int) -> str:
@@ -158,6 +160,7 @@ def main() -> None:
     forward_declared_sort_src = _build_forward_declared_sort_doc(20_000)
     aot_trailing_src = _build_aot_with_trailing(50, 20_000)
     section_trailing_src = _build_section_doc_with_trailing(20_000)
+    large_aot_entry_src = _build_large_aot_entry(20_000)
     large_aot_overwrite_src = _build_large_aot_entry_for_overwrite(20_000)
     large_inline_array_src = (
         "items = [{" + ", ".join(f"k{i} = {i}" for i in range(1_000)) + "}] # tail\n"
@@ -181,6 +184,9 @@ def main() -> None:
         aot = doc.aot("items")
         for i in range(20):
             aot.append({"name": f"new-{i}", "value": 1000 + i})
+
+    def append_after_large_aot_entry(doc: Document) -> None:
+        doc.aot("a").append({"new": 1})
 
     def install_non_tail_new_sections(doc: Document) -> None:
         target = doc.table("a")
@@ -248,6 +254,12 @@ def main() -> None:
         "append 20 entries, non-tail AoT (20k trailing)",
         lambda: tomlrt.loads(aot_trailing_src),
         append_non_tail_aot_entry,
+        repeats=50,
+    )
+    _bench_with_setup(
+        "append after AoT entry with 20k KVs",
+        lambda: tomlrt.loads(large_aot_entry_src),
+        append_after_large_aot_entry,
         repeats=50,
     )
     _bench_with_setup(

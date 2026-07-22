@@ -258,10 +258,17 @@ def _ancestor_chain(c: Container | AoT) -> list[Container]:
 
 
 def _resort_and_recompute_tails(c: Container, doc: Document) -> None:
-    """Resort ``[c, *ancestors]`` refs by doc order and refresh cached body tails."""
-    chain: list[Container] = [c, *_ancestor_chain(c)]
-    _resort_refs_by_doc_order(chain, doc)
-    for cn in chain:
+    """Repair ancestor ref order and cached tails after moving slots."""
+    position: dict[int, int] = {}
+    cur = doc._head  # noqa: SLF001
+    while cur is not None:
+        position[id(cur)] = len(position)
+        cur = cur._next  # noqa: SLF001
+
+    for cn in [c, *_ancestor_chain(c)]:
+        cn._refs.sort(key=lambda ref: position[id(ref.slot)])  # noqa: SLF001
+        for refs in cn._index.values():  # noqa: SLF001
+            refs.sort(key=lambda ref: position[id(ref.slot)])
         if cn._body_tail is not None:  # noqa: SLF001
             cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
 
@@ -3592,21 +3599,6 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         list.append(aot, t)
 
 
-def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> None:
-    """Resort each container's ``_refs`` and ``_index[k]`` by linked-list position."""
-    position: dict[int, int] = {}
-    cur = doc._head  # noqa: SLF001
-    idx = 0
-    while cur is not None:
-        position[id(cur)] = idx
-        idx += 1
-        cur = cur._next  # noqa: SLF001
-    for c in containers:
-        c._refs.sort(key=lambda r: position.get(id(r.slot), 0))  # noqa: SLF001
-        for refs in c._index.values():  # noqa: SLF001
-            refs.sort(key=lambda r: position.get(id(r.slot), 0))
-
-
 def _slots_between(
     doc: Document,
     predecessor: Slot | None,
@@ -3624,16 +3616,12 @@ def _slots_between(
 
 def _ref_projections(
     slots: list[Slot],
-) -> dict[int, tuple[Container, list[SlotRef]]]:
+) -> dict[int, list[SlotRef]]:
     """Project a doc-ordered slot interval onto every container referencing it."""
-    projections: dict[int, tuple[Container, list[SlotRef]]] = {}
+    projections: dict[int, list[SlotRef]] = {}
     for slot in slots:
         for ref in slot._refs:  # noqa: SLF001
-            item = projections.get(id(ref.container))
-            if item is None:
-                item = (ref.container, [])
-                projections[id(ref.container)] = item
-            item[1].append(ref)
+            projections.setdefault(id(ref.container), []).append(ref)
     return projections
 
 
@@ -3697,8 +3685,9 @@ def _reorder_region_refs(
     new_by_container = _ref_projections(new_slots)
     assert old_by_container.keys() == new_by_container.keys()
 
-    for container_id, (c, old_refs) in old_by_container.items():
-        new_refs = new_by_container[container_id][1]
+    for container_id, old_refs in old_by_container.items():
+        c = old_refs[0].container
+        new_refs = new_by_container[container_id]
         if old_refs == new_refs:
             continue
         _replace_ref_projection(
@@ -3883,10 +3872,6 @@ def _move_slots_to_anchor(
     head.leading.pieces = list(saved_leading_pieces)
     _terminate_unless_tail(tail, doc)
 
-    # Resort ancestor refs by linked-list position; also recompute
-    # _body_tail on each (the move may have invalidated the cached
-    # tail when the moved slot block was the staging-tail of any
-    # ancestor body).
     _resort_and_recompute_tails(parent, doc)
 
 
