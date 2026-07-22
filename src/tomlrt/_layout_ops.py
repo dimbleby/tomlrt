@@ -1912,7 +1912,7 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
 
 
 def _splice_block_after(slots: list[Slot], anchor: Slot | None, doc: Document) -> None:
-    """Splice a contiguous slot block after ``anchor`` or at doc end."""
+    """Splice a contiguous, internally terminated block after ``anchor``."""
     if not slots:
         return
     if anchor is None:
@@ -1925,6 +1925,7 @@ def _splice_block_after(slots: list[Slot], anchor: Slot | None, doc: Document) -
         _ensure_terminator(prev, doc)
         insert_after(prev, s, doc)
         prev = s
+    _terminate_unless_tail(prev, doc)
 
 
 def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
@@ -2382,9 +2383,6 @@ def _install_cloned_structural_block(
         owner=owner,
     )
     _splice_block_after(cloned_slots, anchor, doc)
-    # A cloned slot's ``eol.newline`` can be None if its source document
-    # had no final newline (it was previously the very last slot there).
-    _terminate_unless_tail(cloned_slots[-1], doc)
     _populate_entry_views(
         entry_table=table,
         cloned_slots=cloned_slots,
@@ -2807,8 +2805,6 @@ def adopt_private_section(
     assert isinstance(first, StructuralHeaderSlot)
     _retarget_header_separator(first, _build_section_leading(doc))
     _splice_block_after(slots, _child_header_anchor(dest_parent), doc)
-    tail = slots[-1]
-    _terminate_unless_tail(tail, doc)
     _extend_header_bindings_to_root(dest_parent, slots)
     dict.__setitem__(dest_parent, key, value)
     _maybe_demote_synthetic_empty_header(dest_parent)
@@ -2923,9 +2919,9 @@ def adopt_private_implicit(
         for prev, s in itertools.pairwise(slots):
             insert_after(prev, s, doc)
         _ensure_leading_blank_line(old_head, doc)
+        _terminate_unless_tail(slots[-1], doc)
     else:
         _splice_block_after(slots, anchor, doc)
-    _terminate_unless_tail(slots[-1], doc)
     # value's own subtree refs travelled intact; re-file only the ancestor
     # binding refs the delete scrubbed: dotted KVs hosted at ``host``
     # propagate up the ``host``-to-``dest_parent`` chain, nested headers
@@ -3742,15 +3738,17 @@ def _splice_blocks_in_order(
     to the old physical block index. ``new_head_leadings`` is indexed by
     new position.
 
-    The helper is purely permutational on the doc-stream linked
-    list. Trivia policy (positional vs slot-attached) is the
-    caller's responsibility — see ``renormalise_aot_order``
-    (peer-block model) and ``reorder_container`` (region-marker
-    model) for the two existing flavours.
+    The helper permutes the doc-stream linked list and terminates the
+    former final movable slot if it moves into the middle. Other trivia
+    policy (positional vs slot-attached) is the caller's responsibility
+    — see ``renormalise_aot_order`` (peer-block model) and
+    ``reorder_container`` (region-marker model) for the two existing
+    flavours.
     """
     if not physical_blocks:
         return
 
+    former_region_tail = physical_blocks[-1][-1]
     anchor_prev = physical_blocks[0][0]._prev  # noqa: SLF001
 
     for block in physical_blocks:
@@ -3769,6 +3767,8 @@ def _splice_blocks_in_order(
     for new_pos, phys_idx in enumerate(new_order_indices):
         head_slot = physical_blocks[phys_idx][0]
         head_slot.leading = Trivia(list(new_head_leadings[new_pos].pieces))
+
+    _terminate_unless_tail(former_region_tail, doc)
 
 
 def _slot_binding_root(slot: Slot) -> tuple[str, ...]:

@@ -1720,6 +1720,25 @@ def test_aot_sort_preserves_formatting_byte_exact() -> None:
     )
 
 
+def test_aot_sort_terminates_former_document_tail() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[t]]
+        x = 2
+
+        [[t]]
+        x = 1""")
+    )
+    doc.aot("t").sort(key=lambda entry: entry["x"])
+    assert tomlrt.dumps(doc) == td("""
+        [[t]]
+        x = 1
+
+        [[t]]
+        x = 2
+    """)
+
+
 def test_aot_reverse_preserves_formatting_byte_exact() -> None:
     src = td("""
         [[t]]
@@ -2911,6 +2930,31 @@ def test_aot_setitem_clone_path_out_of_range_index_raises_indexerror() -> None:
     with pytest.raises(IndexError, match="out of range"):
         aot[99] = foreign_entry
     assert tomlrt.dumps(doc1) == src1
+
+
+def test_aot_setitem_clone_terminates_foreign_document_tail() -> None:
+    src = tomlrt.loads(
+        td("""
+        [[s]]
+        x = 9""")
+    )
+    dst = tomlrt.loads(
+        td("""
+        [[d]]
+        x = 1
+
+        [[d]]
+        x = 2
+        """)
+    )
+    dst.aot("d")[0] = src.aot("s")[0]
+    assert tomlrt.dumps(dst) == td("""
+        [[d]]
+        x = 9
+
+        [[d]]
+        x = 2
+    """)
 
 
 # ---------------------------------------------------------------------------
