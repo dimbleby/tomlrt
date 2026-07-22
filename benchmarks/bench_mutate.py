@@ -153,6 +153,7 @@ def main() -> None:
     aot_src = _build_aot_doc(500)
     section_src = _build_section_doc(50, 20)
     sortable_section_src = _build_section_doc(800, 20)
+    wide_section_src = _build_section_doc(1, 8_000)
     nested_section_src = _build_nested_section_doc(400)
     forward_declared_sort_src = _build_forward_declared_sort_doc(20_000)
     aot_trailing_src = _build_aot_with_trailing(50, 20_000)
@@ -225,6 +226,9 @@ def main() -> None:
 
     def sort_forward_declared_table(doc: Document) -> None:
         doc.table("target").sort()
+
+    def reverse_sort_wide_section(doc: Document) -> None:
+        doc.table("s0").sort(reverse=True)
 
     def render_only() -> None:
         tomlrt.dumps(doc_pyproject)
@@ -305,6 +309,12 @@ def main() -> None:
         lambda: tomlrt.loads(forward_declared_sort_src),
         sort_forward_declared_table,
         repeats=50,
+    )
+    _bench_with_setup(
+        "sort one section (8k keys)",
+        lambda: tomlrt.loads(wide_section_src),
+        reverse_sort_wide_section,
+        repeats=20,
     )
 
 

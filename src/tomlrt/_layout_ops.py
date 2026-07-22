@@ -3580,6 +3580,16 @@ def _replace_ref_projection(
     refs[start:end] = new
 
 
+def _refs_by_local_key(refs: list[SlotRef]) -> dict[str, list[SlotRef]]:
+    """Group refs by derived local key, preserving their input order."""
+    grouped: dict[str, list[SlotRef]] = {}
+    for ref in refs:
+        local_key = ref.local_key
+        if local_key is not None:
+            grouped.setdefault(local_key, []).append(ref)
+    return grouped
+
+
 def _reorder_region_refs(
     old_slots: list[Slot],
     new_slots: list[Slot],
@@ -3598,16 +3608,14 @@ def _reorder_region_refs(
             old_refs,
             new_refs,
         )
-        keys = {
-            local_key for ref in old_refs if (local_key := ref.local_key) is not None
-        }
-        for key in keys:
-            old_key_refs = [r for r in old_refs if r.local_key == key]
-            new_key_refs = [r for r in new_refs if r.local_key == key]
+        old_by_key = _refs_by_local_key(old_refs)
+        new_by_key = _refs_by_local_key(new_refs)
+        assert old_by_key.keys() == new_by_key.keys()
+        for key, old_key_refs in old_by_key.items():
             _replace_ref_projection(
                 c._index[key],  # noqa: SLF001
                 old_key_refs,
-                new_key_refs,
+                new_by_key[key],
             )
 
 
