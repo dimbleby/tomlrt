@@ -6304,6 +6304,7 @@ def test_live_section_clone_files_ancestor_refs_at_physical_position() -> None:
     assert out == td("""
         [x]
         a = 1
+
         [x.y.z.w]
 
         [x.y.z.w.k68]
@@ -6368,6 +6369,7 @@ def test_sort_super_table_with_aot_preserves_explicit_header() -> None:
         [a]
         date = "2019"
         name = "Bob"
+
         [[a.hello]]
         x = 1
         """)
@@ -6378,16 +6380,7 @@ def test_sort_super_table_with_aot_preserves_explicit_header() -> None:
     assert reparsed.table("a").aot("hello")[0]["x"] == 1
 
 
-def test_sort_when_aot_child_precedes_parent_in_source() -> None:
-    # Regression: when an explicit [c] header was preceded in source by
-    # one of its structural children (i.e. c-header was not the doc-
-    # stream-earliest owned slot of c's region), Container.sort used
-    # to drag c-header's own positional leading into its new top-of-
-    # region position — producing a spurious leading blank line at the
-    # head of the reordered region. The region-marker model now sets
-    # c-header's new leading from the region's external structural
-    # prefix (the doc preamble / above-region gap) plus c-header's own
-    # attached-comment remainder.
+def test_sort_preserves_parent_separator_when_aot_child_precedes_it() -> None:
     src = td("""
         [[a-section.hello]]
         ports = [80]
@@ -6395,16 +6388,162 @@ def test_sort_when_aot_child_precedes_parent_in_source() -> None:
         [a-section]
         date = "2019"
         """)
-    doc = tomlrt.loads(src)
-    doc["a-section"].sort()
-    out = tomlrt.dumps(doc)
-    assert out == td("""
+    expected = td("""
         [a-section]
         date = "2019"
+
         [[a-section.hello]]
         ports = [80]
+    """)
+    doc = tomlrt.loads(src)
+    doc.format()
+    doc["a-section"].sort()
+    assert tomlrt.dumps(doc) == expected
+
+    doc = tomlrt.loads(src)
+    doc["a-section"].sort()
+    doc.format()
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_sort_preserves_separators_for_multiple_forward_aot_children() -> None:
+    src = td("""
+        [[a.x]]
+        x = 1
+
+        [[a.y]]
+        y = 2
+
+        [a]
+        z = 3
         """)
-    assert _reparses(out)
+    expected = td("""
+        [a]
+        z = 3
+
+        [[a.x]]
+        x = 1
+
+        [[a.y]]
+        y = 2
+    """)
+    doc = tomlrt.loads(src)
+    doc.format()
+    doc.table("a").sort()
+    assert tomlrt.dumps(doc) == expected
+
+    doc = tomlrt.loads(src)
+    doc.table("a").sort()
+    doc.format()
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_sort_hoists_mixed_leaf_before_forward_structural_content() -> None:
+    src = td("""
+        [a.x.m]
+        u = 1
+
+        [a]
+        x.foo = 2
+        z = 3
+    """)
+    expected = td("""
+        [a]
+        z = 3
+        x.foo = 2
+
+        [a.x.m]
+        u = 1
+    """)
+    doc = tomlrt.loads(src)
+    doc.format()
+    doc.table("a").sort()
+    out = tomlrt.dumps(doc)
+    assert out == expected
+    assert _reparses(out) == doc.to_dict()
+
+    doc = tomlrt.loads(src)
+    doc.table("a").sort()
+    doc.format()
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_sort_groups_all_mixed_leaves_before_their_structural_content() -> None:
+    src = td("""
+        [a.x.m]
+        u = 1
+
+        [a.y.m]
+        v = 2
+
+        [a]
+        x.foo = 3
+        y.foo = 4
+        z = 5
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("a").sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        z = 5
+        x.foo = 3
+        y.foo = 4
+
+        [a.x.m]
+        u = 1
+
+        [a.y.m]
+        v = 2
+    """)
+    assert _reparses(out) == doc.to_dict()
+
+    doc = tomlrt.loads(src)
+    doc.table("a").sort(reverse=True)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        z = 5
+        y.foo = 4
+        x.foo = 3
+
+        [a.y.m]
+        v = 2
+
+        [a.x.m]
+        u = 1
+    """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_sort_groups_mixed_parts_when_parent_header_is_already_first() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x.foo = 3
+        y.foo = 4
+
+        [a.x.m]
+        u = 1
+
+        [a.y.m]
+        v = 2
+        """)
+    )
+    doc.table("a").sort(reverse=True)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        y.foo = 4
+        x.foo = 3
+
+        [a.y.m]
+        v = 2
+
+        [a.x.m]
+        u = 1
+    """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_sort_preserves_doc_preamble_when_aot_child_precedes_parent() -> None:
@@ -7898,20 +8037,7 @@ def test_dotted_kv_chain_anchors_by_physical_position_not_cached_tail() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_sort_rejects_mixed_key_whose_headerless_leaf_would_be_captured() -> None:
-    """``reorder_container``'s validation that a leaf KV cannot follow a
-    structural key checked ``slot.host_path == c_path`` to decide
-    whether a KV counted as "leaf content" of the mixed key being
-    reordered. That equality never holds when ``c`` itself is
-    headerless (a dotted-key navigator, not a physical host): such a
-    KV's ``host_path`` is ``c``'s own nearest enclosing header (or the
-    document root), shallower than ``c_path``. So a mixed key's
-    genuinely-vulnerable leading dotted content silently passed the
-    check as "safe", and sorting two such mixed keys spliced one's
-    leading dotted KVs directly after the other's nested header body —
-    with no header of their own to re-establish scope, a re-parse
-    captured them as further nested content instead of dropping them
-    back at the document root."""
+def test_sort_mixed_headerless_keys_keeps_all_leaves_before_headers() -> None:
     doc = tomlrt.loads(
         td("""
         3.14159 = "x y"
@@ -7940,8 +8066,35 @@ def test_sort_rejects_mixed_key_whose_headerless_leaf_would_be_captured() -> Non
         k49 = 3.5
         """)
     )
-    with pytest.raises(ValueError, match="cannot follow a structural"):
-        doc["3"].sort()
+    doc["3"].sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        3.14159 = "x y"
+        3.k61.14159 = "x y"
+        3.k91.14159 = "x y"
+        3.k91.k24.14159 = "x y"
+        3.k91.k24.k81 = -7
+
+        [3.k61.k91]
+        14159 = "x y"
+        k81 = -7
+
+        [3.k61.k91.k24]
+        14159 = "x y"
+        k81 = -7
+        k49 = 3.5
+
+        [3.k91.k56]
+        14159 = "x y"
+        k81 = -7
+        k5 = 1
+
+        [3.k91.k56.k24]
+        14159 = "x y"
+        k81 = -7
+        k49 = 3.5
+    """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_reposition_install_leaf_kv_with_no_preceding_header_is_left_unmoved() -> None:
