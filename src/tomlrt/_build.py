@@ -45,11 +45,14 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
     current_host = root
     for slot in slots:
         if isinstance(slot, StructuralHeaderSlot):
-            current_host = (
-                root
-                if slot.path == root._path  # noqa: SLF001
-                else _apply_header(root, slot)
-            )
+            if slot.path == root._path:  # noqa: SLF001
+                assert root._header_ref is None  # noqa: SLF001
+                own_ref = record_ref(root, slot)
+                root._header_ref = own_ref  # noqa: SLF001
+                root._body_tail = slot  # noqa: SLF001
+                current_host = root
+            else:
+                current_host = _apply_header(root, slot)
         else:
             assert isinstance(slot, KVSlot)
             assert slot.host_path == current_host._path, (  # noqa: SLF001
