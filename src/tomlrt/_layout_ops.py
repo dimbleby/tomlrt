@@ -23,6 +23,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import itertools
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from tomlrt._comments import _split_attached_block
@@ -3551,30 +3552,13 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         region_successor = physical_blocks[-1][-1]._next  # noqa: SLF001
         old_region_slots = _slots_between(doc, region_predecessor, region_successor)
 
-        # Peer-block model: every entry header is a comparable block.
-        # The structural separator at each physical position is
-        # positional (stays at that index); the comment-remainder
-        # travels with the block.
-        structural_by_position: list[Trivia] = []
-        remainder_by_block: list[Trivia] = []
-        for block in physical_blocks:
-            structural, remainder = _split_leading_for_reorder(block[0])
-            structural_by_position.append(structural)
-            remainder_by_block.append(remainder)
-
         new_order_indices = [
             phys_idx_by_id[id(t)] for t in new_logical_order if id(t) in phys_idx_by_id
         ]
-        new_head_leadings = [
-            Trivia(
-                list(structural_by_position[new_pos].pieces)
-                + list(remainder_by_block[phys_idx].pieces)
-            )
-            for new_pos, phys_idx in enumerate(new_order_indices)
-        ]
-        _splice_blocks_in_order(
-            doc, physical_blocks, new_order_indices, new_head_leadings
-        )
+        output_blocks = [physical_blocks[phys_idx] for phys_idx in new_order_indices]
+        movable_slots = [slot for block in physical_blocks for slot in block]
+        placements = _peer_placements(physical_blocks, output_blocks)
+        _splice_blocks_in_order(doc, movable_slots, placements)
         _finish_region_permutation(
             doc,
             predecessor=region_predecessor,
@@ -3724,19 +3708,51 @@ def _finish_region_permutation(
     _reorder_region_refs(old_slots, new_slots)
 
 
+@dataclass(slots=True)
+class _ReorderUnit:
+    """One independently sortable slot block and its leading-trivia state."""
+
+    slots: list[Slot]
+    key_rank: int
+    structural: bool
+    mixed: bool
+    prefix: Trivia
+    remainder: Trivia
+    physical_position: int
+
+
+def _peer_placements(
+    physical_blocks: list[list[Slot]], output_blocks: list[list[Slot]]
+) -> list[tuple[list[Slot], Trivia]]:
+    """Pair peer blocks with positional prefixes and attached remainders."""
+    prefixes: list[Trivia] = []
+    remainder_by_head: dict[int, Trivia] = {}
+    for block in physical_blocks:
+        prefix, remainder = _split_leading_for_reorder(block[0])
+        prefixes.append(prefix)
+        remainder_by_head[id(block[0])] = remainder
+    return [
+        (
+            block,
+            Trivia(
+                list(prefixes[position].pieces)
+                + list(remainder_by_head[id(block[0])].pieces)
+            ),
+        )
+        for position, block in enumerate(output_blocks)
+    ]
+
+
 def _splice_blocks_in_order(
     doc: Document,
-    physical_blocks: list[list[Slot]],
-    new_order_indices: list[int],
-    new_head_leadings: list[Trivia],
+    movable_slots: list[Slot],
+    placements: list[tuple[list[Slot], Trivia]],
 ) -> None:
     """Reorder movable layout blocks within the doc-stream.
 
-    ``physical_blocks`` is the list of non-empty slot blocks in
-    physical doc-stream order (``physical_blocks[0][0]`` is the
-    earliest owned slot). ``new_order_indices`` maps each new position
-    to the old physical block index. ``new_head_leadings`` is indexed by
-    new position.
+    ``movable_slots`` is in original physical order. ``placements`` is
+    the block grouping, order, and head leading to reinsert; callers may
+    split an original logical block when its binding order must change.
 
     The helper permutes the doc-stream linked list and terminates the
     former final movable slot if it moves into the middle. Other trivia
@@ -3745,28 +3761,23 @@ def _splice_blocks_in_order(
     ``reorder_container`` (region-marker model) for the two existing
     flavours.
     """
-    if not physical_blocks:
+    if not movable_slots:
         return
 
-    former_region_tail = physical_blocks[-1][-1]
-    anchor_prev = physical_blocks[0][0]._prev  # noqa: SLF001
-
-    for block in physical_blocks:
-        for s in block:
-            unlink_slot(s, doc, strip_new_head_leading=False)
+    anchor_prev = movable_slots[0]._prev  # noqa: SLF001
+    former_region_tail = movable_slots[-1]
+    for slot in movable_slots:
+        unlink_slot(slot, doc, strip_new_head_leading=False)
 
     insert_after_slot = anchor_prev
-    for phys_idx in new_order_indices:
-        for slot in physical_blocks[phys_idx]:
+    for block, leading in placements:
+        block[0].leading = Trivia(list(leading.pieces))
+        for slot in block:
             if insert_after_slot is None:
                 insert_before_head(slot, doc)
             else:
                 insert_after(insert_after_slot, slot, doc)
             insert_after_slot = slot
-
-    for new_pos, phys_idx in enumerate(new_order_indices):
-        head_slot = physical_blocks[phys_idx][0]
-        head_slot.leading = Trivia(list(new_head_leadings[new_pos].pieces))
 
     _terminate_unless_tail(former_region_tail, doc)
 
@@ -3916,14 +3927,15 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     """Reorder ``c``'s direct children to ``new_key_order``.
 
     ``new_key_order`` is trusted to be a permutation of
-    ``dict.keys(c)``. Each key's slots — KV slots filed under the
-    key, plus child section/AoT slots gathered from ``c``'s subtree —
-    are spliced together as one contiguous block. Block classification
-    visits only subtree-owned slots; the linked-list walk is anchored
-    within the subtree and stops once all owned slots are found rather
-    than starting unconditionally at document head. Only the head of
-    each block receives a new *positional separator*; attached comments
-    and other leadings travel with their slots.
+    ``dict.keys(c)``. A pure leaf or structural key moves as one block.
+    A mixed key splits into leaf and structural units so every mixed
+    leaf remains ahead of every section header after sorting. Positional
+    separators stay within the corresponding unit kind; attached
+    comments travel with their unit.
+
+    Classification visits only subtree-owned slots; the linked-list walk
+    is anchored within the subtree and stops once all owned slots are
+    found rather than starting unconditionally at document head.
 
     Non-contiguous keys (e.g. ``[a]; [other]; [a.sub]`` where 'a'
     has two runs at root) are handled by collecting both runs and
@@ -3945,10 +3957,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     their *own* entry — do participate and move with their key.
 
     Only mutates the CST; dict storage is the caller's responsibility.
-
-    Raises:
-        ValueError: the proposed order places a leaf KV after a
-            structural section/AoT key (would re-bind it as nested).
     """
     doc = c._layout_root  # noqa: SLF001
     assert doc is not None
@@ -3985,69 +3993,31 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     ordered_slots = _owned_slots_ordered(c._refs[0].slot, membership)  # noqa: SLF001
 
     key_blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
-    physical_blocks: list[list[Slot]] = []
-    phys_idx_of_header: int | None = None
-    phys_idx_of_key: dict[str, int] = {}
+    child_keys_in_phys_order: list[str] = []
+    movable_slots: list[Slot] = []
 
     for cur in ordered_slots:
         is_header = cur is header_slot
         bind_key = None if is_header else _direct_child_key(cur, c_path, c_plen)
         if is_header:
-            phys_idx_of_header = len(physical_blocks)
-            physical_blocks.append([cur])
+            movable_slots.append(cur)
         elif bind_key is not None and bind_key in key_blocks:
-            if bind_key not in phys_idx_of_key:
-                phys_idx_of_key[bind_key] = len(physical_blocks)
-                physical_blocks.append(key_blocks[bind_key])
+            if not key_blocks[bind_key]:
+                child_keys_in_phys_order.append(bind_key)
             key_blocks[bind_key].append(cur)
+            movable_slots.append(cur)
 
-    # Reject orders that would re-bind a leaf KV under a structural
-    # section header. A block with *any* leaf KV (a bare or dotted
-    # ``key = value``) must not follow a structural block — including a
-    # "mixed" key that owns both a leaf and a sub-section, whose leaf
-    # part would be captured.
-    def _has_leaf(slots: list[Slot]) -> bool:
-        # A block's own leading run — before its first structural
-        # header, if any — is unprotected: a KV there is vulnerable to
-        # capture by whatever header immediately precedes the block
-        # once spliced. Checking ``host_path == c_path`` instead is
-        # wrong whenever ``c`` itself is headerless (a dotted-key
-        # navigator, not a physical host): such a KV's ``host_path`` is
-        # ``c``'s own nearest enclosing header (or root), shallower
-        # than ``c_path``, so the equality never matches and a
-        # genuinely-vulnerable leading KV silently passes as safe.
-        # Once the block's own header appears, everything after it is
-        # scoped there and no longer at risk.
-        for s in slots:
-            if isinstance(s, StructuralHeaderSlot):
-                return False
-            assert isinstance(s, KVSlot), "unknown slot type"
-            return True
-        return False
+    def _is_leaf_slot(slot: Slot, child_path: tuple[str, ...]) -> bool:
+        if not isinstance(slot, KVSlot):
+            return False
+        return slot.host_path[: len(child_path)] != child_path
 
-    def _has_structural(slots: list[Slot]) -> bool:
-        return any(isinstance(s, StructuralHeaderSlot) for s in slots)
-
-    seen_structural = False
-    for k in new_key_order:
-        block = key_blocks[k]
-        if not block:
-            continue
-        if _has_leaf(block) and seen_structural:
-            msg = (
-                f"reorder: key {k!r} has leaf content that cannot follow a "
-                f"structural section/AoT key (would rebind it as nested)"
-            )
-            raise ValueError(msg)
-        if _has_structural(block):
-            seen_structural = True
-
-    if not physical_blocks:
+    if not movable_slots:
         return
 
-    movable_ids = {id(s) for block in physical_blocks for s in block}
-    earliest_owned = next(s for s in ordered_slots if id(s) in movable_ids)
-    latest_owned = next(s for s in reversed(ordered_slots) if id(s) in movable_ids)
+    movable_ids = {id(slot) for slot in movable_slots}
+    earliest_owned = movable_slots[0]
+    latest_owned = movable_slots[-1]
     region_predecessor = earliest_owned._prev  # noqa: SLF001
     region_successor = latest_owned._next  # noqa: SLF001
     old_region_slots = _slots_between(doc, region_predecessor, region_successor)
@@ -4078,75 +4048,68 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             list(head_structural.pieces) + list(front_foreign[0].leading.pieces)
         )
 
-    # Region-external prefix moves to c-header's leading so preambles /
-    # above-region separators survive even if c-header was not first.
-    region_head_structural, region_head_remainder = _split_leading_for_reorder(
-        earliest_owned
-    )
+    key_rank = {key: rank for rank, key in enumerate(new_key_order)}
+    physical_position = {id(slot): pos for pos, slot in enumerate(ordered_slots)}
+    units: list[_ReorderUnit] = []
+    for key in child_keys_in_phys_order:
+        child_path = (*c_path, key)
+        leaves: list[Slot] = []
+        structural: list[Slot] = []
+        for slot in key_blocks[key]:
+            (leaves if _is_leaf_slot(slot, child_path) else structural).append(slot)
+        mixed = bool(leaves and structural)
+        for slots, is_structural in ((leaves, False), (structural, True)):
+            if not slots:
+                continue
+            prefix, remainder = _split_leading_for_reorder(slots[0])
+            units.append(
+                _ReorderUnit(
+                    slots=slots,
+                    key_rank=key_rank[key],
+                    structural=is_structural,
+                    mixed=mixed,
+                    prefix=prefix,
+                    remainder=remainder,
+                    physical_position=physical_position[id(slots[0])],
+                )
+            )
 
-    # c-header's attached comments travel with it; its structural prefix
-    # is replaced by the region-external prefix above.
+    header_prefix = Trivia()
+    header_remainder = Trivia()
     if header_slot is not None:
-        if header_slot is earliest_owned:
-            c_header_remainder = region_head_remainder
-        else:
-            _, c_header_remainder = _split_leading_for_reorder(header_slot)
-    else:
-        c_header_remainder = Trivia()
+        header_prefix, header_remainder = _split_leading_for_reorder(header_slot)
+        if header_slot is not earliest_owned:
+            first_unit = min(units, key=lambda unit: unit.physical_position)
+            header_prefix, first_unit.prefix = first_unit.prefix, header_prefix
 
-    # Snapshot child positional prefixes. Child position 0 keeps a gap
-    # only if c-header actually sat above the first child in source; else
-    # that prefix is the region-external one already consumed above.
-    child_keys_in_phys_order = sorted(phys_idx_of_key, key=phys_idx_of_key.__getitem__)
-    child_physical_blocks = [key_blocks[k] for k in child_keys_in_phys_order]
-    child_phys_pos_of_key: dict[str, int] = {
-        k: i for i, k in enumerate(child_keys_in_phys_order)
+    prefixes_by_kind: dict[tuple[bool, bool], list[Trivia]] = {}
+    for unit in sorted(units, key=lambda item: item.physical_position):
+        prefixes_by_kind.setdefault((unit.structural, unit.mixed), []).append(
+            unit.prefix
+        )
+    prefix_iterators = {
+        kind: iter(prefixes) for kind, prefixes in prefixes_by_kind.items()
     }
+    output_units = sorted(units, key=lambda unit: (unit.structural, unit.key_rank))
 
-    header_above_first_child = (
-        header_slot is not None
-        and child_physical_blocks
-        and earliest_owned is not child_physical_blocks[0][0]
-    )
-
-    child_structural_at_new_pos: list[Trivia] = []
-    child_remainder_of: list[Trivia] = []
-    for i, block in enumerate(child_physical_blocks):
-        structural, remainder = _split_leading_for_reorder(block[0])
-        if i == 0 and header_slot is not None and not header_above_first_child:
-            structural = Trivia()
-        child_structural_at_new_pos.append(structural)
-        child_remainder_of.append(remainder)
-
-    # c-header, when present, occupies new position 0; children follow.
-    # Each child position gets that position's structural prefix plus the
-    # moved block's attached-comment remainder.
-    new_order_indices: list[int] = []
-    new_head_leadings: list[Trivia] = []
-
+    placements: list[tuple[list[Slot], Trivia]] = []
     if header_slot is not None:
-        assert phys_idx_of_header is not None
-        new_order_indices.append(phys_idx_of_header)
-        new_head_leadings.append(
-            Trivia(
-                list(region_head_structural.pieces) + list(c_header_remainder.pieces)
+        placements.append(
+            (
+                [header_slot],
+                Trivia(list(header_prefix.pieces) + list(header_remainder.pieces)),
+            )
+        )
+    for unit in output_units:
+        prefix = next(prefix_iterators[(unit.structural, unit.mixed)])
+        placements.append(
+            (
+                unit.slots,
+                Trivia(list(prefix.pieces) + list(unit.remainder.pieces)),
             )
         )
 
-    new_child_pos = 0
-    for k in new_key_order:
-        if k not in child_phys_pos_of_key:
-            continue
-        phys_child_idx = child_phys_pos_of_key[k]
-        new_order_indices.append(phys_idx_of_key[k])
-        structural = child_structural_at_new_pos[new_child_pos]
-        remainder = child_remainder_of[phys_child_idx]
-        new_head_leadings.append(
-            Trivia(list(structural.pieces) + list(remainder.pieces))
-        )
-        new_child_pos += 1
-
-    _splice_blocks_in_order(doc, physical_blocks, new_order_indices, new_head_leadings)
+    _splice_blocks_in_order(doc, movable_slots, placements)
 
     _finish_region_permutation(
         doc,
