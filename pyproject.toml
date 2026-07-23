@@ -89,6 +89,7 @@ enable_error_code = [
 
 [tool.ruff]
 src = ["src", "tests"]
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["ALL"]
