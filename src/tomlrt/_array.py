@@ -317,7 +317,7 @@ class Array(list[Any]):
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Any:
-        i = _norm_int_index(index, len(self), "pop")
+        i = _norm_index(index, len(self), "pop")
         decoded = self[i]
         del self[i]
         return decoded
@@ -333,12 +333,8 @@ class Array(list[Any]):
 
     @override
     def insert(self, index: SupportsIndex, value: Any) -> None:
-        i = int(index)
-        n = len(self)
-        if i < 0:
-            i = max(0, n + i)
-        i = min(i, n)
-        if i == n:
+        i = _norm_insert_index(index, len(self))
+        if i == len(self):
             self.append(value)
             return
         cst, decoded = self._synth_cst(value)
@@ -421,7 +417,7 @@ class Array(list[Any]):
         # Reject before synthesising or mutating any CST, matching the
         # IndexError that ``list.__setitem__`` raises for a bad index.
         items = self._value.items
-        i = _norm_int_index(index, len(items), "list assignment")
+        i = _norm_index(index, len(items), "list assignment")
         cst, dec = self._synth_cst(value)
         items[i].value = cst
         list.__setitem__(self, i, dec)
@@ -434,7 +430,7 @@ class Array(list[Any]):
             if not removed:
                 return
         else:
-            removed = [_norm_int_index(index, len(items), "list assignment")]
+            removed = [_norm_index(index, len(items), "list assignment")]
         list.__delitem__(self, index if isinstance(index, slice) else removed[0])
         splice_out(
             self._value,
@@ -450,7 +446,7 @@ class Array(list[Any]):
 
     @override
     def __imul__(self, count: SupportsIndex) -> Self:
-        n = int(count)
+        n = operator.index(count)
         if n <= 0:
             self.clear()
             return self
@@ -477,13 +473,19 @@ class Array(list[Any]):
         return self
 
 
-def _norm_int_index(index: SupportsIndex, n: int, action: str) -> int:
+def _norm_insert_index(index: SupportsIndex, n: int) -> int:
+    """Return the clamped index used by ``list.insert``."""
+    i = operator.index(index)
+    return max(0, n + i) if i < 0 else min(i, n)
+
+
+def _norm_index(index: SupportsIndex, n: int, action: str) -> int:
     """Return non-negative in-range index, or raise IndexError.
 
     ``action`` is used verbatim in the error message
     (e.g. ``"pop"`` → ``"pop index out of range"``).
     """
-    i = int(index)
+    i = operator.index(index)
     if i < 0:
         i += n
     if i < 0 or i >= n:
@@ -585,7 +587,7 @@ class AoT(list["Table"]):
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Table:
-        i = _norm_int_index(index, len(self), "pop")
+        i = _norm_index(index, len(self), "pop")
         if self._layout_root is None:
             return list.pop(self, i)
         return _layout_ops.remove_aot_entry(self, i)
@@ -603,7 +605,7 @@ class AoT(list["Table"]):
         if self._layout_root is None:
             list.__delitem__(self, index)
             return
-        _layout_ops.remove_aot_entry(self, int(index))
+        _layout_ops.remove_aot_entry(self, operator.index(index))
 
     @override
     def clear(self) -> None:
@@ -700,9 +702,7 @@ class AoT(list["Table"]):
             list.insert(self, index, _make_unattached_entry(entry))
             return
         # Normalise against the pre-append length to match list.insert.
-        idx = operator.index(index)
-        n_before = len(self)
-        idx = max(0, n_before + idx) if idx < 0 else min(idx, n_before)
+        idx = _norm_insert_index(index, len(self))
         new_entry = self._add_entry_attached(entry)
         new_order: list[Table] = list(self)
         new_order.pop()
@@ -747,7 +747,7 @@ class AoT(list["Table"]):
 
     @override
     def __imul__(self, count: SupportsIndex) -> Self:
-        n = int(count)
+        n = operator.index(count)
         if n <= 0:
             self.clear()
             return self
