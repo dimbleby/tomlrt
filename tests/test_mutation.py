@@ -670,6 +670,26 @@ def test_array_pop_out_of_range_raises_indexerror() -> None:
         xs.pop(-99)
 
 
+def test_array_indices_and_repeat_counts_require_supports_index() -> None:
+    doc = tomlrt.loads("a = [1, 2]\n")
+    arr = doc.array("a")
+    invalid: Any = 0.9
+
+    with pytest.raises(TypeError):
+        arr.insert(invalid, 9)
+    with pytest.raises(TypeError):
+        arr[invalid] = 9
+    with pytest.raises(TypeError):
+        del arr[invalid]
+    with pytest.raises(TypeError):
+        arr.pop(invalid)
+    with pytest.raises(TypeError):
+        arr *= invalid
+
+    assert list(arr) == [1, 2]
+    assert tomlrt.dumps(doc) == "a = [1, 2]\n"
+
+
 def test_array_remove_missing_raises_valueerror() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc.array("xs")
@@ -1627,6 +1647,38 @@ def test_aot_insert_invalid_index_does_not_mutate_document() -> None:
         x = 1
         """)
     assert len(aot) == 1
+
+
+def test_attached_aot_indices_and_repeat_counts_require_supports_index() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[a]]
+            x = 1
+
+            [[a]]
+            x = 2
+            """)
+    )
+    aot = doc.aot("a")
+    invalid: Any = 0.9
+
+    with pytest.raises(TypeError):
+        del aot[invalid]
+    with pytest.raises(TypeError):
+        aot.pop(invalid)
+    with pytest.raises(TypeError):
+        aot.insert(invalid, {"x": 3})
+    with pytest.raises(TypeError):
+        aot *= invalid
+
+    assert aot.to_list() == [{"x": 1}, {"x": 2}]
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+        """)
 
 
 def test_aot_reverse_reorders_cst() -> None:

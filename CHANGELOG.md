@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Array` and `AoT` indices and repeat counts no longer truncate floats.
 - Invalid `AoT.insert()` indices no longer modify attached documents.
 - Sorting child tables no longer scans unrelated document prefixes and suffixes.
 
