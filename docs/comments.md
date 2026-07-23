@@ -26,7 +26,8 @@ print(tomlrt.dumps(doc))
 
 ## Comments above an entry
 
-`Table.leading_comments` is keyed by entry name and stores a tuple of bare comment lines (no leading `#`):
+`Table.leading_comments` is keyed by entry name and stores the attached run
+of bare comment lines immediately above that entry (no leading `#`):
 
 ```python
 server.leading_comments["port"] = (
@@ -48,19 +49,22 @@ server.header_leading_comments = ("Server configuration.",)
 
 ## Array-item comments
 
-`Array` exposes `comments` and `leading_comments` keyed by **integer index**:
+`Array` exposes `comments`, `leading_comments`, and `leading_block` keyed by
+**integer index**:
 
 ```python
 tags = doc.array("tags")
 tags.comments[0] = "primary"
 tags.leading_comments[1] = ("alternate",)
+tags.leading_block[2] = ("older note", None, "attached note")
 ```
 
 ## Inline-table comments
 
 Because tomlrt targets TOML 1.1, inline tables may span multiple lines and
-carry comments. `Table.comments` and `Table.leading_comments` work on an
-inline table just as they do on a `[section]`, keyed by entry name:
+carry comments. `Table.comments`, `Table.leading_comments`, and
+`Table.leading_block` work on an inline table just as they do on a
+`[section]`, keyed by entry name:
 
 ```python
 doc = tomlrt.loads('pkg = { name = "tomlrt", version = "0.1" }\n')
@@ -84,24 +88,23 @@ For a dotted-key inline table such as `{ a.b = 1 }`, address the comment
 through the inner table — `doc["t"]["a"].comments["b"]` — mirroring how a
 top-level `a.b = 1` is reached via `doc["a"].comments["b"]`.
 
-`Table.header_comment` and `Table.header_leading_comments` remain
-unavailable on inline tables: an inline table has no header line to attach
-them to.
+`Table.header_comment`, `Table.header_leading_comments`, and
+`Table.header_leading_block` remain unavailable on inline tables: an inline
+table has no header line to attach them to.
 
-## Orphan comments between sections
+## Blank-separated leading blocks
 
 `leading_comments` and `header_leading_comments` cover only the run of `# …`
-lines that sit *directly* above an entry or section header.
-A comment group separated from the entry by a blank line — for example a
-free-standing `# …` block between `[a]` and `[b]` — is not part of either
-view, and is silently dropped if the entry is removed and reinserted.
+lines that sit *directly* above an entry, array element, or section header.
+A comment group separated from its construct by a blank line is not part of
+either view.
 
-`Table.leading_block` and `Table.header_leading_block` are the lossless
-counterparts: they expose the *whole* leading region — both the blank-
-separated groups above and the attached run immediately above the entry —
-as a tuple in which each `str` is a bare comment line and each `None` is
-a blank line. Round-tripping a value through them therefore preserves
-exact line structure.
+`Table.leading_block`, `Array.leading_block`, and
+`Table.header_leading_block` are the full-region counterparts: they expose
+both blank-separated groups and the attached run as a tuple in which each
+`str` is a bare comment line and each `None` is a blank line. The same
+distinction applies to section entries, multiline inline-table entries, and
+multiline array elements.
 
 ```toml
 [a]

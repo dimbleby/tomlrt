@@ -2337,9 +2337,7 @@ def test_array_leading_comments_repr_lists_only_present_indices() -> None:
         """)
     )
     arr = doc.array("xs")
-    body = repr(arr.leading_comments)
-    assert "0:" in body
-    assert "['first']" in body
+    assert repr(arr.leading_comments) == "{0: ('first',)}"
 
 
 def test_array_comments_on_last_no_comma_forces_bracket_to_new_line() -> None:
@@ -2992,10 +2990,295 @@ def test_header_leading_block_unavailable_on_inline_table() -> None:
         _ = doc.table("x").header_leading_block
 
 
-def test_leading_block_unavailable_on_inline_table() -> None:
-    doc = tomlrt.loads("x = { a = 1 }\n")
-    with pytest.raises(tomlrt.TOMLError):
-        _ = doc.table("x").leading_block
+def test_array_leading_block_distinguishes_attached_comments() -> None:
+    src = td("""
+        x = [
+          # orphan
+
+          # attached
+          1,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("x")
+    assert arr.leading_block[0] == ("orphan", None, "attached")
+    assert arr.leading_comments[0] == ("attached",)
+    arr.leading_block[0] = arr.leading_block[0]
+    assert tomlrt.dumps(doc) == src
+
+
+def test_array_leading_block_excludes_preceding_row_break() -> None:
+    src = "x = [1,  \n  2]\n"
+    doc = tomlrt.loads(src)
+    arr = doc.array("x")
+    assert 1 not in arr.leading_block
+    arr.leading_block[1] = ()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_array_orphan_only_is_absent_from_leading_comments() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          # orphan
+
+          1,
+        ]
+        """)
+    )
+    arr = doc.array("x")
+    assert arr.leading_block[0] == ("orphan", None)
+    assert 0 not in arr.leading_comments
+
+
+def test_array_leading_comments_preserve_older_block() -> None:
+    src = td("""
+        x = [
+          # orphan
+
+          # old
+          1,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("x")
+    arr.leading_comments[0] = ("new",)
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          # orphan
+
+          # new
+          1,
+        ]
+        """)
+    del arr.leading_comments[0]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          # orphan
+
+          1,
+        ]
+        """)
+
+
+def test_array_leading_block_item_zero_blank_and_bracket_comment() -> None:
+    src = td("""
+        x = [ # bracket
+
+          1,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("x")
+    assert arr.leading_block[0] == (None,)
+    assert 0 not in arr.leading_comments
+    arr.leading_comments[0] = ("attached",)
+    assert tomlrt.dumps(doc) == td("""
+        x = [ # bracket
+
+          # attached
+          1,
+        ]
+        """)
+    del arr.leading_block[0]
+    assert tomlrt.dumps(doc) == td("""
+        x = [ # bracket
+          1,
+        ]
+        """)
+
+
+def test_array_leading_block_set_promotes_and_delete_clears() -> None:
+    doc = tomlrt.loads("x = [1, 2]\n")
+    arr = doc.array("x")
+    arr.leading_block[1] = ("orphan", None, "attached")
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+            1,
+            # orphan
+
+            # attached
+            2,
+        ]
+        """)
+    reparsed = tomlrt.loads(tomlrt.dumps(doc)).array("x")
+    assert reparsed.leading_block[1] == ("orphan", None, "attached")
+    assert reparsed.leading_comments[1] == ("attached",)
+    del arr.leading_block[1]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+            1,
+            2,
+        ]
+        """)
+
+
+def test_array_leading_block_empty_does_not_promote() -> None:
+    doc = tomlrt.loads("x = [1, 2]\n")
+    arr = doc.array("x")
+    arr.leading_block[0] = ()
+    assert tomlrt.dumps(doc) == "x = [1, 2]\n"
+    arr.leading_block[0] = (None,)
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+
+            1,
+            2,
+        ]
+        """)
+
+
+def test_array_leading_block_empty_assignment_clears_existing() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+            # note
+            1,
+        ]
+        """)
+    )
+    arr = doc.array("x")
+    arr.leading_block[0] = ()
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+            1,
+        ]
+        """)
+
+
+def test_array_leading_block_delete_absent_raises() -> None:
+    arr = tomlrt.loads("x = [\n    1,\n]\n").array("x")
+    with pytest.raises(KeyError, match="0"):
+        del arr.leading_block[0]
+
+
+def test_array_leading_block_repr_lists_only_present_indices() -> None:
+    arr = tomlrt.loads(
+        td("""
+        x = [
+            # note
+
+            1,
+        ]
+        """)
+    ).array("x")
+    assert repr(arr.leading_block) == "{0: ('note', None)}"
+
+
+def test_array_leading_views_resolve_before_validation() -> None:
+    arr = tomlrt.loads("x = [1]\n").array("x")
+    with pytest.raises(KeyError, match="2"):
+        arr.leading_comments[2] = "invalid"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    with pytest.raises(KeyError, match="2"):
+        arr.leading_block[2] = "invalid"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+
+
+def test_inline_leading_block_distinguishes_attached_comments() -> None:
+    src = td("""
+        x = {
+          # orphan
+
+          # attached
+          a = 1,
+        }
+        """)
+    doc = tomlrt.loads(src)
+    table = doc.table("x")
+    assert table.leading_block["a"] == ("orphan", None, "attached")
+    assert table.leading_comments["a"] == ("attached",)
+    table.leading_block["a"] = table.leading_block["a"]
+    assert tomlrt.dumps(doc) == src
+
+
+def test_inline_leading_block_excludes_preceding_row_break() -> None:
+    src = "x = { a = 1,  \n  # note\n  b = 2 }\n"
+    doc = tomlrt.loads(src)
+    table = doc.table("x")
+    assert table.leading_block["b"] == ("note",)
+    table.leading_block["b"] = table.leading_block["b"]
+    assert tomlrt.dumps(doc) == src
+
+
+def test_inline_leading_comments_preserve_older_block() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = {
+          # orphan
+
+          # old
+          a = 1,
+        }
+        """)
+    )
+    table = doc.table("x")
+    table.leading_comments["a"] = ("new",)
+    assert tomlrt.dumps(doc) == td("""
+        x = {
+          # orphan
+
+          # new
+          a = 1,
+        }
+        """)
+    del table.leading_comments["a"]
+    assert tomlrt.dumps(doc) == td("""
+        x = {
+          # orphan
+
+          a = 1,
+        }
+        """)
+
+
+def test_inline_leading_block_set_promotes_and_delete_clears() -> None:
+    doc = tomlrt.loads("x = { a = 1, b = 2 }\n")
+    table = doc.table("x")
+    table.leading_block["b"] = ("orphan", None, "attached")
+    assert tomlrt.dumps(doc) == td("""
+        x = {
+            a = 1,
+            # orphan
+
+            # attached
+            b = 2,
+        }
+        """)
+    reparsed = tomlrt.loads(tomlrt.dumps(doc)).table("x")
+    assert reparsed.leading_block["b"] == ("orphan", None, "attached")
+    assert reparsed.leading_comments["b"] == ("attached",)
+    del table.leading_block["b"]
+    assert tomlrt.dumps(doc) == td("""
+        x = {
+            a = 1,
+            b = 2,
+        }
+        """)
+
+
+def test_inline_leading_block_comma_first_preserves_predecessor_eol() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = {
+              a = 1 # eol
+             ,b = 2
+        }
+        """)
+    )
+    table = doc.table("x")
+    table.leading_block["b"] = ("orphan", None, "attached")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = {
+              a = 1 # eol
+              # orphan
+
+              # attached
+             ,b = 2
+        }
+        """)
+    reparsed = tomlrt.loads(out).table("x")
+    assert reparsed.comments["a"] == "eol"
+    assert reparsed.leading_block["b"] == ("orphan", None, "attached")
 
 
 def test_reorder_via_block_preserves_orphan_between_sections() -> None:

@@ -45,7 +45,11 @@ from tomlrt._format import (
     format_inline_root,
     format_subtree,
 )
-from tomlrt._inline_comments import InlineEolView, InlineLeadingView
+from tomlrt._inline_comments import (
+    InlineEolView,
+    InlineLeadingBlockView,
+    InlineLeadingView,
+)
 from tomlrt._kind import _Kind
 from tomlrt._paths import validate_path
 from tomlrt._render import render
@@ -168,10 +172,9 @@ class Container(dict[str, Any]):
 
         Mutating the view requires the container to be attached to a
         `Document`. On an inline table the view is keyed by direct leaf
-        key over the backing inline value; it returns every comment in
-        the entry's above-region (matching `Array.leading_comments`,
-        with no blank-line grouping), and setting comments promotes a
-        single-line table to multi-line.
+        key over the backing inline value; it has the same attached-run
+        semantics as a section-backed table, and setting comments promotes
+        a single-line table to multi-line.
         """
         if self._inline:
             return InlineLeadingView(self)
@@ -190,11 +193,12 @@ class Container(dict[str, Any]):
         this block starts after the first blank line.
 
         Mutating the view requires the container to be attached to a
-        `Document`.
+        `Document`. On an inline table the view is keyed by direct leaf
+        key over the backing inline value; an opening-bracket EOL comment
+        is framing and is not part of the first entry's block.
         """
         if self._inline:
-            msg = "comment API is not available on inline tables"
-            raise TOMLError(msg)
+            return InlineLeadingBlockView(self)
         return LeadingBlockView(self)
 
     @property

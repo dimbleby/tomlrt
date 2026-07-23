@@ -1,11 +1,11 @@
 """Expose comment side-channel views for inline tables.
 
-`Table.comments` and `Table.leading_comments` on an inline table are
-keyed by direct leaf key (like the section views), but operate on the
-backing `InlineTableValue` items (like the array views). All of the
-per-item read / write plumbing and the mapping logic live in
-`_comma_comments`; this module supplies only the leaf-key resolution and
-the multi-line promotion policy via a small adapter.
+`Table.comments`, `Table.leading_comments`, and `Table.leading_block` on
+an inline table are keyed by direct leaf key (like the section views),
+but operate on the backing `InlineTableValue` items (like the array
+views). All of the per-item read / write plumbing and the mapping logic
+live in `_comma_comments`; this module supplies only the leaf-key
+resolution and the multi-line promotion policy via a small adapter.
 
 A leaf is exposed only when it names exactly one physical entry. A
 dotted-prefix leaf (``a`` in ``{a.b = 1, a.c = 2}``) names no single
@@ -26,6 +26,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
 from tomlrt._comma_comments import (
     CommaCommentAdapter,
     CommaEolView,
+    CommaLeadingBlockView,
     CommaLeadingView,
 )
 from tomlrt._errors import TOMLError
@@ -118,4 +119,11 @@ class InlineLeadingView(CommaLeadingView[str]):
         super().__init__(_InlineAdapter(container))
 
 
-__all__ = ["InlineEolView", "InlineLeadingView"]
+class InlineLeadingBlockView(CommaLeadingBlockView[str]):
+    __slots__ = ()
+
+    def __init__(self, container: Container) -> None:
+        super().__init__(_InlineAdapter(container))
+
+
+__all__ = ["InlineEolView", "InlineLeadingBlockView", "InlineLeadingView"]

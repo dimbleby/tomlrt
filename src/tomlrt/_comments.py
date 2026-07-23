@@ -32,7 +32,7 @@ from tomlrt._trivia import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
     from tomlrt._container import Container, Document
     from tomlrt._slots import Slot
@@ -268,14 +268,8 @@ def _write_leading_block(
     lines emit a bare newline.
     """
     _above, _attached, indent = _split_attached_block(slot.leading)
-    new_pieces: list[TriviaPiece] = []
     nl = c._doc_newline  # noqa: SLF001
-    for entry in block:
-        if entry is None:
-            new_pieces.append(NewlineNode(nl))
-        else:
-            new_pieces.extend(indent)
-            new_pieces.extend((CommentNode(_encode_comment(entry)), NewlineNode(nl)))
+    new_pieces = _render_comment_lines(block, nl, indent)
     new_pieces.extend(indent)
     slot.leading.pieces = new_pieces
 
@@ -509,10 +503,7 @@ def _set_attached_block(leading: Trivia, comments: tuple[str, ...], nl: str) -> 
     kept: list[TriviaPiece] = []
     for line in above:
         kept.extend(line)
-    new_pieces: list[TriviaPiece] = []
-    for c in comments:
-        new_pieces.extend(indent)
-        new_pieces.extend((CommentNode(_encode_comment(c)), NewlineNode(nl)))
+    new_pieces = _render_comment_lines(comments, nl, indent)
     new_pieces.extend(indent)
     leading.pieces = [*kept, *new_pieces]
 
@@ -526,15 +517,18 @@ def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
         eol.newline = NewlineNode(nl)
 
 
-def _render_doc_comment_lines(
-    block: tuple[str | None, ...], nl: str
+def _render_comment_lines(
+    block: tuple[str | None, ...],
+    nl: str,
+    indent: Sequence[TriviaPiece] = (),
 ) -> list[TriviaPiece]:
-    """Render document-level comment lines, using ``None`` for blanks."""
+    """Render logical comment lines, using ``None`` for blanks."""
     pieces: list[TriviaPiece] = []
     for entry in block:
         if entry is None:
             pieces.append(NewlineNode(nl))
         else:
+            pieces.extend(indent)
             pieces.extend((CommentNode(_encode_comment(entry)), NewlineNode(nl)))
     return pieces
 
@@ -553,7 +547,7 @@ def _doc_preamble_set(doc: Document, value: tuple[str, ...]) -> None:
     if not comments:
         doc._preamble.pieces = []  # noqa: SLF001
         return
-    pieces = _render_doc_comment_lines(comments, nl)
+    pieces = _render_comment_lines(comments, nl)
     # Append a blank-line separator before the first slot.
     if doc._head is not None:  # noqa: SLF001
         pieces.append(NewlineNode(nl))
@@ -573,7 +567,7 @@ def _doc_epilogue_set(doc: Document, value: tuple[str | None, ...]) -> None:
         msg = "cannot set epilogue: document has no structural content"
         raise TOMLError(msg)
     nl = doc._newline  # noqa: SLF001
-    doc._trailing.pieces = _render_doc_comment_lines(block, nl)  # noqa: SLF001
+    doc._trailing.pieces = _render_comment_lines(block, nl)  # noqa: SLF001
 
 
 __all__ = ["EolCommentView", "LeadingBlockView", "LeadingCommentView"]

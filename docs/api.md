@@ -108,6 +108,7 @@ code.
         - get_array
         - comments
         - leading_comments
+        - leading_block
         - format
         - to_list
 
