@@ -20,6 +20,7 @@ from copy import deepcopy
 from tomlrt import _layout_ops
 from tomlrt._array_comments import (
     ArrayEolView,
+    ArrayLeadingBlockView,
     ArrayLeadingView,
 )
 from tomlrt._comma_ops import (
@@ -214,8 +215,16 @@ class Array(list[Any]):
 
     @property
     def leading_comments(self) -> MutableMapping[int, tuple[str, ...]]:
-        """Leading-comment view, indexed by item position."""
+        """Attached leading-comment view, indexed by item position."""
         return ArrayLeadingView(self)
+
+    @property
+    def leading_block(self) -> MutableMapping[int, tuple[str | None, ...]]:
+        """Full leading-block view, indexed by item position.
+
+        Comment lines are strings and blank lines are ``None``.
+        """
+        return ArrayLeadingBlockView(self)
 
     def format(
         self,

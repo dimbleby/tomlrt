@@ -36,6 +36,11 @@ from tomlrt._comma_ops import (
 from tomlrt._comments import (
     _decode_comment,
     _encode_comment,
+    _line_to_comment,
+    _lines_to_comments,
+    _render_comment_lines,
+    _split_attached_block,
+    _validate_comment_entries,
     _validate_comment_seq,
     _validate_comment_str,
 )
@@ -45,9 +50,8 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
     leading_break_index,
-    split_above_block,
     split_eol_section,
-    split_item_above,
+    split_lines,
 )
 from tomlrt._values import (
     item_breaks_before_comma,
@@ -169,16 +173,17 @@ def _above_owner(value: CommaValue[_ItemT], i: int) -> tuple[Trivia, int]:
     return value.items[i].leading, 0
 
 
-def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]:
-    """Decoded comments in item ``idx``'s above-region (source order).
-
-    Reads exactly the comment block the writers rewrite — the bracket-line
-    framing (item 0's ``[ # hdr``) is excluded by construction.
-    """
+def _read_above_block(value: CommaValue[_ItemT], idx: int) -> tuple[str | None, ...]:
+    """Decoded full block in item ``idx``'s above-region."""
     _owner, _prefix, _head, block, _tail = _split_above_frame(value, idx)
-    return tuple(
-        _decode_comment(p.text) for p in block.pieces if isinstance(p, CommentNode)
-    )
+    return tuple(_line_to_comment(line) for line in split_lines(block.pieces))
+
+
+def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]:
+    """Decoded attached comment run in item ``idx``'s above-region."""
+    _owner, _prefix, _head, block, _tail = _split_above_frame(value, idx)
+    _above, attached, _indent = _split_attached_block(block)
+    return _lines_to_comments(attached)
 
 
 def _value_indent(value: CommaValue[_ItemT]) -> str:
@@ -200,17 +205,16 @@ def _value_indent(value: CommaValue[_ItemT]) -> str:
     return ""
 
 
-def _render_above_block(
-    raw_lines: tuple[str, ...], nl: str, ind: str
-) -> list[TriviaPiece]:
-    """Render a comment block as ``[WS(ind), Comment, NL] * n``.
-
-    The value-indent WS lives in the surrounding pad, not here.
-    """
-    out: list[TriviaPiece] = []
-    for raw in raw_lines:
-        out.extend((WhitespaceNode(ind), CommentNode(raw), NewlineNode(nl)))
-    return out
+def _split_framed_pieces(
+    pieces: list[TriviaPiece], head_end: int
+) -> tuple[Trivia, Trivia, Trivia]:
+    """Split physical pieces into head, editable block, and item indent."""
+    head = Trivia(pieces[:head_end])
+    rest = pieces[head_end:]
+    tail: list[TriviaPiece] = []
+    if rest and isinstance(rest[-1], WhitespaceNode):
+        tail = [rest.pop()]
+    return head, Trivia(rest), Trivia(tail)
 
 
 def _split_above_frame(
@@ -226,36 +230,62 @@ def _split_above_frame(
     """
     if i == 0:
         owner = value.header_trivia
-        pad, block = split_above_block(owner)
-        pieces = list(pad.pieces)
+        pieces = list(owner.pieces)
         nl_idx = next(
             (k for k, p in enumerate(pieces) if isinstance(p, NewlineNode)),
             -1,
         )
         if nl_idx < 0:
-            return owner, Trivia(), Trivia(pieces), block, Trivia()
-        head = Trivia(pieces[: nl_idx + 1])
-        tail = Trivia(pieces[nl_idx + 1 :])
+            return owner, Trivia(), Trivia(pieces), Trivia(), Trivia()
+        head, block, tail = _split_framed_pieces(pieces, nl_idx + 1)
         return owner, Trivia(), head, block, tail
     owner, prefix_len = _above_owner(value, i)
     prefix = Trivia(list(owner.pieces[:prefix_len]))
-    head, block, tail = split_item_above(Trivia(list(owner.pieces[prefix_len:])))
+    pieces = list(owner.pieces[prefix_len:])
+    break_idx = leading_break_index(pieces)
+    head_end = break_idx + 1 if break_idx is not None else 0
+    head, block, tail = _split_framed_pieces(pieces, head_end)
     return owner, prefix, head, block, tail
 
 
-def _set_above_pieces(
+def _set_above_block(
     value: CommaValue[_ItemT],
     i: int,
-    raw_lines: tuple[str, ...],
+    block: tuple[str | None, ...],
     nl: str,
     ind: str,
 ) -> None:
-    """Replace the comment block in item ``i``'s above-region.
-
-    Preserve structural framing and rewrite only the comment block
-    between it.
-    """
+    """Replace the full block in item ``i``'s above-region."""
     owner, prefix, head, _block, tail = _split_above_frame(value, i)
+    rendered = _render_comment_lines(block, nl, (WhitespaceNode(ind),))
+    _write_above_frame_pieces(owner, prefix, head, tail, rendered, nl, ind)
+
+
+def _set_attached_comments(
+    value: CommaValue[_ItemT],
+    i: int,
+    comments: tuple[str, ...],
+    nl: str,
+    ind: str,
+) -> None:
+    """Replace only the attached comment run, preserving earlier lines."""
+    owner, prefix, head, block, tail = _split_above_frame(value, i)
+    above, _attached, _indent = _split_attached_block(block)
+    kept = [p for line in above for p in line]
+    rendered = _render_comment_lines(comments, nl, (WhitespaceNode(ind),))
+    _write_above_frame_pieces(owner, prefix, head, tail, [*kept, *rendered], nl, ind)
+
+
+def _write_above_frame_pieces(
+    owner: Trivia,
+    prefix: Trivia,
+    head: Trivia,
+    tail: Trivia,
+    block: list[TriviaPiece],
+    nl: str,
+    ind: str,
+) -> None:
+    """Write physical block pieces inside an existing above-region frame."""
     if not head.pieces and not tail.pieces:
         # An empty region needs its own framing. When `prefix` already
         # ends in a row break (the comma-first layout) reuse it rather
@@ -263,12 +293,19 @@ def _set_above_pieces(
         has_break = bool(prefix.pieces) and isinstance(prefix.pieces[-1], NewlineNode)
         head = Trivia([] if has_break else [NewlineNode(nl)])
         tail = Trivia([WhitespaceNode(ind)])
-    above = _render_above_block(raw_lines, nl, ind)
-    owner.pieces = [*prefix.pieces, *head.pieces, *above, *tail.pieces]
+    owner.pieces = [*prefix.pieces, *head.pieces, *block, *tail.pieces]
 
 
-def _clear_above_pieces(value: CommaValue[_ItemT], i: int) -> None:
-    """Strip the comment block from item ``i``'s above-region; keep framing."""
+def _clear_attached_comments(value: CommaValue[_ItemT], i: int) -> None:
+    """Strip the attached comment run while preserving earlier lines."""
+    owner, prefix, head, block, tail = _split_above_frame(value, i)
+    above, _attached, _indent = _split_attached_block(block)
+    kept = [p for line in above for p in line]
+    owner.pieces = [*prefix.pieces, *head.pieces, *kept, *tail.pieces]
+
+
+def _clear_above_block(value: CommaValue[_ItemT], i: int) -> None:
+    """Strip the full block from item ``i``'s above-region; keep framing."""
     owner, prefix, head, _block, tail = _split_above_frame(value, i)
     owner.pieces = [*prefix.pieces, *head.pieces, *tail.pieces]
 
@@ -404,20 +441,19 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
 
     @override
     def __setitem__(self, key: _KeyT, value: tuple[str, ...] | list[str]) -> None:
-        seq = _validate_comment_seq(value, "leading_comments")
         idx = self._idx(key)
+        seq = _validate_comment_seq(value, "leading_comments")
         if not seq:
             # Empty assignment means "no leading comments" — a
             # delete-if-present. Don't promote: zero comments need no
             # newlines.
             if self._get(idx) is not None:
-                _clear_above_pieces(self._a.value(), idx)
+                _clear_attached_comments(self._a.value(), idx)
             return
         self._a.promote()
         value_obj = self._a.value()
-        encoded = tuple(_encode_comment(c) for c in seq)
-        _set_above_pieces(
-            value_obj, idx, encoded, self._a.newline(), _value_indent(value_obj)
+        _set_attached_comments(
+            value_obj, idx, seq, self._a.newline(), _value_indent(value_obj)
         )
 
     @override
@@ -425,15 +461,45 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
         idx = self._idx(key)
         if self._get(idx) is None:
             raise KeyError(key)
-        _clear_above_pieces(self._a.value(), idx)
+        _clear_attached_comments(self._a.value(), idx)
+
+
+class CommaLeadingBlockView(_CommaView[_KeyT, "tuple[str | None, ...]"]):
+    """Full above-item block mapping over a comma-value, keyed by ``_KeyT``."""
+
+    __slots__ = ()
 
     @override
-    def __repr__(self) -> str:
-        return repr({k: list(v) for k, v in self.items()})
+    def _get(self, idx: int) -> tuple[str | None, ...] | None:
+        return _read_above_block(self._a.value(), idx) or None
+
+    @override
+    def __setitem__(
+        self, key: _KeyT, value: tuple[str | None, ...] | list[str | None]
+    ) -> None:
+        idx = self._idx(key)
+        block = _validate_comment_entries(value, "leading_block", allow_none=True)
+        if not block:
+            if self._get(idx) is not None:
+                _clear_above_block(self._a.value(), idx)
+            return
+        self._a.promote()
+        value_obj = self._a.value()
+        _set_above_block(
+            value_obj, idx, block, self._a.newline(), _value_indent(value_obj)
+        )
+
+    @override
+    def __delitem__(self, key: _KeyT) -> None:
+        idx = self._idx(key)
+        if self._get(idx) is None:
+            raise KeyError(key)
+        _clear_above_block(self._a.value(), idx)
 
 
 __all__ = [
     "CommaCommentAdapter",
     "CommaEolView",
+    "CommaLeadingBlockView",
     "CommaLeadingView",
 ]

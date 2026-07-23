@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `leading_block` for multiline array and inline-table elements.
+
 ### Fixed
 
 - Sorting child tables no longer scans unrelated document prefixes and suffixes.

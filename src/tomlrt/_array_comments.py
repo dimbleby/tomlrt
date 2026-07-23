@@ -1,9 +1,10 @@
 """Expose comment side-channel views for ``Array``.
 
-``Array.comments`` and ``Array.leading_comments`` are indexed by item
-position. All of the per-item read / write plumbing and the mapping
-logic live in `_comma_comments`; this module supplies only the integer
-keying and the multi-line promotion policy via a small adapter.
+``Array.comments``, ``Array.leading_comments``, and
+``Array.leading_block`` are indexed by item position. All of the per-item
+read / write plumbing and the mapping logic live in `_comma_comments`;
+this module supplies only the integer keying and the multi-line promotion
+policy via a small adapter.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
 from tomlrt._comma_comments import (
     CommaCommentAdapter,
     CommaEolView,
+    CommaLeadingBlockView,
     CommaLeadingView,
 )
 
@@ -77,4 +79,11 @@ class ArrayLeadingView(CommaLeadingView[int]):
         super().__init__(_ArrayAdapter(arr))
 
 
-__all__ = ["ArrayEolView", "ArrayLeadingView"]
+class ArrayLeadingBlockView(CommaLeadingBlockView[int]):
+    __slots__ = ()
+
+    def __init__(self, arr: Array) -> None:
+        super().__init__(_ArrayAdapter(arr))
+
+
+__all__ = ["ArrayEolView", "ArrayLeadingBlockView", "ArrayLeadingView"]
