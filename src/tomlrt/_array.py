@@ -700,10 +700,10 @@ class AoT(list["Table"]):
             list.insert(self, index, _make_unattached_entry(entry))
             return
         # Normalise against the pre-append length to match list.insert.
+        idx = operator.index(index)
         n_before = len(self)
-        new_entry = self._add_entry_attached(entry)
-        idx = int(index)
         idx = max(0, n_before + idx) if idx < 0 else min(idx, n_before)
+        new_entry = self._add_entry_attached(entry)
         new_order: list[Table] = list(self)
         new_order.pop()
         new_order.insert(idx, new_entry)

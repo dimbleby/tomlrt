@@ -1609,6 +1609,26 @@ def test_aot_detached_accepts_generic_mapping() -> None:
     assert list(aot) == [{"x": 9}]
 
 
+def test_aot_insert_invalid_index_does_not_mutate_document() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[a]]
+            x = 1
+            """)
+    )
+    aot = doc.aot("a")
+    invalid_index: Any = "bad"
+
+    with pytest.raises(TypeError):
+        aot.insert(invalid_index, {"x": 2})
+
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+        """)
+    assert len(aot) == 1
+
+
 def test_aot_reverse_reorders_cst() -> None:
     doc = tomlrt.loads(
         td("""
