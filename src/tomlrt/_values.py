@@ -23,6 +23,7 @@ from tomlrt._trivia import (
     has_comment,
     has_newline,
     retarget_trivia_newlines,
+    split_eol_section,
     split_item_above,
 )
 
@@ -312,12 +313,15 @@ def item_breaks_before_comma(item: CommaItem) -> bool:
 def item_eol_channel(item: CommaItem) -> Trivia:
     """The trivia run that owns the item's row-attached EOL section.
 
-    ``trailing`` for a comma-first or comma-less item, else
-    ``post_comma_trivia``. Picking the channel here lets callers read,
-    write, and normalise the EOL without branching on the comma.
+    A comma-first item normally uses ``trailing``. If its pre-comma break is
+    structural while an EOL comment follows the comma, the post-comma channel
+    owns that EOL instead. Picking the channel here lets callers read, write,
+    and normalise the EOL without rediscovering that distinction.
     """
     if item_breaks_before_comma(item):
-        return item.trailing
+        trailing_eol, _rest = split_eol_section(item.trailing)
+        if trailing_eol.pieces or not has_comment(item.post_comma_trivia.pieces):
+            return item.trailing
     return item.post_comma_trivia if item.has_comma else item.trailing
 
 

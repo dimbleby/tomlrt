@@ -3016,6 +3016,57 @@ def test_array_leading_block_excludes_preceding_row_break() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+def test_comma_leading_blocks_include_blank_after_predecessor_eol() -> None:
+    src = td("""
+        array = [
+          1, # array eol
+
+          # array attached
+          2,
+        ]
+        inline = {
+          a = 1, # inline eol
+
+          # inline attached
+          b = 2,
+        }
+        """)
+    doc = tomlrt.loads(src)
+    array = doc.array("array")
+    inline = doc.table("inline")
+
+    assert array.leading_block[1] == (None, "array attached")
+    assert array.leading_comments[1] == ("array attached",)
+    assert inline.leading_block["b"] == (None, "inline attached")
+    assert inline.leading_comments["b"] == ("inline attached",)
+
+    array.leading_block[1] = array.leading_block[1]
+    inline.leading_block["b"] = inline.leading_block["b"]
+    assert tomlrt.dumps(doc) == src
+
+    del array.leading_block[1]
+    del inline.leading_block["b"]
+    assert tomlrt.dumps(doc) == td("""
+        array = [
+          1, # array eol
+          2,
+        ]
+        inline = {
+          a = 1, # inline eol
+          b = 2,
+        }
+        """)
+
+
+def test_array_leading_block_after_eol_uses_document_newline() -> None:
+    src = "x = [\r\n1, # eol\r\n\r\n2\r\n]\r\n"
+    doc = tomlrt.loads(src)
+    arr = doc.array("x")
+    assert arr.leading_block[1] == (None,)
+    arr.leading_block[1] = ("attached",)
+    assert tomlrt.dumps(doc) == "x = [\r\n1, # eol\r\n# attached\r\n2\r\n]\r\n"
+
+
 def test_array_orphan_only_is_absent_from_leading_comments() -> None:
     doc = tomlrt.loads(
         td("""
@@ -3279,6 +3330,506 @@ def test_inline_leading_block_comma_first_preserves_predecessor_eol() -> None:
     reparsed = tomlrt.loads(out).table("x")
     assert reparsed.comments["a"] == "eol"
     assert reparsed.leading_block["b"] == ("orphan", None, "attached")
+
+
+def test_array_leading_block_comma_first_eol_exposes_blank() -> None:
+    src = td("""
+        x = [
+          1 # eol
+
+         ,2
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("x")
+    assert arr.leading_block[1] == (None,)
+    arr.leading_block[1] = arr.leading_block[1]
+    assert tomlrt.dumps(doc) == src
+    del arr.leading_block[1]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1 # eol
+         ,2
+        ]
+        """)
+
+
+def test_array_leading_block_spans_comma_first_regions() -> None:
+    src = td("""
+        x = [
+          1 # value eol
+          # before comma
+         , # comma eol
+
+          # attached
+          2
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("x")
+    assert arr.leading_block[1] == ("before comma", None, "attached")
+    assert arr.leading_comments[1] == ("attached",)
+    arr.leading_block[1] = arr.leading_block[1]
+    assert tomlrt.dumps(doc) == src
+    del arr.leading_block[1]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1 # value eol
+         , # comma eol
+          2
+        ]
+        """)
+
+
+def test_array_delete_post_comma_eol_preserves_comma_first_layout() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          1
+         , # comma eol
+          2
+        ]
+        """)
+    )
+    del doc.array("x").comments[0]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1
+         ,
+          2
+        ]
+        """)
+
+
+def test_array_delete_terminal_eol_then_append_keeps_conventional_layout() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          1 # terminal eol
+        ]
+        """)
+    )
+    arr = doc.array("x")
+    del arr.comments[0]
+    arr.append(2)
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1,
+          2
+        ]
+        """)
+
+
+def test_array_comma_first_leading_block_survives_insert() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          1
+          # attached to two
+         ,2
+        ]
+        """)
+    )
+    doc.array("x").insert(1, 9)
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1
+         ,9
+          # attached to two
+         ,2
+        ]
+        """)
+
+
+def test_array_comma_first_leading_block_survives_predecessor_delete() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          1
+          # attached to two
+         ,2
+         ,3
+        ]
+        """)
+    )
+    del doc.array("x")[0]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          # attached to two
+          2
+         ,3
+        ]
+        """)
+
+
+def test_comma_first_leading_blocks_follow_sorted_items() -> None:
+    doc = tomlrt.loads(
+        td("""
+        array = [
+          2
+          # attached to three
+         ,3
+         ,1
+        ]
+        inline = {
+          b = 2
+          # attached to c
+         ,c = 3
+         ,a = 1
+        }
+        """)
+    )
+    doc.array("array").sort()
+    doc.table("inline").sort()
+    assert tomlrt.dumps(doc) == td("""
+        array = [
+          1
+         ,2
+          # attached to three
+         ,3
+        ]
+        inline = {
+          a = 1
+         ,b = 2
+          # attached to c
+         ,c = 3
+        }
+        """)
+
+
+def test_sort_snapshots_leading_blocks_before_moving_eol_comments() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          2, # eol two
+
+          # attached to three
+          3,
+          1,
+        ]
+        """)
+    )
+    doc.array("x").sort()
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1,
+          2, # eol two
+
+          # attached to three
+          3,
+        ]
+        """)
+
+
+def test_sort_realigns_successor_when_comma_break_placement_changes() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          2
+         , # eol two
+          3
+         ,1
+        ]
+        """)
+    )
+    doc.array("x").sort()
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1
+         ,
+          2
+         , # eol two
+          3
+        ]
+        """)
+    assert dict(doc.array("x").comments) == {1: "eol two"}
+
+
+def test_sort_preserves_standalone_comma_row_without_creating_blank() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          2 # eol two
+         ,
+          3,
+          1
+        ]
+        """)
+    )
+    doc.array("x").sort()
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1
+         ,
+          2, # eol two
+          3
+        ]
+        """)
+    assert dict(doc.array("x").leading_block) == {}
+
+
+def test_sort_eol_replaces_destination_pre_comma_break() -> None:
+    doc = tomlrt.loads("x = [2 # two\n , 1\n , 3\n]\n")
+    doc.array("x").sort()
+    assert tomlrt.dumps(doc) == "x = [1\n , 2 # two\n , 3\n]\n"
+    assert dict(doc.array("x").leading_block) == {}
+
+
+def test_sort_preserves_blank_after_pre_comma_eol() -> None:
+    doc = tomlrt.loads("x = [2, 1 # one\n\n  ,3]\n")
+    arr = doc.array("x")
+    assert arr.leading_block[2] == (None,)
+    arr.sort()
+    assert tomlrt.dumps(doc) == "x = [1, # one\n    2\n\n  ,3]\n"
+    assert arr.leading_block[2] == (None,)
+
+
+def test_partial_sort_keeps_foreign_successor_leading_block() -> None:
+    doc = tomlrt.loads(
+        td("""
+        t = {a.q=3, x=0, a.p=1
+         , # ep
+         # ay
+         y=2
+        }
+        """)
+    )
+    table = doc.table("t")
+    table.table("a").sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        t = {a.p=1, # ep
+            x=0, a.q=3
+         ,
+         # ay
+         y=2
+        }
+        """)
+    reparsed = tomlrt.loads(out).table("t")
+    assert reparsed.leading_block["y"] == ("ay",)
+    assert reparsed.table("a").comments["p"] == "ep"
+
+
+def test_comma_first_head_insert_keeps_block_with_displaced_item() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+         # attached to one
+         1
+        ,2
+        ]
+        """)
+    )
+    doc.array("x").insert(0, 9)
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+         9
+         # attached to one
+        ,1
+        ,2
+        ]
+        """)
+    assert dict(doc.array("x").leading_block) == {1: ("attached to one",)}
+
+
+def test_delete_head_drops_removed_items_leading_block() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          # attached to one
+          1,
+          2,
+        ]
+        """)
+    )
+    del doc.array("x")[0]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          2,
+        ]
+        """)
+
+
+def test_delete_head_keeps_surviving_blank_block() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          1,
+
+          2,
+        ]
+        """)
+    )
+    del doc.array("x")[0]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+
+          2,
+        ]
+        """)
+    assert doc.array("x").leading_block[0] == (None,)
+
+
+def test_identity_sort_preserves_shared_rows() -> None:
+    src = td("""
+        x = [1, 2,
+          3]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("x").sort()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_sort_preserves_shared_row_boundaries() -> None:
+    doc = tomlrt.loads("x = [3, 1, 2\n]\n")
+    doc.array("x").sort()
+    assert tomlrt.dumps(doc) == "x = [1, 2, 3\n]\n"
+
+
+def test_leading_comment_write_breaks_shared_row() -> None:
+    doc = tomlrt.loads("x = [1, 2\n]\n")
+    doc.array("x").leading_comments[1] = ("two",)
+    assert tomlrt.dumps(doc) == "x = [1,\n # two\n 2\n]\n"
+    assert doc.array("x").leading_comments[1] == ("two",)
+
+
+def test_sort_combines_positional_blank_with_moved_comment() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          3,
+
+          1,
+          # attached to two
+          2,
+        ]
+        """)
+    )
+    doc.array("x").sort()
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1,
+
+          # attached to two
+          2,
+          3,
+        ]
+        """)
+
+
+def test_tail_delete_keeps_pre_comma_space_before_eol() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          1  , # eol one
+          2
+        ]
+        """)
+    )
+    del doc.array("x")[1]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1   # eol one
+        ]
+        """)
+
+
+def test_tail_delete_drops_obsolete_comma_first_break() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          1
+         , # eol one
+          2
+        ]
+        """)
+    )
+    del doc.array("x")[1]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1 # eol one
+        ]
+        """)
+
+
+def test_tail_delete_uses_final_boundary_leading_block() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          1
+          # attached to two
+         ,2
+          # closing
+         ,
+        ]
+        """)
+    )
+    del doc.array("x")[1]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1
+          # closing
+         ,
+        ]
+        """)
+
+
+def test_middle_delete_preserves_attached_lane_across_comma_eol() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          3
+         , # eol three
+          1
+          # attached to two
+         ,2
+        ]
+        """)
+    )
+    del doc.array("x")[1]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          3
+         , # eol three
+          # attached to two
+          2
+        ]
+        """)
+    assert doc.array("x").leading_comments[1] == ("attached to two",)
+
+
+def test_middle_delete_realigns_comma_row_follower() -> None:
+    doc = tomlrt.loads("x = [1\n, 2, 3]\n")
+    del doc.array("x")[1]
+    assert tomlrt.dumps(doc) == "x = [1\n,3]\n"
+
+
+def test_tail_delete_drops_removed_block_before_eol_classification() -> None:
+    doc = tomlrt.loads(
+        td("""
+        x = [
+          3,
+          1 # eol one
+          # attached to two
+         ,2,
+        ]
+        """)
+    )
+    del doc.array("x")[2]
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          3,
+          1 , # eol one
+        ]
+        """)
+    assert dict(doc.array("x").comments) == {1: "eol one"}
+
+
+def test_array_leading_comments_after_zero_indent_eol_adds_no_blank() -> None:
+    doc = tomlrt.loads("x = [\n1, # eol\n2\n]\n")
+    arr = doc.array("x")
+    arr.leading_comments[1] = ("attached",)
+    assert tomlrt.dumps(doc) == "x = [\n1, # eol\n# attached\n2\n]\n"
 
 
 def test_reorder_via_block_preserves_orphan_between_sections() -> None:

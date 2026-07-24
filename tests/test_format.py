@@ -394,6 +394,61 @@ def test_comma_first_inline_table_keeps_comment() -> None:
     """)
 
 
+def test_comma_first_leading_blocks_remain_leading_when_formatted() -> None:
+    src = td("""
+        a = [
+              1
+              # array leading
+             ,2
+            ]
+        t = {
+              a = 1
+              # inline leading
+             ,b = 2
+            }
+    """)
+    doc = tomlrt.loads(src)
+    doc.format()
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+          # array leading
+          2,
+        ]
+        t = {
+          a = 1,
+          # inline leading
+          b = 2,
+        }
+    """)
+
+
+def test_format_preserves_final_block_after_closed_item_row() -> None:
+    src = td("""
+        x = [
+          1, # eol
+
+          # closing
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("x").format()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_format_preserves_final_block_after_open_item_row() -> None:
+    src = td("""
+        x = [
+          1,
+
+          # closing
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("x").format()
+    assert tomlrt.dumps(doc) == src
+
+
 @pytest.mark.parametrize(
     "options",
     [

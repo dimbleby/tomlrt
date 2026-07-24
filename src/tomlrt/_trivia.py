@@ -197,39 +197,6 @@ def join_above_block(pad: Trivia, above: Trivia) -> Trivia:
     return Trivia([pieces[0], *above.pieces, *pieces[1:]])
 
 
-def split_leading_above(t: Trivia) -> tuple[Trivia, Trivia]:
-    r"""Split an ``items[i].leading`` (i >= 1) into ``(pad, above)``.
-
-    Unlike :func:`split_above_block`, the opening break is located with
-    :func:`leading_break_index` (so a leftover ``1, \n`` whitespace run
-    does not mask it) and may be *absent*: when the predecessor
-    terminates its own row the leading starts at the comment indent, and
-    that whole comment block becomes the traveling ``above`` rather than
-    a bracket-line EOL. Reconstruct with :func:`join_leading_above`.
-    """
-    pieces = t.pieces
-    k = leading_break_index(pieces)
-    return _pad_above_from(pieces, k + 1 if k is not None else 0)
-
-
-def join_leading_above(pad: Trivia, above: Trivia) -> Trivia:
-    """Splice ``above`` back into an item-leading ``pad``.
-
-    When ``pad`` carries an opening break (the row's own newline, found
-    with :func:`leading_break_index` past any leftover whitespace)
-    ``above`` is inserted just after it, ahead of the value indent;
-    otherwise the break lives upstream on the predecessor, so ``above``
-    is prepended. Inverse of :func:`split_leading_above`.
-    """
-    pieces = list(pad.pieces)
-    if not above.pieces:
-        return Trivia(pieces)
-    k = leading_break_index(pieces)
-    if k is not None:
-        return Trivia([*pieces[: k + 1], *above.pieces, *pieces[k + 1 :]])
-    return Trivia([*above.pieces, *pieces])
-
-
 def indent_from_final_trivia(ft: Trivia) -> str:
     """Extract a logical indent from a bracket-pad's pieces.
 
@@ -413,7 +380,6 @@ __all__ = [
     "has_newline",
     "indent_from_final_trivia",
     "join_above_block",
-    "join_leading_above",
     "leading_break_index",
     "leading_has_blank_line",
     "restamp_bracket_pad_for_first",
@@ -422,7 +388,6 @@ __all__ = [
     "split_above_block",
     "split_eol_section",
     "split_item_above",
-    "split_leading_above",
     "split_lines",
     "strip_trailing_indent",
 ]
