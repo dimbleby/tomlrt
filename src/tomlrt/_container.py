@@ -1075,10 +1075,8 @@ class Container(dict[str, Any]):
         _layout_ops.populate_promoted_inline_entries(result, entries)
         new_header = result._header_ref.slot if result._header_ref else None  # noqa: SLF001
         if isinstance(new_header, StructuralHeaderSlot):
-            if saved_leading is not None:
-                new_header.leading = saved_leading
-            if saved_eol is not None:
-                new_header.eol = saved_eol
+            new_header.leading = saved_leading
+            new_header.eol = saved_eol
             # A promoted KV becomes a section header and needs a visual
             # separator from the parent's direct entries.
             if (
@@ -1110,18 +1108,17 @@ class Container(dict[str, Any]):
             if not (_is_inline_table(el)):
                 msg = f"{key!r} contains a non-inline-table element"
                 raise TOMLError(msg)
-        if cur._value is not None:  # noqa: SLF001
-            if _array_value_has_outer_comments(cur._value):  # noqa: SLF001
-                msg = f"cannot promote {key!r}: array has comments that would be lost"
+        if _array_value_has_outer_comments(cur._value):  # noqa: SLF001
+            msg = f"cannot promote {key!r}: array has comments that would be lost"
+            raise TOMLError(msg)
+        for entry_view in cur:
+            ev = entry_view._value  # noqa: SLF001
+            if ev is not None and _inline_value_has_inner_comments(ev):
+                msg = (
+                    f"cannot promote {key!r}: array entry has inner "
+                    f"comments that would be lost"
+                )
                 raise TOMLError(msg)
-            for entry_view in cur:
-                ev = entry_view._value  # noqa: SLF001
-                if ev is not None and _inline_value_has_inner_comments(ev):
-                    msg = (
-                        f"cannot promote {key!r}: array entry has inner "
-                        f"comments that would be lost"
-                    )
-                    raise TOMLError(msg)
         value = cur._value  # noqa: SLF001
         assert isinstance(value, ArrayValue)
         entries: list[list[tuple[InlineTableEntry, Value]]] = []
@@ -1141,7 +1138,7 @@ class Container(dict[str, Any]):
             _layout_ops.populate_promoted_inline_entries(entry, body)
         # Apply saved leading to the first entry header and saved eol to
         # the last entry's last slot.
-        if saved_leading is not None and len(result) > 0:
+        if len(result) > 0:
             first_entry = result[0]
             entry_record = first_entry._owner_aot_entry  # noqa: SLF001
             if entry_record is not None and entry_record.entry_slots:
@@ -1152,7 +1149,7 @@ class Container(dict[str, Any]):
                         *saved_leading.pieces,
                         *first_slot.leading.pieces,
                     ]
-        if saved_eol is not None and len(result) > 0:
+        if len(result) > 0:
             last_entry = result[-1]
             last_slot = _layout_ops._body_anchor(last_entry)  # noqa: SLF001
             assert last_slot is not None
@@ -1180,8 +1177,12 @@ def _reorder_dict_storage(c: Container, new_key_order: list[str]) -> None:
         dict.__setitem__(c, k, v)
 
 
-def _direct_kv_trivia(c: Container, key: str) -> tuple[Trivia | None, EolTrivia | None]:
-    """Return the direct-KV slot's leading/EOL trivia for ``key``, if any."""
+def _direct_kv_trivia(c: Container, key: str) -> tuple[Trivia, EolTrivia]:
+    """Return the direct-KV slot's leading/EOL trivia for ``key``.
+
+    Both fields are non-Optional on `KVSlot`, so the result is never
+    ``None`` in either component.
+    """
     slot = _direct_kv_slot(c, key)
     assert slot is not None, "inline promotion source must have a direct KV slot"
     return slot.leading, slot.eol
