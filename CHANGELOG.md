@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-24
+
 ### Added
 
 - Added `leading_block` for multiline array and inline-table elements.
