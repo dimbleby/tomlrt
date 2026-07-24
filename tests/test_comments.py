@@ -536,6 +536,33 @@ def test_inline_table_leading_comments_now_supported() -> None:
     assert dict(t.leading_comments) == {"a": ("note",)}
 
 
+def test_retained_inline_comment_view_tracks_structural_mutations() -> None:
+    doc = tomlrt.loads(
+        td("""
+        t = {
+            a = 1, # an a
+            b = 2, # a b
+            c = 3, # a c
+        }
+        """)
+    )
+    t = doc.table("t")
+    comments = t.comments
+    assert dict(comments) == {"a": "an a", "b": "a b", "c": "a c"}
+
+    t.sort(reverse=True)
+    assert dict(comments) == {"c": "a c", "b": "a b", "a": "an a"}
+
+    del t["b"]
+    assert dict(comments) == {"c": "a c", "a": "an a"}
+    with pytest.raises(KeyError):
+        _ = comments["b"]
+
+    t["b"] = 4
+    comments["b"] = "new b"
+    assert dict(comments) == {"c": "a c", "a": "an a", "b": "new b"}
+
+
 def test_inline_table_header_comment_get_raises() -> None:
     t = _inline_in_doc()
     with pytest.raises(tomlrt.TOMLError, match="header comment API"):

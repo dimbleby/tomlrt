@@ -61,10 +61,11 @@ def _require_value(c: Container) -> None:
 
 
 class _InlineAdapter(CommaCommentAdapter[str]):
-    __slots__ = ("_c",)
+    __slots__ = ("_c", "_indices")
 
     def __init__(self, container: Container) -> None:
         self._c = container
+        self._indices: dict[str, int] = {}
 
     @override
     def value(self) -> InlineTableValue:
@@ -77,8 +78,22 @@ class _InlineAdapter(CommaCommentAdapter[str]):
     def resolve(self, key: object) -> int | None:
         if not isinstance(key, str):
             return None
-        found = _find_entry(self.value(), _entry_key_path(self._c, key))
-        return found[0] if found is not None else None
+        iv = self.value()
+        key_path = _entry_key_path(self._c, key)
+        cached = self._indices.get(key)
+        if (
+            cached is not None
+            and cached < len(iv.items)
+            and iv.items[cached].key_path == key_path
+        ):
+            return cached
+        found = _find_entry(iv, key_path)
+        if found is None:
+            self._indices.pop(key, None)
+            return None
+        idx, _entry = found
+        self._indices[key] = idx
+        return idx
 
     @override
     def promote(self) -> None:
@@ -89,20 +104,22 @@ class _InlineAdapter(CommaCommentAdapter[str]):
         return self._c._doc_newline  # noqa: SLF001
 
     @override
-    def candidates(self) -> Iterator[str]:
+    def indexed_candidates(self) -> Iterator[tuple[str, int]]:
         iv = self.value()
         root = _outermost_inline(self._c)
         prefix = self._c._path[len(root._path) :]  # noqa: SLF001
         plen = len(prefix)
+        self._indices.clear()
         seen: set[str] = set()
-        for e in iv.items:
+        for i, e in enumerate(iv.items):
             kp = e.key_path
             if len(kp) != plen + 1 or kp[:plen] != prefix:
                 continue
             leaf = kp[plen]
             assert leaf not in seen, "inline table cannot contain duplicate leaves"
             seen.add(leaf)
-            yield leaf
+            self._indices[leaf] = i
+            yield leaf, i
 
 
 class InlineEolView(CommaEolView[str]):

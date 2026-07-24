@@ -61,8 +61,8 @@ class _ArrayAdapter(CommaCommentAdapter[int]):
         return self._arr._doc_newline  # noqa: SLF001
 
     @override
-    def candidates(self) -> Iterator[int]:
-        return iter(range(len(self._arr._value.items)))  # noqa: SLF001
+    def indexed_candidates(self) -> Iterator[tuple[int, int]]:
+        return ((i, i) for i in range(len(self._arr._value.items)))  # noqa: SLF001
 
 
 class ArrayEolView(CommaEolView[int]):
