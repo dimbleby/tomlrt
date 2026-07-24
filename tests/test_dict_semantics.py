@@ -157,6 +157,14 @@ def test_update_via_kwargs_and_mapping() -> None:
         """)
 
 
+def test_update_via_kwargs_only() -> None:
+    """No positional argument: only the kwargs branch should run."""
+    doc = tomlrt.loads("[a]\nx = 1\n")
+    doc["a"].update(y=2, z=3)
+    assert doc["a"]["y"] == 2
+    assert doc["a"]["z"] == 3
+
+
 def test_update_via_iterable_of_pairs() -> None:
     doc = tomlrt.loads("")
     doc.update([("a", 1), ("b", 2)])

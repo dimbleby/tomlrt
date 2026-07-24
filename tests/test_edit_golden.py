@@ -3288,6 +3288,32 @@ def test_install_section_overwrites_inline_value() -> None:
     assert rendered == '[tool.poetry]\nversion = "2.0"\n'
 
 
+def test_install_dotted_path_past_unrelated_inline_key() -> None:
+    """Intermediate inline table exists, but the next path component
+    isn't one of its keys, so there's nothing to clean up.
+    """
+    doc = tomlrt.loads('tool = {poetry = {name = "x"}}\n')
+    doc.install("tool.other.deps", Table.section({"requests": "1.0"}))
+    assert tomlrt.dumps(doc) == td("""
+        tool = {poetry = {name = "x"}}
+
+        [tool.other.deps]
+        requests = "1.0"
+        """)
+
+
+def test_install_dotted_path_drops_only_conflicting_inline_key() -> None:
+    """Only the shadowed inline key is dropped; sibling keys survive."""
+    doc = tomlrt.loads("a = {b = {x = 1}, sibling = 2}\n")
+    doc.install("a.b.c", Table.section({"y": 9}))
+    assert tomlrt.dumps(doc) == td("""
+        a = {sibling = 2}
+
+        [a.b.c]
+        y = 9
+        """)
+
+
 def test_install_empty_section() -> None:
     doc = tomlrt.loads("")
     t = doc.install("tool.poetry", Table.section())
@@ -3792,6 +3818,13 @@ def test_promote_array_moves_trailing_comment_to_header_only_entry() -> None:
     doc = tomlrt.loads("servers = [{}]  # tail\n")
     doc.promote_array("servers")
     assert tomlrt.dumps(doc) == "[[servers]]  # tail\n"
+
+
+def test_promote_array_moves_trailing_comment_with_no_preceding_whitespace() -> None:
+    """No gap-whitespace to carry over when the comment abuts the array."""
+    doc = tomlrt.loads("servers = [{a = 1}]# tail\n")
+    doc.promote_array("servers")
+    assert tomlrt.dumps(doc) == "[[servers]]\na = 1# tail\n"
 
 
 def test_aot_insert_at_zero_separates_from_following_entry() -> None:
