@@ -106,6 +106,23 @@ def test_add_top_level_key_before_first_section_with_attached_comment() -> None:
     assert _reparses(out) == {"name": "demo", "srv": {"port": 8080}}
 
 
+def test_add_top_level_key_before_first_section_with_indented_comment() -> None:
+    """Leading indentation before the first section's attached comment
+    should survive when a new root KV is inserted ahead of it."""
+    src = "  # attached\n[srv]\nport = 8080\n"
+    doc = tomlrt.loads(src)
+    doc["name"] = "demo"
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        name = "demo"
+
+          # attached
+        [srv]
+        port = 8080
+        """)
+    assert _reparses(out) == {"name": "demo", "srv": {"port": 8080}}
+
+
 def test_add_key_inside_existing_section() -> None:
     src = "[srv]\nport = 80\n"
     doc = tomlrt.loads(src)
@@ -4557,6 +4574,40 @@ def test_overwrite_with_scattered_implicit_source_skips_reposition() -> None:
     assert doc["name"]["first"].to_dict() == doc["animal"]["type"].to_dict()
 
 
+def test_overwrite_first_root_key_with_implicit_source_skips_root_reposition() -> None:
+    """Replacing the first root KV with an implicit source whose cloned
+    block starts with a dotted KV must not try to move that dotted KV
+    back to the doc head across a header boundary."""
+    src = tomlrt.loads(
+        td("""
+        src.q = 2
+
+        [src.child]
+        z = 1
+        """)
+    )
+    dst = tomlrt.loads(
+        td("""
+        a = 0
+
+        [tail]
+        y = 1
+        """)
+    )
+    dst["a"] = src["src"]
+    out = tomlrt.dumps(dst)
+    assert out == td("""
+        a.q = 2
+
+        [a.child]
+        z = 1
+
+        [tail]
+        y = 1
+        """)
+    assert _reparses(out) == dst.to_dict()
+
+
 def test_overwrite_ancestor_with_own_nested_aot_preserves_nested_entries() -> None:
     """Overwriting a key with its own descendant AoT (Case A: descendant
     into ancestor) must preserve nested `[[a.x]]` entries living inside
@@ -5449,6 +5500,38 @@ def test_delete_aot_entry_with_nested_aot() -> None:
         [[outer]]
         x = 2
         """)
+
+
+def test_delete_nested_aot_section_scans_past_earlier_inline_value() -> None:
+    """Deleting a nested section from one AoT entry should still find
+    surviving sibling-entry ownership even when an earlier inline table
+    is visited first during the reachability scan."""
+    doc = tomlrt.loads(
+        td("""
+        meta = { a = 1 }
+
+        [[fruit]]
+        name = "a"
+
+        [fruit.extra]
+        x = 1
+
+        [[fruit]]
+        name = "b"
+        """)
+    )
+    del doc.aot("fruit")[0]["extra"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        meta = { a = 1 }
+
+        [[fruit]]
+        name = "a"
+
+        [[fruit]]
+        name = "b"
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 # ---------------------------------------------------------------------------
