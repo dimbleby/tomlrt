@@ -35,6 +35,7 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from tomlrt._comma_ops import Boundary
 from tomlrt._errors import TOMLError
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
@@ -381,15 +382,21 @@ def _canon_multiline_shape(
     produces only empty/single-space trivia.
     """
     items = v.items
+    above_blocks: list[Trivia] = []
+    for i in range(len(items)):
+        boundary = Boundary.capture(v, i)
+        above_blocks.append(Trivia(list(boundary.above)))
+        boundary.remove_above().restore(v, i)
     last_row_closed = _canon_multi_line_items(
         items,
+        above_blocks=above_blocks,
         nl=nl,
         indent=item_indent,
         options=options,
     )
     if items:
         head_eol, _ = split_eol_section(v.header_trivia)
-        _, head_above = split_above_block(v.header_trivia)
+        head_above = _format_above_block(above_blocks[0])
         v.header_trivia = _compose_pad(
             head_eol=head_eol,
             above=head_above,
@@ -448,6 +455,11 @@ def _format_above(t: Trivia, *, row_already_closed: bool) -> Trivia:
     if row_already_closed:
         above.pieces[:0] = head.pieces
     return above
+
+
+def _format_above_block(block: Trivia) -> Trivia:
+    """Keep an authored logical above-block only when it has comments."""
+    return block if has_comment(block.pieces) else Trivia()
 
 
 def _compose_pad(
@@ -571,6 +583,7 @@ def _finalise_inline_trivia(
 def _canon_multi_line_items(
     items: Sequence[CommaItem],
     *,
+    above_blocks: Sequence[Trivia],
     nl: str,
     indent: str,
     options: FormatOptions,
@@ -596,10 +609,7 @@ def _canon_multi_line_items(
         if k == 0:
             it.leading = Trivia()
         else:
-            above = _format_above(
-                it.leading,
-                row_already_closed=previous_row_closed,
-            )
+            above = _format_above_block(above_blocks[k])
             it.leading = _compose_pad(
                 head_eol=Trivia(),
                 above=above,

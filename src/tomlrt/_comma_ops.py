@@ -17,23 +17,22 @@ needs to land here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    has_comment,
     has_newline,
     indent_from_final_trivia,
     join_above_block,
-    join_leading_above,
     leading_break_index,
     restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
-    split_item_above,
-    split_leading_above,
+    split_lines,
     strip_trailing_indent,
 )
 from tomlrt._values import (
@@ -62,15 +61,6 @@ _CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
 # ---------------------------------------------------------------------------
 
 
-def _row_terminated(item: CommaItem) -> bool:
-    """Return whether the item's own row carries its terminating newline.
-
-    Otherwise the break is downstream, in the next item's leading (or
-    ``final_trivia`` for the tail). Comma placement never enters into it.
-    """
-    return has_newline(item_eol_channel(item).pieces)
-
-
 def _take_eol(item: CommaItem) -> Trivia:
     """Split out and return the item's row-attached EOL section.
 
@@ -86,7 +76,7 @@ def _take_eol(item: CommaItem) -> Trivia:
 
 
 def _put_eol(item: CommaItem, eol: Trivia) -> None:
-    """Append a previously-taken EOL section onto the item.
+    """Put a previously-taken EOL section onto the item.
 
     Routes to ``post_comma_trivia`` or ``trailing`` according to the
     item's *current* ``has_comma``, which may differ from the value
@@ -95,59 +85,380 @@ def _put_eol(item: CommaItem, eol: Trivia) -> None:
     if not eol.pieces:
         return
     if item.has_comma:
-        item.post_comma_trivia = Trivia([*item.post_comma_trivia.pieces, *eol.pieces])
+        item.post_comma_trivia.pieces.extend(eol.pieces)
     else:
-        item.trailing = Trivia([*item.trailing.pieces, *eol.pieces])
+        item.trailing.pieces.extend(eol.pieces)
+
+
+# ---------------------------------------------------------------------------
+# Above-item boundary ownership
+# ---------------------------------------------------------------------------
+
+
+def _first_newline_end(pieces: Sequence[TriviaPiece]) -> int:
+    """Return the offset just after the first newline, or zero."""
+    for i, piece in enumerate(pieces):
+        if isinstance(piece, NewlineNode):
+            return i + 1
+    return 0
+
+
+@dataclass(slots=True)
+class _Lane:
+    head: Trivia = field(default_factory=Trivia)
+    above: Trivia = field(default_factory=Trivia)
+    tail: Trivia = field(default_factory=Trivia)
+
+    @classmethod
+    def capture(cls, trivia: Trivia, start: int) -> _Lane:
+        pieces = trivia.pieces
+        end = len(pieces)
+        if end > start and isinstance(pieces[-1], WhitespaceNode):
+            end -= 1
+        return cls(
+            Trivia(pieces[:start]),
+            Trivia(pieces[start:end]),
+            Trivia(pieces[end:]),
+        )
+
+    def copy(self) -> _Lane:
+        return _Lane(self.head, self.above, self.tail)
+
+    def join(self) -> Trivia:
+        return Trivia([*self.head.pieces, *self.above.pieces, *self.tail.pieces])
+
+
+@dataclass(slots=True)
+class Boundary:
+    """Lossless snapshot of the complete region before an item or bracket."""
+
+    before: _Lane
+    after: Trivia
+    following: _Lane
+    has_comma: bool = False
+    is_head: bool = False
+
+    @classmethod
+    def capture(cls, cv: CommaValue[Any], i: int) -> Boundary:
+        items = cv.items
+        if i == 0:
+            following = cv.header_trivia
+            start = _first_newline_end(following.pieces) or len(following.pieces)
+            return cls(
+                _Lane(),
+                Trivia(),
+                _Lane.capture(following, start),
+                is_head=True,
+            )
+        pred = items[i - 1]
+        following = cv.final_trivia if i == len(items) else items[i].leading
+        before_break = pred.has_comma and has_newline(pred.trailing.pieces)
+        closed_lane = pred.post_comma_trivia if pred.has_comma else pred.trailing
+        row_closed = has_newline(closed_lane.pieces)
+        before_start = (
+            _first_newline_end(pred.trailing.pieces)
+            if before_break
+            else len(pred.trailing.pieces)
+        )
+        break_idx = leading_break_index(following.pieces)
+        following_start = (
+            0 if row_closed else break_idx + 1 if break_idx is not None else 0
+        )
+        return cls(
+            _Lane.capture(pred.trailing, before_start),
+            pred.post_comma_trivia.copy(),
+            _Lane.capture(following, following_start),
+            has_comma=pred.has_comma,
+        )
+
+    def copy(self) -> Boundary:
+        return Boundary(
+            self.before.copy(),
+            self.after,
+            self.following.copy(),
+            has_comma=self.has_comma,
+            is_head=self.is_head,
+        )
+
+    def restore(self, cv: CommaValue[Any], i: int) -> None:
+        following = self.following.join()
+        if self.is_head:
+            cv.header_trivia = following
+            cv.items[0].leading = Trivia()
+            return
+        pred = cv.items[i - 1]
+        pred.trailing = self.before.join()
+        pred.has_comma = self.has_comma
+        pred.post_comma_trivia = self.after.copy()
+        if i == len(cv.items):
+            cv.final_trivia = following
+        else:
+            cv.items[i].leading = following
+
+    @property
+    def break_before_comma(self) -> bool:
+        return self.has_comma and has_newline(self.before.head.pieces)
+
+    @property
+    def row_closed(self) -> bool:
+        lane = self.after if self.has_comma else self.before.head
+        return has_newline(lane.pieces)
+
+    @property
+    def following_break_is_structural(self) -> bool:
+        return (
+            not self.is_head
+            and not self.row_closed
+            and leading_break_index(self.following.head.pieces) is not None
+        )
+
+    def _eol(self) -> tuple[int | None, Trivia]:
+        before = self.before.join()
+        if self.break_before_comma:
+            eol, _rest = split_eol_section(before)
+            if eol.pieces or not has_comment(self.after.pieces):
+                return (0 if eol.pieces else None), eol
+        eol, _rest = split_eol_section(self.after if self.has_comma else before)
+        return (1 if self.has_comma else 0) if eol.pieces else None, eol
+
+    @property
+    def eol(self) -> Trivia:
+        """Left-owned row-attached EOL payload."""
+        return self._eol()[1]
+
+    @property
+    def eol_lane(self) -> int | None:
+        """Physical pre/post-comma lane containing ``eol``."""
+        return self._eol()[0]
+
+    @property
+    def above_parts(self) -> tuple[list[TriviaPiece], list[TriviaPiece]]:
+        return self.before.above.pieces, self.following.above.pieces
+
+    @property
+    def above(self) -> list[TriviaPiece]:
+        return [*self.before.above.pieces, *self.following.above.pieces]
+
+    def target_lane(self) -> int:
+        return int(
+            self.is_head
+            or not self.break_before_comma
+            or self.row_closed
+            or bool(self.following.head.pieces)
+            or bool(self.following.above.pieces)
+        )
+
+    @property
+    def attached_lane(self) -> int | None:
+        if self.following.above.pieces:
+            return 1
+        if not self.before.above.pieces:
+            return None
+        if self.row_closed or self.following.head.pieces:
+            return None
+        return 0
+
+    @property
+    def attached_above(self) -> list[TriviaPiece] | None:
+        lane = self.attached_lane
+        return None if lane is None else self.above_parts[lane]
+
+    @property
+    def target_tail(self) -> list[TriviaPiece]:
+        tails = self.before.tail, self.following.tail
+        return tails[self.target_lane()].pieces
+
+    @property
+    def target_above(self) -> list[TriviaPiece]:
+        return self.above_parts[self.target_lane()]
+
+    def replace_lane(
+        self,
+        lane: int,
+        block: Sequence[TriviaPiece],
+        nl: str,
+        indent: str,
+    ) -> None:
+        lanes = self.before, self.following
+        target = lanes[lane]
+        head = target.head.copy()
+        tail = target.tail.copy()
+        upstream = (
+            self.break_before_comma
+            if lane == 0
+            else (False if self.is_head else self.row_closed)
+        )
+        if block:
+            if not upstream and not has_newline(head.pieces):
+                head.pieces.append(NewlineNode(nl))
+            if not tail.pieces:
+                tail.pieces.append(WhitespaceNode(indent))
+        target.head = head
+        target.above = Trivia(list(block))
+        target.tail = tail
+
+    def remove_above(self) -> Boundary:
+        self.before.above = Trivia()
+        self.following.above = Trivia()
+        return self
+
+    def remove_eol(self) -> Boundary:
+        lane = self.eol_lane
+        break_before_comma = self.break_before_comma
+        if lane == 0:
+            eol, self.before.head = split_eol_section(self.before.head)
+            if (
+                break_before_comma
+                and eol.pieces
+                and isinstance(eol.pieces[-1], NewlineNode)
+            ):
+                self.before.head.pieces.insert(0, NewlineNode(eol.pieces[-1].text))
+        elif lane == 1:
+            _eol, self.after = split_eol_section(self.after)
+        return self
+
+    def set_above(self, block: Sequence[TriviaPiece], nl: str, indent: str) -> Boundary:
+        before, following = self.above_parts
+        target_lane = self.target_lane()
+        self.remove_above()
+        if before and following:
+            lines = split_lines(block)
+            cut = len(split_lines(before))
+            self.replace_lane(0, [p for line in lines[:cut] for p in line], nl, indent)
+            block = [p for line in lines[cut:] for p in line]
+            self.replace_lane(1, block, nl, indent)
+        else:
+            lane = 0 if before else 1 if following else target_lane
+            self.replace_lane(lane, block, nl, indent)
+        return self
+
+    def set_attached(
+        self, block: Sequence[TriviaPiece], nl: str, indent: str
+    ) -> Boundary:
+        lane = self.attached_lane
+        target = self.target_lane() if lane is None else lane
+        self.replace_lane(target, block, nl, indent)
+        return self
+
+    def carry_above_from(
+        self,
+        source: Boundary,
+        nl: str,
+        indent: str,
+        *,
+        preserve_positional: bool = True,
+    ) -> Boundary:
+        row_closed = self.row_closed
+        break_before_comma = self.break_before_comma
+        following_head = bool(self.following.head.pieces)
+        target_lane = self.target_lane()
+        if not (preserve_positional and not has_comment(self.above)):
+            self.remove_above()
+        if preserve_positional and not has_comment(source.above):
+            return self
+        before, following = source.above_parts
+
+        def append_to(lane: int, pieces: Sequence[TriviaPiece]) -> None:
+            self.replace_lane(
+                lane,
+                [*self.above_parts[lane], *pieces],
+                nl,
+                indent,
+            )
+
+        before_stays_attached = source.attached_lane != 0 or (
+            not row_closed and not following_head
+        )
+        if before and break_before_comma and before_stays_attached:
+            append_to(0, before)
+            append_to(1, following)
+        else:
+            append_to(target_lane, [*before, *following])
+        return self
+
+    def put_eol_from(self, source: Boundary, positional: Boundary) -> Boundary:
+        """Put ``source``'s EOL into this positional shell."""
+        if not source.eol.pieces:
+            return self
+        lane = positional.eol_lane
+        if lane is None:
+            lane = int(
+                self.has_comma
+                and not (source.eol_lane == 0 and positional.break_before_comma)
+            )
+        target = (self.before.head if lane == 0 else self.after).copy()
+        break_idx = leading_break_index(target.pieces)
+        rest = (
+            target.pieces[break_idx + 1 :] if break_idx is not None else target.pieces
+        )
+        target.pieces = [*source.eol.pieces, *rest]
+        if lane == 0:
+            self.before.head = target
+        else:
+            self.after = target
+        return self
+
+    def shift_carried_from(
+        self,
+        old: Boundary,
+        nl: str,
+        indent: str,
+        *,
+        is_terminal: bool,
+    ) -> None:
+        """Repair this boundary's structural break after its left item moves."""
+        row_closed = self.row_closed
+        break_before_comma = self.break_before_comma
+        current_structural = (
+            False if row_closed else old.row_closed or old.following_break_is_structural
+        )
+        delta = int(current_structural) - int(old.following_break_is_structural)
+        facts_changed = (
+            row_closed != old.row_closed or break_before_comma != old.break_before_comma
+        )
+        if not delta and not facts_changed:
+            return
+        holder = self.following.join()
+        if delta:
+            holder.pieces = shift_pieces(holder.pieces, delta, nl)
+        if (
+            not is_terminal
+            and (row_closed or break_before_comma)
+            and leading_break_index(holder.pieces) is None
+        ):
+            if row_closed:
+                reindent_as_leader(holder, indent)
+            else:
+                reindent_as_follower(holder)
+        break_idx = leading_break_index(holder.pieces)
+        following_start = (
+            0 if row_closed else break_idx + 1 if break_idx is not None else 0
+        )
+        self.following = _Lane.capture(holder, following_start)
 
 
 # ---------------------------------------------------------------------------
 # Row-break maintenance
 # ---------------------------------------------------------------------------
 #
-# In a multi-line inline value each item occupies one physical row, and
-# each row needs exactly one terminating newline ("row break"). That break
-# lives either in the row's own EOL channel (see :func:`_row_terminated`) or
-# downstream in the next row's ``leading`` (``final_trivia`` for the tail).
-# Any *further* newline at a boundary is a deliberate user blank line.
-#
-# A mutation can only invalidate the boundaries it actually touches, so the
-# helpers below operate per-boundary rather than re-scanning the whole value
-# (which would clobber blank lines the edit never went near). Two shapes of
-# touched boundary arise:
-#
-# * a *fresh* boundary, where the mutation introduced a brand-new item — its
-#   ``leading`` is a synthesised separator carrying exactly the structural
-#   break and no blanks, so a redundant break is just stripped when the
-#   predecessor already terminates its own row (:func:`_structural_break`);
-# * a *carried* boundary, where an existing downstream region is reused under
-#   a predecessor whose termination changed — the rendered blank-line count
-#   must survive, so the structural break shifts by ``+1`` / ``-1``
-#   (:func:`_shift_carried_boundary`), leaving the blanks intact.
+# Each multi-line boundary has one structural row break; any further break
+# is authored whitespace. Fresh boundaries can drop a redundant separator
+# directly, while carried boundaries shift only that structural break.
 
 
 def _structural_break(pred: CommaItem, succ: CommaItem, nl: str) -> None:
-    """Strip the redundant downstream break from a fresh boundary.
-
-    A fresh ``succ.leading`` is a synthesised separator carrying exactly
-    one newline — its structural row break. When ``pred`` already
-    terminates its own row that newline is redundant and is dropped;
-    otherwise it is the row break and stays. This is the carried-boundary
-    shift of a zero-blank baseline: ``delta == -1`` iff ``pred`` is
-    terminated.
-    """
+    """Drop a fresh separator when ``pred`` already closes its row."""
     succ.leading = Trivia(
-        shift_pieces(succ.leading.pieces, -int(_row_terminated(pred)), nl)
+        shift_pieces(
+            succ.leading.pieces,
+            -int(has_newline(item_eol_channel(pred).pieces)),
+            nl,
+        )
     )
 
 
 def boundary_break_holder(cv: CommaValue[_CV_ItemT], b: int) -> Trivia:
-    """Return the trivia that owns the row break *downstream* of boundary ``b``.
-
-    Boundary ``b`` sits between items ``b-1`` and ``b``; the break for the
-    ``b-1`` row, when not carried in that item's own EOL channel, lives in
-    ``items[b].leading`` or — for the final boundary (``b == len(items)``) —
-    in ``cv.final_trivia``.
-    """
+    """Return boundary ``b``'s downstream row-break owner."""
     items = cv.items
     return items[b].leading if b < len(items) else cv.final_trivia
 
@@ -155,60 +466,47 @@ def boundary_break_holder(cv: CommaValue[_CV_ItemT], b: int) -> Trivia:
 def shift_pieces(
     pieces: Sequence[TriviaPiece], delta: int, nl: str
 ) -> list[TriviaPiece]:
-    """Add or drop ``|delta|`` leading newlines, preserving the remainder.
-
-    ``delta > 0`` prepends structural newlines (pushing any existing
-    newlines down into blank lines); ``delta < 0`` drops that many leading
-    newlines (each skipping an intervening whitespace run). The indent and
-    any blank lines below the shifted region are untouched.
-    """
+    """Shift leading structural newlines without disturbing later trivia."""
     if delta > 0:
         return [*(NewlineNode(text=nl) for _ in range(delta)), *pieces]
     out = list(pieces)
     for _ in range(-delta):
         k = leading_break_index(out)
-        if k is None:
-            break
+        assert k is not None
         out = out[k + 1 :]
     return out
 
 
 def _shift_carried_boundary(
-    cv: CommaValue[_CV_ItemT], b: int, nl: str, *, old_pred_terminated: bool
+    cv: CommaValue[_CV_ItemT],
+    b: int,
+    nl: str,
+    *,
+    old: Boundary,
 ) -> None:
-    """Shift the structural break at carried boundary ``b``.
-
-    Boundary ``b`` sits between items ``b-1`` and ``b`` (or before the
-    closing bracket when ``b == len(items)``). Its predecessor's
-    termination has changed from ``old_pred_terminated`` to its current
-    value; shift the break by that difference so the rendered blank-line
-    count is preserved.
-    """
-    delta = int(old_pred_terminated) - int(_row_terminated(cv.items[b - 1]))
-    if not delta:
-        return
-    holder = boundary_break_holder(cv, b)
-    had_break = leading_break_index(holder.pieces) is not None
-    holder.pieces = shift_pieces(holder.pieces, delta, nl)
-    if delta < 0 and not had_break and b < len(cv.items):
-        # The successor had no break of its own — it was a shared-row
-        # follower of the (now-removed/relocated) predecessor. Its new
-        # predecessor terminates its own row, so the follower becomes a row
-        # leader at the value indent rather than its leftover separator.
-        reindent_as_leader(holder, _value_indent(cv))
+    """Repair a carried boundary after its predecessor changes."""
+    current = Boundary.capture(cv, b)
+    current.shift_carried_from(
+        old,
+        nl,
+        _value_indent(cv),
+        is_terminal=b >= len(cv.items),
+    )
+    current.restore(cv, b)
 
 
 def reindent_as_leader(holder: Trivia, indent: str) -> None:
-    """Promote a shared-row follower to a row leader at ``indent``.
-
-    The follower's leftover inline separator — a leading whitespace run
-    with no row break of its own — is replaced by ``indent``; any later
-    pieces (a downstream above-block, blank lines) are kept.
-    """
+    """Promote a shared-row follower to a row leader at ``indent``."""
     rest = list(holder.pieces)
     while rest and isinstance(rest[0], WhitespaceNode):
         rest.pop(0)
     holder.pieces = [WhitespaceNode(text=indent), *rest]
+
+
+def reindent_as_follower(holder: Trivia) -> None:
+    """Strip row-leader indentation from a comma-row follower."""
+    while holder.pieces and isinstance(holder.pieces[0], WhitespaceNode):
+        holder.pieces.pop(0)
 
 
 # ---------------------------------------------------------------------------
@@ -217,13 +515,7 @@ def reindent_as_leader(holder: Trivia, indent: str) -> None:
 
 
 def flip_to_internal(item: CommaItem) -> None:
-    """Make ``item`` look like an internal (non-last) item.
-
-    The inter-item separator belongs to the next item's leading; this
-    only sets comma state and carries any EOL comment across the
-    ``trailing`` → ``post_comma_trivia`` channel flip so the comma renders
-    before the comment. No-op if the item already has a comma.
-    """
+    """Add an internal comma while keeping the item's EOL attached."""
     if item.has_comma:
         return
     eol = _take_eol(item)
@@ -232,14 +524,7 @@ def flip_to_internal(item: CommaItem) -> None:
 
 
 def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
-    """Make ``item`` look like the terminal item for ``style``.
-
-    No-op when the item is already in the right comma state (so trailing-
-    comma style preserves any ``post_comma_trivia`` the parser filed).
-    Otherwise the EOL section survives the ``trailing`` /
-    ``post_comma_trivia`` channel flip; a comma-dropping flip also clears
-    the now-orphaned structural ``post_comma_trivia`` rest.
-    """
+    """Apply terminal comma policy while keeping the item's EOL attached."""
     if item.has_comma == style.trailing_comma:
         return
     eol = _take_eol(item)
@@ -372,6 +657,36 @@ def migrate_bracket_above(bracket: Trivia, separator: Trivia) -> tuple[Trivia, T
     return pad, join_above_block(separator, above)
 
 
+def _carry_above(
+    cv: CommaValue[Any],
+    i: int,
+    source: Boundary,
+    nl: str,
+    indent: str,
+    *,
+    preserve_positional: bool = True,
+) -> None:
+    Boundary.capture(cv, i).carry_above_from(
+        source,
+        nl,
+        indent,
+        preserve_positional=preserve_positional,
+    ).restore(cv, i)
+
+
+def _replace_above(
+    cv: CommaValue[Any], i: int, source: Boundary, nl: str, indent: str = ""
+) -> None:
+    _carry_above(
+        cv,
+        i,
+        source,
+        nl,
+        indent,
+        preserve_positional=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Append / remove / reorder orchestration
 # ---------------------------------------------------------------------------
@@ -383,15 +698,7 @@ def splice_in(
     style: CommaStyle,
     nl: str,
 ) -> None:
-    """Append ``new_item`` to ``cv`` honouring ``style``.
-
-    The caller supplies the concrete item (``ArrayItem`` or
-    ``InlineTableEntry``) and style. Empty values reframe bracket pads for
-    the first item, preserving canonical single-line inner pad when no
-    authored pad survives. Non-empty values migrate above-bracket comments
-    to the new item's leading, flip the old tail internal, make the new
-    item terminal, and restore row-break invariants.
-    """
+    """Append ``new_item`` while preserving the inferred comma style."""
     items = cv.items
     if not items:
         header, final = restamp_bracket_pad_for_first(cv.final_trivia)
@@ -406,6 +713,7 @@ def splice_in(
         cv.final_trivia, style.inter_separator
     )
     old_tail = items[-1]
+    old_final = Boundary.capture(cv, len(items))
     if style.break_before_comma:
         # Comma-first: the former tail keeps its EOL comment but yields its
         # terminal break (re-homed before the closing bracket) and gains its
@@ -429,7 +737,10 @@ def splice_in(
         # predecessor changes from the old tail to the new item.
         _structural_break(old_tail, new_item, nl)
         _shift_carried_boundary(
-            cv, len(items), nl, old_pred_terminated=_row_terminated(old_tail)
+            cv,
+            len(items),
+            nl,
+            old=old_final,
         )
 
 
@@ -440,16 +751,12 @@ def splice_insert(
     style: CommaStyle,
     nl: str,
 ) -> None:
-    """Insert ``new_item`` at ``index`` (``0 <= index < len(items)``).
-
-    Appending is :func:`splice_in`; this covers interior and head inserts.
-    A comma-first item owns its break before its comma, so its neighbours are
-    untouched. Otherwise a head insert migrates the opening-bracket above-block
-    onto the displaced item (keeping item-0 leading empty); an interior insert
-    gives the new item its structural break and shifts the carried boundary so
-    the displaced item keeps its blank lines.
-    """
+    """Insert ``new_item`` before the existing item at ``index``."""
     items = cv.items
+    displaced = Boundary.capture(cv, index)
+    carry_above = has_comment(displaced.above)
+    if carry_above:
+        displaced.copy().remove_above().restore(cv, index)
     if style.break_before_comma:
         new_item.trailing = style.pre_comma_break.copy()
         new_item.leading = Trivia() if index == 0 else style.inter_separator.copy()
@@ -457,6 +764,8 @@ def splice_insert(
         if index == 0:
             # Item 0 keeps an empty leading; the displaced item takes the pad.
             items[1].leading = style.inter_separator.copy()
+        if carry_above:
+            _carry_above(cv, index + 1, displaced, nl, _value_indent(cv))
         return
     if index == 0:
         cv.header_trivia, items[0].leading = migrate_bracket_above(
@@ -465,14 +774,22 @@ def splice_insert(
         items.insert(0, new_item)
         if style.is_multiline:
             _structural_break(new_item, items[1], nl)
+        if carry_above:
+            _carry_above(cv, 1, displaced, nl, _value_indent(cv))
         return
     pred = items[index - 1]
-    pred_terminated = _row_terminated(pred)
     new_item.leading = style.inter_separator.copy()
     items.insert(index, new_item)
     if style.is_multiline:
         _structural_break(pred, new_item, nl)
-        _shift_carried_boundary(cv, index + 1, nl, old_pred_terminated=pred_terminated)
+        _shift_carried_boundary(
+            cv,
+            index + 1,
+            nl,
+            old=displaced,
+        )
+    if carry_above:
+        _carry_above(cv, index + 1, displaced, nl, _value_indent(cv))
 
 
 def splice_out(
@@ -482,21 +799,7 @@ def splice_out(
     *,
     is_multiline: bool,
 ) -> None:
-    """Splice out ``removed_indices`` and run the boundary fixups.
-
-    Shared removal orchestration for inline arrays and inline-table
-    entries; callers own index discovery (slice/int normalisation for
-    arrays, key/prefix lookup for inline tables) and logical-view updates.
-    Head removal snapshots the new-first above-block so the "item 0
-    above-block lives in ``header_trivia``" invariant is restored. Tail
-    removal transfers the removed tail's comma policy to the new tail
-    while its row-attached EOL section survives the channel flip; the
-    former internal tail's stale ``post_comma_trivia`` structural rest is
-    dropped. Empty values use :func:`strip_trailing_indent`.
-
-    ``removed_indices`` must be a list of valid distinct indices into
-    ``cv.items`` (not necessarily sorted on input; sorted internally).
-    """
+    """Remove valid distinct item indices and repair the surviving seams."""
     assert removed_indices
     items = cv.items
     assert items
@@ -512,18 +815,21 @@ def splice_out(
     zero_removed = 0 in removed_set
     tail_removed = last_idx in removed_set
 
-    # Snapshot before popping: termination per original position, and the
-    # original index of each surviving item (so carried boundaries can shift
-    # for a predecessor that was removed).
-    term_before = [_row_terminated(it) for it in items]
     survivors = [i for i in range(orig_len) if i not in removed_set]
-
-    new_first_above: Trivia = Trivia()
-    if zero_removed:
-        for k in range(1, orig_len):
-            if k not in removed_set:
-                _h, new_first_above, _t = split_item_above(items[k].leading)
-                break
+    seams = [j for j in range(1, len(survivors)) if survivors[j] - survivors[j - 1] > 1]
+    needed = {survivors[j] for j in seams}
+    if survivors and zero_removed:
+        needed.add(survivors[0])
+    if survivors and tail_removed:
+        needed.update((survivors[-1] + 1, orig_len))
+    boundaries_before = {b: Boundary.capture(cv, b) for b in needed}
+    new_last_eol = Trivia()
+    if survivors and tail_removed:
+        left_boundary = survivors[-1] + 1
+        boundaries_before[left_boundary].copy().remove_above().restore(
+            cv, left_boundary
+        )
+        new_last_eol = _take_eol(items[survivors[-1]])
     new_terminal_has_comma = items[last_idx].has_comma if tail_removed else False
 
     for i in reversed(sorted_removed):
@@ -532,29 +838,35 @@ def splice_out(
     if not items:
         strip_trailing_indent(cv.header_trivia, cv.final_trivia)
         return
-    if zero_removed:
-        head_pad, _drop = split_above_block(cv.header_trivia)
-        cv.header_trivia = join_above_block(head_pad, new_first_above)
-        items[0].leading = Trivia()
     if tail_removed:
         new_last = items[-1]
-        eol = _take_eol(new_last)
         new_last.post_comma_trivia = Trivia()
         new_last.has_comma = new_terminal_has_comma
-        _put_eol(new_last, eol)
+        if not new_terminal_has_comma and has_newline(new_last.trailing.pieces):
+            new_last.trailing = Trivia()
+        _put_eol(new_last, new_last_eol)
         if is_multiline:
             _shift_carried_boundary(
-                cv, len(items), nl, old_pred_terminated=term_before[last_idx]
+                cv,
+                len(items),
+                nl,
+                old=boundaries_before[orig_len],
             )
     if is_multiline:
-        # Each remaining seam — a survivor whose original predecessor was
-        # removed — is a carried boundary: keep its blank lines while its
-        # predecessor changes to the nearest surviving item.
-        for j in range(1, len(items)):
-            if survivors[j] - survivors[j - 1] > 1:
-                _shift_carried_boundary(
-                    cv, j, nl, old_pred_terminated=term_before[survivors[j] - 1]
-                )
+        for j in seams:
+            _shift_carried_boundary(
+                cv,
+                j,
+                nl,
+                old=boundaries_before[survivors[j]],
+            )
+    indent = _value_indent(cv)
+    if zero_removed:
+        _replace_above(cv, 0, boundaries_before[survivors[0]], nl, indent)
+    for j in seams:
+        _replace_above(cv, j, boundaries_before[survivors[j]], nl, indent)
+    if tail_removed:
+        _replace_above(cv, len(items), boundaries_before[orig_len], nl)
 
 
 def reorder_owned(
@@ -565,70 +877,53 @@ def reorder_owned(
     *,
     is_multiline: bool,
 ) -> None:
-    """Reorder ``owned_positions`` within ``cv.items`` in place.
-
-    Shared positional-preserve strategy for arrays and dotted-inner
-    inline-table navigators. State splits as follows:
-
-    * positional: structural pad, comma state, post-comma trivia, trailing
-      trivia;
-    * entry-attached: above-item comment blocks and row-attached EOL
-      sections.
-
-    ``owned_positions`` is strictly ascending and foreign positions stay
-    untouched. ``new_owned`` is the matching permutation. Bracket trivia
-    (``header_trivia`` / ``final_trivia``) is untouched, so above-bracket
-    comments stay at their structural position. No-op for fewer than two
-    owned positions.
-    """
+    """Reorder selected items while boundary shells stay positional."""
     if len(owned_positions) <= 1:
         return
     assert len(owned_positions) == len(new_owned)
     items = cv.items
-    # Termination per original position, snapshot before _take_eol mutates it.
-    term_before = [_row_terminated(it) for it in items]
-    pos_state: dict[int, tuple[Trivia, bool, Trivia, Trivia]] = {}
-    above_by_entry: dict[int, Trivia] = {}
-    eol_by_entry: dict[int, Trivia] = {}
-    for i in owned_positions:
-        e = items[i]
-        if i == 0:
-            pad, above = split_above_block(cv.header_trivia)
-        else:
-            pad, above = split_leading_above(e.leading)
-        eol_by_entry[id(e)] = _take_eol(e)
-        pos_state[i] = (pad, e.has_comma, e.post_comma_trivia, e.trailing)
-        above_by_entry[id(e)] = above
+    if all(
+        items[pos] is entry
+        for pos, entry in zip(owned_positions, new_owned, strict=True)
+    ):
+        return
+    affected = {b for pos in owned_positions for b in (pos, pos + 1)}
+    boundaries = {b: Boundary.capture(cv, b) for b in affected}
+    above_by_item = {id(items[pos]): boundaries[pos] for pos in owned_positions}
+    left_by_item = {id(items[pos]): boundaries[pos + 1] for pos in owned_positions}
+    owned = set(owned_positions)
+    incoming = dict(zip(owned_positions, new_owned, strict=True))
+    indent = _value_indent(cv)
+    composed: dict[int, Boundary] = {}
+    for b, boundary in boundaries.items():
+        shell = boundary.copy()
+        if b in owned and has_comment(shell.above):
+            shell.remove_above()
+        if b - 1 in owned:
+            shell.remove_eol()
+        left = incoming.get(b - 1)
+        if left is not None:
+            shell.put_eol_from(left_by_item[id(left)], boundary)
+        if is_multiline and b - 1 in owned:
+            shell.shift_carried_from(
+                boundary,
+                nl,
+                indent,
+                is_terminal=b == len(items),
+            )
+        right = incoming.get(b)
+        if right is not None:
+            shell.carry_above_from(above_by_item[id(right)], nl, indent)
+        composed[b] = shell
 
-    new_items = list(items)
-    for pos, e in zip(owned_positions, new_owned, strict=True):
-        new_items[pos] = e
-    items[:] = new_items
-
-    for pos in owned_positions:
-        e = items[pos]
-        pad, has_comma, post_rest, trail_rest = pos_state[pos]
-        e.has_comma = has_comma
-        e.post_comma_trivia = post_rest
-        e.trailing = trail_rest
-        _put_eol(e, eol_by_entry[id(e)])
-        above = above_by_entry[id(e)]
-        if pos == 0:
-            cv.header_trivia = join_above_block(pad, above)
-            e.leading = Trivia()
-        else:
-            e.leading = join_leading_above(pad, above)
-    # Restore the structural break at the boundaries the reorder touched.
-    # An owned item carries its EOL section (hence its termination) with it,
-    # so a boundary whose predecessor moved sees a predecessor-termination
-    # change; the carried-boundary shift keeps its blank lines intact. Only
-    # boundaries whose predecessor moved (``p + 1``) can change.
-    if is_multiline:
-        for b in {p + 1 for p in owned_positions}:
-            _shift_carried_boundary(cv, b, nl, old_pred_terminated=term_before[b - 1])
+    for pos, entry in incoming.items():
+        items[pos] = entry
+    for b in sorted(affected):
+        composed[b].restore(cv, b)
 
 
 __all__ = [
+    "Boundary",
     "CommaStyle",
     "boundary_break_holder",
     "detect_style",

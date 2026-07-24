@@ -206,7 +206,9 @@ them. Read roughly in this order:
   inline arrays (`Array`) and inline tables (`_inline_ops`).
   Owns the canonical layout invariants for any `CommaValue`:
   per-item trivia ownership, the single-row-break rule, EOL
-  section attachment, and trailing-comma policy. The cross-module
+  section attachment, and trailing-comma policy. `Boundary` is the
+  canonical capture / compose / restore model for trivia spanning
+  adjacent items. The cross-module
   surface is intentionally small — a few `splice_*` / `reorder_owned`
   entry points consumed by `Array` / `_inline_ops`, plus the
   row-break primitives (`shift_pieces`, `boundary_break_holder`)
@@ -299,6 +301,16 @@ wrong.
 
 ### Invariants worth knowing
 
+- **Comma-value boundaries** may span predecessor `trailing`,
+  predecessor `post_comma_trivia`, and successor `leading`. EOL
+  payload belongs to the left item; comment-containing above blocks
+  belong to the right item; blank-only regions stay positional.
+  `leading_block` hides exactly one structural row break.
+- **`Boundary` transforms mutate with copy-on-write.** Call `copy()`
+  before transforming a snapshot that remains a source. Reorders
+  capture affected seams before moving items, compose each final
+  seam completely, then restore it once. Keep reorder linear; do not
+  mutate then recapture or deep-copy every trivia channel.
 - **Slot-stream linked list** is the single source of physical
   ordering. Mutation primitives splice exactly one slot at a time
   and update `_prev` / `_next`. Never rebuild the list.
