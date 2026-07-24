@@ -22,6 +22,7 @@ ROUND_TRIP_CORPUS: list[str] = [
     "# just a comment\n",
     "key = 1\n",
     "key = 1",  # no trailing newline
+    "key = 1  ",  # no trailing newline, trailing whitespace runs to EOF
     'name = "Tom"\n',
     "title = 'literal'\n",
     "pi = 3.14\n",
@@ -311,6 +312,13 @@ def test_datetime_values() -> None:
         "a = 2024-01-01T00:00:00+\u0660\u0661:00\n",  # offset hour
         "a = 2024-01-01T00:00:00+01:\u0660\u0660\n",  # offset minute
         "a = 2024-01-01 \u0660\u0660:00:00\n",  # space-separator look-ahead
+        # Truncated input: whitespace scans run all the way to EOF
+        # with no token following, rather than stopping on a
+        # non-whitespace character.
+        "a =   ",  # post-'=' whitespace, then EOF instead of a value
+        "a = [1,   ",  # in-array whitespace, then EOF instead of ']'
+        "a  ",  # key trailing whitespace, then EOF instead of '='
+        "a.  ",  # dotted-key separator whitespace, then EOF instead of a key
     ],
 )
 def test_parse_errors(src: str) -> None:
