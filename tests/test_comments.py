@@ -161,6 +161,15 @@ def test_del_eol_comment_removes_it() -> None:
         del doc.comments["name"]
 
 
+def test_del_eol_comment_with_no_preceding_whitespace_removes_it() -> None:
+    """No gap-whitespace piece to drop when the comment abuts the value directly."""
+    src = 'name = "ada"# old\n'
+    doc = tomlrt.loads(src)
+    del doc.comments["name"]
+    assert tomlrt.dumps(doc) == 'name = "ada"\n'
+    assert "name" not in doc.comments
+
+
 def test_set_eol_comment_round_trips_text_with_hash_prefix() -> None:
     # The API takes comment *content*, never the '#' marker. A user
     # whose content genuinely starts with '#' (e.g. "#hashtag") gets
@@ -697,6 +706,14 @@ def test_header_comment_set_none_no_comment_preserves_trailing_whitespace() -> N
     doc = tomlrt.loads(src)
     doc.table("server").header_comment = None
     assert tomlrt.dumps(doc) == src
+
+
+def test_header_comment_del_with_no_preceding_whitespace_removes_it() -> None:
+    """No gap-whitespace piece to drop when the comment abuts the header directly."""
+    src = "[server]# old\nhost = 'a'\n"
+    doc = tomlrt.loads(src)
+    del doc.table("server").header_comment
+    assert tomlrt.dumps(doc) == "[server]\nhost = 'a'\n"
 
 
 def test_header_leading_comments_extract_block_only() -> None:

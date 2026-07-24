@@ -6927,6 +6927,13 @@ def test_pop_all_array_keeps_bracket_eol_comment_without_blank_line() -> None:
     """)
 
 
+def test_pop_sole_item_closing_bracket_on_same_line_keeps_eol_comment() -> None:
+    """Item and closing bracket share a physical line (no newline between them)."""
+    doc = tomlrt.loads("a = [ # tail\n    1]\n")
+    doc.array("a").pop()
+    assert tomlrt.dumps(doc) == "a = [ # tail\n]\n"
+
+
 def test_append_after_empty_array_keeps_bracket_eol_comment() -> None:
     src = td("""
         arr = [ # tail
@@ -6955,6 +6962,13 @@ def test_delete_all_inline_keeps_bracket_eol_comment_without_blank_line() -> Non
         x = { # tail
         }
     """)
+
+
+def test_delete_sole_entry_closing_brace_on_same_line_keeps_eol_comment() -> None:
+    """Entry and closing brace share a physical line (no newline between them)."""
+    doc = tomlrt.loads("a = { # tail\n    x = 1}\n")
+    del doc.table("a")["x"]
+    assert tomlrt.dumps(doc) == "a = { # tail\n}\n"
 
 
 def test_add_after_empty_inline_keeps_bracket_eol_comment() -> None:
