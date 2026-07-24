@@ -63,6 +63,49 @@ def test_add_top_level_key_when_only_section_exists() -> None:
     assert _reparses(out) == {"name": "demo", "srv": {"port": 8080}}
 
 
+def test_add_top_level_key_before_first_section_with_blank_attached_block() -> None:
+    """Adding the first root KV ahead of a section keeps an existing
+    opening blank-separated block on that section intact."""
+    src = td("""
+
+        # attached
+        [srv]
+        port = 8080
+        """)
+    doc = tomlrt.loads(src)
+    doc["name"] = "demo"
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        name = "demo"
+
+        # attached
+        [srv]
+        port = 8080
+        """)
+    assert _reparses(out) == {"name": "demo", "srv": {"port": 8080}}
+
+
+def test_add_top_level_key_before_first_section_with_attached_comment() -> None:
+    """If the first section already owns a leading comment block, the
+    inserted root KV still leaves one blank separator before it."""
+    src = td("""
+        # attached
+        [srv]
+        port = 8080
+        """)
+    doc = tomlrt.loads(src)
+    doc["name"] = "demo"
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        name = "demo"
+
+        # attached
+        [srv]
+        port = 8080
+        """)
+    assert _reparses(out) == {"name": "demo", "srv": {"port": 8080}}
+
+
 def test_add_key_inside_existing_section() -> None:
     src = "[srv]\nport = 80\n"
     doc = tomlrt.loads(src)
@@ -3869,6 +3912,36 @@ def test_aot_append_with_no_sibling_indent_stays_flush() -> None:
         """)
 
 
+def test_aot_append_skips_structural_only_sibling_when_inheriting_indent() -> None:
+    """A new entry's first KV inherits indent from the nearest earlier
+    sibling that actually has a direct KV."""
+    src = td("""
+        [[t]]
+            z = 0
+
+        [[t]]
+        [t.sub]
+        x = 1
+
+        [[t]]
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("t")[2]["y"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[t]]
+            z = 0
+
+        [[t]]
+        [t.sub]
+        x = 1
+
+        [[t]]
+            y = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_dotted_add_when_host_lacks_trailing_newline() -> None:
     """Adding a dotted sibling must not glue onto the previous KV."""
     src = "[s]\na.b = 1"
@@ -7208,6 +7281,17 @@ def test_aot_cross_doc_assign_negative_index() -> None:
     """)
 
 
+def test_aot_cross_doc_assign_empty_entry_clears_body() -> None:
+    """Replacing an attached entry with an empty foreign one keeps only
+    the destination header."""
+    src_doc = tomlrt.loads("[[s]]\n")
+    dst_doc = tomlrt.loads("[[a]]\nx = 1\n")
+    dst_doc.aot("a")[0] = src_doc.aot("s")[0]
+    out = tomlrt.dumps(dst_doc)
+    assert out == "[[a]]\n"
+    assert _reparses(out) == dst_doc.to_dict()
+
+
 def test_aot_sort_singleton_short_circuits() -> None:
     """``aot.sort()`` on a single-entry AoT takes the early-return path
     and leaves the doc byte-stable."""
@@ -7303,6 +7387,24 @@ def test_demote_synthetic_placeholder_then_sort_aot() -> None:
         [[tool.poetry]]
         x = 3
         """)
+
+
+def test_demote_synthetic_placeholder_inside_aot_entry_updates_membership() -> None:
+    """Demoting a synthetic placeholder inside an AoT entry must also
+    remove the orphaned header from that entry's slot membership."""
+    doc = tomlrt.loads('[[pkg]]\nname = "a"\n')
+    entry = doc.aot("pkg")[0]
+    entry["tool"] = Table.section({})
+    entry["tool"]["sub"] = Table.section({"x": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[pkg]]
+        name = "a"
+
+        [pkg.tool.sub]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 # ---------------------------------------------------------------------------
