@@ -359,6 +359,25 @@ def test_inline_overwrite_sole_prefix_preserves_bracket_pad() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_inline_overwrite_dotted_prefix_on_multiline_table_skips_pad_restore() -> None:
+    """No single-line pad to restore when the table is already multiline.
+
+    ``set_multiline`` forces `is_multiline()` true, so overwriting a
+    dotted prefix must skip the single-line bracket-pad save/restore
+    entirely and let ``splice_in`` alone re-lay the multiline rows.
+    """
+    doc = tomlrt.loads("t = { a.b = 1, a.c = 2 }\n")
+    doc.table("t").multiline = True
+    doc.table("t")["a"] = 5
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        t = {
+            a = 5,
+        }
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_set_overwrites_implicit_child_table() -> None:
     src = "[a.b]\nx = 1\n"
     doc = tomlrt.loads(src)
