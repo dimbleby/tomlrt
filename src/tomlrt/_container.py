@@ -960,8 +960,10 @@ class Container(dict[str, Any]):
             parent = cur._parent  # noqa: SLF001
             assert parent is not None  # implied by INLINE_DOTTED_INNER
             my_key = cur._path[-1]  # noqa: SLF001
-            if my_key in parent:
-                dict.__delitem__(parent, my_key)
+            # `cur` is only ever filed under `parent` by this same prune
+            # loop or by initial build, both of which keep the two in
+            # lockstep, so `my_key` is always still present here.
+            dict.__delitem__(parent, my_key)
             cur = parent
 
     def install(self, path: str | Sequence[str], value: TomlInput) -> Any:
@@ -1533,13 +1535,13 @@ def _reset_table_for_rehome(t: Container) -> None:
     standard attach path treats `t` as if freshly constructed.
 
     Also resets nested non-inline ``Container`` / ``AoT`` children from
-    the same detached subtree. Children pointing at a different doc are
-    left for the cross-doc clone path.
+    the same detached subtree: every caller re-roots a whole subtree to
+    the same orphan in one pass before any of its tables can be
+    independently touched, so descending unconditionally is safe.
 
     Used when re-installing a held view that was detached into a
     private orphan ``Document``.
     """
-    old_root = t._layout_root  # noqa: SLF001
     t._layout_root = None  # noqa: SLF001
     t._path = ()  # noqa: SLF001
     t._parent = None  # noqa: SLF001
@@ -1551,9 +1553,8 @@ def _reset_table_for_rehome(t: Container) -> None:
 
     for child in dict.values(t):
         if _is_section(child):
-            if child._layout_root is old_root:  # noqa: SLF001
-                _reset_table_for_rehome(child)
-        elif isinstance(child, AoT) and child._layout_root is old_root:  # noqa: SLF001
+            _reset_table_for_rehome(child)
+        elif isinstance(child, AoT):
             for entry in list.__iter__(child):
                 _reset_table_for_rehome(entry)
             child._layout_root = None  # noqa: SLF001
