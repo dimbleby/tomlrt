@@ -270,8 +270,8 @@ class CommaCommentAdapter(ABC, Generic[_KeyT]):
         """The owning document's newline string."""
 
     @abstractmethod
-    def candidates(self) -> Iterator[_KeyT]:
-        """The keys that could carry a comment, in item order."""
+    def indexed_candidates(self) -> Iterator[tuple[_KeyT, int]]:
+        """The candidate keys and item indices, in item order."""
 
 
 class _CommaView(MutableMapping[_KeyT, _ValueT]):
@@ -307,9 +307,8 @@ class _CommaView(MutableMapping[_KeyT, _ValueT]):
 
     @override
     def __iter__(self) -> Iterator[_KeyT]:
-        for key in self._a.candidates():
-            idx = self._a.resolve(key)
-            if idx is not None and self._get(idx) is not None:
+        for key, idx in self._a.indexed_candidates():
+            if self._get(idx) is not None:
                 yield key
 
     @override
