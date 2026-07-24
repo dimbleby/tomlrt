@@ -67,7 +67,12 @@ class Trivia:
 
 def has_comment(pieces: Iterable[TriviaPiece]) -> bool:
     """True iff ``pieces`` contains any ``CommentNode``."""
-    return any(isinstance(p, CommentNode) for p in pieces)
+    # A plain loop avoids generator overhead; this runs on every
+    # comma-value boundary during reorder and is hot enough to matter.
+    for piece in pieces:  # noqa: SIM110
+        if isinstance(piece, CommentNode):
+            return True
+    return False
 
 
 def leading_has_blank_line(leading: Trivia) -> bool:
@@ -90,7 +95,11 @@ def leading_has_blank_line(leading: Trivia) -> bool:
 
 def has_newline(pieces: Iterable[TriviaPiece]) -> bool:
     """True iff ``pieces`` contains any ``NewlineNode``."""
-    return any(isinstance(p, NewlineNode) for p in pieces)
+    # See has_comment: a plain loop measurably beats any()+generator here.
+    for piece in pieces:  # noqa: SIM110
+        if isinstance(piece, NewlineNode):
+            return True
+    return False
 
 
 def leading_break_index(pieces: Sequence[TriviaPiece]) -> int | None:
