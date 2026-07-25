@@ -1284,7 +1284,13 @@ def _collect_subtree(
     aots_out: list[AoT],
     add_slot: Callable[[Slot], None],
 ) -> None:
-    """Walk ``val``'s container subtree, collecting containers, AoTs and owned slots."""
+    """Walk ``val``'s container subtree, collecting containers, AoTs and owned slots.
+
+    Only ``Container``/``AoT`` values can ever match below (an inline
+    array's contents never own doc-stream slots of their own, and are
+    handled separately by ``_walk_view_tree``), so non-container leaves
+    are skipped without recursing into them.
+    """
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
@@ -1295,7 +1301,8 @@ def _collect_subtree(
         for r in val._refs:  # noqa: SLF001
             add_slot(r.slot)
         for child in val.values():
-            _collect_subtree(child, containers_out, aots_out, add_slot)
+            if isinstance(child, (Container, AoT)):
+                _collect_subtree(child, containers_out, aots_out, add_slot)
     elif isinstance(val, AoT):
         aots_out.append(val)
         placeholder = _empty_aot_placeholder_ref(val)
