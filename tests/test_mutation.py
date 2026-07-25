@@ -3030,10 +3030,18 @@ def test_insert_into_implicit_parent_after_aot_attach() -> None:
     assert tomlrt.dumps(doc) == '[tool]\nv = 1\n\n[[tool.list]]\nname = "foo"\n'
 
 
-def test_install_section_through_scalar_intermediate_raises_typeerror() -> None:
-    """``install("a.b.c", section)`` where ``a`` is a scalar must fail loudly."""
+def test_install_section_through_scalar_intermediate_raises_tomlerror() -> None:
+    """``install("a.b.c", section)`` where ``a`` is a scalar must fail loudly.
+
+    Raises the same `TOMLError`, with the same message, that
+    `ensure_table` raises for the identical scenario: both walk the
+    same existing-prefix logic and neither can descend through a
+    non-table value.
+    """
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(TypeError, match="intermediate 'a' is not a table"):
+    with pytest.raises(
+        tomlrt.TOMLError, match="existing value at 'a' is not section-backed"
+    ):
         doc.install("a.b.c", Table.section({"x": 1}))
 
 

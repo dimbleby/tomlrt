@@ -620,10 +620,20 @@ def test_inline_table_promote_array_raises() -> None:
         t.promote_array("a")
 
 
-def test_inline_table_install_section_raises() -> None:
+def test_inline_table_install_promotes_inline_ancestor() -> None:
+    """``install`` promotes an inline-table ancestor to a section, even
+    for a scalar leaf: ``t`` needs an explicit ``[t.x]`` header either
+    way to hold the new ``y``, so there's nothing left to forbid.
+    """
     doc = tomlrt.loads("t = { a = 1 }\n")
-    with pytest.raises(tomlrt.TOMLError, match="not section-backed"):
-        doc.install("t.x.y", 99)
+    doc.install("t.x.y", 99)
+    assert tomlrt.dumps(doc) == td("""
+        [t]
+        a = 1
+
+        [t.x]
+        y = 99
+        """)
 
 
 # ---------------------------------------------------------------------------
