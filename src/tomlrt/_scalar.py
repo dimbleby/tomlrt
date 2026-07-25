@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         from typing_extensions import TypeIs
 
 from tomlrt._values import (
+    _KEY_ESCAPES,
     BoolValue,
     DateTimeValue,
     FloatValue,
@@ -63,27 +64,15 @@ def float_lexeme(v: float) -> str:
     return repr(v)
 
 
+_STRING_ESCAPES: dict[int, str] = {
+    **_KEY_ESCAPES,
+    0x08: "\\b",
+    0x09: "\\t",
+    0x0A: "\\n",
+    0x0C: "\\f",
+    0x0D: "\\r",
+}
+
+
 def basic_string_lexeme(v: str) -> str:
-    out = ['"']
-    for ch in v:
-        c = ord(ch)
-        if ch == "\\":
-            out.append("\\\\")
-        elif ch == '"':
-            out.append('\\"')
-        elif ch == "\b":
-            out.append("\\b")
-        elif ch == "\t":
-            out.append("\\t")
-        elif ch == "\n":
-            out.append("\\n")
-        elif ch == "\f":
-            out.append("\\f")
-        elif ch == "\r":
-            out.append("\\r")
-        elif c < 0x20 or c == 0x7F:
-            out.append(f"\\u{c:04X}")
-        else:
-            out.append(ch)
-    out.append('"')
-    return "".join(out)
+    return f'"{v.translate(_STRING_ESCAPES)}"'
