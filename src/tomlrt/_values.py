@@ -93,21 +93,15 @@ class KeyPart:
         return self.raw
 
 
+_KEY_ESCAPES: dict[int, str] = {0x22: '\\"', 0x5C: "\\\\"}
+for _c in (*range(0x20), 0x7F):
+    _KEY_ESCAPES[_c] = f"\\u{_c:04X}"
+del _c
+
+
 def quote_basic_key(s: str) -> str:
     """Encode ``s`` as a basic-quoted TOML key (escaping where required)."""
-    out = ['"']
-    for ch in s:
-        c = ord(ch)
-        if ch == "\\":
-            out.append("\\\\")
-        elif ch == '"':
-            out.append('\\"')
-        elif c < 0x20 or c == 0x7F:
-            out.append(f"\\u{c:04X}")
-        else:
-            out.append(ch)
-    out.append('"')
-    return "".join(out)
+    return f'"{s.translate(_KEY_ESCAPES)}"'
 
 
 _RE_BARE_KEY_FULL = re.compile(r"\A[A-Za-z0-9_\-]+\Z")
