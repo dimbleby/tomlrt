@@ -1057,16 +1057,19 @@ class Container(dict[str, Any]):
         doesn't refer to an inline-style table.
         """
         cur = self._require_promotable_entry(key, action="inline-table promotion")
-        if not (_is_inline_table(cur)):
+        if not _is_inline_table(cur):
             msg = f"{key!r} is not an inline table"
             raise TypeError(msg)
-        if _inline_value_has_inner_comments(cur._value):  # noqa: SLF001
-            msg = (
-                f"cannot promote {key!r}: inline table has inner "
-                f"comments that would be lost"
-            )
-            raise TOMLError(msg)
-        value = cur._value  # noqa: SLF001
+        _check_inline_promotable(cur, key)
+        return self._promote_inline_entry(key, cur)
+
+    def _promote_inline_entry(self, key: str, cur: Container) -> Table:
+        """Promote already-checked inline table ``cur`` at ``key``.
+
+        Shared with `_walk_existing_sections`, which skips re-checking
+        ancestors its preflight pass already validated.
+        """
+        value = cur._value
         assert isinstance(value, InlineTableValue)
         entries = _layout_ops.prepare_promoted_inline_entries(value.items)
         # Transfer the existing KV slot's leading + eol to the header.
@@ -1212,11 +1215,42 @@ def _walk_existing_sections(
     ``promote_inline``) inline table. With ``promote_inline``, an
     inline-style ancestor is promoted to an explicit section in place
     instead of raising, preserving its other entries; only the final
-    component, handled by the caller, is ever replaced.
+    component, handled by the caller, is ever replaced. Every ancestor
+    is validated by `_preflight_section_walk` before any promotion
+    happens, so a component the walk can't get past leaves earlier
+    ancestors unpromoted; the walk below trusts that verdict outright.
     """
     if limit is None:
         limit = len(parts)
+    n, to_promote = _preflight_section_walk(
+        start, parts, action=action, limit=limit, promote_inline=promote_inline
+    )
     cur: Container = start
+    for i in range(n):
+        p = parts[i]
+        nxt = dict.__getitem__(cur, p)
+        cur = cur._promote_inline_entry(p, nxt) if i in to_promote else nxt  # noqa: SLF001
+    return cur, n
+
+
+def _preflight_section_walk(
+    start: Container,
+    parts: Sequence[str],
+    *,
+    action: str,
+    limit: int,
+    promote_inline: bool,
+) -> tuple[int, set[int]]:
+    """Validate, read-only, the descent `_walk_existing_sections` will make.
+
+    Mirrors that walk without mutating anything, raising the same
+    errors it would, so a component that blocks it (an AoT, a
+    non-table value, or an inline table with inner comments) is
+    caught before an earlier ancestor is ever promoted. Returns the
+    walked length and the indices needing promotion.
+    """
+    cur: Container = start
+    to_promote: set[int] = set()
     i = 0
     while i < limit:
         p = parts[i]
@@ -1230,7 +1264,8 @@ def _walk_existing_sections(
             )
             raise TOMLError(msg)
         if isinstance(nxt, Container) and nxt._inline and promote_inline:  # noqa: SLF001
-            nxt = cur.promote_inline(p)
+            _check_inline_promotable(nxt, p)
+            to_promote.add(i)
         elif not isinstance(nxt, Container) or (nxt._inline and i < len(parts) - 1):  # noqa: SLF001
             msg = (
                 f"existing value at {p!r} is not section-backed "
@@ -1239,7 +1274,7 @@ def _walk_existing_sections(
             raise TOMLError(msg)
         cur = nxt
         i += 1
-    return cur, i
+    return i, to_promote
 
 
 def _populate_unattached(t: Container, mapping: Mapping[str, Any]) -> None:
@@ -1500,6 +1535,21 @@ def _inline_value_has_inner_comments(v: object) -> bool:
     would have nowhere to live in the promoted form.
     """
     return isinstance(v, InlineTableValue) and _comma_value_has_outer_comments(v)
+
+
+def _check_inline_promotable(v: Container, key: str) -> None:
+    """Raise `TOMLError` if promoting ``v`` (bound to ``key``) would lose comments.
+
+    Shared by `Container.promote_inline` and `_walk_existing_sections`'s
+    preflight pass. Callers are expected to have already confirmed
+    ``v`` is an inline table (e.g. via `_is_inline_table`).
+    """
+    if _inline_value_has_inner_comments(v._value):  # noqa: SLF001
+        msg = (
+            f"cannot promote {key!r}: inline table has inner "
+            f"comments that would be lost"
+        )
+        raise TOMLError(msg)
 
 
 def _array_value_has_outer_comments(v: object) -> bool:
