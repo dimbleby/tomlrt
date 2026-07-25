@@ -984,45 +984,33 @@ class Container(dict[str, Any]):
         if self._inline and len(parts) > 1:
             msg = "cannot install dotted path into an inline-style table"
             raise TOMLError(msg)
-        # Section / AoT values need the multi-component attach path so
-        # intermediate components stay implicit.
+        # Section / AoT values keep intermediate components implicit;
+        # only their own header is explicit.
         is_section = isinstance(value, Table) and not value._inline  # noqa: SLF001
         is_aot = isinstance(value, AoT)
         if (is_section or is_aot) and len(parts) > 1 and self._layout_root is not None:
-            # Walk existing prefix; whatever's left is created with
-            # implicit intermediates plus the final explicit binding.
             cur, i = _walk_existing_sections(
-                self, parts, limit=len(parts) - 1, stop_on_non_section=True
+                self, parts, action="install", limit=len(parts) - 1, promote_inline=True
             )
-            # Drop conflicting inline-tail keys before installing the
-            # section, or a stale inline value would shadow it.
-            if (
-                i < len(parts) - 1
-                and parts[i] in cur
-                and isinstance(dict.__getitem__(cur, parts[i]), Container)
-                and dict.__getitem__(cur, parts[i])._inline  # noqa: SLF001
-            ):
-                inline_holder: Container = dict.__getitem__(cur, parts[i])
-                # Delete the next inline path component in order.
-                tail = parts[i + 1 :]
-                if tail and tail[0] in inline_holder:
-                    del inline_holder[tail[0]]
-                    if len(inline_holder) == 0:
-                        _layout_ops.delete_key(cur, parts[i])
-            # Leaf already present: use normal overwrite dispatch.
-            if i == len(parts) - 1:
-                cur[parts[-1]] = value
-                return cur[parts[-1]]
-            # Then use normal Container dispatch; it already handles
-            # attached, detached, section, and AoT source states.
             anchor = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
             anchor[parts[-1]] = value
             return anchor[parts[-1]]
-        host = self if len(parts) == 1 else self.ensure_table(parts[:-1])
+        # A scalar/inline leaf needs its immediate parent to be an
+        # explicit table regardless, so any inline ancestor along the
+        # way is promoted too (see `ensure_table`'s ``promote_inline``).
+        host = (
+            self
+            if len(parts) == 1
+            else self.ensure_table(
+                parts[:-1], promote_inline=self._layout_root is not None
+            )
+        )
         host[parts[-1]] = value
         return host[parts[-1]]
 
-    def ensure_table(self, key: str | Sequence[str]) -> Table:
+    def ensure_table(
+        self, key: str | Sequence[str], *, promote_inline: bool = False
+    ) -> Table:
         """Return the table at ``key``, creating it if missing.
 
         If any prefix already exists as a section, descent continues
@@ -1030,11 +1018,16 @@ class Container(dict[str, Any]):
         implicit; only the deepest component gets an explicit
         ``[a.b.c]`` header. Raises `TOMLError` if a component cannot be
         descended through: an existing array-of-tables, or a non-table
-        value or inline table that would have to be traversed.
+        value or (unless ``promote_inline``) inline table.
+
+        ``promote_inline`` converts an inline-style ancestor into an
+        explicit section in place instead of raising, preserving its
+        other entries. Used by `install`, since the deepest component
+        is getting an explicit header regardless.
         """
         parts = validate_path(key)
         cur, i = _walk_existing_sections(
-            self, parts, limit=len(parts), stop_on_non_section=False
+            self, parts, action="ensure_table", promote_inline=promote_inline
         )
         if i == len(parts):
             assert isinstance(cur, Table)
@@ -1202,10 +1195,27 @@ def _walk_existing_sections(
     start: Container,
     parts: Sequence[str],
     *,
-    limit: int,
-    stop_on_non_section: bool,
+    action: str,
+    limit: int | None = None,
+    promote_inline: bool = False,
 ) -> tuple[Container, int]:
-    """Walk the existing section-backed prefix of ``parts`` under ``start``."""
+    """Walk the existing section-backed prefix of ``parts[:limit]``.
+
+    ``limit`` defaults to the whole path (`ensure_table`); `install`
+    passes ``len(parts) - 1`` to stop short of the leaf, which it
+    handles itself. ``action`` names the caller for error messages
+    only, independent of ``promote_inline`` (which `ensure_table` also
+    accepts, when called on `install`'s behalf).
+
+    Raises `TOMLError` if a component cannot be descended through: an
+    existing array-of-tables, or a non-table value or (unless
+    ``promote_inline``) inline table. With ``promote_inline``, an
+    inline-style ancestor is promoted to an explicit section in place
+    instead of raising, preserving its other entries; only the final
+    component, handled by the caller, is ever replaced.
+    """
+    if limit is None:
+        limit = len(parts)
     cur: Container = start
     i = 0
     while i < limit:
@@ -1214,15 +1224,14 @@ def _walk_existing_sections(
             break
         nxt = dict.__getitem__(cur, p)
         if isinstance(nxt, AoT):
-            action = "install" if stop_on_non_section else "ensure_table"
             msg = (
                 f"cannot {action} through array-of-tables at {p!r}: "
                 "no addressable target inside an AoT"
             )
             raise TOMLError(msg)
-        if not isinstance(nxt, Container) or (nxt._inline and i < len(parts) - 1):  # noqa: SLF001
-            if stop_on_non_section:
-                break
+        if isinstance(nxt, Container) and nxt._inline and promote_inline:  # noqa: SLF001
+            nxt = cur.promote_inline(p)
+        elif not isinstance(nxt, Container) or (nxt._inline and i < len(parts) - 1):  # noqa: SLF001
             msg = (
                 f"existing value at {p!r} is not section-backed "
                 "(is an inline table or non-table value)"

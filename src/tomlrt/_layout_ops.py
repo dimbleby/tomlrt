@@ -495,7 +495,7 @@ def ensure_implicit_chain(
 
     Returns the deepest container. Missing components become new
     implicit (header-less) tables wired into ``parent._attached_doc``;
-    existing components must already be ``Container`` instances.
+    existing components are always ``Container`` instances.
     """
     from tomlrt._container import Container  # noqa: PLC0415
 
@@ -505,9 +505,7 @@ def ensure_implicit_chain(
     for j, comp in enumerate(sub_path):
         if comp in cur:
             nxt = dict.__getitem__(cur, comp)
-            if not isinstance(nxt, Container):
-                msg = f"intermediate {comp!r} is not a table"
-                raise TypeError(msg)
+            assert isinstance(nxt, Container)
             cur = nxt
             continue
         implicit = _init_implicit_table(
@@ -2309,11 +2307,10 @@ def populate_promoted_inline_entries(
     owner = target._owner_aot_entry  # noqa: SLF001
     for source, value in entries:
         key_path = source.key_path
-        leaf_parent = (
-            target
-            if len(key_path) == 1
-            else ensure_implicit_chain(target, key_path[:-1])
-        )
+        # ``ensure_implicit_chain`` is a no-op for an empty sub-path,
+        # so this covers both the direct-child and dotted-descendant
+        # cases without a separate ``len(key_path) == 1`` branch.
+        leaf_parent = ensure_implicit_chain(target, key_path[:-1])
         leaf = key_path[-1]
         decoded = _decode_value(
             value,
