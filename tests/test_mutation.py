@@ -5417,6 +5417,79 @@ def test_ensure_table_through_scalar_value_raises() -> None:
         doc.ensure_table("a")
 
 
+def test_install_dotted_path_leaves_doc_untouched_when_blocked_by_comments() -> None:
+    """A dotted `install()` that must promote an ancestor, but is then
+    blocked by a *later* ancestor's inner comments, must not leave the
+    first ancestor promoted: the whole call is atomic."""
+    src = td("""
+        a = {b = { # comment
+        c = 1 }, sibling = 2}
+        """)
+    doc = tomlrt.loads(src)
+    with pytest.raises(tomlrt.TOMLError, match="inner comments"):
+        doc.install("a.b.x", 9)
+    assert tomlrt.dumps(doc) == src
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"b": {"c": 1}, "sibling": 2}}
+
+
+def test_install_dotted_path_leaves_doc_untouched_when_blocked_by_scalar() -> None:
+    """Same atomicity guarantee when the blocking component is simply a
+    non-table value rather than a comment-bearing inline table."""
+    src = "a = {arr = 1}\n"
+    doc = tomlrt.loads(src)
+    with pytest.raises(tomlrt.TOMLError, match="inline table or non-table"):
+        doc.install("a.arr.x", 9)
+    assert tomlrt.dumps(doc) == src
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"arr": 1}}
+
+
+def test_install_dotted_path_leaves_doc_untouched_when_blocked_by_aot() -> None:
+    """The AoT-blocks-the-walk branch of the preflight also leaves the
+    document untouched (an inline table can never itself hold an AoT,
+    so the AoT here is necessarily a sibling, not a promoted
+    descendant, of the inline table also present under ``x``)."""
+    src = td("""
+        [x]
+        a = {b = 1}
+        [[x.c]]
+        y = 1
+        """)
+    doc = tomlrt.loads(src)
+    with pytest.raises(tomlrt.TOMLError, match="array-of-tables"):
+        doc.install("x.c.d", 9)
+    assert tomlrt.dumps(doc) == src
+    assert _reparses(tomlrt.dumps(doc)) == {"x": {"a": {"b": 1}, "c": [{"y": 1}]}}
+
+
+def test_install_dotted_path_rolls_back_multiple_promotions_when_later_blocked() -> (
+    None
+):
+    """Two ancestors are both promotable, but the third path component
+    is a plain scalar: neither of the first two must end up promoted."""
+    src = "a = {b = {c = 1}, other = 2}\n"
+    doc = tomlrt.loads(src)
+    with pytest.raises(tomlrt.TOMLError, match="inline table or non-table"):
+        doc.install("a.b.c.x", 9)
+    assert tomlrt.dumps(doc) == src
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"b": {"c": 1}, "other": 2}}
+
+
+def test_install_dotted_path_promotes_every_promotable_ancestor() -> None:
+    """Every promotable ancestor on the path is promoted and the leaf
+    is installed."""
+    doc = tomlrt.loads("a = {b = {c = {d = 1}}, other = 2}\n")
+    doc.install("a.b.c.x", 9)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        other = 2
+        [a.b.c]
+        d = 1
+        x = 9
+        """)
+    assert _reparses(out) == {"a": {"other": 2, "b": {"c": {"d": 1, "x": 9}}}}
+
+
 def test_ensure_table_on_detached_table_section() -> None:
     t = Table.section()
     sub = t.ensure_table(["a", "b", "c"])
