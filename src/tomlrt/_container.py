@@ -867,12 +867,20 @@ class Container(dict[str, Any]):
         else:
             # A key's leaf content must precede every section header.
             # Keep mixed keys between pure leaves and pure sections so
-            # their leaf part stays ahead of all sections.
-            pure_leaves = [
-                k for k in current if self._has_leaf(k) and not self.has_header(k)
-            ]
-            mixed = [k for k in current if self._has_leaf(k) and self.has_header(k)]
-            pure_sections = [k for k in current if not self._has_leaf(k)]
+            # their leaf part stays ahead of all sections. Each key is
+            # classified in one pass; `has_header` is only consulted for
+            # keys that have a leaf, since it is only needed to tell
+            # pure leaves from mixed ones.
+            pure_leaves: list[str] = []
+            mixed: list[str] = []
+            pure_sections: list[str] = []
+            for k in current:
+                if not self._has_leaf(k):
+                    pure_sections.append(k)
+                elif self.has_header(k):
+                    mixed.append(k)
+                else:
+                    pure_leaves.append(k)
             for group in (pure_leaves, mixed, pure_sections):
                 group.sort(key=key, reverse=reverse)
             new_order = pure_leaves + mixed + pure_sections

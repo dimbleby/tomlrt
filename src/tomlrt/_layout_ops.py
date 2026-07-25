@@ -3899,10 +3899,10 @@ def _direct_child_key(
     ``parent_path`` and is strictly deeper, else None.
     """
     if isinstance(slot, StructuralHeaderSlot):
-        root: tuple[str, ...] = tuple(slot.path)
+        root: tuple[str, ...] = slot.path
     else:
         assert isinstance(slot, KVSlot), "unknown slot type"
-        root = (*slot.host_path, *slot.key)
+        root = (*slot.host_path, *[p.value for p in slot.key_parts])
     if len(root) > parent_plen and root[:parent_plen] == parent_path:
         return root[parent_plen]
     return None
