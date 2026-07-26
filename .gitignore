@@ -1,9 +1,5 @@
 *.py[oc]
-.cache
 .coverage
-.hypothesis/
-.python-version
-.venv
 __pycache__/
 dist/
 site/
