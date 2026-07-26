@@ -7,17 +7,16 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "David Hotham", email = "david.hotham@blueyonder.co.uk" }]
 keywords = [
+  "config",
+  "configuration",
+  "format-preserving",
+  "pyproject",
+  "round-trip",
   "toml",
   "toml-parser",
   "toml-writer",
   "tomlrt",
-  "format-preserving",
-  "round-trip",
-  "config",
-  "configuration",
-  "pyproject",
 ]
-dependencies = ["typing_extensions>=4; python_version < '3.12'"]
 classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
@@ -25,19 +24,20 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Typing :: Typed",
 ]
+dependencies = ["typing_extensions>=4; python_version < '3.12'"]
 
 [project.urls]
-Repository = "https://github.com/dimbleby/tomlrt"
+Changelog = "https://github.com/dimbleby/tomlrt/blob/main/CHANGELOG.md"
 Documentation = "https://dimbleby.github.io/tomlrt/"
 Issues = "https://github.com/dimbleby/tomlrt/issues"
-Changelog = "https://github.com/dimbleby/tomlrt/blob/main/CHANGELOG.md"
+Repository = "https://github.com/dimbleby/tomlrt"
 
 [dependency-groups]
 dev = [
   "hypothesis>=6",
   "mypy>=2.1",
-  "pytest-cov>=5",
   "pytest>=9",
+  "pytest-cov>=5",
   "tomli>=2.4",
 ]
 docs = [
@@ -48,14 +48,6 @@ docs = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.pytest]
-addopts = ["-ra", "-m", "not slow"]
-testpaths = ["tests"]
-strict = true
-markers = [
-  "slow: property-based / fuzz tests",
-]
 
 [tool.coverage.run]
 source = ["src/tomlrt"]
@@ -86,6 +78,14 @@ enable_error_code = [
   "truthy-iterable",
   "unused-awaitable",
 ]
+
+[tool.pytest]
+addopts = ["-m", "-ra", "not slow"]
+markers = [
+  "slow: property-based / fuzz tests",
+]
+strict = true
+testpaths = ["tests"]
 
 [tool.ruff]
 src = ["src", "tests"]
