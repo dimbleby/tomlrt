@@ -245,6 +245,31 @@ def test_assign_offset_datetime() -> None:
     assert re_value == datetime(2024, 7, 4, 12, 0, 0, tzinfo=tz)
 
 
+def test_assign_datetime_utc_offset() -> None:
+    doc = tomlrt.loads("x = 0\n")
+    doc["x"] = datetime(2024, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+    out = tomlrt.dumps(doc)
+    assert out == "x = 2024-07-04T12:00:00+00:00\n"
+    re_value = tomlrt.loads(out)["x"]
+    assert isinstance(re_value, datetime)
+    assert re_value == datetime(2024, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_assign_datetime_seconds_offset_rejected() -> None:
+    doc = tomlrt.loads("x = 0\n")
+    tz = timezone(timedelta(hours=1, minutes=2, seconds=3))
+    dt = datetime(2020, 1, 1, 10, 0, 0, tzinfo=tz)
+    with pytest.raises(ValueError, match="whole number of minutes"):
+        doc["x"] = dt
+
+
+def test_assign_local_time_with_tzinfo_rejected() -> None:
+    doc = tomlrt.loads("x = 0\n")
+    t = time(10, 0, 0, tzinfo=timezone(timedelta(hours=2)))
+    with pytest.raises(ValueError, match="local time cannot carry a timezone"):
+        doc["x"] = t
+
+
 def test_assign_plain_list_becomes_inline_array() -> None:
     doc = tomlrt.loads("x = 0\n")
     doc["x"] = [1, 2, 3]

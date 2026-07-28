@@ -7,7 +7,7 @@ layer.
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -52,7 +52,23 @@ def coerce_scalar(
         return FloatValue(lexeme=float_lexeme(v), value=v)
     if isinstance(v, str):
         return StringValue(lexeme=basic_string_lexeme(v), value=v)
+    if isinstance(v, datetime):
+        _check_toml_offset(v)
+    elif isinstance(v, time) and v.tzinfo is not None:
+        msg = f"cannot represent {v!r} in TOML: local time cannot carry a timezone"
+        raise ValueError(msg)
     return DateTimeValue(lexeme=v.isoformat(), value=v)
+
+
+def _check_toml_offset(v: datetime) -> None:
+    """Raise if ``v.tzinfo`` isn't representable as TOML's whole-minute offset."""
+    offset = v.utcoffset()
+    if offset is not None and offset % timedelta(minutes=1):
+        msg = (
+            f"cannot represent {v!r} in TOML: timezone offset {offset} is not "
+            "a whole number of minutes"
+        )
+        raise ValueError(msg)
 
 
 def float_lexeme(v: float) -> str:
