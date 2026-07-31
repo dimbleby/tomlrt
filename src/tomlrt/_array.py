@@ -262,9 +262,13 @@ class Array(list[Any]):
         )
         return self
 
-    def _synth_cst(self, value: object) -> tuple[Value, object]:
+    def _synth_item(self, value: object) -> tuple[Value, object]:
+        """Synthesise one value accepted by an inline array."""
         from tomlrt._container import _synth_value  # noqa: PLC0415
 
+        if isinstance(value, AoT):
+            msg = "cannot store an array-of-tables inside an inline array"
+            raise TOMLError(msg)
         return _synth_value(
             value,
             layout_root=self._layout_root,
@@ -273,12 +277,20 @@ class Array(list[Any]):
             owner=None,
         )
 
+    def _prepare_values(self, values: list[Any]) -> list[tuple[Value, Any]]:
+        """Validate all values, then synthesise each exactly once."""
+        from tomlrt._container import _validate_input  # noqa: PLC0415
+
+        for value in values:
+            if isinstance(value, AoT):
+                msg = "cannot store an array-of-tables inside an inline array"
+                raise TOMLError(msg)
+            _validate_input(value, inline_only=True)
+        return [self._synth_item(value) for value in values]
+
     @override
     def append(self, value: Any) -> None:
-        if isinstance(value, AoT):
-            msg = "cannot store an array-of-tables inside an inline array"
-            raise TOMLError(msg)
-        cst, decoded = self._synth_cst(value)
+        cst, decoded = self._synth_item(value)
         self._append_with_style(cst, decoded, self._style())
 
     def _append_with_style(self, cst: Value, decoded: Any, style: CommaStyle) -> None:
@@ -297,14 +309,11 @@ class Array(list[Any]):
         snapshot = list(values)
         if not snapshot:
             return
-        if any(isinstance(v, AoT) for v in snapshot):
-            msg = "cannot store an array-of-tables inside an inline array"
-            raise TOMLError(msg)
+        prepared = self._prepare_values(snapshot)
         # Reuse one style for every item: re-deriving it per item is O(n)
         # for a single-line array, so doing it n times would be quadratic.
         style = self._style()
-        for v in snapshot:
-            cst, decoded = self._synth_cst(v)
+        for cst, decoded in prepared:
             self._append_with_style(cst, decoded, style)
 
     @override
@@ -334,14 +343,23 @@ class Array(list[Any]):
     @override
     def insert(self, index: SupportsIndex, value: Any) -> None:
         i = _norm_insert_index(index, len(self))
-        if i == len(self):
-            self.append(value)
+        cst, decoded = self._synth_item(value)
+        self._insert_synthesised(i, cst, decoded)
+
+    def _insert_synthesised(self, index: int, cst: Value, decoded: Any) -> None:
+        """Insert an already-synthesised value."""
+        if index == len(self):
+            self._append_with_style(cst, decoded, self._style())
             return
-        cst, decoded = self._synth_cst(value)
         style = self._style()
         new_item = _make_item(cst, has_comma=True)
-        splice_insert(self._value, new_item, i, style, self._doc_newline)
-        list.insert(self, i, decoded)
+        splice_insert(self._value, new_item, index, style, self._doc_newline)
+        list.insert(self, index, decoded)
+
+    def _replace_synthesised(self, index: int, cst: Value, decoded: Any) -> None:
+        """Replace an item with an already-synthesised value."""
+        self._value.items[index].value = cst
+        list.__setitem__(self, index, decoded)
 
     @override
     def reverse(self) -> None:
@@ -403,24 +421,24 @@ class Array(list[Any]):
                         f"to extended slice of size {len(indices)}"
                     )
                     raise ValueError(msg)
+                prepared = self._prepare_values(values)
                 # Extended slice positions are unchanged; replace per slot.
-                for k, v in zip(indices, values, strict=True):
-                    self[k] = v
+                for k, (cst, decoded) in zip(indices, prepared, strict=True):
+                    self._replace_synthesised(k, cst, decoded)
                 return
+            prepared = self._prepare_values(values)
             # Reuse delete/insert boundary handling for contiguous slices.
             start, stop, _ = index.indices(len(self))
             del self[start:stop]
-            for offset, v in enumerate(values):
-                self.insert(start + offset, v)
+            for offset, (cst, decoded) in enumerate(prepared):
+                self._insert_synthesised(start + offset, cst, decoded)
             return
         # int index: just replace the value CST in place.
         # Reject before synthesising or mutating any CST, matching the
         # IndexError that ``list.__setitem__`` raises for a bad index.
-        items = self._value.items
-        i = _norm_index(index, len(items), "list assignment")
-        cst, dec = self._synth_cst(value)
-        items[i].value = cst
-        list.__setitem__(self, i, dec)
+        i = _norm_index(index, len(self._value.items), "list assignment")
+        cst, dec = self._synth_item(value)
+        self._replace_synthesised(i, cst, dec)
 
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
@@ -548,7 +566,7 @@ class AoT(list["Table"]):
         append to the owning document.
         """
         if entry is not None:
-            entry = _validate_mapping(entry, label="AoT entry")
+            entry = _prepare_aot_entries((entry,))[0]
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(entry))
             return self[-1]
@@ -648,7 +666,7 @@ class AoT(list["Table"]):
                 )
                 raise ValueError(msg)
             # Atomicity preflight: validate everything before mutating.
-            typed_values = [_validate_mapping(v, label="AoT entry") for v in values]
+            typed_values = _prepare_aot_entries(values)
             if self._layout_root is None:
                 list.__setitem__(
                     self, index, [_make_unattached_entry(v) for v in typed_values]
@@ -672,7 +690,7 @@ class AoT(list["Table"]):
             for i, v in zip(indices, typed_values, strict=True):
                 self._replace_entry_attached(i, v)
             return
-        entry = _validate_mapping(value, label="AoT entry")
+        entry = _prepare_aot_entries((value,))[0]
         if self._layout_root is None:
             list.__setitem__(self, index, _make_unattached_entry(entry))
             return
@@ -681,7 +699,11 @@ class AoT(list["Table"]):
     @override
     def append(self, value: Table | Mapping[str, TomlInput]) -> None:
         # Same semantics as `add(body)` but with no return value (list API).
-        entry = _validate_mapping(value, label="AoT entry")
+        entry = _prepare_aot_entries((value,))[0]
+        self._append_validated(entry)
+
+    def _append_validated(self, entry: Mapping[str, TomlInput]) -> None:
+        """Append an entry that has passed bulk-mutation preflight."""
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(entry))
             return
@@ -690,14 +712,15 @@ class AoT(list["Table"]):
     @override
     def extend(self, values: Iterable[Table | Mapping[str, TomlInput]]) -> None:
         # Snapshot so ``aot.extend(aot)`` duplicates once like list does.
-        for v in list(values):
-            self.append(v)
+        entries = _prepare_aot_entries(values)
+        for entry in entries:
+            self._append_validated(entry)
 
     @override
     def insert(
         self, index: SupportsIndex, value: Table | Mapping[str, TomlInput]
     ) -> None:
-        entry = _validate_mapping(value, label="AoT entry")
+        entry = _prepare_aot_entries((value,))[0]
         if self._layout_root is None:
             list.insert(self, index, _make_unattached_entry(entry))
             return
@@ -765,6 +788,18 @@ class AoT(list["Table"]):
             for e in originals:
                 _layout_ops.clone_aot_entry(self, e)
         return self
+
+
+def _prepare_aot_entries(
+    values: Iterable[Any],
+) -> list[Mapping[str, TomlInput]]:
+    """Snapshot and validate complete AoT entries."""
+    from tomlrt._container import _validate_section_values  # noqa: PLC0415
+
+    entries = [_validate_mapping(value, label="AoT entry") for value in list(values)]
+    for entry in entries:
+        _validate_section_values(entry)
+    return entries
 
 
 def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:

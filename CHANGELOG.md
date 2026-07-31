@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `install()` no longer produces invalid TOML for dotted paths through an existing inline table.
 - Assigning a `datetime` with a sub-minute UTC offset, or a `time` carrying any timezone, now raises `ValueError` instead of producing unparseable TOML.
+- Bulk array mutations now reject invalid items without partially modifying documents.
 
 ## [2.2.0] - 2026-07-24
 

@@ -52,12 +52,17 @@ def coerce_scalar(
         return FloatValue(lexeme=float_lexeme(v), value=v)
     if isinstance(v, str):
         return StringValue(lexeme=basic_string_lexeme(v), value=v)
+    validate_scalar(v)
+    return DateTimeValue(lexeme=v.isoformat(), value=v)
+
+
+def validate_scalar(v: Scalar) -> None:
+    """Raise if a scalar cannot be represented in TOML."""
     if isinstance(v, datetime):
         _check_toml_offset(v)
     elif isinstance(v, time) and v.tzinfo is not None:
         msg = f"cannot represent {v!r} in TOML: local time cannot carry a timezone"
         raise ValueError(msg)
-    return DateTimeValue(lexeme=v.isoformat(), value=v)
 
 
 def _check_toml_offset(v: datetime) -> None:

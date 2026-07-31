@@ -841,6 +841,27 @@ def test_array_setitem_slice_extended_matching_length() -> None:
     assert _reparses(out) == {"xs": [10, 2, 30, 4, 50]}
 
 
+@pytest.mark.parametrize("index", [slice(0, 2), slice(None, None, 2)])
+def test_array_setitem_slice_invalid_value_is_atomic(index: slice) -> None:
+    src = td("""
+        xs = [ # values
+            1, # one
+            3,
+            5,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    xs = doc.array("xs")
+
+    with pytest.raises(TypeError):
+        xs[index] = [2, object()]
+
+    assert list(xs) == [1, 3, 5]
+    rendered = tomlrt.dumps(doc)
+    assert rendered == src
+    assert _reparses(rendered) == {"xs": [1, 3, 5]}
+
+
 def test_array_setitem_slice() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3, 4]\n")
     xs = doc.array("xs")
@@ -1028,6 +1049,56 @@ def test_array_extend_rejects_aot_atomically() -> None:
         doc["xs"].extend([2, AoT([{"a": 1}])])
     # The whole extend is rejected up front; no partial mutation.
     assert tomlrt.dumps(doc) == "xs = [1]\n"
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [{"nested": AoT([{"a": 1}])}, {"nested": Table.section({"a": 1})}],
+)
+def test_array_extend_rejects_nested_structural_value_atomically(
+    invalid: Any,
+) -> None:
+    doc = tomlrt.loads("xs = [1]\n")
+
+    with pytest.raises(tomlrt.TOMLError):
+        doc.array("xs").extend([2, invalid])
+
+    assert tomlrt.dumps(doc) == "xs = [1]\n"
+
+
+def test_array_extend_invalid_value_is_atomic() -> None:
+    src = td("""
+        xs = [ # values
+            1, # one
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    xs = doc.array("xs")
+
+    with pytest.raises(TypeError):
+        xs.extend([2, object()])
+
+    assert list(xs) == [1]
+    rendered = tomlrt.dumps(doc)
+    assert rendered == src
+    assert _reparses(rendered) == {"xs": [1]}
+
+
+@pytest.mark.parametrize("value", [Array([2]), Table.inline({"x": 2})])
+def test_array_failed_bulk_mutation_does_not_attach_input(value: Any) -> None:
+    doc = tomlrt.loads("xs = []\n")
+
+    with pytest.raises(TypeError):
+        doc.array("xs").extend([value, object()])
+
+    doc["kept"] = value
+    assert doc["kept"] is value
+    expected = (
+        "xs = []\nkept = [2]\n"
+        if isinstance(value, Array)
+        else "xs = []\nkept = { x = 2 }\n"
+    )
+    assert tomlrt.dumps(doc) == expected
 
 
 def test_array_extend_self_duplicates_once() -> None:
@@ -3885,6 +3956,45 @@ def test_aot_extend_self_duplicates_once() -> None:
     aot.extend(aot)
     assert len(aot) == 4
     assert [t["a"] for t in aot] == [1, 2, 1, 2]
+
+
+def test_aot_extend_invalid_entry_is_atomic() -> None:
+    src = td("""
+        [[a]]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    aot = doc.aot("a")
+    values: Any = [{"x": 2}, {"x": object()}]
+
+    with pytest.raises(TypeError):
+        aot.extend(values)
+
+    assert aot.to_list() == [{"x": 1}]
+    rendered = tomlrt.dumps(doc)
+    assert rendered == src
+    assert _reparses(rendered) == {"a": [{"x": 1}]}
+
+
+def test_aot_setitem_slice_invalid_entry_is_atomic() -> None:
+    src = td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+        """)
+    doc = tomlrt.loads(src)
+    aot = doc.aot("a")
+    values: Any = [{"x": 3}, {"x": object()}]
+
+    with pytest.raises(TypeError):
+        aot[:] = values
+
+    assert aot.to_list() == [{"x": 1}, {"x": 2}]
+    rendered = tomlrt.dumps(doc)
+    assert rendered == src
+    assert _reparses(rendered) == {"a": [{"x": 1}, {"x": 2}]}
 
 
 def test_aot_iadd_self_duplicates_once() -> None:
