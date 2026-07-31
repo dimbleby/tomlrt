@@ -56,6 +56,7 @@ from tomlrt._render import render
 from tomlrt._scalar import (
     coerce_scalar,
     is_scalar,
+    validate_scalar,
 )
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
@@ -1889,6 +1890,43 @@ def _is_synth_inline(v: object) -> bool:
     # (TOML has no tuple, and accepting it would mask user typos). Array,
     # a list subclass, was already accepted above.
     return isinstance(v, list)
+
+
+def _validate_input(v: object, *, inline_only: bool) -> None:
+    """Validate a value recursively for an inline or section context."""
+    if is_scalar(v):
+        validate_scalar(v)
+        return
+    if isinstance(v, AoT):
+        if inline_only:
+            msg = "cannot store an array-of-tables inside an inline table"
+            raise TOMLError(msg)
+        for entry in v:
+            _validate_section_values(_validate_mapping(entry, label="AoT entry"))
+        return
+    if _is_section(v):
+        if inline_only:
+            msg = "cannot store a section-style table inside an inline-style table"
+            raise TOMLError(msg)
+        _validate_section_values(_validate_mapping(v, label="section table"))
+        return
+    if isinstance(v, Mapping):
+        mapping = _validate_mapping(v, label="inline table")
+        for child in mapping.values():
+            _validate_input(child, inline_only=True)
+        return
+    if isinstance(v, list):
+        for child in v:
+            _validate_input(child, inline_only=True)
+        return
+    msg = f"cannot convert {type(v).__name__} to a TOML value"
+    raise TypeError(msg)
+
+
+def _validate_section_values(mapping: Mapping[str, object]) -> None:
+    """Validate values in a mapping whose keys were already checked."""
+    for value in mapping.values():
+        _validate_input(value, inline_only=False)
 
 
 def _synth_value(
