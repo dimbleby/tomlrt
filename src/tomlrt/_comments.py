@@ -43,11 +43,8 @@ if TYPE_CHECKING:
     )
 
 
-def _validate_comment_text(text: str) -> None:
-    """Reject a comment value that would not round-trip via the parser."""
-    if "\n" in text or "\r" in text:
-        msg = "comment must be single-line"
-        raise ValueError(msg)
+def _validate_comment_controls(text: str) -> None:
+    """Reject ASCII control characters (other than TAB) and DEL."""
     for ch in text:
         cp = ord(ch)
         # TOML comments allow TAB plus printable Unicode; reject other
@@ -59,12 +56,23 @@ def _validate_comment_text(text: str) -> None:
             raise ValueError(msg)
 
 
+def _validate_comment_content(text: str, newline_msg: str) -> None:
+    """Reject a comment value that would not round-trip via the parser.
+
+    ``newline_msg`` lets callers phrase the line-terminator error for
+    their context (a lone scalar vs. one entry of a sequence).
+    """
+    if "\n" in text or "\r" in text:
+        raise ValueError(newline_msg)
+    _validate_comment_controls(text)
+
+
 def _validate_comment_str(value: object, name: str) -> str:
     """Type-check ``value`` is a str and validate its content; return it."""
     if not isinstance(value, str):
         msg = f"{name} must be str, got {type(value).__name__}"
         raise TypeError(msg)
-    _validate_comment_text(value)
+    _validate_comment_content(value, "comment must be single-line")
     return value
 
 
@@ -274,14 +282,6 @@ def _write_leading_block(
     slot.leading.pieces = new_pieces
 
 
-def _validate_comment_entry(c: str, name: str) -> None:
-    """Validate a single non-``None`` comment-sequence entry's content."""
-    if "\n" in c or "\r" in c:
-        msg = f"{name} entries must not contain a line terminator"
-        raise ValueError(msg)
-    _validate_comment_text(c)
-
-
 def _validate_comment_entries(
     value: object, name: str, *, allow_none: bool
 ) -> tuple[str | None, ...]:
@@ -298,7 +298,9 @@ def _validate_comment_entries(
         if not isinstance(c, str):
             msg = f"{name} entries must be strings{' or None' if allow_none else ''}"
             raise TypeError(msg)
-        _validate_comment_entry(c, name)
+        _validate_comment_content(
+            c, f"{name} entries must not contain a line terminator"
+        )
         out.append(c)
     return tuple(out)
 
