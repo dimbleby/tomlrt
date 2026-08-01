@@ -892,8 +892,8 @@ def reorder_owned(
         return
     affected = {b for pos in owned_positions for b in (pos, pos + 1)}
     boundaries = {b: Boundary.capture(cv, b) for b in affected}
-    above_by_item = {id(items[pos]): boundaries[pos] for pos in owned_positions}
-    left_by_item = {id(items[pos]): boundaries[pos + 1] for pos in owned_positions}
+    above_by_item = {items[pos]: boundaries[pos] for pos in owned_positions}
+    left_by_item = {items[pos]: boundaries[pos + 1] for pos in owned_positions}
     owned = set(owned_positions)
     incoming = dict(zip(owned_positions, new_owned, strict=True))
     indent = _value_indent(cv)
@@ -906,7 +906,7 @@ def reorder_owned(
             shell.remove_eol()
         left = incoming.get(b - 1)
         if left is not None:
-            shell.put_eol_from(left_by_item[id(left)], boundary)
+            shell.put_eol_from(left_by_item[left], boundary)
         if is_multiline and b - 1 in owned:
             shell.shift_carried_from(
                 boundary,
@@ -916,7 +916,7 @@ def reorder_owned(
             )
         right = incoming.get(b)
         if right is not None:
-            shell.carry_above_from(above_by_item[id(right)], nl, indent)
+            shell.carry_above_from(above_by_item[right], nl, indent)
         composed[b] = shell
 
     for pos, entry in incoming.items():
