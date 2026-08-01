@@ -904,7 +904,12 @@ class Container(dict[str, Any]):
         entirely from dotted keys (e.g. ``a.x = 1``), and missing keys.
         """
         refs = self._index.get(key, ())
-        return any(isinstance(r.slot, StructuralHeaderSlot) for r in refs)
+        # A plain loop measurably beats any()+generator here; sort()
+        # calls this once per key, so it's hot for wide containers.
+        for r in refs:  # noqa: SIM110
+            if isinstance(r.slot, StructuralHeaderSlot):
+                return True
+        return False
 
     def _has_leaf(self, key: str) -> bool:
         """Whether ``key``'s block contains a leaf ``key = value`` slot.
@@ -913,7 +918,10 @@ class Container(dict[str, Any]):
         case both this and `has_header` return True.
         """
         refs = self._index.get(key, ())
-        return any(isinstance(r.slot, KVSlot) for r in refs)
+        for r in refs:  # noqa: SIM110
+            if isinstance(r.slot, KVSlot):
+                return True
+        return False
 
     @override
     def __ior__(  # type: ignore[override]

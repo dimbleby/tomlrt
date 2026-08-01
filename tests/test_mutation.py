@@ -6079,6 +6079,20 @@ def test_sort_leaf_kvs_preserves_leading_and_eol_comments() -> None:
     assert _reparses(tomlrt.dumps(doc))
 
 
+def test_sort_moves_blank_separator_with_trailing_whitespace() -> None:
+    # A blank-line separator whose own line carries trailing whitespace
+    # (not itself the slot's own indent, since another blank line
+    # follows it) is purely positional, like any comment-free
+    # separator, and travels with the reorder like the plain-newline
+    # case above.
+    src = "a = 1\nb = 2\n   \n\nc = 3\n"
+    doc = tomlrt.loads(src)
+    doc.sort(reverse=True)
+    out = tomlrt.dumps(doc)
+    assert out == "c = 3\nb = 2\n   \n\na = 1\n"
+    assert _reparses(out)
+
+
 def test_sort_reverse_leaf_kvs() -> None:
     src = td("""
         a = 1
