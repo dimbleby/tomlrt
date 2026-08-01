@@ -19,7 +19,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 import tomlrt
-from _helpers import deep_equal, td
+from _helpers import deep_equal
 from tomlrt import Document, FormatOptions
 
 pytestmark = pytest.mark.slow
@@ -64,6 +64,16 @@ _TOML11_DATETIMES = st.sampled_from(
 _TOML11_SCALARS = st.one_of(_TOML11_STRINGS, _TOML11_DATETIMES)
 
 _SCALARS = st.one_of(_STRINGS, _INTS, _BOOLS, _FLOATS, _TOML11_SCALARS)
+
+_COMMENT_TEXT = st.text(
+    alphabet=st.characters(
+        blacklist_categories=["Cs"],
+        blacklist_characters="\n\r"
+        + "".join(chr(c) for c in range(0x20) if c != 0x09)
+        + "\x7f",
+    ),
+    max_size=30,
+)
 
 
 @st.composite
@@ -194,22 +204,50 @@ _FORMAT_OPTIONS = st.builds(
 )
 
 
-@given(options=_FORMAT_OPTIONS)
+def _lay_out(draw: st.DrawFn, entries: list[str], open_b: str, close_b: str) -> str:
+    """Render ``entries`` single- or multi-line, with a random trailing
+    comma and EOL comment when multi-line -- the source-level choices
+    `format()`'s options canonicalise.
+    """
+    if not entries:
+        return open_b + close_b
+    if not draw(st.booleans()):
+        return open_b + " " + ", ".join(entries) + " " + close_b
+    lines = [f"  {e}," for e in entries]
+    if not draw(st.booleans()):
+        lines[-1] = lines[-1].removesuffix(",")
+    if comment := draw(_COMMENT_TEXT):
+        lines[-1] += f" #{comment}"
+    return open_b + "\n" + "\n".join(lines) + "\n" + close_b
+
+
+@st.composite
+def _format_value(draw: st.DrawFn, depth: int) -> str:
+    """A scalar, or (if ``depth`` allows) a nested array / inline table of
+    these, randomly laid out -- see `_lay_out`.
+    """
+    if depth <= 0 or draw(st.booleans()):
+        return draw(_SCALARS)
+    n = draw(st.integers(min_value=0, max_value=3))
+    if draw(st.booleans()):
+        keys = draw(st.lists(_BARE_KEY, min_size=n, max_size=n, unique=True))
+        entries = [f"{k} = {draw(_format_value(depth - 1))}" for k in keys]
+        return _lay_out(draw, entries, "{", "}")
+    entries = [draw(_format_value(depth - 1)) for _ in range(n)]
+    return _lay_out(draw, entries, "[", "]")
+
+
+@given(
+    options=_FORMAT_OPTIONS,
+    root=_SCALARS,
+    comment=_COMMENT_TEXT,
+    outer=_format_value(depth=3),
+)
 @settings(max_examples=100, database=None)
 def test_format_options_preserve_data_and_are_idempotent(
-    options: FormatOptions,
+    options: FormatOptions, root: str, comment: str, outer: str
 ) -> None:
-    src = td("""
-        root = 1 #   root
-        outer = [
-          {
-            values = [
-              1,
-              2, # final
-            ],
-          },
-        ]
-    """)
+    src = f"root = {root} #{comment}\nouter = {outer}\n"
     expected = tomli.loads(src)
     doc = tomlrt.loads(src)
     doc.format(options=options)
@@ -227,17 +265,6 @@ def test_format_options_preserve_data_and_are_idempotent(
 # the "user already supplied #" branch, the empty-string-as-delete shortcut,
 # and the rstrip in the marker-stripper.
 # ---------------------------------------------------------------------------
-
-_COMMENT_TEXT = st.text(
-    alphabet=st.characters(
-        blacklist_categories=["Cs"],
-        blacklist_characters="\n\r"
-        + "".join(chr(c) for c in range(0x20) if c != 0x09)
-        + "\x7f",
-    ),
-    max_size=30,
-)
-
 
 _COMMENT_LINES = st.lists(_COMMENT_TEXT, min_size=1, max_size=4).map(tuple)
 
