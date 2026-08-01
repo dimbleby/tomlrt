@@ -343,6 +343,7 @@ def test_eol_comment_set_then_clear(text: str) -> None:
     assert tomlrt.dumps(doc) == base
 
 
+# ---------------------------------------------------------------------------
 # CRLF preservation: the round-trip invariant explicitly covers line endings.
 # Take a generated source and randomly map each '\n' to '\n' or '\r\n'.
 # ---------------------------------------------------------------------------
@@ -517,55 +518,8 @@ def test_api_mutation_program(ops: list[tuple[Any, ...]]) -> None:
         # build states whose rendered form re-parses to a different *type*
         # than the logical model even though the dict view matches — e.g.
         # an empty ``AoT`` renders as ``key = []`` and re-parses as an
-        # empty ``Array``. The reorder property below seeds from parsed
-        # source, where the stronger ``loads(out) == to_dict()`` holds.
+        # empty ``Array``. test_mutation.py's deterministic AoT-reorder
+        # tests seed from parsed source instead, where the stronger
+        # ``loads(out) == to_dict()`` holds.
         out = tomlrt.dumps(doc)
         assert tomlrt.dumps(tomlrt.loads(out)) == out
-
-
-# ---------------------------------------------------------------------------
-# AoT reorder over *structural* nested AoTs / sub-sections. The API mutation
-# fuzzer above builds from synthesis, which renders nested tables as inline
-# values (``sub = [{...}]``) and so never produces a structural ``[[r.sub]]``
-# block; and it only checks idempotence. Reordering an AoT whose entries own
-# structural sub-blocks has to carry those sub-blocks along — a bug there
-# corrupts the data while keeping the output valid and idempotent, so it is
-# only visible against the logical-model oracle. Seed from parsed source to
-# reach the shape and assert that oracle.
-# ---------------------------------------------------------------------------
-
-
-@st.composite
-def _nested_aot_doc(draw: st.DrawFn) -> str:
-    n = draw(st.integers(min_value=2, max_value=4))
-    xs = draw(st.lists(st.integers(0, 99), min_size=n, max_size=n, unique=True))
-    blocks: list[str] = []
-    for i, x in enumerate(xs):
-        lines = ["[[r]]", f"x = {x}"]
-        for j in range(draw(st.integers(0, 2))):
-            lines += ["", "  [[r.sub]]", f"  y = {i * 10 + j}"]
-        if draw(st.booleans()):
-            lines += ["", "  [r.s]", f"  z = {i}"]
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks) + "\n"
-
-
-@settings(
-    max_examples=300,
-    deadline=None,
-    suppress_health_check=[HealthCheck.too_slow],
-)
-@given(src=_nested_aot_doc(), how=st.sampled_from(["sort", "reverse"]))
-def test_aot_reorder_preserves_nested_blocks(src: str, how: str) -> None:
-    doc = tomlrt.loads(src)
-    assert tomlrt.dumps(doc) == src
-    aot = doc.aot("r")
-    if how == "sort":
-        aot.sort(key=lambda e: e["x"])
-    else:
-        aot.reverse()
-    out = tomlrt.dumps(doc)
-    # The rendered output must reflect the reordered logical model...
-    assert deep_equal(tomli.loads(out), doc.to_dict())
-    # ...and stay valid + idempotent.
-    assert tomlrt.dumps(tomlrt.loads(out)) == out

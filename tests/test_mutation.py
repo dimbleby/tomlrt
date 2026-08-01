@@ -2315,6 +2315,64 @@ def test_aot_sort_carries_nested_aot_blocks() -> None:
     )
 
 
+def test_aot_sort_carries_varying_nested_aot_counts_and_subtable() -> None:
+    """Sorting must carry each entry's own count of nested blocks: zero,
+    one, or several ``[[t.sub]]`` entries, and an unrelated ``[t.s]``
+    plain sub-table -- not just the uniform one-sub-each shape the
+    sibling tests above pin.
+    """
+    src = td("""
+        [[t]]
+        x = 3
+
+          [[t.sub]]
+          y = 30
+
+          [[t.sub]]
+          y = 31
+
+          [t.s]
+          z = 3
+
+        [[t]]
+        x = 1
+
+        [[t]]
+        x = 2
+
+          [[t.sub]]
+          y = 20
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("t").sort(key=lambda e: e["x"])
+    out = tomlrt.dumps(doc)
+    assert out == (
+        td("""
+            [[t]]
+            x = 1
+
+            [[t]]
+            x = 2
+
+              [[t.sub]]
+              y = 20
+
+            [[t]]
+            x = 3
+
+              [[t.sub]]
+              y = 30
+
+              [[t.sub]]
+              y = 31
+
+              [t.s]
+              z = 3
+            """)
+    )
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_sort_container_with_synthetic_header_binding_keeps_kv_in_scope() -> None:
     """Sorting a table whose header is synthetic (promoted by an overwrite)
     must keep the synthetic header as the region marker so its body KV
