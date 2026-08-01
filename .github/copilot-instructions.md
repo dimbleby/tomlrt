@@ -373,10 +373,10 @@ wrong.
   that come from `Table` actually being a `dict` subclass
   (`isinstance`, ``**t`` unpacking, identity stability of lookups).
 - `tests/test_toml11.py` — TOML 1.1-specific coverage.
-- `tests/test_hypothesis.py` — property-based round-trip tests. If you
-  break round-tripping, this will usually catch it; add new strategies
-  here when you add a new construct.
-- `tests/test_fuzz.py` — bytes-level grammar fuzzer that feeds the
+- `tests/test_fuzz_roundtrip.py` — property-based round-trip tests
+  (Hypothesis). If you break round-tripping, this will usually catch
+  it; add new strategies here when you add a new construct.
+- `tests/test_fuzz_parser.py` — bytes-level grammar fuzzer that feeds the
   parser arbitrary / near-valid input and asserts it either raises
   `TOMLParseError` or accepts and round-trips byte-exactly. Marked
   `slow`, so it is only picked up by `pytest -m slow` (`make fuzz`).
