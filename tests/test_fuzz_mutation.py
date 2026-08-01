@@ -36,7 +36,6 @@ of attempts cheaply, while the trivial ones cost almost nothing.
 
 from __future__ import annotations
 
-import math
 import random
 import secrets
 from pathlib import Path
@@ -46,6 +45,7 @@ import pytest
 import tomli
 
 import tomlrt
+from _helpers import deep_equal
 from tomlrt import AoT, Array
 from tomlrt._container import Container, Table
 
@@ -64,20 +64,6 @@ if not _VALID_ROOT.is_dir():
 
 _CORPUS = sorted(_VALID_ROOT.rglob("*.toml"))
 _PROGRAMS = 150  # random mutation programs per corpus file, per run
-
-
-def _deep_eq(a: object, b: object) -> bool:
-    if isinstance(a, float) and isinstance(b, float):
-        return (math.isnan(a) and math.isnan(b)) or a == b
-    if isinstance(a, dict) and isinstance(b, dict):
-        am: dict[Any, Any] = a
-        bm: dict[Any, Any] = b
-        return am.keys() == bm.keys() and all(_deep_eq(v, bm[k]) for k, v in am.items())
-    if isinstance(a, list) and isinstance(b, list):
-        return len(a) == len(b) and all(
-            _deep_eq(x, y) for x, y in zip(a, b, strict=True)
-        )
-    return type(a) is type(b) and a == b
 
 
 def _rand_value(rng: random.Random) -> Any:
@@ -253,7 +239,7 @@ def test_mutation_keeps_model_consistent(path: Path) -> None:
         tomli.loads(out)
         assert tomlrt.dumps(tomlrt.loads(out)) == out, f"non-idempotent: {ctx}\n{out!r}"
         # The rendered output reflects the in-memory logical model.
-        assert _deep_eq(tomli.loads(out), doc.to_dict()), (
+        assert deep_equal(tomli.loads(out), doc.to_dict()), (
             f"render/model mismatch: {ctx}\n{out!r}\n"
             f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
         )
