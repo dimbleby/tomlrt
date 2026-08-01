@@ -2319,7 +2319,7 @@ def populate_promoted_inline_entries(
             value,
             layout_root=doc,
             parent=leaf_parent,
-            path=(*leaf_parent._path, leaf),  # noqa: SLF001
+            name=leaf,
             owner=owner,
         )
         if len(key_path) == 1:
