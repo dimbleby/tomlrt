@@ -484,7 +484,7 @@ class Array(list[Any]):
                     cst,
                     layout_root=self._layout_root,
                     parent=None,
-                    path=(),
+                    name=None,
                     owner=None,
                 )
                 self._append_with_style(cst, decoded, style)
