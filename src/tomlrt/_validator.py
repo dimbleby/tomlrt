@@ -62,14 +62,23 @@ class _Validator:
         Returns the opened ``AoTEntry`` for ``[[H]]``, otherwise ``None``.
         """
         path_kinds = self._path_kinds
-        # Prefix overlaps with a bound value would mean overwriting a scalar
-        # (or an inline-table value) with a table — always invalid.
+        active_aot_entries = self._active_aot_entries
+        # ``owner`` is the deepest active AoT path among the ancestor
+        # prefixes visited so far (shortest first): once a prefix is
+        # itself an active AoT, every longer prefix is owned by it, so
+        # one forward pass finds each prefix's owner directly.
+        owner: tuple[str, ...] | None = None
         for i in range(1, len(path)):
             prefix = path[:i]
-            if path_kinds.get(prefix) == "value":
+            prefix_kind = path_kinds.get(prefix)
+            if prefix_kind == "value":
                 joined = ".".join(prefix)
                 msg = f"cannot use {joined!r} as a table: already defined as a value"
                 raise self._error(msg, at=at)
+            if prefix_kind is None:
+                self._record_path(prefix, "implicit", owner)
+            if prefix in active_aot_entries:
+                owner = prefix
         current_kind = path_kinds.get(path)
         if current_kind == "value":
             joined = ".".join(path)
@@ -91,7 +100,7 @@ class _Validator:
                 joined = ".".join(path)
                 msg = f"cannot redefine array-of-tables {joined!r} as a normal table"
                 raise self._error(msg, at=at)
-            self._record_path(path, "explicit")
+            self._record_path(path, "explicit", owner)
         else:  # aot-entry
             if current_kind == "explicit":
                 msg = f"cannot redefine table {'.'.join(path)!r} as an array-of-tables"
@@ -104,37 +113,16 @@ class _Validator:
                 raise self._error(msg, at=at)
             # A new AoT entry invalidates per-entry tracking under it.
             self._reset_scope_under(path)
-            self._record_path(path, "aot")
+            self._record_path(path, "aot", owner)
             new_entry = AoTEntry()
-            self._active_aot_entries[path] = new_entry
-
-        # Intermediate prefixes become implicit tables.
-        for i in range(1, len(path)):
-            sub = path[:i]
-            if sub not in path_kinds:
-                self._record_path(sub, "implicit")
+            active_aot_entries[path] = new_entry
+            owner = path  # a fresh AoT entry owns itself and its subtree
 
         self._current_section = path
-        self._current_owner_aot_entry = self._compute_owner_aot_entry(path)
+        self._current_owner_aot_entry = (
+            active_aot_entries[owner] if owner is not None else None
+        )
         return new_entry
-
-    def _compute_owner_aot_entry(
-        self, section_path: tuple[str, ...]
-    ) -> AoTEntry | None:
-        """Return the deepest active AoTEntry whose path is a prefix of the section.
-
-        ``section_path`` is included as a prefix of itself: the entry
-        opened by ``[[a]]`` has owner_aot_entry = itself.
-        """
-        if not self._active_aot_entries:
-            return None
-        # Walk from longest to shortest prefix.
-        for i in range(len(section_path), 0, -1):
-            prefix = section_path[:i]
-            entry = self._active_aot_entries.get(prefix)
-            if entry is not None:
-                return entry
-        return None
 
     def record_keyvalue(
         self, key_path: tuple[str, ...], value: Value, *, at: int
@@ -149,6 +137,12 @@ class _Validator:
         if current_kind is not None:
             msg = f"key {'.'.join(full)!r} already defined as a table"
             raise self._error(msg, at=at)
+        # A value/dotted-key path is always within the current
+        # section's own tree, never itself a ``[[header]]``-established
+        # AoT path, so its owner (if any) is just the owning entry's
+        # own path, already resolved for the section.
+        owner_entry = self._current_owner_aot_entry
+        owner = owner_entry.path if owner_entry is not None else None
         # Intermediate-prefix conflicts.
         slen = len(section)
         flen = len(full)
@@ -172,14 +166,16 @@ class _Validator:
                         "via dotted keys"
                     )
                     raise self._error(msg, at=at)
-                self._record_path(sub, "dotted")
-        self._record_path(full, "value")
+                self._record_path(sub, "dotted", owner)
+        self._record_path(full, "value", owner)
         if isinstance(value, InlineTableValue):
-            self._register_inline_table(value, abs_prefix=full)
+            self._register_inline_table(value, abs_prefix=full, owner=owner)
         elif isinstance(value, ArrayValue):
             for item in value.items:
                 if isinstance(item.value, InlineTableValue):
-                    self._register_inline_table(item.value, abs_prefix=None)
+                    self._register_inline_table(
+                        item.value, abs_prefix=None, owner=owner
+                    )
 
     def check_inline_key_conflict(
         self,
@@ -210,43 +206,50 @@ class _Validator:
         table: InlineTableValue,
         *,
         abs_prefix: tuple[str, ...] | None,
+        owner: tuple[str, ...] | None,
     ) -> None:
         for entry in table.items:
             path = entry.key_path
             if abs_prefix is not None:
                 full = abs_prefix + path
-                self._record_path(full, "value")
+                self._record_path(full, "value", owner)
                 for i in range(1, len(path)):
                     sub = abs_prefix + path[:i]
-                    self._record_path(sub, "dotted")
+                    self._record_path(sub, "dotted", owner)
             sub_abs: tuple[str, ...] | None
             if isinstance(entry.value, InlineTableValue):
                 sub_abs = (abs_prefix + path) if abs_prefix is not None else None
-                self._register_inline_table(entry.value, abs_prefix=sub_abs)
+                self._register_inline_table(
+                    entry.value, abs_prefix=sub_abs, owner=owner
+                )
             elif isinstance(entry.value, ArrayValue):
                 for item in entry.value.items:
                     if isinstance(item.value, InlineTableValue):
-                        self._register_inline_table(item.value, abs_prefix=None)
+                        self._register_inline_table(
+                            item.value, abs_prefix=None, owner=owner
+                        )
 
-    def _record_path(self, path: tuple[str, ...], kind: _PathKind) -> None:
+    def _record_path(
+        self,
+        path: tuple[str, ...],
+        kind: _PathKind,
+        owner: tuple[str, ...] | None,
+    ) -> None:
+        """Record ``path``'s kind, filing it under ``owner`` if it's new.
+
+        ``owner`` is the active AoT path (if any) that ``path`` falls
+        under, supplied by the caller -- see :meth:`enter_header` and
+        :meth:`record_keyvalue` for how each finds it in O(1).
+        """
         previous = self._path_kinds.get(path)
         assert (
             previous is None
             or previous == kind
             or (previous == "implicit" and kind in ("dotted", "explicit"))
         )
-        if previous is None:
-            self._track(path)
+        if previous is None and owner is not None:
+            self._aot_subpaths.setdefault(owner, []).append(path)
         self._path_kinds[path] = kind
-
-    def _track(self, path: tuple[str, ...]) -> None:
-        if not self._active_aot_entries:
-            return
-        for i in range(len(path) - 1, 0, -1):
-            prefix = path[:i]
-            if prefix in self._active_aot_entries:
-                self._aot_subpaths.setdefault(prefix, []).append(path)
-                return
 
     def _reset_scope_under(self, path: tuple[str, ...]) -> None:
         subs = self._aot_subpaths.pop(path, None)
