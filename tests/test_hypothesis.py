@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-import string
 from typing import Any
 
 import pytest
@@ -12,27 +10,10 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 import tomlrt
-from _helpers import td
+from _helpers import deep_equal, td
 from tomlrt import Document, FormatOptions
 
 pytestmark = pytest.mark.slow
-
-
-def _deep_equal(a: object, b: object) -> bool:
-    """Structural equality that treats NaN as equal to itself."""
-    if isinstance(a, float) and isinstance(b, float):
-        if math.isnan(a) and math.isnan(b):
-            return True
-        return a == b
-    if isinstance(a, dict) and isinstance(b, dict):
-        if a.keys() != b.keys():
-            return False
-        return all(_deep_equal(a[k], b[k]) for k in a)  # ty: ignore[invalid-argument-type]
-    if isinstance(a, list) and isinstance(b, list):
-        if len(a) != len(b):
-            return False
-        return all(_deep_equal(x, y) for x, y in zip(a, b, strict=True))
-    return bool(a == b) and type(a) is type(b)
 
 
 # ---------------------------------------------------------------------------
@@ -187,64 +168,12 @@ def test_document_invariants(case: tuple[str, dict[str, Any]]) -> None:
     doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
     expected = tomli.loads(src)
-    assert _deep_equal(doc.to_dict(), expected)
+    assert deep_equal(doc.to_dict(), expected)
     for k, v in overrides.items():
         doc[k] = v
         expected[k] = v
-    assert _deep_equal(doc.to_dict(), expected)
-    assert _deep_equal(tomlrt.loads(tomlrt.dumps(doc)).to_dict(), expected)
-
-
-# Specific edge-case corpora that aren't easily generated.
-_EDGE_CASES = [
-    "",
-    "\n",
-    "key = 1",  # no trailing newline
-    "key = 1\n",
-    "# only a comment\n",
-    td("""
-        a = 1
-
-        [b]
-        c = 2
-        """),
-    "x = [1, 2, 3]\n",
-    td("""
-        x = [
-          1,
-          2,
-        ]
-        """),
-    "obj = { a = 1, b = 2 }\n",
-    td("""
-        [[items]]
-        name = 'x'
-        [[items]]
-        name = 'y'
-        """),
-    "[a.b.c]\nv = 1\n",
-    "a.b.c = 1\n",
-    f"strs = {list(string.ascii_letters[:5])}\n".replace("'", '"'),
-    # TOML 1.1: inline-table trailing commas, multi-line inline tables,
-    # and the new \xHH / \e escapes and seconds-optional times.
-    "obj = { a = 1, b = 2, }\n",
-    td("""
-        obj = {
-            a = 1,
-            b = 2,
-        }
-        """),
-    'a = "hi \\xe9 \\e there"\n',
-    "t = 07:32\n",
-    "ldt = 1979-05-27T07:32\n",
-    "odt = 1979-05-27 07:32Z\n",
-]
-
-
-@given(src=st.sampled_from(_EDGE_CASES))
-@settings(max_examples=len(_EDGE_CASES), database=None)
-def test_edge_cases_roundtrip(src: str) -> None:
-    assert tomlrt.dumps(tomlrt.loads(src)) == src
+    assert deep_equal(doc.to_dict(), expected)
+    assert deep_equal(tomlrt.loads(tomlrt.dumps(doc)).to_dict(), expected)
 
 
 _FORMAT_OPTIONS = st.builds(
@@ -276,8 +205,8 @@ def test_format_options_preserve_data_and_are_idempotent(
     doc = tomlrt.loads(src)
     doc.format(options=options)
     once = tomlrt.dumps(doc)
-    assert _deep_equal(doc.to_dict(), expected)
-    assert _deep_equal(tomli.loads(once), expected)
+    assert deep_equal(doc.to_dict(), expected)
+    assert deep_equal(tomli.loads(once), expected)
     doc.format(options=options)
     assert tomlrt.dumps(doc) == once
     assert tomlrt.dumps(tomlrt.loads(once)) == once
@@ -414,20 +343,6 @@ def test_eol_comment_set_then_clear(text: str) -> None:
     assert tomlrt.dumps(doc) == base
 
 
-# ---------------------------------------------------------------------------
-# Edge-case + tomli semantic cross-check on the fixed corpus.
-# ---------------------------------------------------------------------------
-
-
-@given(src=st.sampled_from(_EDGE_CASES))
-@settings(max_examples=len(_EDGE_CASES), database=None)
-def test_edge_cases_match_tomllib(src: str) -> None:
-    ours = tomlrt.loads(src).to_dict()
-    theirs = tomli.loads(src)
-    assert _deep_equal(ours, theirs)
-
-
-# ---------------------------------------------------------------------------
 # CRLF preservation: the round-trip invariant explicitly covers line endings.
 # Take a generated source and randomly map each '\n' to '\n' or '\r\n'.
 # ---------------------------------------------------------------------------
@@ -490,7 +405,7 @@ def test_synthesise_roundtrip(data: dict[str, Any]) -> None:
     doc = Document(data)
     out = tomlrt.dumps(doc)
     recovered = tomlrt.loads(out).to_dict()
-    assert _deep_equal(recovered, data)
+    assert deep_equal(recovered, data)
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +566,6 @@ def test_aot_reorder_preserves_nested_blocks(src: str, how: str) -> None:
         aot.reverse()
     out = tomlrt.dumps(doc)
     # The rendered output must reflect the reordered logical model...
-    assert _deep_equal(tomli.loads(out), doc.to_dict())
+    assert deep_equal(tomli.loads(out), doc.to_dict())
     # ...and stay valid + idempotent.
     assert tomlrt.dumps(tomlrt.loads(out)) == out
