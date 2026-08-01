@@ -2,12 +2,11 @@
 generated, well-formed TOML (as opposed to `test_fuzz_parser.py`, which
 throws adversarial/malformed input at the parser, and
 `test_fuzz_mutation.py`, which fuzzes the mutation API over real
-corpus documents). Built with Hypothesis, but organised by what each
-property covers: round-trip + semantic equivalence to `tomli` over
-generated documents, comment-API round-trip, `format()` idempotence,
-CRLF preservation, synthesis from a plain Python tree, and an
-API-mutation fuzzer that grows a `Document` from empty via the
-public builder API.
+corpus documents and, from empty, via the builder API). Built with
+Hypothesis, but organised by what each property covers: round-trip +
+semantic equivalence to `tomli` over generated documents, comment-API
+round-trip, `format()` idempotence, CRLF preservation, and synthesis
+from a plain Python tree.
 """
 
 from __future__ import annotations
@@ -417,119 +416,3 @@ def test_synthesise_roundtrip(data: dict[str, Any]) -> None:
     out = tomlrt.dumps(doc)
     recovered = tomlrt.loads(out).to_dict()
     assert deep_equal(recovered, data)
-
-
-# ---------------------------------------------------------------------------
-# API-level mutation fuzzer: draw a sequence of builder/mutator API calls
-# (ensure_table, scalar / dict / AoT assigns, AoT.add, delete) against an
-# initially-empty Document. After each step assert that the model is
-# internally consistent: the doc round-trips byte-exactly through
-# dumps/loads, and its to_dict() matches a parallel Python-dict shadow.
-#
-# The bytes-level parser fuzzer in test_fuzz.py never touches the editing
-# API, and the existing mutation property only overrides existing top-
-# level scalar slots; this fills the gap that hid the
-# `attach_section_at` / `_maybe_demote_synthetic_empty_header` ancestor-
-# anchor bug.
-# ---------------------------------------------------------------------------
-
-
-_API_KEY = st.sampled_from(["a", "b", "c"])
-
-
-@st.composite
-def _api_path(draw: st.DrawFn) -> tuple[str, ...]:
-    return tuple(draw(st.lists(_API_KEY, min_size=1, max_size=3)))
-
-
-@st.composite
-def _mutation_op(draw: st.DrawFn) -> tuple[Any, ...]:
-    kind = draw(
-        st.sampled_from(["ensure_table", "set_scalar", "set_aot", "aot_add", "delete"])
-    )
-    path = draw(_api_path())
-    if kind == "set_scalar":
-        return (kind, path, draw(_PY_SCALARS))
-    if kind == "set_aot":
-        entries = draw(st.lists(_py_dict(max_depth=0), min_size=0, max_size=3))
-        return (kind, path, entries)
-    if kind == "aot_add":
-        return (kind, path, draw(_py_dict(max_depth=0)))
-    return (kind, path)
-
-
-def _navigate(doc: Document, prefix: tuple[str, ...]) -> Any:
-    """Return the container at ``prefix`` via ``ensure_table``; None on conflict."""
-    if not prefix:
-        return doc
-    try:
-        return doc.ensure_table(list(prefix))
-    except (tomlrt.TOMLError, TypeError):
-        return None
-
-
-def _apply_op(doc: Document, op: tuple[Any, ...]) -> None:
-    """Apply ``op`` to ``doc``; tolerate any user-facing API error.
-
-    The point of the fuzzer is to drive the editing API into unusual
-    shapes and assert the model stays internally consistent (no
-    internal assertions fire, ``dumps`` succeeds and is idempotent
-    under reparse). Conflicts (e.g. ensure_table through an inline
-    table) raise ``TOMLError`` or ``TypeError`` and are tolerated.
-    """
-    from tomlrt import AoT  # noqa: PLC0415
-
-    kind: str = op[0]
-    path: tuple[str, ...] = op[1]
-    try:
-        if kind == "ensure_table":
-            doc.ensure_table(list(path))
-            return
-        if kind == "set_scalar":
-            target = _navigate(doc, path[:-1])
-            if target is None:
-                return
-            target[path[-1]] = op[2]
-            return
-        if kind == "set_aot":
-            target = _navigate(doc, path[:-1])
-            if target is None:
-                return
-            target[path[-1]] = AoT([dict(e) for e in op[2]])
-            return
-        if kind == "aot_add":
-            target = _navigate(doc, path[:-1])
-            if target is None or path[-1] not in target:
-                return
-            aot = target[path[-1]]
-            if not isinstance(aot, AoT):
-                return
-            aot.add(dict(op[2]))
-            return
-        if kind == "delete":
-            target = _navigate(doc, path[:-1])
-            if target is None or path[-1] not in target:
-                return
-            del target[path[-1]]
-    except (tomlrt.TOMLError, TypeError, KeyError):
-        pass
-
-
-@settings(max_examples=200, deadline=None)
-@given(ops=st.lists(_mutation_op(), min_size=1, max_size=8))
-def test_api_mutation_program(ops: list[tuple[Any, ...]]) -> None:
-    doc = Document()
-    for op in ops:
-        _apply_op(doc, op)
-        # Internal consistency: dumps must succeed at every step and
-        # be a fixed point of dumps -> loads -> dumps.
-        #
-        # NB: only the idempotence oracle is asserted here. Synthesis can
-        # build states whose rendered form re-parses to a different *type*
-        # than the logical model even though the dict view matches — e.g.
-        # an empty ``AoT`` renders as ``key = []`` and re-parses as an
-        # empty ``Array``. test_mutation.py's deterministic AoT-reorder
-        # tests seed from parsed source instead, where the stronger
-        # ``loads(out) == to_dict()`` holds.
-        out = tomlrt.dumps(doc)
-        assert tomlrt.dumps(tomlrt.loads(out)) == out
