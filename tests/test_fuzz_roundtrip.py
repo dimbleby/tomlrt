@@ -1,4 +1,14 @@
-"""Hypothesis round-trip tests: dumps(parse(s)) == s for many shapes."""
+"""Property-based tests: round-trip fidelity and API invariants over
+generated, well-formed TOML (as opposed to `test_fuzz_parser.py`, which
+throws adversarial/malformed input at the parser, and
+`test_fuzz_mutation.py`, which fuzzes the mutation API over real
+corpus documents). Built with Hypothesis, but organised by what each
+property covers: round-trip + semantic equivalence to `tomli` over
+generated documents, comment-API round-trip, `format()` idempotence,
+CRLF preservation, synthesis from a plain Python tree, and an
+API-mutation fuzzer that grows a `Document` from empty via the
+public builder API.
+"""
 
 from __future__ import annotations
 

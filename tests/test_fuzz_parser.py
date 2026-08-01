@@ -1,8 +1,8 @@
 """Bytes-level grammar fuzzer for the parser.
 
-Complements ``test_hypothesis.py`` (which builds well-formed TOML and
-asserts byte-exact round-trip) by feeding the parser arbitrary and
-near-valid byte sequences. The parser must:
+Complements ``test_fuzz_roundtrip.py`` (which builds well-formed
+TOML and asserts byte-exact round-trip) by feeding the parser arbitrary
+and near-valid byte sequences. The parser must:
 
 * Reject malformed input by raising `tomlrt.TOMLParseError` -- never any
   other exception type, never a hang, never a crash.
