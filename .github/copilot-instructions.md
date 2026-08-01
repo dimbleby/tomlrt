@@ -381,9 +381,11 @@ wrong.
   `TOMLParseError` or accepts and round-trips byte-exactly. Marked
   `slow`, so it is only picked up by `pytest -m slow` (`make fuzz`).
 - `tests/test_fuzz_mutation.py` — mutation fuzzer over the vendored
-  `toml-test` corpus: runs random edit programs (set / delete /
-  overwrite / sort / array + AoT ops) over each parsed document and
-  asserts the model stays self-consistent — valid TOML out, a
+  `toml-test` corpus, and from an empty document: runs random edit
+  programs (set / delete / overwrite / sort / array + AoT ops,
+  including building fresh `[section]` / `[[AoT]]` structure from
+  scratch) over each parsed document, and once starting from empty,
+  asserting the model stays self-consistent — valid TOML out, a
   dump→load→dump fixed point, and (the important oracle)
   `tomli.loads(dumps(doc))` matching `doc.to_dict()`, which catches a
   mutation that places a slot where a re-parse attributes it to a
