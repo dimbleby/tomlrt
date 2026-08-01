@@ -42,7 +42,6 @@ from tomlrt._trivia import (
     NewlineNode,
     Trivia,
     WhitespaceNode,
-    has_comment,
     leading_has_blank_line,
 )
 from tomlrt._values import (
@@ -2044,13 +2043,17 @@ def _split_leading_for_reorder(slot: Slot) -> tuple[Trivia, Trivia]:
     immediately precedes a slot is part of that slot's leading and
     must travel with it under reorder. For every slot the positional
     prefix is the run of pure-blank lines before the first comment;
-    the remainder is everything from the first comment line onward.
+    the remainder is everything from the first comment line onward,
+    or just the trailing indent if there's no comment at all.
     """
-    above, attached, indent = _split_attached_block(slot.leading)
-    i = 0
-    while i < len(above) and not has_comment(above[i]):
-        i += 1
-    return _split_at_remainder(slot.leading, [*above[i:], *attached], indent)
+    pieces = slot.leading.pieces
+    cut = 0
+    for i, piece in enumerate(pieces):
+        if isinstance(piece, CommentNode):
+            break
+        if isinstance(piece, NewlineNode):
+            cut = i + 1
+    return Trivia(pieces[:cut]), Trivia(pieces[cut:])
 
 
 def _retarget_header_separator(
