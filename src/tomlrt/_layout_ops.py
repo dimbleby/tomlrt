@@ -1463,8 +1463,6 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     Used to inherit indent when ``c`` is an AoT entry root with no
     direct KVs of its own yet.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-
     owner = c._owner_aot_entry  # noqa: SLF001
     if owner is None:
         return None
@@ -1474,6 +1472,9 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     key = c._path[-1] if c._path else None  # noqa: SLF001
     if key is None or key not in parent:
         return None
+
+    from tomlrt._array import AoT  # noqa: PLC0415
+
     aot = dict.__getitem__(parent, key)
     if not isinstance(aot, AoT):
         return None
