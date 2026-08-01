@@ -205,17 +205,17 @@ def _recorded_install_span(recorded: list[Slot], doc: Document) -> list[Slot] | 
     survivors = list(dict.fromkeys(s for s in recorded if _slot_is_linked(s, doc)))
     if not survivors:
         return None
-    ids = {id(s) for s in survivors}
+    span = set(survivors)
     heads = [
         s
         for s in survivors
-        if s._prev is None or id(s._prev) not in ids  # noqa: SLF001
+        if s._prev is None or s._prev not in span  # noqa: SLF001
     ]
     if len(heads) != 1:
         return None
     ordered: list[Slot] = []
     cur: Slot | None = heads[0]
-    while cur is not None and id(cur) in ids:
+    while cur is not None and cur in span:
         ordered.append(cur)
         cur = cur._next  # noqa: SLF001
     assert len(ordered) == len(survivors), "linked slot span must be contiguous"
@@ -233,9 +233,9 @@ def _anchor_accepts_install(
     if not any(isinstance(s, StructuralHeaderSlot) for s in slots):
         return in_parent_body
 
-    installed_ids = {id(s) for s in slots}
+    installed = set(slots)
     successor = anchor._next if anchor is not None else doc._head  # noqa: SLF001
-    while successor is not None and id(successor) in installed_ids:
+    while successor is not None and successor in installed:
         successor = successor._next  # noqa: SLF001
     if isinstance(successor, KVSlot):
         return False
@@ -259,16 +259,16 @@ def _ancestor_chain(c: Container | AoT) -> list[Container]:
 
 def _resort_and_recompute_tails(c: Container, doc: Document) -> None:
     """Repair ancestor ref order and cached tails after moving slots."""
-    position: dict[int, int] = {}
+    position: dict[Slot, int] = {}
     cur = doc._head  # noqa: SLF001
     while cur is not None:
-        position[id(cur)] = len(position)
+        position[cur] = len(position)
         cur = cur._next  # noqa: SLF001
 
     for cn in [c, *_ancestor_chain(c)]:
-        cn._refs.sort(key=lambda ref: position[id(ref.slot)])  # noqa: SLF001
+        cn._refs.sort(key=lambda ref: position[ref.slot])  # noqa: SLF001
         for refs in cn._index.values():  # noqa: SLF001
-            refs.sort(key=lambda ref: position[id(ref.slot)])
+            refs.sort(key=lambda ref: position[ref.slot])
         if cn._body_tail is not None:  # noqa: SLF001
             cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
 
@@ -846,14 +846,14 @@ def append_direct_kv(
 
 def _invalidate_body_tail_chain(
     start: Container | None,
-    owned_slot_ids: set[int],
+    owned_slots: set[Slot],
     *,
     min_depth: int = 0,
 ) -> None:
     """Recompute invalidated ``_body_tail`` values on the path to root.
 
     For each container ``cc`` along the chain whose existing
-    ``_body_tail`` slot is in ``owned_slot_ids``, recompute the tail.
+    ``_body_tail`` slot is in ``owned_slots``, recompute the tail.
 
     Walks until either the chain is exhausted or
     ``len(cc._path) < min_depth``. The depth bound is a
@@ -866,7 +866,7 @@ def _invalidate_body_tail_chain(
     while cur is not None and len(cur._path) >= min_depth:  # noqa: SLF001
         if (
             cur._body_tail is not None  # noqa: SLF001
-            and id(cur._body_tail) in owned_slot_ids  # noqa: SLF001
+            and cur._body_tail in owned_slots  # noqa: SLF001
         ):
             cur._body_tail = _recompute_body_tail(cur)  # noqa: SLF001
         cur = cur._parent  # noqa: SLF001
@@ -1083,13 +1083,13 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         mat_primary = primary
 
     # Owned-slot identity set + retained slot objects (for unlink).
-    owned_ids: set[int] = set()
+    owned_ids: set[Slot] = set()
     owned_slots: list[Slot] = []
 
     def _add_slot(s: Slot) -> None:
-        if id(s) in owned_ids:
+        if s in owned_ids:
             return
-        owned_ids.add(id(s))
+        owned_ids.add(s)
         owned_slots.append(s)
 
     for r in c._index.get(key, []):  # noqa: SLF001
@@ -1131,18 +1131,18 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     # Unlink owned slots; transplant user-referenced subtrees to an
     # orphan Document. Keep entry_slots for AoTEntries whose AoT moves
     # with them, so clone/re-install can still read the full CST.
-    moving_aot_entry_ids: set[int] = set()
+    moving_aot_entries: set[AoTEntry] = set()
     for ao in subtree_aots:
         for entry_table in list.__iter__(ao):
             owner_e = entry_table._owner_aot_entry  # noqa: SLF001
             if owner_e is not None:
-                moving_aot_entry_ids.add(id(owner_e))
+                moving_aot_entries.add(owner_e)
 
-    candidate_owners: set[int] = set()
+    candidate_owners: set[AoTEntry] = set()
     for slot in owned_slots:
         owner = slot.owner_aot_entry
-        if owner is not None and id(owner) not in moving_aot_entry_ids:
-            candidate_owners.add(id(owner))
+        if owner is not None and owner not in moving_aot_entries:
+            candidate_owners.add(owner)
     surviving_aot_entries = (
         _surviving_aot_entries(doc, candidate_owners) if candidate_owners else set()
     )
@@ -1156,7 +1156,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     # doc-stream-first.
     transplanting = bool(subtree_containers or subtree_aots)
     ordered_for_transplant = (
-        _owned_slots_ordered(owned_slots[0], set(owned_slots))
+        _owned_slots_ordered(owned_slots[0], owned_ids)
         if transplanting and owned_slots
         else owned_slots
     )
@@ -1164,8 +1164,8 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         owner = slot.owner_aot_entry
         if (
             owner is not None
-            and id(owner) in surviving_aot_entries
-            and id(owner) not in moving_aot_entry_ids
+            and owner in surviving_aot_entries
+            and owner not in moving_aot_entries
         ):
             with contextlib.suppress(ValueError):
                 _pop_or_remove(owner.entry_slots, slot)
@@ -1351,15 +1351,15 @@ def _owned_slots_ordered(start: Slot, owned: set[Slot]) -> list[Slot]:
     return backward + forward
 
 
-def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
-    """Return ``id(AoTEntry)`` values from ``candidates`` still reachable in ``doc``.
+def _surviving_aot_entries(doc: Document, candidates: set[AoTEntry]) -> set[AoTEntry]:
+    """Return entries from ``candidates`` still reachable in ``doc``.
 
     Bails out as soon as every candidate has been spotted.
     """
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
-    surviving: set[int] = set()
+    surviving: set[AoTEntry] = set()
     remaining = set(candidates)
 
     def visit(v: object) -> None:
@@ -1367,11 +1367,9 @@ def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
             return
         if isinstance(v, Container):
             owner = v._owner_aot_entry  # noqa: SLF001
-            if owner is not None:
-                oid = id(owner)
-                if oid in remaining:
-                    surviving.add(oid)
-                    remaining.discard(oid)
+            if owner is not None and owner in remaining:
+                surviving.add(owner)
+                remaining.discard(owner)
             if not v._inline:  # noqa: SLF001
                 for child in v.values():
                     if not remaining:
@@ -2169,7 +2167,7 @@ def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     slot = ref.slot
     _scrub_owned_slots_via_backptrs([slot])
     min_depth = len(slot.host_path) if isinstance(slot, KVSlot) else 0
-    _invalidate_body_tail_chain(parent, {id(slot)}, min_depth=min_depth)
+    _invalidate_body_tail_chain(parent, {slot}, min_depth=min_depth)
     owner = slot.owner_aot_entry
     if owner is not None:
         with contextlib.suppress(ValueError):
@@ -3066,17 +3064,17 @@ def _clone_entry_slots(
     cloned slot's structural-newline trivia is retargeted so a
     cross-document graft does not leave alien line endings behind.
     """
-    nested_entry_map: dict[int, AoTEntry] = {}
+    nested_entry_map: dict[AoTEntry, AoTEntry] = {}
     if head is not None and new_entry is not None:
         assert isinstance(head, StructuralHeaderSlot)
         if head.entry is not None:
-            nested_entry_map[id(head.entry)] = new_entry
+            nested_entry_map[head.entry] = new_entry
     for s in src_slots:
         if s is head or not isinstance(s, StructuralHeaderSlot) or s.entry is None:
             continue
-        if id(s.entry) in nested_entry_map:
+        if s.entry in nested_entry_map:
             continue
-        nested_entry_map[id(s.entry)] = AoTEntry()
+        nested_entry_map[s.entry] = AoTEntry()
 
     cloned: list[Slot] = []
     cloned_head: StructuralHeaderSlot | None = None
@@ -3086,7 +3084,7 @@ def _clone_entry_slots(
         c._next = None  # noqa: SLF001
         _retarget_slot_paths(c, src_prefix, target_prefix, dst_newline)
         src_owner = s.owner_aot_entry
-        mapped = nested_entry_map.get(id(src_owner)) if src_owner else None
+        mapped = nested_entry_map.get(src_owner) if src_owner else None
         owner_for_slot = mapped if mapped is not None else body_owner
         c.owner_aot_entry = owner_for_slot
         if isinstance(c, StructuralHeaderSlot):
@@ -3096,7 +3094,7 @@ def _clone_entry_slots(
                 # source-entry lookup (which is None for a plain table).
                 c.entry = new_entry
             elif s.entry is not None:
-                c.entry = nested_entry_map.get(id(s.entry))
+                c.entry = nested_entry_map.get(s.entry)
         cloned.append(c)
         if s is head:
             assert isinstance(c, StructuralHeaderSlot)
@@ -3391,8 +3389,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     # header), so this walks all the way to the doc root —
     # exactly what we want, since a binding ref to an AoT entry
     # header lives at every prefix container.
-    union_owned_ids = {id(s) for s in union_owned}
-    _invalidate_body_tail_chain(parent, union_owned_ids)
+    _invalidate_body_tail_chain(parent, union_owned)
 
     for owned in owned_per_entry:
         # Unlink in reverse order so the entry's leftmost slot (the
@@ -3706,7 +3703,7 @@ def _finish_region_permutation(
 ) -> None:
     """Validate a physical permutation and apply it to every ref projection."""
     new_slots = _slots_between(doc, predecessor, successor)
-    assert {id(s) for s in new_slots} == {id(s) for s in old_slots}
+    assert set(new_slots) == set(old_slots)
     _reorder_region_refs(old_slots, new_slots)
 
 
@@ -3728,17 +3725,17 @@ def _peer_placements(
 ) -> list[tuple[list[Slot], Trivia]]:
     """Pair peer blocks with positional prefixes and attached remainders."""
     prefixes: list[Trivia] = []
-    remainder_by_head: dict[int, Trivia] = {}
+    remainder_by_head: dict[Slot, Trivia] = {}
     for block in physical_blocks:
         prefix, remainder = _split_leading_for_reorder(block[0])
         prefixes.append(prefix)
-        remainder_by_head[id(block[0])] = remainder
+        remainder_by_head[block[0]] = remainder
     return [
         (
             block,
             Trivia(
                 list(prefixes[position].pieces)
-                + list(remainder_by_head[id(block[0])].pieces)
+                + list(remainder_by_head[block[0]].pieces)
             ),
         )
         for position, block in enumerate(output_blocks)
@@ -4013,7 +4010,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     if not movable_slots:
         return
 
-    movable_ids = {id(slot) for slot in movable_slots}
+    movable_ids = set(movable_slots)
     earliest_owned = movable_slots[0]
     latest_owned = movable_slots[-1]
     region_predecessor = earliest_owned._prev  # noqa: SLF001
@@ -4029,7 +4026,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     seen = 1  # earliest_owned itself
     scan: Slot | None = earliest_owned._next  # noqa: SLF001
     while scan is not None and seen < len(movable_ids):
-        if id(scan) in movable_ids:
+        if scan in movable_ids:
             seen += 1
         elif isinstance(scan, StructuralHeaderSlot):
             break
@@ -4047,7 +4044,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         )
 
     key_rank = {key: rank for rank, key in enumerate(new_key_order)}
-    physical_position = {id(slot): pos for pos, slot in enumerate(ordered_slots)}
+    physical_position = {slot: pos for pos, slot in enumerate(ordered_slots)}
     units: list[_ReorderUnit] = []
     for key in child_keys_in_phys_order:
         child_path = (*c_path, key)
@@ -4068,7 +4065,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
                     mixed=mixed,
                     prefix=prefix,
                     remainder=remainder,
-                    physical_position=physical_position[id(slots[0])],
+                    physical_position=physical_position[slots[0]],
                 )
             )
 
@@ -4115,7 +4112,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         successor=region_successor,
         old_slots=old_region_slots,
     )
-    moved_ids = movable_ids | {id(s) for s in front_foreign}
+    moved_ids = movable_ids | set(front_foreign)
     _invalidate_body_tail_chain(c, moved_ids)
 
 
