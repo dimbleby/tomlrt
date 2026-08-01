@@ -1156,7 +1156,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     # doc-stream-first.
     transplanting = bool(subtree_containers or subtree_aots)
     ordered_for_transplant = (
-        _owned_slots_ordered(owned_slots[0], owned_ids)
+        _owned_slots_ordered(owned_slots[0], set(owned_slots))
         if transplanting and owned_slots
         else owned_slots
     )
@@ -1309,8 +1309,8 @@ def _collect_subtree(
             _collect_subtree(entry, containers_out, aots_out, add_slot)
 
 
-def _owned_slots_ordered(start: Slot, owned_ids: set[int]) -> list[Slot]:
-    """Collect ``owned_ids`` in true doc-stream order, anchored at ``start``.
+def _owned_slots_ordered(start: Slot, owned: set[Slot]) -> list[Slot]:
+    """Collect ``owned`` in true doc-stream order, anchored at ``start``.
 
     ``start`` is typically a binding's own header/primary slot, and
     usually — but not always — the owned set's doc-stream-first slot: a
@@ -1330,20 +1330,20 @@ def _owned_slots_ordered(start: Slot, owned_ids: set[int]) -> list[Slot]:
     whole document.
     """
     forward: list[Slot] = []
-    seen: set[int] = set()
+    seen: set[Slot] = set()
     cur: Slot | None = start
-    while cur is not None and len(seen) < len(owned_ids):
-        if id(cur) in owned_ids:
+    while cur is not None and len(seen) < len(owned):
+        if cur in owned:
             forward.append(cur)
-            seen.add(id(cur))
+            seen.add(cur)
         cur = cur._next  # noqa: SLF001
-    missing = len(owned_ids) - len(seen)
+    missing = len(owned) - len(seen)
     if not missing:
         return forward
     backward: list[Slot] = []
     cur = start._prev  # noqa: SLF001
     while cur is not None and len(backward) < missing:
-        if id(cur) in owned_ids:
+        if cur in owned:
             backward.append(cur)
         cur = cur._prev  # noqa: SLF001
     assert len(backward) == missing, "owned slot unreachable from start"
@@ -2595,13 +2595,19 @@ def _owned_slots_from(root: Container, start: Slot) -> list[Slot]:
     :func:`_owned_slots_ordered` for why that's usually but not always
     doc-stream-first, and how it's handled either way.
     """
-    return _owned_slots_ordered(start, _owned_slot_ids(root))
+    return _owned_slots_ordered(start, _owned_slots(root))
 
 
-def _owned_slot_ids(root: Container) -> set[int]:
-    """Return the identities of every slot owned by ``root``'s subtree."""
-    owned: set[int] = set()
-    _collect_subtree(root, [], [], lambda s: owned.add(id(s)))
+def _owned_slots(root: Container) -> set[Slot]:
+    """Return every slot owned by ``root``'s subtree.
+
+    ``Slot`` is identity-hashable (``eq=False``), so a plain ``set[Slot]``
+    is both correct and faster to build/query than wrapping each slot
+    in ``id()`` — unlike ``Container``, which is an unhashable ``dict``
+    subclass and genuinely needs ``id()`` for this purpose.
+    """
+    owned: set[Slot] = set()
+    _collect_subtree(root, [], [], owned.add)
     return owned
 
 
@@ -3943,7 +3949,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     When ``c`` is an AoT entry (``c._owner_aot_entry is not None``),
     only slots within ``c``'s own subtree participate (see
-    :func:`_owned_slot_ids`): sibling entries with the same path
+    :func:`_owned_slots`): sibling entries with the same path
     are excluded so their content is not merged in, but nested
     descendants — including nested AoT children, which are owned by
     their *own* entry — do participate and move with their key.
@@ -3980,7 +3986,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     # Gather and order only c's subtree. The linked walk spans unrelated
     # slots only when they physically interleave a non-contiguous subtree,
     # where their relative scope must participate in the reorder.
-    membership = _owned_slot_ids(c)
+    membership = _owned_slots(c)
     assert c._refs, "attached sortable container must own slots"  # noqa: SLF001
     ordered_slots = _owned_slots_ordered(c._refs[0].slot, membership)  # noqa: SLF001
 
