@@ -147,9 +147,9 @@ def retarget_trivia_newlines(t: Trivia, target: str) -> None:
 
 
 def retarget_eol_newline(eol: EolTrivia, target: str) -> None:
-    """Rewrite ``eol.newline.text`` to ``target`` (if present)."""
-    if eol.newline is not None and eol.newline.text != target:
-        eol.newline.text = target
+    """Rewrite ``eol.newline`` to ``target`` (if present)."""
+    if eol.newline:
+        eol.newline = target
 
 
 def _pad_above_from(
@@ -354,28 +354,17 @@ class EolTrivia:
     """End-of-line tail of a single physical line.
 
     Used by `KVSlot` and `StructuralHeaderSlot` to capture the
-    optional inline comment plus the line terminator. ``newline``
-    may be ``None`` only for the last line of a file with no
-    final newline.
+    optional inline comment plus the line terminator. Each part is
+    verbatim source text, empty when absent; ``newline`` is empty only
+    for the last line of a file with no final newline.
     """
 
-    trailing_ws: WhitespaceNode | None  # whitespace before any comment / newline
-    comment: CommentNode | None
-    newline: NewlineNode | None
+    trailing_ws: str  # whitespace before any comment / newline
+    comment: str  # includes the leading '#'
+    newline: str
 
     def render(self) -> str:
-        # Fast path: the overwhelming majority of lines carry no
-        # trailing whitespace or comment, just a bare newline (or EOF).
-        if self.trailing_ws is None and self.comment is None:
-            return self.newline.text if self.newline is not None else ""
-        out: list[str] = []
-        if self.trailing_ws is not None:
-            out.append(self.trailing_ws.text)
-        if self.comment is not None:
-            out.append(self.comment.text)
-        if self.newline is not None:
-            out.append(self.newline.text)
-        return "".join(out)
+        return f"{self.trailing_ws}{self.comment}{self.newline}"
 
 
 __all__ = [

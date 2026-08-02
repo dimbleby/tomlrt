@@ -150,7 +150,7 @@ class _Scanner:
         line, col = self.line_col(offset)
         return TOMLParseError(message, line=line, col=col, offset=offset)
 
-    def scan_comment(self) -> CommentNode:
+    def scan_comment(self) -> str:
         """Consume a comment from `#` to (but not including) the newline.
 
         The cursor must be on `#`. Raises if the comment body contains
@@ -169,7 +169,7 @@ class _Scanner:
                 msg = f"invalid control character U+{cp:04X} in comment"
                 raise self.error(msg)
         self.pos = end_pos
-        return CommentNode(src[start:end_pos])
+        return src[start:end_pos]
 
     def scan_doc_trivia(self) -> Trivia:
         """Consume a document-scope trivia block.
@@ -195,7 +195,7 @@ class _Scanner:
                 pieces.append(WhitespaceNode(src[ws_start:pos]))
             elif ch == "#":
                 self.pos = pos
-                pieces.append(self.scan_comment())
+                pieces.append(CommentNode(self.scan_comment()))
                 pos = self.pos
             elif ch == "\n":
                 pos += 1
@@ -214,35 +214,11 @@ class _Scanner:
         self.pos = pos
         return trivia
 
-    def scan_inline_ws(self) -> WhitespaceNode | None:
-        """Consume one run of inline whitespace; no newlines or comments.
-
-        Returns `None` (and leaves the cursor untouched) if the next
-        character is not space or tab.
-        """
-        src = self.src
-        end = self.end
-        pos = self.pos
-        if pos >= end:
-            return None
-        ch = src[pos]
-        if ch != " " and ch != "\t":
-            return None
-        start = pos
-        pos += 1
-        while pos < end:
-            c = src[pos]
-            if c != " " and c != "\t":
-                break
-            pos += 1
-        self.pos = pos
-        return WhitespaceNode(src[start:pos])
-
     def scan_inline_ws_text(self) -> str:
         """Consume one run of inline whitespace; return raw text (or "").
 
-        Like :meth:`scan_inline_ws`, but skips the ``WhitespaceNode``
-        allocation for parser fields stored as plain ``str``.
+        Newlines and comments are not whitespace here; the cursor stops
+        at the first character that is neither space nor tab.
         """
         src = self.src
         end = self.end
@@ -294,7 +270,7 @@ class _Scanner:
                 self._seen_crlf = True
             elif ch == "#":
                 self.pos = pos
-                pieces.append(self.scan_comment())
+                pieces.append(CommentNode(self.scan_comment()))
                 pos = self.pos
             else:
                 break
@@ -307,8 +283,8 @@ class _Scanner:
         Raises if a non-newline, non-comment, non-EOF character is
         found after the optional whitespace.
         """
-        trailing = self.scan_inline_ws()
-        comment: CommentNode | None = None
+        trailing = self.scan_inline_ws_text()
+        comment = ""
         src = self.src
         end = self.end
         pos = self.pos
@@ -317,14 +293,14 @@ class _Scanner:
             comment = self.scan_comment()
             pos = self.pos
             ch = src[pos] if pos < end else ""
-        newline: NewlineNode | None = None
+        newline = ""
         if ch == "\n":
             self.pos = pos + 1
-            newline = NewlineNode("\n")
+            newline = "\n"
             self._seen_lf = True
         elif ch == "\r" and pos + 1 < end and src[pos + 1] == "\n":
             self.pos = pos + 2
-            newline = NewlineNode("\r\n")
+            newline = "\r\n"
             self._seen_crlf = True
         elif pos < end:
             msg = f"expected newline or end of file, got {ch!r}"

@@ -25,7 +25,6 @@ from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
-    WhitespaceNode,
     has_comment,
     has_newline,
     split_lines,
@@ -177,14 +176,14 @@ class EolCommentView(_SlotKeyedView[str]):
 
     @override
     def _present(self, slot: KVSlot) -> bool:
-        return slot.eol.comment is not None
+        return bool(slot.eol.comment)
 
     @override
     def __getitem__(self, key: str) -> str:
         slot = self._require_slot(key)
-        if slot.eol.comment is None:
+        if not slot.eol.comment:
             raise KeyError(key)
-        return _decode_comment(slot.eol.comment.text)
+        return _decode_comment(slot.eol.comment)
 
     @override
     def __setitem__(self, key: str, value: str) -> None:
@@ -197,13 +196,12 @@ class EolCommentView(_SlotKeyedView[str]):
     def __delitem__(self, key: str) -> None:
         _require_attached(self._c)
         slot = self._require_slot(key)
-        if slot.eol.comment is None:
+        if not slot.eol.comment:
             raise KeyError(key)
-        slot.eol.comment = None
+        slot.eol.comment = ""
         # Also drop the gap-whitespace that preceded the comment so we
         # don't leave a dangling tail like `key = 1   \n`.
-        if slot.eol.trailing_ws is not None:
-            slot.eol.trailing_ws = None
+        slot.eol.trailing_ws = ""
 
 
 def _split_preamble(
@@ -430,19 +428,18 @@ def _header_comment_get(c: Container) -> str | None:
         # dropping a write would be a footgun.
         return None
     eol = h.eol
-    if eol.comment is None:
+    if not eol.comment:
         return None
-    return _decode_comment(eol.comment.text)
+    return _decode_comment(eol.comment)
 
 
 def _header_comment_set(c: Container, value: str | None) -> None:
     h = _require_header_slot(c, "container has no header to attach a comment to")
     eol = h.eol
     if value is None:
-        if eol.comment is not None:
-            eol.comment = None
-            if eol.trailing_ws is not None and eol.trailing_ws.text.strip(" \t") == "":
-                eol.trailing_ws = None
+        if eol.comment:
+            eol.comment = ""
+            eol.trailing_ws = ""
         return
     _validate_comment_str(value, "header_comment")
     _write_eol_comment(eol, value, c._doc_newline)  # noqa: SLF001
@@ -512,11 +509,11 @@ def _set_attached_block(leading: Trivia, comments: tuple[str, ...], nl: str) -> 
 
 def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
     """Set the EOL comment on ``eol``, ensuring a separator and newline."""
-    if eol.trailing_ws is None:
-        eol.trailing_ws = WhitespaceNode(" ")
-    eol.comment = CommentNode(_encode_comment(text))
-    if eol.newline is None:
-        eol.newline = NewlineNode(nl)
+    if not eol.trailing_ws:
+        eol.trailing_ws = " "
+    eol.comment = _encode_comment(text)
+    if not eol.newline:
+        eol.newline = nl
 
 
 def _render_comment_lines(
