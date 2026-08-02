@@ -9,7 +9,7 @@ in one container.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -69,18 +69,26 @@ class Slot:
     machinery instead of the plain-type fast path. `render` still
     raises rather than being left unimplemented so a missing override
     fails loudly instead of silently.
+
+    Constructor fields are positional and required: a slot is built once
+    per physical line, and keyword binding roughly doubles that cost.
+    ``_prev`` / ``_next`` / ``_refs`` are runtime wiring, declared
+    ``init=False`` so they take no constructor argument and don't force
+    subclass fields keyword-only.
     """
 
     leading: Trivia
-    _prev: Slot | None = field(default=None, repr=False, compare=False)
-    _next: Slot | None = field(default=None, repr=False, compare=False)
-    owner_aot_entry: AoTEntry | None = None
+    owner_aot_entry: AoTEntry | None
     """The AoT entry that physically contains this slot, if any.
 
     Lives on the base so all slot kinds expose the field uniformly.
     """
 
-    _refs: list[SlotRef] = field(default_factory=list, repr=False, compare=False)
+    _prev: Slot | None = field(default=None, init=False, repr=False, compare=False)
+    _next: Slot | None = field(default=None, init=False, repr=False, compare=False)
+    _refs: list[SlotRef] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
     """Back-pointers from this slot to every `SlotRef` that references it.
 
     Bounded length (≤ path depth + 1). AoT removal uses this to scrub
@@ -97,13 +105,12 @@ class Slot:
         new = type(self).__new__(type(self))
         memo[id(self)] = new
         for f in fields(self):
-            match f.name:
-                case "_prev" | "_next":
-                    value: object = None
-                case "_refs":
-                    value = []
-                case _:
-                    value = copy.deepcopy(getattr(self, f.name), memo)
+            if f.init:
+                value: object = copy.deepcopy(getattr(self, f.name), memo)
+            elif f.default_factory is not MISSING:
+                value = f.default_factory()
+            else:
+                value = f.default
             setattr(new, f.name, value)
         return new
 
@@ -115,19 +122,19 @@ class Slot:
 class KVSlot(Slot):
     """A single ``key = value`` line."""
 
-    host_path: tuple[str, ...] = field(kw_only=True)
+    host_path: tuple[str, ...]
     """Full path of the table body this KV physically belongs to."""
 
-    key_parts: list[KeyPart] = field(kw_only=True)
+    key_parts: list[KeyPart]
     """The dotted-key parts as written. ``len >= 1``."""
 
-    key_seps: list[str] = field(default_factory=list)
+    key_seps: list[str]
     """Whitespace + ``.`` between parts. Length ``len(key_parts) - 1``."""
 
-    pre_eq: str = ""
-    post_eq: str = ""
-    value: Value = field(kw_only=True)
-    eol: EolTrivia = field(kw_only=True)
+    pre_eq: str
+    post_eq: str
+    value: Value
+    eol: EolTrivia
 
     @property
     def key(self) -> tuple[str, ...]:
@@ -155,19 +162,19 @@ class StructuralHeaderSlot(Slot):
     is derived from ``entry`` so the two cannot drift.
     """
 
-    path: tuple[str, ...] = field(kw_only=True)
+    path: tuple[str, ...]
     """Full decoded path of the section / AoT entry header."""
 
-    key_parts: list[KeyPart] = field(kw_only=True)
-    key_seps: list[str] = field(default_factory=list)
-    inner_pre: str = ""
-    inner_post: str = ""
-    eol: EolTrivia = field(kw_only=True)
+    key_parts: list[KeyPart]
+    key_seps: list[str]
+    inner_pre: str
+    inner_post: str
+    eol: EolTrivia
 
-    entry: AoTEntry | None = None
+    entry: AoTEntry | None
     """The AoT entry this header opens; ``None`` for a plain table."""
 
-    synthetic: bool = False
+    synthetic: bool
     """True iff this header was introduced by mutation."""
 
     @property
