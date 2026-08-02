@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import Boundary
 from tomlrt._errors import TOMLError
-from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
@@ -278,19 +278,12 @@ def _canon_eol(eol: EolTrivia, *, nl: str, options: FormatOptions) -> None:
     separator before comments.
     """
     retarget_eol_newline(eol, nl)
-    if eol.comment is None:
-        eol.trailing_ws = None
+    if not eol.comment:
+        eol.trailing_ws = ""
         return
     if options.normalize_comments:
-        eol.comment.text = _canon_comment_text(eol.comment.text)
-    eol.trailing_ws = _comment_separator(options)
-
-
-def _comment_separator(options: FormatOptions) -> WhitespaceNode | None:
-    """Return the configured whitespace before an EOL comment."""
-    if options.eol_comment_spaces == 0:
-        return None
-    return WhitespaceNode(" " * options.eol_comment_spaces)
+        eol.comment = _canon_comment_text(eol.comment)
+    eol.trailing_ws = " " * options.eol_comment_spaces
 
 
 # ---------------------------------------------------------------------------
@@ -659,9 +652,8 @@ def _canon_item_eol(
     pieces: list[TriviaPiece] = []
     for k, comment in enumerate(comments):
         if k == 0:
-            separator = _comment_separator(options)
-            if separator is not None:
-                pieces.append(separator)
+            if separator := " " * options.eol_comment_spaces:
+                pieces.append(WhitespaceNode(separator))
         elif indent:
             pieces.append(WhitespaceNode(indent))
         pieces.extend((comment, NewlineNode(nl)))
@@ -829,9 +821,7 @@ def format_subtree(
         # genuinely-final slot is never visited as ``prev``, so its
         # no-final-newline state survives.
         if prev is not None:
-            assert isinstance(prev, (KVSlot, StructuralHeaderSlot))
-            if prev.eol.newline is None:
-                prev.eol.newline = NewlineNode(nl)
+            ensure_terminator(prev, nl)
         if isinstance(slot, KVSlot):
             _canon_kv_slot(slot, nl=nl, options=options)
         else:

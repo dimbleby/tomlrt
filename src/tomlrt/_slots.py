@@ -229,6 +229,17 @@ class SlotRef:
         return slot.path[len(c_path)]
 
 
+def ensure_terminator(slot: Slot, nl: str) -> None:
+    """Give ``slot`` a trailing ``nl`` if it lacks one.
+
+    A slot parsed as the file's final line carries no terminator. Once a
+    mutation moves it off the tail it needs one, or it would run into
+    whatever now follows it.
+    """
+    if isinstance(slot, (KVSlot, StructuralHeaderSlot)) and not slot.eol.newline:
+        slot.eol.newline = nl
+
+
 def retarget_slot_newlines(slot: Slot, target: str) -> None:
     """Rewrite every ``NewlineNode.text`` reachable from ``slot`` to ``target``.
 
@@ -249,5 +260,6 @@ __all__ = [
     "Slot",
     "SlotRef",
     "StructuralHeaderSlot",
+    "ensure_terminator",
     "retarget_slot_newlines",
 ]

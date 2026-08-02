@@ -34,6 +34,7 @@ from tomlrt._slots import (
     KVSlot,
     SlotRef,
     StructuralHeaderSlot,
+    ensure_terminator,
     retarget_slot_newlines,
 )
 from tomlrt._trivia import (
@@ -536,11 +537,7 @@ def _rebuild_index_for_key(c: Container, local_key: str) -> None:
 
 def _default_eol(doc: Document) -> EolTrivia:
     """A bare-newline `EolTrivia` for a freshly synthesised slot."""
-    return EolTrivia(
-        trailing_ws=None,
-        comment=None,
-        newline=NewlineNode(text=doc._newline),  # noqa: SLF001
-    )
+    return EolTrivia(trailing_ws="", comment="", newline=doc._newline)  # noqa: SLF001
 
 
 def _body_anchor(c: Container) -> Slot | None:
@@ -676,11 +673,11 @@ def _splice_body_slot(
     (the seam case), where ancestor refs must go at index 0.
     """
     if anchor_body_tail is not None:
-        _ensure_terminator(anchor_body_tail, doc)
+        ensure_terminator(anchor_body_tail, doc._newline)  # noqa: SLF001
         insert_after(anchor_body_tail, new_slot, doc)
         return False
     if anchor_header_ref is not None:
-        _ensure_terminator(anchor_header_ref.slot, doc)
+        ensure_terminator(anchor_header_ref.slot, doc._newline)  # noqa: SLF001
         insert_after(anchor_header_ref.slot, new_slot, doc)
         return False
     if doc._head is not None:  # noqa: SLF001
@@ -902,7 +899,7 @@ def _replace_primary_in_place(
 
     The caller is materialising a replacement for an about-to-be-deleted
     binding whose doc-stream-first slot is ``primary``. ``new_slot`` takes
-    ``primary``'s position — inheriting its leading and eol — and is
+    ``primary``'s position — copying its leading and sharing its eol — and is
     inserted *before* it, so the later unlink of ``primary`` leaves
     ``new_slot`` exactly where ``primary`` was. Because ``new_slot`` is in
     place before the unlink, head-occupancy is preserved for free: if
@@ -1725,16 +1722,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     _extend_entry_slots(owner, header_slot, new_kv)
 
 
-def _ensure_terminator(slot: Slot, doc: Document) -> None:
-    """Give ``slot`` a trailing newline if it lacks one (no-final-newline doc)."""
-    if isinstance(slot, (KVSlot, StructuralHeaderSlot)) and slot.eol.newline is None:
-        slot.eol = EolTrivia(
-            trailing_ws=slot.eol.trailing_ws,
-            comment=slot.eol.comment,
-            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
-        )
-
-
 def _terminate_unless_tail(slot: Slot, doc: Document) -> None:
     """Ensure ``slot`` has a trailing newline, unless it is now the doc tail.
 
@@ -1745,7 +1732,7 @@ def _terminate_unless_tail(slot: Slot, doc: Document) -> None:
     same line.
     """
     if slot is not doc._tail:  # noqa: SLF001
-        _ensure_terminator(slot, doc)
+        ensure_terminator(slot, doc._newline)  # noqa: SLF001
 
 
 def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
@@ -1918,7 +1905,7 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
         insert_before_head(slot, doc)
         _promote_trailing_to_preamble(doc)
     else:
-        _ensure_terminator(anchor, doc)
+        ensure_terminator(anchor, doc._newline)  # noqa: SLF001
         insert_after(anchor, slot, doc)
 
 
@@ -1929,11 +1916,11 @@ def _splice_block_after(slots: list[Slot], anchor: Slot | None, doc: Document) -
     if anchor is None:
         _splice_at_end(slots[0], doc)
     else:
-        _ensure_terminator(anchor, doc)
+        ensure_terminator(anchor, doc._newline)  # noqa: SLF001
         insert_after(anchor, slots[0], doc)
     prev = slots[0]
     for s in slots[1:]:
-        _ensure_terminator(prev, doc)
+        ensure_terminator(prev, doc._newline)  # noqa: SLF001
         insert_after(prev, s, doc)
         prev = s
     _terminate_unless_tail(prev, doc)

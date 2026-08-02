@@ -1170,12 +1170,11 @@ class Container(dict[str, Any]):
             assert last_slot is not None
             if (
                 isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
-                and saved_eol.comment is not None
-                and last_slot.eol.comment is None
+                and saved_eol.comment
+                and not last_slot.eol.comment
             ):
                 last_slot.eol.comment = saved_eol.comment
-                if saved_eol.trailing_ws is not None:
-                    last_slot.eol.trailing_ws = saved_eol.trailing_ws
+                last_slot.eol.trailing_ws = saved_eol.trailing_ws
         return result
 
 
