@@ -5187,6 +5187,98 @@ def test_reassign_orphan_section_repoints_array_nested_views() -> None:
     assert _reparses(tomlrt.dumps(doc)) == {"a": {"arr": [{"x": 7}, [10, 20, 30]]}}
 
 
+def test_reassign_nested_orphan_section_detaches_from_old_parent() -> None:
+    """Moving a nested child out of a private orphan scrubs the stale parent.
+
+    Rehoming ``orphan["child"]`` should remove the old ``child`` binding
+    from the orphan before wiring the section into its new parent, while
+    keeping the held view live at the destination.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.child]
+        x = 1
+
+        [dest]
+        y = 2
+        """)
+    )
+    orphan = doc.pop("root")
+    child = orphan["child"]
+    doc["dest"]["moved"] = child
+    child["z"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        y = 2
+
+        [dest.moved]
+        x = 1
+        z = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_reassign_nested_orphan_section_with_array_item_inline_view() -> None:
+    """Nested inline views inside arrays survive a nested-section rehome."""
+    doc = tomlrt.loads(
+        td("""
+        [root.child]
+        arr = [ { x = 1 } ]
+
+        [dest]
+        y = 2
+        """)
+    )
+    orphan = doc.pop("root")
+    child = orphan["child"]
+    item = child["arr"][0]
+    doc["dest"]["moved"] = child
+    assert doc["dest"]["moved"]["arr"][0] is item
+    item["x"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        y = 2
+
+        [dest.moved]
+        arr = [ { x = 2 } ]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_orphan_implicit_into_aot_entry_keeps_entry_body_tail() -> None:
+    """An adopted ownerless KV must not become the entry's body tail.
+
+    ``adopt_private_implicit`` moves the orphan's dotted KV into an AoT
+    entry without retargeting its ``owner_aot_entry``, so the slot is
+    physically inside the entry but is not part of the entry's own
+    body. A later direct append therefore still lands after ``x``, the
+    entry's real body tail, rather than after the adopted slot.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        b.c = 1
+
+        [[t]]
+        x = 1
+        """)
+    )
+    orphan = doc.pop("a")
+    doc.aot("t")[0]["moved"] = orphan["b"]
+    doc.aot("t")[0]["after"] = 99
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[t]]
+        x = 1
+        after = 99
+        moved.c = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {"t": [{"x": 1, "moved": {"c": 1}, "after": 99}]}
+
+
 def test_reassign_implicit_orphan_section_preserves_trivia() -> None:
     """A header-less (implicit, dotted) orphan section is moved, not rebuilt.
 
