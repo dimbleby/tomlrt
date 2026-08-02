@@ -34,25 +34,15 @@ def test_starts_with() -> None:
     s = _Scanner("hello world")
     assert s.starts_with("hello")
     assert not s.starts_with("world")
-    s.advance(6)
+    s.pos = 6
     assert s.starts_with("world")
-
-
-def test_advance_returns_slice_and_moves_cursor() -> None:
-    s = _Scanner("abcdef")
-    assert s.advance(3) == "abc"
-    assert s.pos == 3
-    assert s.advance(0) == ""
-    assert s.pos == 3
-    assert s.advance(2) == "de"
-    assert s.peek() == "f"
 
 
 def test_pos_supports_backtracking() -> None:
     s = _Scanner("abcdef")
-    s.advance(4)
+    s.pos += 4
     save = s.pos
-    s.advance(1)
+    s.pos += 1
     assert s.peek() == "f"
     s.pos = save
     assert s.peek() == "e"
@@ -61,7 +51,7 @@ def test_pos_supports_backtracking() -> None:
 def test_eof_transitions() -> None:
     s = _Scanner("xy")
     assert not s.eof()
-    s.advance(2)
+    s.pos += 2
     assert s.eof()
     assert s.peek() == ""
 
@@ -104,7 +94,7 @@ def test_line_col_handles_crlf() -> None:
 
 def test_error_uses_cursor_by_default() -> None:
     s = _Scanner("abc\ndef")
-    s.advance(5)  # at 'e'
+    s.pos += 5  # at 'e'
     err = s.error("nope")
     assert isinstance(err, TOMLParseError)
     assert err.offset == 5
@@ -116,7 +106,7 @@ def test_error_uses_cursor_by_default() -> None:
 
 def test_error_accepts_explicit_offset() -> None:
     s = _Scanner("abc\ndef")
-    s.advance(6)
+    s.pos += 6
     err = s.error("rewound", at=2)
     assert err.offset == 2
     assert err.line == 1

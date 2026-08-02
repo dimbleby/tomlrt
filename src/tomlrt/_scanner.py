@@ -122,17 +122,6 @@ class _Scanner:
     def eof(self) -> bool:
         return self.pos >= self.end
 
-    def advance(self, n: int = 1) -> str:
-        """Move the cursor forward `n` chars; return the consumed slice.
-
-        Does *not* validate that `n` characters remain — the caller is
-        responsible (this is fine because every existing call site
-        first peeks for the characters it expects).
-        """
-        s = self.src[self.pos : self.pos + n]
-        self.pos += n
-        return s
-
     def line_col(self, pos: int) -> tuple[int, int]:
         """Return the 1-based (line, column) for source offset `pos`."""
         line = 1
@@ -318,23 +307,21 @@ class _Scanner:
         Precondition: cursor is at `"` or `'`. Callers always peek
         first; this is asserted, not validated.
         """
+        src = self.src
         start = self.pos
-        ch = self.peek()
+        ch = src[start]
         assert ch in ('"', "'"), f"scan_string called at {ch!r}"
         if ch == '"':
-            node = self._scan_basic_string(allow_multiline=allow_multiline)
+            ml = allow_multiline and src.startswith('"""', start)
+            node = self._scan_ml_basic_string() if ml else self._scan_basic_string()
         else:
-            node = self._scan_literal_string(allow_multiline=allow_multiline)
-        node.lexeme = self.src[start : self.pos]
+            ml = allow_multiline and src.startswith("'''", start)
+            node = self._scan_ml_literal_string() if ml else self._scan_literal_string()
+        node.lexeme = src[start : self.pos]
         return node
 
-    def _scan_basic_string(self, *, allow_multiline: bool) -> StringValue:
-        """Scan a basic string. Decodes escapes; never sets `raw`.
-
-        Precondition: cursor is at `"`.
-        """
-        if allow_multiline and self.starts_with('"""'):
-            return self._scan_ml_basic_string()
+    def _scan_basic_string(self) -> StringValue:
+        """Scan a single-line basic string. Precondition: cursor is at `"`."""
         src = self.src
         end = self.end
         # Fast path: simple basic string with no escapes.
@@ -457,13 +444,8 @@ class _Scanner:
             msg = "multi-line basic body regex left an ordinary character"
             raise AssertionError(msg)
 
-    def _scan_literal_string(self, *, allow_multiline: bool) -> StringValue:
-        """Scan a literal string. No escapes; never sets `raw`.
-
-        Precondition: cursor is at `'`.
-        """
-        if allow_multiline and self.starts_with("'''"):
-            return self._scan_ml_literal_string()
+    def _scan_literal_string(self) -> StringValue:
+        """Scan a single-line literal string. Precondition: cursor is at `'`."""
         self.pos += 1
         src = self.src
         end = self.end
