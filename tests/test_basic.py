@@ -361,6 +361,15 @@ def test_inline_table_dotted_key_conflict_reports_inline_position() -> None:
     assert exc_info.value.col == 14
 
 
+def test_parse_error_position_counts_crlf_as_one_line() -> None:
+    # Both halves of a CRLF belong to the line they terminate, so the
+    # error on the second physical line must report line 2, not line 3.
+    with pytest.raises(tomlrt.TOMLParseError) as exc_info:
+        tomlrt.loads("a = 1\r\nb = @\r\n")
+    err = exc_info.value
+    assert (err.line, err.col, err.offset) == (2, 5, 11)
+
+
 def test_parse_error_is_value_error() -> None:
     # `tomllib.TOMLDecodeError` extends `ValueError`; tomlrt should be
     # catchable the same way for drop-in compatibility.

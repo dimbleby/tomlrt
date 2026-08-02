@@ -398,8 +398,6 @@ wrong.
 - `tests/test_live_attach.py` — live-attach semantics for
   `Table.inline`, `Array`, and `AoT` when assigned into a document.
 - `tests/test_synthesise_and_io.py` — value synthesis and binary I/O.
-- `tests/test_scanner.py` — pins the cursor + diagnostics contract
-  on `_Scanner` that the higher-level `scan_*` helpers build on.
 - `tests/_helpers.py` — shared test helpers: `td(""" … """)` for writing
   TOML fixtures as indented triple-quoted literals (prefer it over walls
   of `\n`-escaped strings in new tests), and `reparses(src)` for the
