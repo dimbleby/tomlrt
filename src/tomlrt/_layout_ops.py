@@ -1169,12 +1169,12 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     for slot in reversed(ordered_for_transplant):
         unlink_slot(slot, doc)
 
-    displaced_inlines: list[Container] = []
-    displaced_arrays: list[Array] = []
-    _collect_displaced_inline_views(val, displaced_inlines, displaced_arrays)
     if transplanting:
         from tomlrt._container import Document  # noqa: PLC0415
 
+        displaced_inlines: list[Container] = []
+        displaced_arrays: list[Array] = []
+        _collect_displaced_inline_views(val, displaced_inlines, displaced_arrays)
         orphan = Document()
         orphan._newline = doc._newline  # noqa: SLF001
         orphan._is_private = True  # noqa: SLF001
@@ -1192,18 +1192,9 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         for ar in displaced_arrays:
             ar._layout_root = orphan  # noqa: SLF001
     else:
-        # No orphan (e.g. a top-level inline value): reset by hand so a
-        # held reference reports detached and can re-attach cleanly.
-        from tomlrt._container import (  # noqa: PLC0415
-            _reset_array_for_rehome,
-            _reset_inline_for_rehome,
-        )
-
-        # Every view reachable from the bound value was attached here.
-        for it in displaced_inlines:
-            _reset_inline_for_rehome(it)
-        for ar in displaced_arrays:
-            _reset_array_for_rehome(ar)
+        # No orphan (e.g. a top-level inline value): reset so a held
+        # reference reports detached and can re-attach cleanly.
+        reset_displaced_views(val)
 
     # Drop the dict entry.
     dict.__delitem__(c, key)
@@ -1217,22 +1208,29 @@ def _walk_view_tree(val: object, visit: Callable[[object], None]) -> None:
     delete-side displacement walk (:func:`_collect_displaced_inline_views`)
     and the adopt-side rehome walk (:func:`_rehome_view_tree`); each
     caller supplies the per-node action. Scalars are inert.
+
+    The recursion is an inner function so the deferred imports — needed
+    to break the ``_container`` / ``_array`` import cycle — are resolved
+    once per traversal rather than once per node. Displaced-value walks
+    visit every scalar leaf, so a wide table or long array pays that
+    cost hundreds of times over.
     """
     from tomlrt._array import AoT, Array  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
-    if isinstance(val, Container):
-        visit(val)
-        for child in val.values():
-            _walk_view_tree(child, visit)
-    elif isinstance(val, AoT):
-        visit(val)
-        for entry in val:
-            _walk_view_tree(entry, visit)
-    elif isinstance(val, Array):
-        visit(val)
-        for item in val:
-            _walk_view_tree(item, visit)
+    view_types = (Container, AoT, Array)
+
+    def walk(node: Container | AoT | Array) -> None:
+        visit(node)
+        children = node.values() if isinstance(node, Container) else node
+        for child in children:
+            # Also what makes ``walk``'s parameter type sound — don't
+            # hoist this check into ``walk`` itself.
+            if isinstance(child, view_types):
+                walk(child)
+
+    if isinstance(val, view_types):
+        walk(val)
 
 
 def _collect_displaced_inline_views(
@@ -1260,6 +1258,28 @@ def _collect_displaced_inline_views(
             arrays_out.append(node)
 
     _walk_view_tree(val, visit)
+
+
+def reset_displaced_views(val: object) -> None:
+    """Detach every inline-table / array view nested inside ``val``.
+
+    Used when ``val``'s backing CST is replaced or removed: a nested
+    view left pointing at the dead value would keep reporting as
+    attached and resolve against it. Resetting the whole subtree — not
+    just its root — lets each view re-attach live elsewhere.
+    """
+    from tomlrt._container import (  # noqa: PLC0415
+        _reset_array_for_rehome,
+        _reset_inline_for_rehome,
+    )
+
+    inlines: list[Container] = []
+    arrays: list[Array] = []
+    _collect_displaced_inline_views(val, inlines, arrays)
+    for it in inlines:
+        _reset_inline_for_rehome(it)
+    for ar in arrays:
+        _reset_array_for_rehome(ar)
 
 
 def _collect_subtree(

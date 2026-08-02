@@ -762,11 +762,14 @@ class Container(dict[str, Any]):
         cst, decoded = self._synth_local_value(key, value)
         slot.value = cst
         dict.__setitem__(self, key, decoded)
-        # Detach the displaced view so it can be reattached live.
-        if _is_inline_table(old) and old is not decoded:
-            _reset_inline_for_rehome(old)
-        elif isinstance(old, Array) and old is not decoded:
-            _reset_array_for_rehome(old)
+        # Detach the displaced view *and every view nested beneath it* so
+        # each can be reattached live. A descendant left pointing at the
+        # replaced CST would keep reporting as attached and resolve
+        # against a dead inline value; the delete path walks the same
+        # subtree for the same reason. Scalars own no views, so the
+        # common scalar-for-scalar overwrite skips the walk entirely.
+        if _is_inline_table(old) or isinstance(old, Array):
+            _layout_ops.reset_displaced_views(old)
 
     @override
     def __delitem__(self, key: str) -> None:
