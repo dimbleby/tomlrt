@@ -20,7 +20,7 @@ _HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
     from tomlrt._slots import Slot
-    from tomlrt._values import KeyPart, Value
+    from tomlrt._values import Value
 
 
 @dataclass
@@ -108,7 +108,7 @@ class _Parser:
             kind = "table"
 
         inner_pre = sc.scan_inline_ws_text()
-        key_parts, key_seps, inner_post = self._parse_key()
+        key_parts, key_seps, inner_post = sc.scan_key()
 
         if kind == "aot-entry":
             if not sc.starts_with("]]"):
@@ -124,7 +124,7 @@ class _Parser:
         eol = sc.scan_eol()
         path = tuple([p.value for p in key_parts])
         new_entry = self._validator.enter_header(path, kind, at=sc.pos)
-        owner = self._validator.current_owner_aot_entry()
+        owner = self._validator.current_owner_aot_entry
 
         slot = StructuralHeaderSlot(
             leading=leading,
@@ -142,25 +142,9 @@ class _Parser:
             owner.entry_slots.append(slot)
         return slot
 
-    def _parse_key(self) -> tuple[list[KeyPart], list[str], str]:
-        """Parse a dotted key.
-
-        ``trailing_ws`` is consumed after the last key part and can be
-        used directly as ``pre_eq`` / ``inner_post``.
-        """
-        sc = self._sc
-        parts: list[KeyPart] = [sc.scan_key_part()]
-        seps: list[str] = []
-        while True:
-            text, is_sep = sc.scan_key_separator()
-            if not is_sep:
-                return parts, seps, text
-            seps.append(text)
-            parts.append(sc.scan_key_part())
-
     def _parse_key_value(self, leading: Trivia) -> KVSlot:
         sc = self._sc
-        key_parts, key_seps, pre_eq = self._parse_key()
+        key_parts, key_seps, pre_eq = sc.scan_key()
         src = sc.src
         pos = sc.pos
         if pos >= sc.end or src[pos] != "=":
@@ -174,8 +158,8 @@ class _Parser:
 
         key_path = tuple([p.value for p in key_parts])
         self._validator.record_keyvalue(key_path, value, at=sc.pos)
-        host_path = self._validator.current_section()
-        owner = self._validator.current_owner_aot_entry()
+        host_path = self._validator.current_section
+        owner = self._validator.current_owner_aot_entry
         slot = KVSlot(
             leading=leading,
             host_path=host_path,
@@ -276,7 +260,7 @@ class _Parser:
         entries = node.items
         while True:
             key_at = sc.pos
-            key_parts, key_seps, pre_eq = self._parse_key()
+            key_parts, key_seps, pre_eq = sc.scan_key()
             key_path = tuple([p.value for p in key_parts])
             self._validator.check_inline_key_conflict(
                 key_path, seen_values, seen_prefixes, at=key_at

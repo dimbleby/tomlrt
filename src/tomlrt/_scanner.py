@@ -596,50 +596,38 @@ class _Scanner:
             raise self.error(msg)
         return chr(cp)
 
-    def scan_key_part(self) -> KeyPart:
-        """Scan one key part: bare, basic-quoted, or literal-quoted."""
-        src = self.src
-        pos = self.pos
-        ch = src[pos] if pos < self.end else ""
-        if ch == '"' or ch == "'":
-            s = self.scan_string(allow_multiline=False)
-            return KeyPart(s.lexeme, s.value)
-        m = _RE_BARE_KEY.match(src, pos)
-        if m is not None:
-            end_pos = m.end()
-            raw = src[pos:end_pos]
-            self.pos = end_pos
-            return KeyPart(raw, raw)
-        msg = f"expected key, got {ch!r}"
-        raise self.error(msg)
+    def scan_key(self) -> tuple[list[KeyPart], list[str], str]:
+        """Scan a dotted key; return its parts, separators, trailing ws.
 
-    def scan_key_separator(self) -> tuple[str, bool]:
-        """Scan an optional dotted-key separator and trailing whitespace.
-
-        If the next non-whitespace char is ``.``, consumes ``ws "." ws``
-        and returns ``(lexeme, True)``. Otherwise returns leading
-        whitespace as ``(ws_text, False)`` for ``pre_eq`` / ``inner_post``.
+        Each part is bare, basic-quoted or literal-quoted; each
+        separator is the literal ``ws "." ws`` between two parts. The
+        whitespace after the last part is consumed too, and can be used
+        directly as ``pre_eq`` / ``inner_post``.
         """
         src = self.src
-        end = self.end
-        save = self.pos
-        ws_end = save
-        while ws_end < end:
-            c = src[ws_end]
-            if c != " " and c != "\t":
-                break
-            ws_end += 1
-        if ws_end >= end or src[ws_end] != ".":
-            self.pos = ws_end
-            return src[save:ws_end], False
-        sep_end = ws_end + 1
-        while sep_end < end:
-            c = src[sep_end]
-            if c != " " and c != "\t":
-                break
-            sep_end += 1
-        self.pos = sep_end
-        return src[save:sep_end], True
+        parts: list[KeyPart] = []
+        seps: list[str] = []
+        while True:
+            start = self.pos
+            ch = src[start] if start < self.end else ""
+            if ch == '"' or ch == "'":
+                quoted = self.scan_string(allow_multiline=False)
+                parts.append(KeyPart(quoted.lexeme, quoted.value))
+            else:
+                m = _RE_BARE_KEY.match(src, start)
+                if m is None:
+                    msg = f"expected key, got {ch!r}"
+                    raise self.error(msg)
+                self.pos = m.end()
+                raw = src[start : self.pos]
+                parts.append(KeyPart(raw, raw))
+            sep_start = self.pos
+            ws = self.scan_inline_ws_text()
+            if self.pos >= self.end or src[self.pos] != ".":
+                return parts, seps, ws
+            self.pos += 1
+            self.scan_inline_ws_text()
+            seps.append(src[sep_start : self.pos])
 
     # Bare value tokens: bool, special floats, numbers, and date/time values.
     # The parser dispatches strings, arrays, and inline tables itself.

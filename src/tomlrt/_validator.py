@@ -31,10 +31,10 @@ class _Validator:
     __slots__ = (
         "_active_aot_entries",
         "_aot_subpaths",
-        "_current_owner_aot_entry",
-        "_current_section",
         "_error",
         "_path_kinds",
+        "current_owner_aot_entry",
+        "current_section",
     )
 
     def __init__(self, error_builder: ErrorBuilder) -> None:
@@ -42,17 +42,11 @@ class _Validator:
         self._path_kinds: dict[tuple[str, ...], _PathKind] = {}
         # Index from each active AoT path to all sub-paths registered under it.
         self._aot_subpaths: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
-        self._current_section: tuple[str, ...] = ()
+        self.current_section: tuple[str, ...] = ()
 
         # Active AoT paths map to their most recently opened entry.
         self._active_aot_entries: dict[tuple[str, ...], AoTEntry] = {}
-        self._current_owner_aot_entry: AoTEntry | None = None
-
-    def current_section(self) -> tuple[str, ...]:
-        return self._current_section
-
-    def current_owner_aot_entry(self) -> AoTEntry | None:
-        return self._current_owner_aot_entry
+        self.current_owner_aot_entry: AoTEntry | None = None
 
     def enter_header(
         self, path: tuple[str, ...], kind: _HeaderKind, *, at: int
@@ -118,8 +112,8 @@ class _Validator:
             active_aot_entries[path] = new_entry
             owner = path  # a fresh AoT entry owns itself and its subtree
 
-        self._current_section = path
-        self._current_owner_aot_entry = (
+        self.current_section = path
+        self.current_owner_aot_entry = (
             active_aot_entries[owner] if owner is not None else None
         )
         return new_entry
@@ -127,7 +121,7 @@ class _Validator:
     def record_keyvalue(
         self, key_path: tuple[str, ...], value: Value, *, at: int
     ) -> None:
-        section = self._current_section
+        section = self.current_section
         full = section + key_path if section else key_path
         path_kinds = self._path_kinds
         current_kind = path_kinds.get(full)
@@ -141,7 +135,7 @@ class _Validator:
         # section's own tree, never itself a ``[[header]]``-established
         # AoT path, so its owner (if any) is just the owning entry's
         # own path, already resolved for the section.
-        owner_entry = self._current_owner_aot_entry
+        owner_entry = self.current_owner_aot_entry
         owner = owner_entry.path if owner_entry is not None else None
         # Intermediate-prefix conflicts.
         slen = len(section)
