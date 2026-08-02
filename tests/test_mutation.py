@@ -2427,6 +2427,40 @@ def test_sort_container_with_synthetic_header_binding_dotted_kv() -> None:
     assert doc.to_dict() == {"fruit": {"apple": {}, "orange": {"deep": {"v": 1}}}}
 
 
+def test_sort_container_skips_empty_synthetic_header_region_marker() -> None:
+    """An empty synthetic header stays put while real children reorder.
+
+    Promote ``fruit`` to a synthetic ``[fruit]`` header, then delete the
+    body KV that made it non-elidable. Sorting the remaining child
+    sections must leave that now-empty placeholder header untouched
+    while still reordering the real children beneath it.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [fruit.apple]
+            x = 1
+
+            [fruit.banana]
+            y = 2
+            """)
+    )
+    doc["fruit"]["orange"] = {"deep": {"v": 1}}
+    del doc["fruit"]["orange"]
+    doc["fruit"].sort(reverse=True)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [fruit]
+
+        [fruit.banana]
+        y = 2
+
+        [fruit.apple]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {"fruit": {"banana": {"y": 2}, "apple": {"x": 1}}}
+
+
 def test_sort_aot_entry_with_nested_aot_child_reorders_physically() -> None:
     """Sorting an AoT entry whose children include a *nested AoT* must
     reorder the physical CST, not just dict storage.
