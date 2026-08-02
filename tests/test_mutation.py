@@ -6717,6 +6717,51 @@ def test_sort_inline_dotted_inner_navigator() -> None:
     assert _reparses(tomlrt.dumps(doc))
 
 
+def test_sort_detached_inline_factory_table() -> None:
+    """A detached ``Table.inline()`` sorts its dict order.
+
+    There is no backing inline value to permute yet, so the sort only
+    has to survive until attachment, where dict order decides what is
+    emitted.
+    """
+    table = Table.inline()
+    table["b"] = 1
+    table["a"] = 2
+    table.sort()
+    assert list(table) == ["a", "b"]
+    doc = tomlrt.Document()
+    doc["x"] = table
+    assert tomlrt.dumps(doc) == "x = { a = 2, b = 1 }\n"
+    assert _reparses(tomlrt.dumps(doc)) == doc.to_dict()
+
+
+def test_sort_detached_inline_factory_table_reverse_and_key() -> None:
+    """``key`` / ``reverse`` apply to a detached inline table too."""
+    table = Table.inline()
+    table["bb"] = 1
+    table["a"] = 2
+    table["ccc"] = 3
+    table.sort(key=len, reverse=True)
+    doc = tomlrt.Document()
+    doc["x"] = table
+    assert tomlrt.dumps(doc) == "x = { ccc = 3, bb = 1, a = 2 }\n"
+    assert _reparses(tomlrt.dumps(doc)) == doc.to_dict()
+
+
+def test_sort_nested_detached_inline_factory_table() -> None:
+    """Sorting a factory table already nested in another factory works."""
+    outer = Table.inline()
+    inner = Table.inline()
+    inner["b"] = 1
+    inner["a"] = 2
+    outer["n"] = inner
+    inner.sort()
+    doc = tomlrt.Document()
+    doc["x"] = outer
+    assert tomlrt.dumps(doc) == "x = { n = { a = 2, b = 1 } }\n"
+    assert _reparses(tomlrt.dumps(doc)) == doc.to_dict()
+
+
 def test_sort_preserves_lexeme_styles_and_whitespace() -> None:
     src = td("""
         b = 'lit'

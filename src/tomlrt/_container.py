@@ -885,7 +885,10 @@ class Container(dict[str, Any]):
         if new_order == current:
             return
         if self._inline:
-            _inline_ops.reorder_inline(self, new_order)
+            # A detached factory table has no backing inline value yet;
+            # dict order alone decides what is emitted when it attaches.
+            if self._kind is not _Kind.INLINE_FACTORY:
+                _inline_ops.reorder_inline(self, new_order)
         elif self._layout_root is not None:
             _layout_ops.reorder_container(self, new_order)
         _reorder_dict_storage(self, new_order)
