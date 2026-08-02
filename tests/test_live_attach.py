@@ -1399,3 +1399,65 @@ def test_append_aot_entry_from_overwritten_noncontiguous_section() -> None:
         "other": {"y": 1},
         "dst": [{"id": "KEEP-ME"}],
     }
+
+
+def test_inline_overwrite_detaches_nested_dotted_view() -> None:
+    """Replacing an inline value detaches views nested inside it.
+
+    Only the displaced root used to be reset, stranding any dotted-key
+    navigator held beneath it: it still claimed to be attached while its
+    backing inline value was gone, so mutating it tripped an internal
+    assertion. It must instead fall back to detached dict-only mode and
+    stay reusable.
+    """
+    doc = tomlrt.loads("x = { a.c = 1, a.b = 2 }\n")
+    inner = doc["x"]["a"]
+    doc["x"] = 5
+    assert tomlrt.dumps(doc) == "x = 5\n"
+
+    inner.sort()
+    inner["d"] = 3
+    assert list(inner) == ["b", "c", "d"]
+
+    doc["y"] = inner
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 5
+        y = { b = 2, c = 1, d = 3 }
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_inline_overwrite_detaches_nested_array_view() -> None:
+    """The same subtree walk covers arrays nested in a displaced value."""
+    doc = tomlrt.loads("x = { arr = [1, 2] }\n")
+    arr = doc["x"]["arr"]
+    doc["x"] = 5
+    assert not arr._attached  # noqa: SLF001
+
+    arr.append(3)
+    doc["y"] = arr
+    # Live-attach, not clone: the detached view becomes the one in the doc.
+    assert doc["y"] is arr
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 5
+        y = [1, 2, 3]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_inline_overwrite_with_inline_detaches_nested_view() -> None:
+    """Detaching happens when the replacement is itself an inline table."""
+    doc = tomlrt.loads("x = { a.c = 1, a.b = 2 }\n")
+    inner = doc["x"]["a"]
+    doc["x"] = {"p": 1}
+    inner.sort()
+
+    doc["y"] = inner
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = { p = 1 }
+        y = { b = 2, c = 1 }
+        """)
+    assert _reparses(out) == doc.to_dict()
