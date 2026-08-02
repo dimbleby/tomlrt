@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
-    from tomlrt._trivia import EolTrivia, Trivia
+    from tomlrt._trivia import EolTrivia
     from tomlrt._values import KeyPart, Value
 
 import sys
@@ -24,7 +24,7 @@ if sys.version_info >= (3, 12):
 else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
-from tomlrt._trivia import retarget_eol_newline, retarget_trivia_newlines
+from tomlrt._trivia import retarget_eol_newline, retarget_newlines
 from tomlrt._values import render_dotted, retarget_value_newlines
 
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ class Slot:
     subclass fields keyword-only.
     """
 
-    leading: Trivia
+    leading: str
     owner_aot_entry: AoTEntry | None
     """The AoT entry that physically contains this slot, if any.
 
@@ -147,7 +147,7 @@ class KVSlot(Slot):
     @override
     def render(self) -> str:
         return (
-            f"{self.leading.render()}{self.render_key()}"
+            f"{self.leading}{self.render_key()}"
             f"{self.pre_eq}={self.post_eq}"
             f"{self.value.render()}{self.eol.render()}"
         )
@@ -192,7 +192,7 @@ class StructuralHeaderSlot(Slot):
         else:
             open_br, close_br = "[", "]"
         return (
-            f"{self.leading.render()}{open_br}{self.inner_pre}"
+            f"{self.leading}{open_br}{self.inner_pre}"
             f"{self.render_key()}{self.inner_post}{close_br}{self.eol.render()}"
         )
 
@@ -248,12 +248,12 @@ def ensure_terminator(slot: Slot, nl: str) -> None:
 
 
 def retarget_slot_newlines(slot: Slot, target: str) -> None:
-    """Rewrite every ``NewlineNode.text`` reachable from ``slot`` to ``target``.
+    """Rewrite every line terminator reachable from ``slot`` to ``target``.
 
     Used by graft paths so cross-document spliced slots adopt the
     destination document's line ending, including nested inline values.
     """
-    retarget_trivia_newlines(slot.leading, target)
+    slot.leading = retarget_newlines(slot.leading, target)
     if isinstance(slot, KVSlot):
         retarget_eol_newline(slot.eol, target)
         retarget_value_newlines(slot.value, target)

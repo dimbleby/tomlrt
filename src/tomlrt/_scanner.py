@@ -17,13 +17,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Final
 
 from tomlrt._errors import TOMLParseError
-from tomlrt._trivia import (
-    CommentNode,
-    EolTrivia,
-    NewlineNode,
-    Trivia,
-    WhitespaceNode,
-)
+from tomlrt._trivia import EolTrivia
 from tomlrt._values import (
     BoolValue,
     DateTimeValue,
@@ -149,35 +143,26 @@ class _Scanner:
         self.pos = end_pos
         return src[start:end_pos]
 
-    def scan_doc_trivia(self) -> Trivia:
+    def scan_doc_trivia(self) -> str:
         """Consume a document-scope trivia block.
 
         Whitespace, blank lines and full-line comments are consumed.
         Stops before the next structural token (or EOF).
         """
-        trivia = Trivia()
-        pieces = trivia.pieces
+        start = self.pos
         src = self.src
         end = self.end
         pos = self.pos
         while pos < end:
             ch = src[pos]
             if ch == " " or ch == "\t":
-                ws_start = pos
                 pos += 1
-                while pos < end:
-                    c = src[pos]
-                    if c != " " and c != "\t":
-                        break
-                    pos += 1
-                pieces.append(WhitespaceNode(src[ws_start:pos]))
             elif ch == "#":
                 self.pos = pos
-                pieces.append(CommentNode(self.scan_comment()))
+                self.scan_comment()
                 pos = self.pos
             elif ch == "\n":
                 pos += 1
-                pieces.append(NewlineNode("\n"))
                 self._seen_lf = True
             elif ch == "\r":
                 if pos + 1 >= end or src[pos + 1] != "\n":
@@ -185,12 +170,11 @@ class _Scanner:
                     msg = "stray carriage return"
                     raise self.error(msg)
                 pos += 2
-                pieces.append(NewlineNode("\r\n"))
                 self._seen_crlf = True
             else:
                 break
         self.pos = pos
-        return trivia
+        return src[start:pos]
 
     def scan_inline_ws_text(self) -> str:
         """Consume one run of inline whitespace; return raw text (or "").
@@ -216,44 +200,34 @@ class _Scanner:
         self.pos = pos
         return src[start:pos]
 
-    def scan_array_trivia(self) -> Trivia:
+    def scan_array_trivia(self) -> str:
         """Consume trivia inside an array (or TOML 1.1 inline table).
 
         Whitespace, newlines and comments are all permitted. Stops
         before the next structural character.
         """
-        trivia = Trivia()
-        pieces = trivia.pieces
+        start = self.pos
         src = self.src
         end = self.end
         pos = self.pos
         while pos < end:
             ch = src[pos]
             if ch == " " or ch == "\t":
-                ws_start = pos
                 pos += 1
-                while pos < end:
-                    c = src[pos]
-                    if c != " " and c != "\t":
-                        break
-                    pos += 1
-                pieces.append(WhitespaceNode(src[ws_start:pos]))
             elif ch == "\n":
                 pos += 1
-                pieces.append(NewlineNode("\n"))
                 self._seen_lf = True
             elif ch == "\r" and pos + 1 < end and src[pos + 1] == "\n":
                 pos += 2
-                pieces.append(NewlineNode("\r\n"))
                 self._seen_crlf = True
             elif ch == "#":
                 self.pos = pos
-                pieces.append(CommentNode(self.scan_comment()))
+                self.scan_comment()
                 pos = self.pos
             else:
                 break
         self.pos = pos
-        return trivia
+        return src[start:pos]
 
     def scan_eol(self) -> EolTrivia:
         """Consume optional trailing-ws + comment + newline (or EOF).

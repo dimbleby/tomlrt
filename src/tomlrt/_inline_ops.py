@@ -22,9 +22,6 @@ from tomlrt._comma_ops import (
 )
 from tomlrt._format import set_comma_value_multiline
 from tomlrt._kind import _Kind
-from tomlrt._trivia import (
-    Trivia,
-)
 from tomlrt._values import (
     InlineTableEntry,
     make_keyparts,
@@ -114,11 +111,11 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         eq_pre = " "
         eq_post = " "
     new_entry = InlineTableEntry(
-        leading=Trivia(),
+        leading="",
         value=new_value,
-        trailing=Trivia(),
+        trailing="",
         has_comma=False,
-        post_comma_trivia=Trivia(),
+        post_comma_trivia="",
         key_parts=make_keyparts(key_path),
         key_seps=["."] * (len(key_path) - 1),
         pre_eq=eq_pre,
@@ -140,9 +137,7 @@ def overwrite_entry(t: Container, key: str, new_value: Value) -> None:
     """
     iv = _outermost_inline(t)._value  # noqa: SLF001
     assert iv is not None
-    keep_pad = (
-        None if iv.is_multiline() else (iv.header_trivia.copy(), iv.final_trivia.copy())
-    )
+    keep_pad = None if iv.is_multiline() else (iv.header_trivia, iv.final_trivia)
     delete_entry(t, key)
     append_entry(t, key, new_value)
     if keep_pad is not None:

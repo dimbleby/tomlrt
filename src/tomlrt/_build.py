@@ -14,7 +14,6 @@ from tomlrt._comments import _split_preamble
 from tomlrt._container import Container, Document, Table
 from tomlrt._layout_ops import maybe_advance_body_tail, record_ref
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import Trivia
 from tomlrt._values import (
     ArrayValue,
     InlineTableValue,
@@ -339,7 +338,7 @@ def build_from_parse(result: ParseResult) -> Document:
     doc._head = result.slots[0] if result.slots else None  # noqa: SLF001
     doc._tail = result.slots[-1] if result.slots else None  # noqa: SLF001
     doc._trailing = result.trailing  # noqa: SLF001
-    doc._preamble = Trivia()  # noqa: SLF001
+    doc._preamble = ""  # noqa: SLF001
     doc._newline = result.newline  # noqa: SLF001
     doc._prelude = result.prelude  # noqa: SLF001
     doc._is_private = False  # noqa: SLF001
@@ -352,13 +351,13 @@ def build_from_parse(result: ParseResult) -> Document:
         head = result.slots[0]
         preamble, rest = _split_preamble(head.leading)
         if preamble:
-            doc._preamble = Trivia(preamble)  # noqa: SLF001
-            head.leading = Trivia(rest)
+            doc._preamble = preamble  # noqa: SLF001
+            head.leading = rest
     else:
         # Comment-only source: the parser put everything onto
         # ``trailing``; that's the preamble, not the epilogue.
         doc._preamble = result.trailing  # noqa: SLF001
-        doc._trailing = Trivia()  # noqa: SLF001
+        doc._trailing = ""  # noqa: SLF001
     _build_containers(doc, result.slots)
     return doc
 
