@@ -45,15 +45,15 @@ def coerce_scalar(
 ) -> StringValue | IntegerValue | FloatValue | BoolValue | DateTimeValue:
     """Coerce a Python scalar to a fresh `Value` with a default lexeme."""
     if isinstance(v, bool):
-        return BoolValue(lexeme="true" if v else "false", value=v)
+        return BoolValue("true" if v else "false", v)
     if isinstance(v, int):
-        return IntegerValue(lexeme=str(v), value=v)
+        return IntegerValue(str(v), v)
     if isinstance(v, float):
-        return FloatValue(lexeme=float_lexeme(v), value=v)
+        return FloatValue(float_lexeme(v), v)
     if isinstance(v, str):
-        return StringValue(lexeme=basic_string_lexeme(v), value=v)
+        return StringValue(basic_string_lexeme(v), v)
     validate_scalar(v)
-    return DateTimeValue(lexeme=v.isoformat(), value=v)
+    return DateTimeValue(v.isoformat(), v)
 
 
 def validate_scalar(v: Scalar) -> None:

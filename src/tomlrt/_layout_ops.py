@@ -1557,15 +1557,15 @@ def _new_kv_slot(
     spelling. Callers moving an existing value may supply source spelling.
     """
     return KVSlot(
-        leading=leading,
-        host_path=host_path,
-        key_parts=make_keyparts(key) if key_parts is None else list(key_parts),
-        key_seps=["."] * (len(key) - 1) if key_seps is None else list(key_seps),
-        pre_eq=" ",
-        post_eq=" ",
-        value=value,
-        eol=_default_eol(doc),
-        owner_aot_entry=owner,
+        leading,
+        owner,
+        host_path,
+        make_keyparts(key) if key_parts is None else list(key_parts),
+        ["."] * (len(key) - 1) if key_seps is None else list(key_seps),
+        " ",
+        " ",
+        value,
+        _default_eol(doc),
     )
 
 
@@ -1800,13 +1800,15 @@ def _new_section_header(
     owner_aot_entry: AoTEntry | None = None,
 ) -> StructuralHeaderSlot:
     return StructuralHeaderSlot(
-        leading=leading,
-        path=path,
-        key_parts=make_keyparts(path),
-        key_seps=["."] * (len(path) - 1),
-        eol=_default_eol(doc),
-        entry=entry,
-        owner_aot_entry=owner_aot_entry,
+        leading,
+        owner_aot_entry,
+        path,
+        make_keyparts(path),
+        ["."] * (len(path) - 1),
+        "",
+        "",
+        _default_eol(doc),
+        entry,
         synthetic=True,
     )
 

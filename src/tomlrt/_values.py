@@ -110,8 +110,8 @@ _RE_BARE_KEY_FULL = re.compile(r"\A[A-Za-z0-9_\-]+\Z")
 def make_keypart(name: str) -> KeyPart:
     """Build a ``KeyPart`` for ``name``, choosing bare vs basic-quoted."""
     if _RE_BARE_KEY_FULL.match(name):
-        return KeyPart(raw=name, value=name)
-    return KeyPart(raw=quote_basic_key(name), value=name)
+        return KeyPart(name, name)
+    return KeyPart(quote_basic_key(name), name)
 
 
 def make_keyparts(path: tuple[str, ...]) -> list[KeyPart]:

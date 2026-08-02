@@ -344,7 +344,7 @@ class _Scanner:
             body_end = m.end()
             if body_end < end and src[body_end] == '"':
                 self.pos = body_end + 1
-                return StringValue(lexeme="", value=src[body_start:body_end])
+                return StringValue("", src[body_start:body_end])
             self.pos = body_end
         else:
             self.pos = body_start
@@ -358,7 +358,7 @@ class _Scanner:
             ch = src[self.pos]
             if ch == '"':
                 self.pos += 1
-                return StringValue(lexeme="", value="".join(out))
+                return StringValue("", "".join(out))
             if ch == "\\":
                 out.append(self._scan_escape())
             elif ch == "\n" or ch == "\r":
@@ -403,7 +403,7 @@ class _Scanner:
                     out.append('"')
                     self.pos += 1
                     extras += 1
-                return StringValue(lexeme="", value="".join(out))
+                return StringValue("", "".join(out))
             ch = self.peek()
             if ch == '"':
                 # Single or double quote, not the closing triple.
@@ -514,7 +514,7 @@ class _Scanner:
                     out.append("'")
                     self.pos += 1
                     extras += 1
-                return StringValue(lexeme="", value="".join(out))
+                return StringValue("", "".join(out))
             ch = self.peek()
             if ch == "'":
                 # Single quote, not the closing triple.
@@ -624,16 +624,14 @@ class _Scanner:
         self.pos = end
 
         # Whole-token keyword classification.
-        if token == "true":  # noqa: S105
-            return BoolValue("true", value=True)
-        if token == "false":  # noqa: S105
-            return BoolValue("false", value=False)
+        if token in ("true", "false"):
+            return BoolValue(token, token == "true")  # noqa: S105
         if token in ("inf", "+inf"):
-            return FloatValue(lexeme=token, value=float("inf"))
+            return FloatValue(token, float("inf"))
         if token == "-inf":  # noqa: S105
-            return FloatValue(lexeme=token, value=float("-inf"))
+            return FloatValue(token, float("-inf"))
         if token in ("nan", "+nan", "-nan"):
-            return FloatValue(lexeme=token, value=float("nan"))
+            return FloatValue(token, float("nan"))
 
         # Date/time literals always carry a fixed punctuation char in
         # a known position. Try them before numbers so e.g. ``1979-…``

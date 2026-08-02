@@ -127,15 +127,15 @@ class _Parser:
         owner = self._validator.current_owner_aot_entry
 
         slot = StructuralHeaderSlot(
-            leading=leading,
-            path=path,
-            key_parts=key_parts,
-            key_seps=key_seps,
-            inner_pre=inner_pre,
-            inner_post=inner_post,
-            eol=eol,
-            owner_aot_entry=owner,
-            entry=new_entry,
+            leading,
+            owner,
+            path,
+            key_parts,
+            key_seps,
+            inner_pre,
+            inner_post,
+            eol,
+            new_entry,
             synthetic=False,
         )
         if owner is not None:
@@ -161,15 +161,15 @@ class _Parser:
         host_path = self._validator.current_section
         owner = self._validator.current_owner_aot_entry
         slot = KVSlot(
-            leading=leading,
-            host_path=host_path,
-            key_parts=key_parts,
-            key_seps=key_seps,
-            pre_eq=pre_eq,
-            post_eq=post_eq,
-            value=value,
-            eol=eol,
-            owner_aot_entry=owner,
+            leading,
+            owner,
+            host_path,
+            key_parts,
+            key_seps,
+            pre_eq,
+            post_eq,
+            value,
+            eol,
         )
         if owner is not None:
             owner.entry_slots.append(slot)
