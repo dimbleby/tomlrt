@@ -99,9 +99,9 @@ them. Read roughly in this order:
   in the circular-import graph that `_container` / `_array` form
   among themselves. Distinct from `_validator.py` (parse-time
   semantic validator) — this module is API-boundary plumbing.
-- **`_trivia.py`** — `Trivia` / `TriviaPiece` types and pure helpers
-  over them (whitespace, newlines, comments). Depends only on
-  `_errors`.
+- **`_trivia.py`** — trivia is verbatim source text (whitespace,
+  newlines, comments) held in a plain `str`; this module is the pure
+  string helpers over it, plus `EolTrivia`. No dependencies.
 - **`_scanner.py`** — the `(src, end, pos)` cursor and the `scan_*`
   primitives the parser drives. String scanning is *semantic*:
   escapes are decoded, surrogate code points rejected, and the
@@ -128,7 +128,7 @@ them. Read roughly in this order:
 - **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:
-  - `Slot` — base; carries `leading: Trivia`, `_prev` / `_next`
+  - `Slot` — base; carries `leading: str`, `_prev` / `_next`
     intrusive linked-list pointers, `owner_aot_entry`, and a
     `_refs` back-pointer list (every `SlotRef` that targets the
     slot — bounded by path depth, used for O(depth) ref scrub on
@@ -211,7 +211,7 @@ them. Read roughly in this order:
   adjacent items. The cross-module
   surface is intentionally small — a few `splice_*` / `reorder_owned`
   entry points consumed by `Array` / `_inline_ops`, plus the
-  row-break primitives (`shift_pieces`, `boundary_break_holder`)
+  row-break primitives (`shift_breaks`, `boundary_break_holder`)
   shared with `_comma_comments`; the lower-level boundary-flip and
   EOL-section helpers stay module-private. The
   shared bracket-pad re-anchoring uses `split_above_block` /

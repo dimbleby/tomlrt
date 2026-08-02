@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal
 
 from tomlrt._scanner import _Scanner
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import Trivia, leading_has_blank_line, split_eol_section
+from tomlrt._trivia import leading_has_blank_line, split_eol_section
 from tomlrt._validator import _Validator
 from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
 
@@ -32,7 +32,7 @@ class ParseResult:
     """
 
     slots: list[Slot] = field(default_factory=list)
-    trailing: Trivia = field(default_factory=Trivia)
+    trailing: str = ""
     newline: str = "\n"
     prelude: str = ""
     section_blank_separated: bool = True
@@ -66,7 +66,7 @@ class _Parser:
             leading = sc.scan_doc_trivia()
             pos = sc.pos
             if pos >= end:
-                result.trailing.pieces.extend(leading.pieces)
+                result.trailing += leading
                 break
 
             ch = src[pos]
@@ -93,7 +93,7 @@ class _Parser:
         result.newline = sc.detected_newline()
         return result
 
-    def _parse_header(self, leading: Trivia) -> StructuralHeaderSlot:
+    def _parse_header(self, leading: str) -> StructuralHeaderSlot:
         """Parse a ``[a.b]`` / ``[[a.b]]`` header.
 
         Precondition: cursor is at ``[``.
@@ -139,7 +139,7 @@ class _Parser:
             owner.entry_slots.append(slot)
         return slot
 
-    def _parse_key_value(self, leading: Trivia) -> KVSlot:
+    def _parse_key_value(self, leading: str) -> KVSlot:
         sc = self._sc
         key_parts, key_seps, pre_eq = sc.scan_key()
         src = sc.src
@@ -209,7 +209,7 @@ class _Parser:
             return node
         node.header_trivia = head
         items = node.items
-        leading = Trivia()  # items[0].leading is always empty
+        leading = ""  # items[0].leading is always empty
         while True:
             value = self._parse_value()
             trailing = sc.scan_array_trivia()
@@ -226,7 +226,7 @@ class _Parser:
                     return node
                 leading = next_leading
             elif ch == "]":
-                items.append(ArrayItem(leading, value, trailing, False, Trivia()))  # noqa: FBT003
+                items.append(ArrayItem(leading, value, trailing, False, ""))  # noqa: FBT003
                 # No trailing comma: split item EOL from bracket pad.
                 eol, rest = split_eol_section(items[-1].trailing)
                 items[-1].trailing = eol
@@ -253,7 +253,7 @@ class _Parser:
             sc.pos += 1
             return node
         node.header_trivia = head
-        leading = Trivia()  # entries[0].leading is always empty
+        leading = ""  # entries[0].leading is always empty
         seen_values: set[tuple[str, ...]] = set()
         seen_prefixes: set[tuple[str, ...]] = set()
         entries = node.items
@@ -308,7 +308,7 @@ class _Parser:
                         value=value,
                         trailing=trailing,
                         has_comma=False,
-                        post_comma_trivia=Trivia(),
+                        post_comma_trivia="",
                         key_path=key_path,
                     )
                 )

@@ -17,12 +17,12 @@ def render(doc: Document) -> str:
     prelude = doc._prelude  # noqa: SLF001
     if prelude:
         out.append(prelude)
-    out.append(doc._preamble.render())  # noqa: SLF001
+    out.append(doc._preamble)  # noqa: SLF001
     slot = doc._head  # noqa: SLF001
     while slot is not None:
         out.append(slot.render())
         slot = slot._next  # noqa: SLF001
-    out.append(doc._trailing.render())  # noqa: SLF001
+    out.append(doc._trailing)  # noqa: SLF001
     return "".join(out)
 
 

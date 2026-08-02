@@ -38,12 +38,9 @@ from tomlrt._slots import (
     retarget_slot_newlines,
 )
 from tomlrt._trivia import (
-    CommentNode,
     EolTrivia,
-    NewlineNode,
-    Trivia,
-    WhitespaceNode,
     leading_has_blank_line,
+    trailing_ws,
 )
 from tomlrt._values import (
     ArrayValue,
@@ -57,7 +54,6 @@ if TYPE_CHECKING:
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table
     from tomlrt._slots import Slot
-    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import InlineTableEntry, KeyPart, Value
 
 
@@ -69,7 +65,7 @@ if TYPE_CHECKING:
 @contextlib.contextmanager
 def _record_install(
     doc: Document,
-) -> Iterator[tuple[list[Slot], list[tuple[Slot, list[TriviaPiece], Slot | None]]]]:
+) -> Iterator[tuple[list[Slot], list[tuple[Slot, str, Slot | None]]]]:
     """Record slots installed and existing slots displaced by the transaction.
 
     The three insertion primitives (:func:`insert_after`,
@@ -86,7 +82,7 @@ def _record_install(
     """
     prev = doc._install_recorders  # noqa: SLF001
     installed: list[Slot] = []
-    displaced: list[tuple[Slot, list[TriviaPiece], Slot | None]] = []
+    displaced: list[tuple[Slot, str, Slot | None]] = []
     doc._install_recorders = (installed, displaced)  # noqa: SLF001
     try:
         yield installed, displaced
@@ -151,10 +147,8 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     primary_ref = _binding_primary_ref(parent, key)
     old_primary = primary_ref.slot
     saved_anchor_prev, successor_slot = _binding_run_neighbours(parent, key)
-    saved_leading_pieces = list(old_primary.leading.pieces)
-    successor_leading = (
-        list(successor_slot.leading.pieces) if successor_slot is not None else None
-    )
+    saved_leading = old_primary.leading
+    successor_leading = successor_slot.leading if successor_slot is not None else None
     # The header-less safety check reads the doc-stream around the
     # captured anchor, so evaluate it before ``del`` perturbs the
     # links. The header-bearing check is done after install, against
@@ -184,16 +178,16 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
         installed, saved_anchor_prev, in_parent_body=in_body, doc=doc
     ):
         return
-    _move_slots_to_anchor(parent, installed, saved_anchor_prev, saved_leading_pieces)
+    _move_slots_to_anchor(parent, installed, saved_anchor_prev, saved_leading)
     # Unified neighbour-leading restore (see docstring): restore each
     # perturbed neighbour's pre-op leading iff the move left it directly
     # after the predecessor that makes that leading correct.
-    restores: list[tuple[Slot, list[TriviaPiece], Slot | None]] = list(displaced)
+    restores: list[tuple[Slot, str, Slot | None]] = list(displaced)
     if successor_slot is not None and successor_leading is not None:
         restores.append((successor_slot, successor_leading, installed[-1]))
     for slot, original, expected_pred in restores:
         if slot._prev is expected_pred:  # noqa: SLF001
-            slot.leading.pieces = list(original)
+            slot.leading = original
 
 
 def _recorded_install_span(recorded: list[Slot], doc: Document) -> list[Slot] | None:
@@ -443,7 +437,7 @@ def _file_synthetic_header_and_kv(
         value=value,
         doc=doc,
         owner=owner,
-        leading=Trivia(),
+        leading="",
     )
     insert_after(header_slot, new_kv, doc)
     kv_ref = SlotRef(slot=new_kv, container=c)
@@ -596,18 +590,15 @@ def _promote_trailing_to_preamble(doc: Document) -> None:
     row) before the new first slot. Idempotent and no-op when preamble
     is empty.
     """
-    pieces = doc._preamble.pieces  # noqa: SLF001
-    if not pieces:
+    preamble = doc._preamble  # noqa: SLF001
+    if not preamble:
         return
-    nl_count = 0
-    for p in reversed(pieces):
-        if isinstance(p, NewlineNode):
-            nl_count += 1
-        else:
-            break
-    while nl_count < 2:
-        pieces.append(NewlineNode(doc._newline))  # noqa: SLF001
-        nl_count += 1
+    breaks = 0
+    rest = preamble
+    while breaks < 2 and rest.endswith("\n"):
+        rest = rest[: -2 if rest.endswith("\r\n") else -1]
+        breaks += 1
+    doc._preamble = preamble + doc._newline * (2 - breaks)  # noqa: SLF001
 
 
 def unlink_slot(
@@ -617,7 +608,7 @@ def unlink_slot(
 
     When ``strip_new_head_leading`` is True (default), if the unlink
     promotes a successor to be the new doc head, leading blank-line
-    pieces on that successor are stripped — what was a separator from
+    blank lines on that successor are stripped — what was a separator from
     the removed first slot must not show up as a stray blank at the
     top of the file. Pass False for transient unlinks (e.g. AoT
     renormalise that re-splices the same slots) where the leading
@@ -640,17 +631,17 @@ def unlink_slot(
 
 
 def _strip_leading_blank_lines(slot: Slot) -> None:
-    """Drop leading newline-only pieces from ``slot.leading``.
+    """Drop the run of blank lines that starts ``slot.leading``.
 
-    Comment pieces are preserved (we don't want to silently drop user
-    comments). Stops at the first non-newline piece.
+    Comments are preserved (we don't want to silently drop user
+    comments): the walk stops at the first line that is not a bare
+    terminator.
     """
-    pieces = slot.leading.pieces
+    leading = slot.leading
     i = 0
-    while i < len(pieces) and isinstance(pieces[i], NewlineNode):
-        i += 1
-    if i:
-        del pieces[:i]
+    while leading.startswith("\n", i) or leading.startswith("\r\n", i):
+        i += 2 if leading[i] == "\r" else 1
+    slot.leading = leading[i:]
 
 
 # ---------------------------------------------------------------------------
@@ -906,7 +897,7 @@ def _replace_primary_in_place(
     ``primary`` was the doc head, ``new_slot`` becomes the head and the
     unlink never strips the following separator.
     """
-    new_slot.leading.pieces = list(primary.leading.pieces)
+    new_slot.leading = primary.leading
     new_slot.eol = primary.eol
     if primary._prev is None:  # noqa: SLF001
         insert_before_head(new_slot, doc)
@@ -915,7 +906,7 @@ def _replace_primary_in_place(
 
 
 def _new_owned_section_header(
-    c: Container, *, leading: Trivia, doc: Document
+    c: Container, *, leading: str, doc: Document
 ) -> StructuralHeaderSlot:
     return _new_section_header(
         c._path,  # noqa: SLF001
@@ -1003,7 +994,7 @@ def _materialise_empty_inline_table(
         value=val,
         doc=doc,
         owner=owner,
-        leading=Trivia(),
+        leading="",
     )
     _replace_primary_in_place(kv, primary, doc)
 
@@ -1438,22 +1429,6 @@ def _last_direct_kv(c: Container) -> KVSlot | None:
     return _last_kv(c, direct=True)
 
 
-def _extract_indent(leading: Trivia) -> str:
-    """Return indent (whitespace after the last newline) of ``leading``."""
-    pieces = leading.pieces
-    last_nl = -1
-    for i, p in enumerate(pieces):
-        if isinstance(p, NewlineNode):
-            last_nl = i
-    text = ""
-    for p in pieces[last_nl + 1 :]:
-        if isinstance(p, WhitespaceNode):
-            text += p.text
-        else:
-            break
-    return text
-
-
 def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     """Return the last direct KV of the most recent prior AoT sibling.
 
@@ -1488,13 +1463,13 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     return None
 
 
-def _peer_separator(prev_leading: Trivia | None, doc: Document) -> Trivia:
+def _peer_separator(prev_leading: str | None, doc: Document) -> str:
     """Mirror a peer's blank-gap when emitting a new structural sibling.
 
-    Returns a single-newline ``Trivia`` (one blank line of separation)
-    iff ``prev_leading`` itself contains a blank line, or when there
-    is no peer to mirror (the conventional default for the first
-    sibling of its kind). Otherwise returns empty ``Trivia``.
+    Returns a single newline (one blank line of separation) iff
+    ``prev_leading`` itself contains a blank line, or when there is no
+    peer to mirror (the conventional default for the first sibling of
+    its kind). Otherwise returns the empty string.
 
     This is the shared "match the last peer" rule used by KV append,
     section-header insertion, and AoT-entry append; each caller wraps
@@ -1502,13 +1477,13 @@ def _peer_separator(prev_leading: Trivia | None, doc: Document) -> Trivia:
     KV indent).
     """
     if prev_leading is None or leading_has_blank_line(prev_leading):
-        return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
-    return Trivia()
+        return doc._newline  # noqa: SLF001
+    return ""
 
 
 def _kv_leading_after(
     prev: KVSlot | None, doc: Document, fallback_indent: str = ""
-) -> Trivia:
+) -> str:
     """Build leading trivia for a new KV slot following ``prev``.
 
     Inherits indent from ``prev`` and mirrors its blank-gap so the
@@ -1516,17 +1491,11 @@ def _kv_leading_after(
     no prior sibling, falls back to a bare ``fallback_indent``.
     """
     if prev is None:
-        if fallback_indent:
-            return Trivia([WhitespaceNode(text=fallback_indent)])
-        return Trivia()
-    pieces: list[TriviaPiece] = list(_peer_separator(prev.leading, doc).pieces)
-    indent_text = _extract_indent(prev.leading)
-    if indent_text:
-        pieces.append(WhitespaceNode(text=indent_text))
-    return Trivia(pieces)
+        return fallback_indent
+    return _peer_separator(prev.leading, doc) + trailing_ws(prev.leading)
 
 
-def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
+def _kv_separator_leading(c: Container, doc: Document) -> str:
     """Pick leading trivia for a new direct-KV slot in container ``c``.
 
     For an AoT entry with no own KVs yet, falls back to inheriting
@@ -1536,7 +1505,7 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
     if last is not None:
         return _kv_leading_after(last, doc)
     sibling = _aot_sibling_last_kv(c)
-    fallback = _extract_indent(sibling.leading) if sibling is not None else ""
+    fallback = trailing_ws(sibling.leading) if sibling is not None else ""
     return _kv_leading_after(None, doc, fallback_indent=fallback)
 
 
@@ -1547,7 +1516,7 @@ def _new_kv_slot(
     value: Value,
     doc: Document,
     owner: AoTEntry | None,
-    leading: Trivia,
+    leading: str,
     key_parts: Sequence[KeyPart] | None = None,
     key_seps: Sequence[str] | None = None,
 ) -> KVSlot:
@@ -1597,7 +1566,7 @@ def install_dotted_kv_slot(
     value: Value,
     *,
     leaf_parent: Container,
-    leading: Trivia | None = None,
+    leading: str | None = None,
     key_parts: Sequence[KeyPart] | None = None,
     key_seps: Sequence[str] | None = None,
 ) -> None:
@@ -1689,9 +1658,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         insert_before(anchor_slot, header_slot, doc)
         recorder = doc._install_recorders  # noqa: SLF001
         if recorder is not None:
-            recorder[1].append(
-                (anchor_slot, list(anchor_slot.leading.pieces), original_pred)
-            )
+            recorder[1].append((anchor_slot, anchor_slot.leading, original_pred))
         anchor_slot.leading = new_descendant_leading
     else:
         host, host_tail = _header_host_and_tail(c)
@@ -1702,7 +1669,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         # header-bearing host, not under an unrelated document tail.
         _splice_block_after([header_slot], host_tail, doc)
         if isinstance(header_slot._prev, StructuralHeaderSlot):  # noqa: SLF001
-            header_slot.leading = Trivia()
+            header_slot.leading = ""
 
     parent = c._parent  # noqa: SLF001
     assert parent is not None
@@ -1738,18 +1705,14 @@ def _terminate_unless_tail(slot: Slot, doc: Document) -> None:
 def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
     """Ensure ``slot.leading`` begins with a blank line.
 
-    A run of ``pieces`` starts with a blank line when the first
-    non-whitespace piece is a ``NewlineNode``. If a comment appears
-    first, prepend a fresh ``NewlineNode`` so the comment block stays
-    visually detached from the slot.
+    A leading run starts with a blank line when its first line is
+    blank. If a comment comes first, prepend a fresh newline so the
+    comment block stays visually detached from the slot.
     """
-    pieces = slot.leading.pieces
-    for p in pieces:
-        if isinstance(p, NewlineNode):
-            return
-        if isinstance(p, CommentNode):
-            break
-    pieces.insert(0, NewlineNode(text=doc._newline))  # noqa: SLF001
+    leading = slot.leading
+    if "\n" in leading and "#" not in leading.split("\n", 1)[0]:
+        return
+    slot.leading = doc._newline + slot.leading  # noqa: SLF001
 
 
 def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
@@ -1794,7 +1757,7 @@ def _recompute_body_tail(c: Container) -> Slot | None:
 def _new_section_header(
     path: tuple[str, ...],
     *,
-    leading: Trivia,
+    leading: str,
     doc: Document,
     entry: AoTEntry | None = None,
     owner_aot_entry: AoTEntry | None = None,
@@ -1966,11 +1929,7 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     unlink_slot(header, doc, strip_new_head_leading=True)
     if successor is not None:
         _strip_leading_blank_lines(successor)
-        if header.leading.pieces:
-            successor.leading.pieces = [
-                *header.leading.pieces,
-                *successor.leading.pieces,
-            ]
+        successor.leading = header.leading + successor.leading
     parent._body_tail = None  # noqa: SLF001
     # Canonical bulk-scrub via the header's back-pointer list: drops
     # ``hdr_ref`` from ``parent._refs`` (and clears ``parent._header_ref``
@@ -1986,29 +1945,7 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
             owner.entry_slots.remove(header)
 
 
-def _split_at_remainder(
-    leading: Trivia,
-    remainder_lines: Iterable[Iterable[TriviaPiece]],
-    indent: Iterable[TriviaPiece],
-) -> tuple[Trivia, Trivia]:
-    """Build ``(positional-prefix, remainder)`` from already-classified lines.
-
-    Concatenates ``remainder_lines`` and ``indent`` to form the
-    remainder; the positional prefix is whatever's left of
-    ``leading`` once ``len(remainder)`` pieces have been peeled off
-    the tail. Callers are responsible for choosing which lines
-    travel with the slot.
-    """
-    pieces = leading.pieces
-    remainder: list[TriviaPiece] = []
-    for line in remainder_lines:
-        remainder.extend(line)
-    remainder.extend(indent)
-    cut = len(pieces) - len(remainder)
-    return Trivia(list(pieces[:cut])), Trivia(remainder)
-
-
-def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
+def _split_leading_structural(leading: str) -> tuple[str, str]:
     """Split a leading-trivia stream into (above-blank prefix, slot-remainder).
 
     The slot-remainder is the attached comment block (immediately above
@@ -2019,11 +1956,11 @@ def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
     Used by reorder paths to decide which prefix travels with the slot
     under move and which is positional (separator) trivia at the seam.
     """
-    _above, attached, indent = _split_attached_block(leading)
-    return _split_at_remainder(leading, attached, indent)
+    above, attached, indent = _split_attached_block(leading)
+    return above, attached + indent
 
 
-def _split_leading_for_reorder(slot: Slot) -> tuple[Trivia, Trivia]:
+def _split_leading_for_reorder(slot: Slot) -> tuple[str, str]:
     """Reorder-aware leading split: disjoint comment blocks travel with the slot.
 
     Per the public ownership model (``Table.header_leading_block``,
@@ -2034,19 +1971,14 @@ def _split_leading_for_reorder(slot: Slot) -> tuple[Trivia, Trivia]:
     the remainder is everything from the first comment line onward,
     or just the trailing indent if there's no comment at all.
     """
-    pieces = slot.leading.pieces
-    cut = 0
-    for i, piece in enumerate(pieces):
-        if isinstance(piece, CommentNode):
-            break
-        if isinstance(piece, NewlineNode):
-            cut = i + 1
-    return Trivia(pieces[:cut]), Trivia(pieces[cut:])
+    leading = slot.leading
+    cut = leading.split("#", 1)[0].rfind("\n") + 1
+    return leading[:cut], leading[cut:]
 
 
 def _retarget_header_separator(
     header: StructuralHeaderSlot,
-    new_separator: Trivia,
+    new_separator: str,
 ) -> None:
     """Replace ``header.leading``'s positional prefix with ``new_separator``.
 
@@ -2055,10 +1987,10 @@ def _retarget_header_separator(
     prefix is dropped.
     """
     _positional, remainder = _split_leading_structural(header.leading)
-    header.leading = Trivia([*new_separator.pieces, *remainder.pieces])
+    header.leading = new_separator + remainder
 
 
-def _build_section_leading(doc: Document) -> Trivia:
+def _build_section_leading(doc: Document) -> str:
     """Trivia for a fresh section header.
 
     Empty doc → no leading; otherwise use the document's stable
@@ -2066,10 +1998,8 @@ def _build_section_leading(doc: Document) -> Trivia:
     (or the canonical blank-separated default for a fresh document).
     """
     if doc._head is None:  # noqa: SLF001
-        return Trivia()
-    if doc._section_blank_separated:  # noqa: SLF001
-        return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
-    return Trivia()
+        return ""
+    return doc._newline if doc._section_blank_separated else ""  # noqa: SLF001
 
 
 def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
@@ -2165,7 +2095,7 @@ def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     unlink_slot(slot, doc)
 
 
-def _aot_separator(aot: AoT, doc: Document) -> Trivia:
+def _aot_separator(aot: AoT, doc: Document) -> str:
     """Pick the leading-trivia for a newly-appended AoT entry header.
 
     Mirrors the most recent entry's blank-gap; for the first entry
@@ -3705,29 +3635,23 @@ class _ReorderUnit:
     key_rank: int
     structural: bool
     mixed: bool
-    prefix: Trivia
-    remainder: Trivia
+    prefix: str
+    remainder: str
     physical_position: int
 
 
 def _peer_placements(
     physical_blocks: list[list[Slot]], output_blocks: list[list[Slot]]
-) -> list[tuple[list[Slot], Trivia]]:
+) -> list[tuple[list[Slot], str]]:
     """Pair peer blocks with positional prefixes and attached remainders."""
-    prefixes: list[Trivia] = []
-    remainder_by_head: dict[Slot, Trivia] = {}
+    prefixes: list[str] = []
+    remainder_by_head: dict[Slot, str] = {}
     for block in physical_blocks:
         prefix, remainder = _split_leading_for_reorder(block[0])
         prefixes.append(prefix)
         remainder_by_head[block[0]] = remainder
     return [
-        (
-            block,
-            Trivia(
-                list(prefixes[position].pieces)
-                + list(remainder_by_head[block[0]].pieces)
-            ),
-        )
+        (block, prefixes[position] + remainder_by_head[block[0]])
         for position, block in enumerate(output_blocks)
     ]
 
@@ -3735,7 +3659,7 @@ def _peer_placements(
 def _splice_blocks_in_order(
     doc: Document,
     movable_slots: list[Slot],
-    placements: list[tuple[list[Slot], Trivia]],
+    placements: list[tuple[list[Slot], str]],
 ) -> None:
     """Reorder movable layout blocks within the doc-stream.
 
@@ -3760,7 +3684,7 @@ def _splice_blocks_in_order(
 
     insert_after_slot = anchor_prev
     for block, leading in placements:
-        block[0].leading = Trivia(list(leading.pieces))
+        block[0].leading = leading
         for slot in block:
             if insert_after_slot is None:
                 insert_before_head(slot, doc)
@@ -3820,12 +3744,12 @@ def _move_slots_to_anchor(
     parent: Container,
     slots: list[Slot],
     saved_anchor_prev: Slot | None,
-    saved_leading_pieces: list[TriviaPiece],
+    saved_leading: str,
 ) -> None:
     """Move ``slots`` to ``saved_anchor_prev`` in the doc-stream.
 
     Splices the contiguous block immediately after ``saved_anchor_prev``
-    (or to doc head), applies ``saved_leading_pieces`` to the new head,
+    (or to doc head), applies ``saved_leading`` to the new head,
     and resorts affected ancestor ``_refs``. Used by the
     ``Container.__setitem__`` position-preserving structural replace
     path.
@@ -3844,7 +3768,7 @@ def _move_slots_to_anchor(
 
     if head._prev is saved_anchor_prev:  # noqa: SLF001
         # Already at the saved position — only the leading needs fixing.
-        head.leading.pieces = list(saved_leading_pieces)
+        head.leading = saved_leading
         _terminate_unless_tail(tail, doc)
         return
 
@@ -3880,7 +3804,7 @@ def _move_slots_to_anchor(
         else:
             doc._tail = tail  # noqa: SLF001
 
-    head.leading.pieces = list(saved_leading_pieces)
+    head.leading = saved_leading
     _terminate_unless_tail(tail, doc)
 
     _resort_and_recompute_tails(parent, doc)
@@ -4025,13 +3949,11 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         scan = scan._next  # noqa: SLF001
     if front_foreign:
         head_structural, head_remainder = _split_leading_for_reorder(earliest_owned)
-        earliest_owned.leading = Trivia(list(head_remainder.pieces))
+        earliest_owned.leading = head_remainder
         for f in front_foreign:
             unlink_slot(f, doc, strip_new_head_leading=False)
             insert_before(earliest_owned, f, doc)
-        front_foreign[0].leading = Trivia(
-            list(head_structural.pieces) + list(front_foreign[0].leading.pieces)
-        )
+        front_foreign[0].leading = head_structural + front_foreign[0].leading
 
     key_rank = {key: rank for rank, key in enumerate(new_key_order)}
     physical_position = {slot: pos for pos, slot in enumerate(ordered_slots)}
@@ -4059,15 +3981,15 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
                 )
             )
 
-    header_prefix = Trivia()
-    header_remainder = Trivia()
+    header_prefix = ""
+    header_remainder = ""
     if header_slot is not None:
         header_prefix, header_remainder = _split_leading_for_reorder(header_slot)
         if header_slot is not earliest_owned:
             first_unit = min(units, key=lambda unit: unit.physical_position)
             header_prefix, first_unit.prefix = first_unit.prefix, header_prefix
 
-    prefixes_by_kind: dict[tuple[bool, bool], list[Trivia]] = {}
+    prefixes_by_kind: dict[tuple[bool, bool], list[str]] = {}
     for unit in sorted(units, key=lambda item: item.physical_position):
         prefixes_by_kind.setdefault((unit.structural, unit.mixed), []).append(
             unit.prefix
@@ -4077,22 +3999,12 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     }
     output_units = sorted(units, key=lambda unit: (unit.structural, unit.key_rank))
 
-    placements: list[tuple[list[Slot], Trivia]] = []
+    placements: list[tuple[list[Slot], str]] = []
     if header_slot is not None:
-        placements.append(
-            (
-                [header_slot],
-                Trivia(list(header_prefix.pieces) + list(header_remainder.pieces)),
-            )
-        )
+        placements.append(([header_slot], header_prefix + header_remainder))
     for unit in output_units:
         prefix = next(prefix_iterators[(unit.structural, unit.mixed)])
-        placements.append(
-            (
-                unit.slots,
-                Trivia(list(prefix.pieces) + list(unit.remainder.pieces)),
-            )
-        )
+        placements.append((unit.slots, prefix + unit.remainder))
 
     _splice_blocks_in_order(doc, movable_slots, placements)
 

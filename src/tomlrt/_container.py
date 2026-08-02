@@ -59,14 +59,7 @@ from tomlrt._scalar import (
     validate_scalar,
 )
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import (
-    NewlineNode,
-    Trivia,
-    WhitespaceNode,
-    has_comment,
-    leading_has_blank_line,
-    retarget_trivia_newlines,
-)
+from tomlrt._trivia import leading_has_blank_line, retarget_newlines
 from tomlrt._typecheck import _validate_key, _validate_mapping
 from tomlrt._values import (
     ArrayItem,
@@ -86,7 +79,7 @@ if TYPE_CHECKING:
     from tomlrt._format import FormatOptions
     from tomlrt._scalar import Scalar
     from tomlrt._slots import AoTEntry, Slot, SlotRef
-    from tomlrt._trivia import EolTrivia, TriviaPiece
+    from tomlrt._trivia import EolTrivia
     from tomlrt._values import (
         CommaItem,
         CommaValue,
@@ -326,10 +319,14 @@ class Container(dict[str, Any]):
                 owner=None,
                 nl=nl,
                 options=resolved,
-                head_blank_cap=0 if self._preamble.pieces else 1,
+                head_blank_cap=0 if self._preamble else 1,
             )
-            format_document_trailing(self._preamble, nl=nl, options=resolved)
-            format_document_trailing(self._trailing, nl=nl, options=resolved)
+            self._preamble = format_document_trailing(
+                self._preamble, nl=nl, options=resolved
+            )
+            self._trailing = format_document_trailing(
+                self._trailing, nl=nl, options=resolved
+            )
             return
 
         if kind is _Kind.SECTION:
@@ -1101,7 +1098,7 @@ class Container(dict[str, Any]):
             ):
                 layout_root = self._layout_root
                 nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
-                new_header.leading.pieces.insert(0, NewlineNode(text=nl))
+                new_header.leading = nl + new_header.leading
         return result
 
     def promote_array(self, key: str) -> AoT:
@@ -1160,10 +1157,7 @@ class Container(dict[str, Any]):
                 first_slot = entry_record.entry_slots[0]
                 if isinstance(first_slot, StructuralHeaderSlot):
                     # Preserve any separator already placed on the header.
-                    first_slot.leading.pieces = [
-                        *saved_leading.pieces,
-                        *first_slot.leading.pieces,
-                    ]
+                    first_slot.leading = saved_leading + first_slot.leading
         if len(result) > 0:
             last_entry = result[-1]
             last_slot = _layout_ops._body_anchor(last_entry)  # noqa: SLF001
@@ -1191,7 +1185,7 @@ def _reorder_dict_storage(c: Container, new_key_order: list[str]) -> None:
         dict.__setitem__(c, k, v)
 
 
-def _direct_kv_trivia(c: Container, key: str) -> tuple[Trivia, EolTrivia]:
+def _direct_kv_trivia(c: Container, key: str) -> tuple[str, EolTrivia]:
     """Return the direct-KV slot's leading/EOL trivia for ``key``.
 
     Both fields are non-Optional on `KVSlot`, so the result is never
@@ -1445,15 +1439,15 @@ class Document(Container):
         super().__init__()
         self._head: Slot | None = None
         self._tail: Slot | None = None
-        self._trailing: Trivia = Trivia()
-        self._preamble: Trivia = Trivia()
+        self._trailing: str = ""
+        self._preamble: str = ""
         self._newline: str = "\n"
         self._prelude: str = ""
         self._is_private: bool = False
         self._install_recorders: (
             tuple[
                 list[Slot],
-                list[tuple[Slot, list[TriviaPiece], Slot | None]],
+                list[tuple[Slot, str, Slot | None]],
             ]
             | None
         ) = None
@@ -1571,12 +1565,10 @@ def _array_value_has_outer_comments(v: object) -> bool:
 
 
 def _comma_value_has_outer_comments(v: CommaValue[_ItemT]) -> bool:
-    if has_comment(v.header_trivia.pieces) or has_comment(v.final_trivia.pieces):
+    if "#" in v.header_trivia or "#" in v.final_trivia:
         return True
     return any(
-        has_comment(p.leading.pieces)
-        or has_comment(p.trailing.pieces)
-        or has_comment(p.post_comma_trivia.pieces)
+        "#" in p.leading or "#" in p.trailing or "#" in p.post_comma_trivia
         for p in v.items
     )
 
@@ -1736,8 +1728,7 @@ def _install_dotted_direct_kvs(
         assert isinstance(src_slot, KVSlot)
         cst = copy.deepcopy(src_slot.value)
         _retarget_to_doc(cst, doc)
-        leading = copy.deepcopy(src_slot.leading)
-        retarget_trivia_newlines(leading, doc._newline)  # noqa: SLF001
+        leading = retarget_newlines(src_slot.leading, doc._newline)  # noqa: SLF001
         decoded = _decode_value(
             cst, layout_root=doc, parent=destination, name=k, owner=owner
         )
@@ -2085,23 +2076,22 @@ def _populate_inline_table(
         )
         is_last = i == len(items) - 1
         entry = InlineTableEntry(
-            leading=Trivia() if i == 0 else Trivia([WhitespaceNode(text=" ")]),
+            leading="" if i == 0 else " ",
             key_parts=[make_keypart(k)],
             key_seps=[],
             pre_eq=" ",
             post_eq=" ",
             value=sub_cst,
-            trailing=Trivia(),
+            trailing="",
             has_comma=not is_last,
-            post_comma_trivia=Trivia(),
+            post_comma_trivia="",
             key_path=(k,),
         )
         val.items.append(entry)
         dict.__setitem__(table, k, sub_dec)
     if items:
-        pad = Trivia([WhitespaceNode(text=val._single_line_pad)])  # noqa: SLF001
-        val.header_trivia = pad.copy()
-        val.final_trivia = pad
+        val.header_trivia = val._single_line_pad  # noqa: SLF001
+        val.final_trivia = val._single_line_pad  # noqa: SLF001
     return val, table
 
 
@@ -2129,11 +2119,11 @@ def _synth_inline_array(
         # NEXT item's leading; items[0].leading is always empty;
         # post_comma_trivia carries only EOL sections (empty here).
         item = ArrayItem(
-            leading=Trivia() if i == 0 else Trivia([WhitespaceNode(text=" ")]),
+            leading="" if i == 0 else " ",
             value=sub_cst,
-            trailing=Trivia(),
+            trailing="",
             has_comma=not is_last,
-            post_comma_trivia=Trivia(),
+            post_comma_trivia="",
         )
         val.items.append(item)
         list.append(arr, sub_dec)

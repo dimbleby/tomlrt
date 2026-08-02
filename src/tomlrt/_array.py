@@ -37,9 +37,6 @@ from tomlrt._format import (
     set_comma_value_multiline,
 )
 from tomlrt._trivia import (
-    NewlineNode,
-    Trivia,
-    WhitespaceNode,
     strip_trailing_indent,
 )
 from tomlrt._typecheck import _validate_mapping
@@ -57,7 +54,6 @@ if TYPE_CHECKING:
         CommaStyle,
     )
     from tomlrt._format import FormatOptions
-    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
         Value,
     )
@@ -102,9 +98,7 @@ class Array(list[Any]):
         items_list = list(items)
         if not items_list:
             if multiline:
-                self._value.final_trivia = Trivia(
-                    [NewlineNode(text="\n"), WhitespaceNode(text=indent_str)]
-                )
+                self._value.final_trivia = f"\n{indent_str}"
             return
         from tomlrt._container import _synth_inline_array  # noqa: PLC0415
 
@@ -113,16 +107,13 @@ class Array(list[Any]):
         for v in arr:
             list.append(self, v)
         if multiline and val.items:
-            indent_pieces: list[TriviaPiece] = [
-                NewlineNode(text="\n"),
-                WhitespaceNode(text=indent_str),
-            ]
-            val.header_trivia = Trivia(list(indent_pieces))
-            val.final_trivia = Trivia([NewlineNode(text="\n")])
+            row_indent = f"\n{indent_str}"
+            val.header_trivia = row_indent
+            val.final_trivia = "\n"
             for k, it in enumerate(val.items):
-                it.leading = Trivia() if k == 0 else Trivia(list(indent_pieces))
-                it.post_comma_trivia = Trivia()
-                it.trailing = Trivia()
+                it.leading = "" if k == 0 else row_indent
+                it.post_comma_trivia = ""
+                it.trailing = ""
                 it.has_comma = True
 
     def to_list(self) -> list[Any]:
@@ -320,7 +311,9 @@ class Array(list[Any]):
     def clear(self) -> None:
         self._value.items.clear()
         # Drop inter-item trivia; preserve bracket leading in final_trivia.
-        strip_trailing_indent(self._value.header_trivia, self._value.final_trivia)
+        self._value.header_trivia, self._value.final_trivia = strip_trailing_indent(
+            self._value.header_trivia, self._value.final_trivia
+        )
         list.clear(self)
         self._value.reset_multiline_cache()
 
@@ -515,11 +508,11 @@ def _norm_index(index: SupportsIndex, n: int, action: str) -> int:
 def _make_item(cst: Value, *, has_comma: bool) -> ArrayItem:
     """Build a fresh ``ArrayItem`` with empty trivia."""
     return ArrayItem(
-        leading=Trivia(),
+        leading="",
         value=cst,
-        trailing=Trivia(),
+        trailing="",
         has_comma=has_comma,
-        post_comma_trivia=Trivia(),
+        post_comma_trivia="",
     )
 
 

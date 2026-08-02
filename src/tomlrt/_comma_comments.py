@@ -32,10 +32,10 @@ from tomlrt._comma_ops import (
     Boundary,
     boundary_break_holder,
     reindent_as_leader,
-    shift_pieces,
+    set_boundary_break_holder,
+    shift_breaks,
 )
 from tomlrt._comments import (
-    _decode_comment,
     _encode_comment,
     _line_to_comment,
     _lines_to_comments,
@@ -45,22 +45,17 @@ from tomlrt._comments import (
     _validate_comment_seq,
     _validate_comment_str,
 )
-from tomlrt._trivia import (
-    CommentNode,
-    NewlineNode,
-    Trivia,
-    WhitespaceNode,
-    leading_break_index,
-    split_eol_section,
-    split_lines,
+from tomlrt._trivia import leading_break, split_eol_section, split_lines
+from tomlrt._values import (
+    item_eol_channel,
+    item_eol_on_trailing,
+    set_item_eol_channel,
 )
-from tomlrt._values import item_eol_channel
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import Any
 
-    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import CommaItem, CommaValue
 
 _ItemT = TypeVar("_ItemT", bound="CommaItem")
@@ -75,12 +70,8 @@ _ValueT = TypeVar("_ValueT")
 
 def _item_eol(item: CommaItem) -> str | None:
     """Decoded EOL comment on ``item``, or None."""
-    for p in item_eol_channel(item).pieces:
-        if isinstance(p, NewlineNode):
-            return None
-        if isinstance(p, CommentNode):
-            return _decode_comment(p.text)
-    return None
+    eol, _rest = split_eol_section(item_eol_channel(item))
+    return _line_to_comment(eol) if eol else None
 
 
 def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) -> None:
@@ -96,48 +87,38 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
       a trailing comma).
     """
     item = value.items[idx]
-    target = item_eol_channel(item)
-    existing_eol, rest = split_eol_section(target)
+    existing_eol, rest = split_eol_section(item_eol_channel(item))
     stripped = False
-    if (
-        not existing_eol.pieces
-        and rest.pieces
-        and isinstance(rest.pieces[0], NewlineNode)
-    ):
-        rest = Trivia(list(rest.pieces[1:]))
+    if not existing_eol and rest.startswith(("\n", "\r\n")):
+        rest = rest[2:] if rest[0] == "\r" else rest[1:]
         stripped = True
-    new_eol: list[TriviaPiece] = [
-        WhitespaceNode(" "),
-        CommentNode(raw_text),
-        NewlineNode(nl),
-    ]
-    target.pieces = [*new_eol, *rest.pieces]
-    if existing_eol.pieces or stripped:
+    set_item_eol_channel(item, f" {raw_text}{nl}{rest}")
+    if existing_eol or stripped:
         return
     nxt = boundary_break_holder(value, idx + 1)
-    if leading_break_index(nxt.pieces) is not None:
+    if leading_break(nxt):
         # The next item already starts a fresh line; the comment's own
         # newline replaces that break (a carried -1 boundary shift), along
         # with any stray trailing whitespace (``1,  \n``) that preceded it.
-        nxt.pieces = shift_pieces(nxt.pieces, -1, nl)
+        nxt = shift_breaks(nxt, -1, nl)
     else:
         # The next item shared this row: the comment forces a break, so
         # promote it to a row leader at the value indent.
-        reindent_as_leader(nxt, _value_indent(value))
+        nxt = reindent_as_leader(nxt, _value_indent(value))
+    set_boundary_break_holder(value, idx + 1, nxt)
 
 
 def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
     """Remove the EOL comment on item ``idx``; return whether one existed."""
     item = value.items[idx]
-    target = item_eol_channel(item)
-    eol, rest = split_eol_section(target)
-    if not eol.pieces:
+    eol, rest = split_eol_section(item_eol_channel(item))
+    if not eol:
         return False
-    if item.has_comma and target is item.trailing:
+    if item.has_comma and item_eol_on_trailing(item):
         # The eol section's terminating newline is this row's break and
         # the comma follows it. Keep the break (drop only whitespace +
         # comment) and leave the next item alone.
-        item.trailing = Trivia([NewlineNode(nl), *rest.pieces])
+        item.trailing = nl + rest
         return True
     # Non-comma-first: the row break lived inside the eol section. Drop the
     # whole section and re-home the break (plus any structural rest) onto the
@@ -145,9 +126,9 @@ def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
     # in the item's own channel renders identically but desyncs from a fresh
     # parse: reorder_owned treats that channel as positional and would orphan
     # a later item's EOL comment onto its own line.
-    target.pieces = []
+    set_item_eol_channel(item, "")
     nxt = boundary_break_holder(value, idx + 1)
-    nxt.pieces = [NewlineNode(nl), *rest.pieces, *nxt.pieces]
+    set_boundary_break_holder(value, idx + 1, nl + rest + nxt)
     return True
 
 
@@ -167,7 +148,7 @@ def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]
     block = Boundary.capture(value, idx).attached_above
     if block is None:
         return ()
-    _above, attached, _indent = _split_attached_block(Trivia(list(block)))
+    _above, attached, _indent = _split_attached_block(block)
     return _lines_to_comments(attached)
 
 
@@ -179,12 +160,8 @@ def _value_indent(value: CommaValue[_ItemT]) -> str:
     """
     for i in range(len(value.items)):
         tail = Boundary.capture(value, i).target_tail
-        # `split_item_above` / the item-0 bracket-pad split guarantee that
-        # a non-empty `tail` is a single value-indent WhitespaceNode, so the
-        # isinstance check never fails here (it exists only for the type).
-        for p in reversed(tail):
-            if isinstance(p, WhitespaceNode):  # pragma: no branch
-                return p.text
+        if tail:
+            return tail
     # No item carries an indent: the items sit at column zero, so a comment
     # block above them should too.
     return ""
@@ -199,7 +176,7 @@ def _set_above_block(
 ) -> None:
     """Replace the full block in item ``i``'s above-region."""
     boundary = Boundary.capture(value, i)
-    rendered = _render_comment_lines(block, nl, (WhitespaceNode(ind),))
+    rendered = _render_comment_lines(block, nl, ind)
     boundary.set_above(rendered, nl, ind).restore(value, i)
 
 
@@ -213,10 +190,9 @@ def _set_attached_comments(
     """Replace only the attached comment run, preserving earlier lines."""
     boundary = Boundary.capture(value, i)
     part = boundary.attached_above or boundary.target_above
-    above, _attached, _indent = _split_attached_block(Trivia(list(part)))
-    kept = [p for line in above for p in line]
-    rendered = _render_comment_lines(comments, nl, (WhitespaceNode(ind),))
-    boundary.set_attached([*kept, *rendered], nl, ind).restore(value, i)
+    above, _attached, _indent = _split_attached_block(part)
+    rendered = _render_comment_lines(comments, nl, ind)
+    boundary.set_attached(above + rendered, nl, ind).restore(value, i)
 
 
 def _clear_attached_comments(value: CommaValue[_ItemT], i: int) -> None:
@@ -224,9 +200,8 @@ def _clear_attached_comments(value: CommaValue[_ItemT], i: int) -> None:
     boundary = Boundary.capture(value, i)
     part = boundary.attached_above
     assert part is not None
-    above, _attached, _indent = _split_attached_block(Trivia(list(part)))
-    kept = [p for line in above for p in line]
-    boundary.set_attached(kept, "\n", "").restore(value, i)
+    above, _attached, _indent = _split_attached_block(part)
+    boundary.set_attached(above, "\n", "").restore(value, i)
 
 
 def _clear_above_block(value: CommaValue[_ItemT], i: int) -> None:

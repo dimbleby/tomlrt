@@ -39,19 +39,15 @@ from tomlrt._comma_ops import Boundary
 from tomlrt._errors import TOMLError
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
-    CommentNode,
-    NewlineNode,
-    Trivia,
-    WhitespaceNode,
-    has_comment,
-    has_newline,
-    leading_break_index,
+    leading_break,
     retarget_eol_newline,
-    retarget_trivia_newlines,
+    retarget_newlines,
     split_above_block,
     split_eol_section,
     split_item_above,
+    split_line,
     split_lines,
+    trailing_ws,
 )
 from tomlrt._values import (
     ArrayValue,
@@ -59,16 +55,14 @@ from tomlrt._values import (
     InlineTableValue,
     item_eol_channel,
     item_has_any_comment,
+    set_item_eol_channel,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomlrt._slots import AoTEntry, Slot
-    from tomlrt._trivia import (
-        EolTrivia,
-        TriviaPiece,
-    )
+    from tomlrt._trivia import EolTrivia
     from tomlrt._values import (
         CommaItem,
         Value,
@@ -151,20 +145,17 @@ def _canon_comment_text(text: str) -> str:
 
 
 def _canon_trivia_text(
-    t: Trivia,
+    t: str,
     *,
     comments: bool,
-    strip_pre_comment_ws: bool = True,
     comment_indent: str = "",
     first_line_is_eol: bool = False,
-) -> None:
-    r"""Normalise trivia content in place.
+) -> str:
+    r"""Return ``t`` with its content normalised.
 
     Strips trailing whitespace on blank lines. Full-line comments drop
     pre-comment whitespace, or restamp to ``comment_indent`` for
-    multi-line inline element comments. Set ``strip_pre_comment_ws=False``
-    for EOL trivia, where the caller-owned separator before ``#`` must
-    survive.
+    multi-line inline element comments.
 
     ``first_line_is_eol`` treats only the pre-first-newline run as an
     EOL context; this covers bracket pads whose opening row stores a
@@ -172,41 +163,27 @@ def _canon_trivia_text(
     rewritten via :func:`_canon_comment_text`. Newline text is retargeted
     by callers.
     """
-    pieces = t.pieces
-    new: list[TriviaPiece] = []
-    line: list[TriviaPiece] = []
+    out: list[str] = []
     in_eol = first_line_is_eol
     previous_line_blank = False
-    line_has_comment = False
-    for p in pieces:
-        if isinstance(p, NewlineNode):
-            while line and isinstance(line[-1], WhitespaceNode):
-                line.pop()
-            line_blank = not in_eol and not line and not line_has_comment
+    for line in split_lines(t):
+        pre, comment, term = split_line(line)
+        if comment:
+            if not in_eol:
+                pre = comment_indent
+            out.append(pre + (_canon_comment_text(comment) if comments else comment))
+            out.append(term)
+            previous_line_blank = False
+        elif term:
+            content = pre.rstrip(" \t")
+            line_blank = not in_eol and not content
             if not (line_blank and previous_line_blank):
-                new.extend(line)
-                new.append(p)
-            line = []
-            in_eol = False
+                out.append(content + term)
             previous_line_blank = line_blank
-            line_has_comment = False
-            continue
-        if isinstance(p, CommentNode):
-            if strip_pre_comment_ws and not in_eol:
-                while line and isinstance(line[-1], WhitespaceNode):
-                    line.pop()
-                if comment_indent:
-                    line.append(WhitespaceNode(comment_indent))
-            if comments:
-                p.text = _canon_comment_text(p.text)
-            new.extend(line)
-            new.append(p)
-            line = []
-            line_has_comment = True
-            continue
-        line.append(p)
-    new.extend(line)
-    t.pieces = new
+        else:
+            out.append(pre)
+        in_eol = False
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -235,20 +212,19 @@ def _canon_leading(
     canonical target, so comment-block separation intent survives without
     suppressing structural-header spacing.
     """
-    lines = split_lines(slot.leading.pieces)
+    lines = split_lines(slot.leading)
 
-    if lines and not has_newline(lines[-1]) and not has_comment(lines[-1]):
+    if lines and "\n" not in lines[-1] and "#" not in lines[-1]:
         lines.pop()
 
     head_count = 0
-    while head_count < len(lines) and not has_comment(lines[head_count]):
-        assert has_newline(lines[head_count])
+    while head_count < len(lines) and "#" not in lines[head_count]:
+        assert "\n" in lines[head_count]
         head_count += 1
     middle = lines[head_count:]
 
-    middle_t = Trivia([p for line in middle for p in line])
-    retarget_trivia_newlines(middle_t, nl)
-    _canon_trivia_text(middle_t, comments=options.normalize_comments)
+    middle_t = retarget_newlines("".join(middle), nl)
+    middle_t = _canon_trivia_text(middle_t, comments=options.normalize_comments)
 
     # Preamble/subtree boundaries keep authored head gaps; attached
     # comment blocks clamp to 0/1 so separation intent survives.
@@ -260,9 +236,7 @@ def _canon_leading(
         n_blanks = max(target_blanks, min(head_count, 1))
     else:
         n_blanks = target_blanks
-    head_t = Trivia([NewlineNode(nl)] * n_blanks)
-
-    slot.leading.pieces = [*head_t.pieces, *middle_t.pieces]
+    slot.leading = nl * n_blanks + middle_t
 
 
 # ---------------------------------------------------------------------------
@@ -375,10 +349,10 @@ def _canon_multiline_shape(
     produces only empty/single-space trivia.
     """
     items = v.items
-    above_blocks: list[Trivia] = []
+    above_blocks: list[str] = []
     for i in range(len(items)):
         boundary = Boundary.capture(v, i)
-        above_blocks.append(Trivia(list(boundary.above)))
+        above_blocks.append(boundary.above)
         boundary.remove_above().restore(v, i)
     last_row_closed = _canon_multi_line_items(
         items,
@@ -404,7 +378,7 @@ def _canon_multiline_shape(
             row_already_closed=last_row_closed,
         )
         v.final_trivia = _compose_pad(
-            head_eol=Trivia(),
+            head_eol="",
             above=final_above,
             nl=nl,
             trailing_indent=outer_indent,
@@ -417,14 +391,14 @@ def _canon_multiline_shape(
         # header_trivia is empty by construction.
         final_eol, _ = split_eol_section(v.final_trivia)
         _, final_above = split_above_block(v.final_trivia)
-        v.header_trivia = Trivia()
+        v.header_trivia = ""
         v.final_trivia = _compose_pad(
             head_eol=final_eol,
             above=final_above,
             nl=nl,
             trailing_indent=outer_indent,
         )
-        final_eol_first = bool(final_eol.pieces)
+        final_eol_first = bool(final_eol)
     _finalise_inline_trivia(
         v,
         nl=nl,
@@ -435,7 +409,7 @@ def _canon_multiline_shape(
     )
 
 
-def _format_above(t: Trivia, *, row_already_closed: bool) -> Trivia:
+def _format_above(t: str, *, row_already_closed: bool) -> str:
     """Return an above-item block with any authored separator it owns.
 
     When the upstream EOL channel already closed the row, the leading
@@ -443,26 +417,24 @@ def _format_above(t: Trivia, *, row_already_closed: bool) -> Trivia:
     terminator, so keep it with the above block.
     """
     head, above, _ = split_item_above(t)
-    if not has_comment(above.pieces):
-        return Trivia()
-    if row_already_closed:
-        above.pieces[:0] = head.pieces
-    return above
+    if "#" not in above:
+        return ""
+    return head + above if row_already_closed else above
 
 
-def _format_above_block(block: Trivia) -> Trivia:
+def _format_above_block(block: str) -> str:
     """Keep an authored logical above-block only when it has comments."""
-    return block if has_comment(block.pieces) else Trivia()
+    return block if "#" in block else ""
 
 
 def _compose_pad(
     *,
-    head_eol: Trivia,
-    above: Trivia,
+    head_eol: str,
+    above: str,
     nl: str,
     trailing_indent: str,
     row_already_closed: bool = False,
-) -> Trivia:
+) -> str:
     r"""Compose a bracket-pad from (row-attached EOL, above-block, indent).
 
     Layout is ``head_eol`` (already terminated when non-empty), optional
@@ -470,25 +442,17 @@ def _compose_pad(
     structural newline when ``head_eol`` or the upstream item EOL channel
     already closed the row.
     """
-    pieces: list[TriviaPiece] = list(head_eol.pieces)
-    if not head_eol.pieces and not row_already_closed:
-        pieces.append(NewlineNode(nl))
-    pieces.extend(above.pieces)
-    if trailing_indent:
-        pieces.append(WhitespaceNode(trailing_indent))
-    return Trivia(pieces)
+    head = head_eol if head_eol or row_already_closed else nl
+    return head + above + trailing_indent
 
 
-def _inner_space(v: ArrayValue | InlineTableValue) -> Trivia:
+def _inner_space(v: ArrayValue | InlineTableValue) -> str:
     """Bracket-inner padding for a single-line inline value.
 
     Inline tables wear ``{ a = 1 }`` with one space; inline arrays wear
-    ``[a, b]`` with none. Each call returns fresh ``Trivia`` for
-    independent ``header_trivia`` / ``final_trivia`` assignment.
+    ``[a, b]`` with none.
     """
-    if v.items and v._single_line_pad:  # noqa: SLF001
-        return Trivia([WhitespaceNode(v._single_line_pad)])  # noqa: SLF001
-    return Trivia()
+    return v._single_line_pad if v.items else ""  # noqa: SLF001
 
 
 def _canon_single_line_inline(v: ArrayValue | InlineTableValue) -> None:
@@ -497,9 +461,9 @@ def _canon_single_line_inline(v: ArrayValue | InlineTableValue) -> None:
     items = v.items
     n = len(items)
     for k, it in enumerate(items):
-        it.leading = Trivia() if k == 0 else Trivia([WhitespaceNode(" ")])
-        it.trailing = Trivia()
-        it.post_comma_trivia = Trivia()
+        it.leading = "" if k == 0 else " "
+        it.trailing = ""
+        it.post_comma_trivia = ""
         it.has_comma = k < n - 1
 
 
@@ -522,61 +486,40 @@ def _finalise_inline_trivia(
     opening bracket's row-attached EOL lives in ``final_trivia`` and must
     be treated as EOL context.
     """
-    retarget_trivia_newlines(v.header_trivia, nl)
-    retarget_trivia_newlines(v.final_trivia, nl)
-    _canon_trivia_text(
+    v.header_trivia = retarget_newlines(v.header_trivia, nl)
+    v.final_trivia = retarget_newlines(v.final_trivia, nl)
+    v.header_trivia = _canon_trivia_text(
         v.header_trivia,
         comments=options.normalize_comments,
         comment_indent=item_indent,
         first_line_is_eol=True,
     )
-    _canon_trivia_text(
+    v.final_trivia = _canon_trivia_text(
         v.final_trivia,
         comments=options.normalize_comments,
         comment_indent=item_indent,
         first_line_is_eol=(
             final_first_line_is_eol
-            or (
-                leading_break_index(v.final_trivia.pieces) is not None
-                and not final_row_already_closed
-            )
+            or (bool(leading_break(v.final_trivia)) and not final_row_already_closed)
         ),
     )
     for k, it in enumerate(v.items):
-        retarget_trivia_newlines(it.leading, nl)
-        retarget_trivia_newlines(it.trailing, nl)
-        retarget_trivia_newlines(it.post_comma_trivia, nl)
-        previous_row_closed = k > 0 and has_newline(
-            item_eol_channel(v.items[k - 1]).pieces
-        )
-        _canon_trivia_text(
+        it.leading = retarget_newlines(it.leading, nl)
+        previous_row_closed = k > 0 and "\n" in item_eol_channel(v.items[k - 1])
+        it.leading = _canon_trivia_text(
             it.leading,
             comments=options.normalize_comments,
             comment_indent=item_indent,
             first_line_is_eol=(
-                leading_break_index(it.leading.pieces) is not None
-                and not previous_row_closed
+                bool(leading_break(it.leading)) and not previous_row_closed
             ),
-        )
-        # ``trailing`` and ``post_comma_trivia`` are EOL contexts:
-        # the space before ``#`` is the structural separator the
-        # caller has already canonicalised.
-        _canon_trivia_text(
-            it.trailing,
-            comments=options.normalize_comments,
-            strip_pre_comment_ws=False,
-        )
-        _canon_trivia_text(
-            it.post_comma_trivia,
-            comments=options.normalize_comments,
-            strip_pre_comment_ws=False,
         )
 
 
 def _canon_multi_line_items(
     items: Sequence[CommaItem],
     *,
-    above_blocks: Sequence[Trivia],
+    above_blocks: Sequence[str],
     nl: str,
     indent: str,
     options: FormatOptions,
@@ -600,11 +543,11 @@ def _canon_multi_line_items(
     last_index = len(items) - 1
     for k, it in enumerate(items):
         if k == 0:
-            it.leading = Trivia()
+            it.leading = ""
         else:
             above = _format_above_block(above_blocks[k])
             it.leading = _compose_pad(
-                head_eol=Trivia(),
+                head_eol="",
                 above=above,
                 nl=nl,
                 trailing_indent=indent,
@@ -613,14 +556,14 @@ def _canon_multi_line_items(
         # Changing comma state may shift comments between ``trailing``
         # and ``post_comma_trivia``; collect both sides before clearing them.
         comments = [
-            p
+            comment
             for trivia in (it.trailing, it.post_comma_trivia)
-            for p in trivia.pieces
-            if isinstance(p, CommentNode)
+            for line in split_lines(trivia)
+            if (comment := split_line(line)[1])
         ]
         it.has_comma = k < last_index or options.multiline_trailing_comma
-        it.trailing = Trivia()
-        it.post_comma_trivia = Trivia()
+        it.trailing = ""
+        it.post_comma_trivia = ""
         previous_row_closed = _canon_item_eol(
             it,
             comments,
@@ -633,7 +576,7 @@ def _canon_multi_line_items(
 
 def _canon_item_eol(
     item: CommaItem,
-    comments: Sequence[CommentNode],
+    comments: Sequence[str],
     *,
     nl: str,
     options: FormatOptions,
@@ -649,15 +592,16 @@ def _canon_item_eol(
     """
     if not comments:
         return False
-    pieces: list[TriviaPiece] = []
-    for k, comment in enumerate(comments):
-        if k == 0:
-            if separator := " " * options.eol_comment_spaces:
-                pieces.append(WhitespaceNode(separator))
-        elif indent:
-            pieces.append(WhitespaceNode(indent))
-        pieces.extend((comment, NewlineNode(nl)))
-    item_eol_channel(item).pieces = pieces
+    separator = " " * options.eol_comment_spaces
+    if options.normalize_comments:
+        comments = [_canon_comment_text(c) for c in comments]
+    set_item_eol_channel(
+        item,
+        "".join(
+            f"{separator if k == 0 else indent}{comment}{nl}"
+            for k, comment in enumerate(comments)
+        ),
+    )
     return True
 
 
@@ -706,9 +650,7 @@ def set_comma_value_multiline(
                     "items contain EOL or leading comments"
                 )
                 raise TOMLError(msg)
-        if has_comment(value.header_trivia.pieces) or has_comment(
-            value.final_trivia.pieces
-        ):
+        if "#" in value.header_trivia or "#" in value.final_trivia:
             msg = (
                 "cannot collapse to single line: "
                 "header or trailing trivia contains comments"
@@ -734,10 +676,9 @@ def set_comma_value_multiline(
 
 def _closing_indent(value: ArrayValue | InlineTableValue) -> str:
     """Return the whitespace immediately before a multiline closing bracket."""
-    if not value.is_multiline() or not value.final_trivia.pieces:
+    if not value.is_multiline():
         return ""
-    final_piece = value.final_trivia.pieces[-1]
-    return final_piece.text if isinstance(final_piece, WhitespaceNode) else ""
+    return trailing_ws(value.final_trivia)
 
 
 def format_inline_root(
@@ -843,11 +784,11 @@ def format_subtree(
 
 
 def format_document_trailing(
-    trailing: Trivia,
+    trailing: str,
     *,
     nl: str,
     options: FormatOptions,
-) -> None:
+) -> str:
     """Canonicalise the trailing trivia of a :class:`Document`.
 
     Retargets newlines, collapses blank-line runs, strips blank-line
@@ -855,8 +796,9 @@ def format_document_trailing(
     comments, and optionally rewrites comment text. The
     preamble/epilogue split is unaffected.
     """
-    retarget_trivia_newlines(trailing, nl)
-    _canon_trivia_text(trailing, comments=options.normalize_comments)
+    return _canon_trivia_text(
+        retarget_newlines(trailing, nl), comments=options.normalize_comments
+    )
 
 
 __all__ = [

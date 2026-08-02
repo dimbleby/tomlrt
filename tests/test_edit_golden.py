@@ -756,7 +756,7 @@ def test_cross_doc_table_assign_preserves_header_leading_comments() -> None:
 
     The clone path rewrites the structural prefix of the head's
     leading trivia (so the destination doc's spacing convention wins)
-    but keeps any comment pieces — they belong to the section being
+    but keeps any comments — they belong to the section being
     copied.
     """
     src = tomlrt.loads("# bee\n[b]  # eol\nval = 2\n")
@@ -4638,7 +4638,7 @@ def test_cross_doc_update_retargets_eol_to_dst() -> None:
     """``Document.update(src)`` adopts the destination's line ending.
 
     Grafting tables from a CRLF source into an LF destination (or
-    vice versa) used to leak the source's NewlineNode pieces into
+    vice versa) used to leak the source's line terminators into
     the destination's slot stream, producing mixed-EOL output.
     Cloning now retargets all structural newlines to the
     destination's detected line ending, so the merged document is
@@ -5270,3 +5270,87 @@ def test_reassign_empty_implicit_orphan() -> None:
     doc["b"] = held
     assert doc["b"] is held
     assert _reparses(tomlrt.dumps(doc)) == {"other": 2, "b": {}}
+
+
+def test_sort_keeps_each_slot_own_indent() -> None:
+    """Sorting must carry each slot's own column indent with the slot.
+
+    The indent is the run after the last newline of a slot's leading, so
+    it belongs to the slot's remainder, not to the positional prefix that
+    stays behind at the seam.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [t]
+          # note
+            b = 1
+          a = 2
+        """)
+    )
+    doc.table("t").sort()
+    assert tomlrt.dumps(doc) == td("""
+        [t]
+          a = 2
+          # note
+            b = 1
+        """)
+
+
+def test_append_samples_indent_past_a_column_zero_comment() -> None:
+    """The item indent is sampled from the document, never invented.
+
+    An empty multi-line array keeps its whole interior in one pad, whose
+    trailing whitespace is where the first item will go. A comment
+    sitting at column zero must not mask that whitespace and send the
+    append to the four-space fallback -- six spaces are authored here,
+    and six is what the items must get.
+
+    The closing bracket returning to the opening line's column is the
+    established shape for filling an empty multi-line value: that pad's
+    indent is a forward reference to the item column, not the bracket's
+    own.
+    """
+    doc = tomlrt.loads(
+        td("""
+        a = [
+        # c
+              ]
+        """)
+    )
+    arr = doc.array("a")
+    arr.append(1)
+    arr.append(2)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+        # c
+              1,
+              2,
+        ]
+        """)
+
+
+def test_comma_first_insert_uses_the_comma_row_indent() -> None:
+    """A comma-first insert indents the new comma row as the value authored it.
+
+    The displaced item sits on its comma's row, so that row's authored
+    indent -- here none at all -- is the one to match, not the indent
+    the value's item rows happen to use.
+    """
+    doc = tomlrt.loads(
+        td("""
+        x = [
+        # attached
+        1
+        ,2
+        ]
+        """)
+    )
+    doc.array("x").insert(0, 9)
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+        9
+        # attached
+        ,1
+        ,2
+        ]
+        """)
