@@ -6007,3 +6007,97 @@ def test_write_to_orphan_aot_entry_after_its_sibling_is_adopted() -> None:
         x = 2
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_install_a_popped_orphan_into_itself() -> None:
+    """A subtree can be installed inside itself, by copy.
+
+    Moving it there is impossible — it would have to become its own
+    descendant, and the parent chain would close into a loop — so the
+    overlapping install is copied, exactly as it already is when the
+    source is part of a live document.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        b.c = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan["m"] = orphan
+
+    assert orphan.to_dict() == {
+        "a": {"b": {"c": 1}},
+        "m": {"a": {"b": {"c": 1}}},
+    }
+    assert orphan["m"] is not orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+    doc["back"] = orphan
+    readopted = tomlrt.dumps(doc)
+    assert _reparses(readopted) == doc.to_dict()
+
+
+def test_install_a_popped_orphan_into_its_own_descendant() -> None:
+    """The same holds when the destination is nested inside the source."""
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        b.c = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan["a"]["m"] = orphan
+
+    assert orphan.to_dict() == {"a": {"b": {"c": 1}, "m": {"a": {"b": {"c": 1}}}}}
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopting_each_level_of_a_popped_chain_leaves_no_phantom() -> None:
+    """Adopting a level away unbinds it from what used to hold it.
+
+    Each adopt empties its parent, so the next one synthesises rather
+    than moves. That path has to unbind the value it took, or the level
+    above still names a table that now lives elsewhere — and renders it
+    a second time.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.a.b.c]
+        x = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m0"] = orphan["a"]["b"]["c"]
+    doc["m1"] = orphan["a"]["b"]
+    doc["m2"] = orphan["a"]
+
+    assert orphan.to_dict() == {}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m0]
+        x = 1
+
+        [m1]
+
+        [m2]
+        """)
+    assert _reparses(out) == doc.to_dict()

@@ -206,6 +206,14 @@ def _run_program(src: str, seed: int) -> None:
         out = tomlrt.dumps(doc)
         assert tomli.loads(out) == doc.to_dict(), f"{ctx}: render disagrees with model"
         check_slot_chain(doc, ctx)
+        assert foreign_refs(doc) == [], f"{ctx}: source document holds a foreign ref"
+        # The orphan is a document in its own right, so it answers the
+        # same questions. Once it has been adopted away it is no longer
+        # the orphan's, and the destination has already been checked.
+        private = orphan._layout_root  # noqa: SLF001
+        if private is not None and private is not doc:
+            check_slot_chain(private, f"{ctx} [orphan]")
+            assert foreign_refs(private) == [], f"{ctx}: orphan holds a foreign ref"
 
 
 @pytest.mark.parametrize("src", _SHAPES)
@@ -285,3 +293,26 @@ def test_writing_to_a_popped_subtree_leaves_no_ref_behind() -> None:
 
     assert foreign_refs(doc) == []
     assert "root" not in doc._index  # noqa: SLF001
+
+
+def test_adopting_a_slotless_orphan_root_unbinds_it() -> None:
+    """Adopting an emptied orphan leaves nothing behind in it.
+
+    The orphan is emptied by adopting its last slot-owning child away,
+    so the root itself is synthesised at its new home rather than
+    moved. That path still has to unbind it from the document it came
+    from, exactly as the move paths do.
+    """
+    doc = tomlrt.loads("[root.a]\nb.c = 1\n\n[root.a.e]\nq = 1\n\n[dest]\nz = 0\n")
+    orphan = doc.pop("root")
+    private = orphan._layout_root  # noqa: SLF001
+    assert private is not None
+
+    doc["m0"] = orphan["a"]
+    doc["m1"] = orphan
+
+    assert dict.keys(private) == {}.keys()
+    assert foreign_refs(private) == []
+    check_slot_chain(private, "emptied orphan")
+    out = tomlrt.dumps(doc)
+    assert tomli.loads(out) == doc.to_dict()
