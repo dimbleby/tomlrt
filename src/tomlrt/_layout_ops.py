@@ -2691,6 +2691,10 @@ def _unfile_stale_same_orphan_ancestors(
     A detached orphan retains its internal refs. Moving a nested value
     out must scrub those refs up to, but not beyond, the orphan root.
     Slot back-pointers avoid scanning every ancestor's complete cache.
+
+    Scrubbing can strand an ancestor's cached ``_body_tail`` on a slot
+    that is no longer filed there, so the chain is revalidated after —
+    the same repair the delete path makes for the same reason.
     """
     old_parent = value._parent  # noqa: SLF001
     if old_parent is None or old_parent._layout_root is not value._layout_root:  # noqa: SLF001
@@ -2705,10 +2709,13 @@ def _unfile_stale_same_orphan_ancestors(
     while node is not None and node._layout_root is value._layout_root:  # noqa: SLF001
         stale_container_ids.add(id(node))
         node = node._parent  # noqa: SLF001
+    unfiled: set[Slot] = set()
     for slot in target_slots:
         for ref in list(slot._refs):  # noqa: SLF001
             if id(ref.container) in stale_container_ids:
                 unfile_ref(ref)
+                unfiled.add(slot)
+    _invalidate_body_tail_chain(old_parent, unfiled)
 
 
 def adopt_private_section(
@@ -2860,8 +2867,8 @@ def adopt_private_implicit(
     stale_owner = value._owner_aot_entry  # noqa: SLF001
     new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
-    # An implicit table always owns at least one slot (an emptied one
-    # materialises to an inline table and never reaches here).
+    # `_attach_section` only dispatches here for an orphan that still owns
+    # slots; a slotless one is synthesised instead.
     assert value._refs, "implicit orphan has no slots"  # noqa: SLF001
     slots = _owned_slots_from(value, value._refs[0].slot)  # noqa: SLF001
     _detach_from_source_doc(value, slots)

@@ -712,7 +712,7 @@ class Container(dict[str, Any]):
                 value = _snapshot_for_overlapping_install(self, key, value)
                 _install_attached_subtree(self, (key,), value)
             return
-        if src_root is not None and src_root._is_private:  # noqa: SLF001
+        if src_root is not None and src_root._is_private and value._refs:  # noqa: SLF001
             # Private orphan with intact slots: move the slots into the
             # document so identity and trivia both survive. A header-bearing
             # section (an AoT entry is normalised to a plain section) moves
@@ -722,11 +722,16 @@ class Container(dict[str, Any]):
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
             return
-        # A Container with no layout root can't be a Document (which is
-        # always its own root), so it must be an unattached Table.
+        # No slots to move — either never attached, or an orphan emptied by
+        # adopting its last child away. The latter still points at its
+        # (now empty) orphan document, so reset it to a genuinely detached
+        # source and synthesise. A Container with no layout root can't be
+        # a Document (which is always its own root), so it is a Table.
         assert isinstance(value, Table), (
             "internal: detached section source expected to be a Table"
         )
+        if value._layout_root is not None:  # noqa: SLF001
+            _reset_table_for_rehome(value)
         _layout_ops.attach_section_at(self, (key,), value)
 
     def _replace_scalar(self, key: str, value: Scalar) -> None:

@@ -5580,3 +5580,67 @@ def test_adopt_orphan_branch_keeps_surviving_branch_trivia() -> None:
         m1.y = 2
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_orphan_emptied_by_adopting_its_last_child() -> None:
+    """An orphan with no slots left is synthesised, not moved.
+
+    Adopting the last child away leaves the orphan pointing at its now
+    empty private document. There is no longer any trivia to preserve,
+    so it takes the same path as a source that was never attached.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        x = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m1"] = orphan["a"]
+    doc["m2"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m1]
+        x = 1
+
+        [m2]
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {"dest": {"z": 0}, "m1": {"x": 1}, "m2": {}}
+
+
+def test_adopt_orphan_branch_repairs_ancestor_body_tail() -> None:
+    """Scrubbing an orphan's refs must not strand its cached body tail.
+
+    Adopting ``a``'s dotted KV away left ``a._body_tail`` naming a slot
+    no longer filed on it. Adopting ``a`` itself carried that stale
+    cache into the document, where the next append used it as an anchor
+    and failed to find it.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [root.a]
+        b.c = 3
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m0"] = orphan["a"]["b"]
+    doc["m1"] = orphan["a"]
+    doc["m1"]["appended"] = 5
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        m0.c = 3
+
+        [m1]
+        appended = 5
+        """)
+    assert _reparses(out) == doc.to_dict()
