@@ -19,7 +19,7 @@ gap:
 
 Two oracles run after every step. The first is the model check the
 in-place fuzzer uses -- the render must re-parse to ``doc.to_dict()``.
-The second, :func:`check_document_invariants`, inspects the CST itself.
+The second, :func:`check_slot_chain`, inspects the CST itself.
 That matters because a corrupt document can still render perfectly: a
 cross-linked slot stream produced byte-correct output and only failed
 much later, on an unrelated operation. Structural checks catch it at the
@@ -72,6 +72,13 @@ _SHAPES = (
     "[root.a]\nv = { p = 1, q = [1, 2] }\n\n[dest]\nz = 0\n",
     "[root.a]\narr = [ { m = 1 }, 2 ]\n\n[dest]\nz = 0\n",
 )
+
+# Shapes whose orphan holds a dotted key *under an explicit header*
+# are deliberately absent: adopting the dotted part away strands an
+# empty implicit table that renders as nothing while the model keeps
+# it, so every program over them fails the model oracle for a reason
+# that has nothing to do with detaching. Restore them once an emptied
+# intermediate round-trips.
 
 
 def _chain(doc: Document) -> list[Slot]:
@@ -162,7 +169,15 @@ def _run_program(src: str, seed: int) -> None:
     held: list[Any] = []
 
     for step in range(rng.randint(1, _MAX_STEPS)):
-        choices = ["adopt", "adopt", "write_orphan", "write_doc", "hold", "write_held"]
+        choices = [
+            "adopt",
+            "adopt",
+            "write_orphan",
+            "write_doc",
+            "hold",
+            "write_held",
+            "delete_orphan",
+        ]
         op = rng.choice(choices)
         paths = _view_paths(orphan)
         if op == "adopt":
@@ -180,6 +195,10 @@ def _run_program(src: str, seed: int) -> None:
                 target[f"h{step}"] = step
             elif isinstance(target, Array):
                 target.append(step)
+        elif op == "delete_orphan":
+            target = _resolve(orphan, rng.choice([*paths, ()]))
+            if isinstance(target, Container) and list(target.keys()):
+                del target[rng.choice(list(target.keys()))]
         else:
             doc[f"k{step}"] = step
 
@@ -189,26 +208,9 @@ def _run_program(src: str, seed: int) -> None:
         check_slot_chain(doc, ctx)
 
 
-# Shapes whose orphan has no header of its own. Writing to one raises
-# from the dotted-KV installer, because a popped subtree has no
-# header-bearing host inside its own document -- see the
-# `dotted-orphan-write-crash` and `orphan-write-then-adopt-drops-slots`
-# investigations. Listed rather than dropped so they start failing
-# loudly once that is fixed.
-_KNOWN_BAD = frozenset(
-    {
-        "root.a.x = 1\nroot.a.y = 2\n\n[dest]\nz = 0\n",
-        "root.b.x = 1\n\n# comment\nroot.c.y = 2\n",
-        "[[root.t]]\nx = 1\n\n[root.a]\nb.c = 3\n",
-    }
-)
-
-
 @pytest.mark.parametrize("src", _SHAPES)
 def test_detached_subtree_programs_keep_model_consistent(src: str) -> None:
     """Random detach / adopt / held-write programs stay self-consistent."""
-    if src in _KNOWN_BAD:
-        pytest.xfail("writing to a header-less orphan is broken")
     for _ in range(_PROGRAMS):
         _run_program(src, secrets.randbits(64))
 
@@ -268,15 +270,14 @@ def test_displaced_views_never_resolve_against_a_dead_value() -> None:
         check_slot_chain(doc, label)
 
 
-@pytest.mark.xfail(reason="writing to a popped subtree files a ref on its old root")
 def test_writing_to_a_popped_subtree_leaves_no_ref_behind() -> None:
     """A popped subtree's writes must not touch the document it left.
 
-    Synthesising a header inside the orphan walks the ancestor chain to
-    file the binding, and that chain still runs through the container
-    the subtree was popped from — so the source document ends up with a
-    cache entry naming a slot it does not contain, under a key it no
-    longer has.
+    A private orphan is rooted at the path its slots spell, so filing a
+    binding walks an ancestor chain that ends at the orphan's own root.
+    While the subtree's ancestry still ran back into the source
+    document, that walk left the source naming a slot it did not
+    contain, under a key it no longer had.
     """
     doc = tomlrt.loads("[root.a]\nb.c = 1\n\n[dest]\nz = 0\n")
     orphan = doc.pop("root")
