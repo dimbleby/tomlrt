@@ -75,11 +75,13 @@ def _record_install(
     yielded list. The second captures existing slots whose leading trivia
     was temporarily rewritten by synthetic-header insertion.
 
-    The delete runs before this transaction and the reinstall never moves
-    pre-existing slots, so the record distinguishes materialisation from
-    movement. ``reposition_install`` uses both lists to move the installed
-    block and restore surviving seams. Nested contexts stack; only the
-    innermost is active.
+    The delete runs before this transaction, so the record is normally
+    of freshly materialised slots. The exception is an install that
+    adopts a subtree from the same private document, which relinks
+    slots that already existed — and so can record the very slot the
+    reposition anchor names. ``reposition_install`` uses both lists to
+    move the installed block and restore surviving seams. Nested
+    contexts stack; only the innermost is active.
     """
     prev = doc._install_recorders  # noqa: SLF001
     installed: list[Slot] = []
@@ -174,6 +176,12 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
         return
     installed = _recorded_install_span(new_slots, doc)
     if installed is None:
+        return
+    if saved_anchor_prev is not None and any(s is saved_anchor_prev for s in installed):
+        # The reinstall took over the slot the anchor named — it can
+        # happen when the new value is a sibling that physically
+        # preceded the binding being replaced. "Sit after yourself" has
+        # no answer, so leave the block where the reinstall put it.
         return
     if not _anchor_accepts_install(
         installed, saved_anchor_prev, in_parent_body=in_body, doc=doc
