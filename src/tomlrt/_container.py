@@ -730,6 +730,15 @@ class Container(_View, dict[str, Any]):
                 value = _snapshot_for_overlapping_install(self, key, value)
                 _install_attached_subtree(self, (key,), value)
             return
+        # An overlapping install can never be a move — the source would
+        # have to end up inside itself — so it is copied instead, as it
+        # is for a live source above. The copy is a fresh detached
+        # `Document`, which installs as a section.
+        snapshot = _snapshot_for_overlapping_install(self, key, value)
+        if snapshot is not value:
+            assert isinstance(snapshot, Document)
+            _layout_ops.clone_document_as_section(self, key, snapshot)
+            return
         if src_root is not None and src_root._is_private and value._refs:  # noqa: SLF001
             # Private orphan with intact slots: move the slots into the
             # document so identity and trivia both survive. A header-bearing
@@ -749,6 +758,9 @@ class Container(_View, dict[str, Any]):
             "internal: detached section source expected to be a Table"
         )
         if value._layout_root is not None:  # noqa: SLF001
+            # Unbind it from the orphan before the reset severs the link,
+            # or the orphan is left naming a value that now lives here.
+            _layout_ops.unfile_orphan_binding(value)
             _reset_table_for_rehome(value)
         _layout_ops.attach_section_at(self, (key,), value)
 
