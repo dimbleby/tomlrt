@@ -2736,6 +2736,7 @@ def adopt_private_section(
 
     assert value._header_ref is not None  # noqa: SLF001
     _, slots = _gather_headered_subtree_slots(value)
+    _detach_from_source_doc(value, slots)
     # Nested headers also retain bindings to the orphan's old ancestors.
     nested_headers = [s for s in slots if isinstance(s, StructuralHeaderSlot)]
     _unfile_stale_same_orphan_ancestors(
@@ -2820,6 +2821,23 @@ def _rehome_view_tree(
     _walk_view_tree(root, visit)
 
 
+def _detach_from_source_doc(value: Container, slots: list[Slot]) -> None:
+    """Unlink ``slots`` from the private orphan they currently live in.
+
+    The adopt paths splice the block into the destination document, which
+    rewrites each slot's own links but leaves the orphan's surviving
+    neighbours pointing at it. That cross-links the two documents, so a
+    later walk of the orphan wanders into the destination — and any
+    subsequent adopt of a remaining orphan branch collects slots it can no
+    longer reach. Leading trivia is preserved: the orphan is scratch space
+    and the destination sets the new block's separator itself.
+    """
+    src_doc = value._layout_root  # noqa: SLF001
+    assert src_doc is not None, "private orphan section must be attached"
+    for s in reversed(slots):
+        unlink_slot(s, src_doc, strip_new_head_leading=False)
+
+
 def adopt_private_implicit(
     dest_parent: Container,
     key: str,
@@ -2846,6 +2864,7 @@ def adopt_private_implicit(
     # materialises to an inline table and never reaches here).
     assert value._refs, "implicit orphan has no slots"  # noqa: SLF001
     slots = _owned_slots_from(value, value._refs[0].slot)  # noqa: SLF001
+    _detach_from_source_doc(value, slots)
     _unfile_stale_same_orphan_ancestors(value, slots)
 
     nl = doc._newline  # noqa: SLF001

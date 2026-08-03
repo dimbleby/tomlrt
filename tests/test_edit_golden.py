@@ -5446,3 +5446,137 @@ def test_comma_first_insert_uses_the_comma_row_indent() -> None:
         ,2
         ]
         """)
+
+
+def test_adopt_two_branches_of_same_orphan() -> None:
+    """Adopting one orphan branch leaves the rest of the orphan walkable.
+
+    The adopt paths splice the moved block into the destination but used
+    to leave the orphan's surviving neighbours pointing at it, so the two
+    documents became cross-linked. A second adopt then gathered slots it
+    could no longer reach from its own anchor.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        b.c = 1
+
+        [root.a.e]
+        q = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m1"] = orphan["a"]["b"]
+    doc["m2"] = orphan["a"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        m1.c = 1
+
+        [dest]
+        z = 0
+
+        [m2]
+
+        [m2.e]
+        q = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {"m1": {"c": 1}, "dest": {"z": 0}, "m2": {"e": {"q": 1}}}
+
+
+def test_adopt_nested_orphan_branch_then_its_parent() -> None:
+    """A descendant may be adopted before the section that contained it."""
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        x = 1
+
+        [root.a.e]
+        q = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m1"] = orphan["a"]["e"]
+    doc["m2"] = orphan["a"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m1]
+        q = 1
+
+        [m2]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_orphan_branch_into_aot_entry_destination() -> None:
+    """The destination may itself live inside an AoT entry.
+
+    The adopted block takes on the entry's owner, so this drives the
+    stale-owner transfer that a plain document destination does not.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        b.c = 1
+
+        [root.a.e]
+        q = 1
+
+        [[t]]
+        x = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m1"] = orphan["a"]["b"]
+    doc.aot("t")[0]["m2"] = orphan["a"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        m1.c = 1
+
+        [[t]]
+        x = 0
+
+        [t.m2]
+
+        [t.m2.e]
+        q = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_orphan_branch_keeps_surviving_branch_trivia() -> None:
+    """Removing the orphan's head must not restyle what stays behind.
+
+    The orphan is scratch space, so unlinking preserves the leading
+    trivia of the slots that remain: the blank line and comment above
+    ``c`` still separate it from its new neighbour once adopted.
+    """
+    doc = tomlrt.loads(
+        td("""
+        root.b.x = 1
+
+        # c comment
+        root.c.y = 2
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m0"] = orphan["b"]
+    doc["m1"] = orphan["c"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        m0.x = 1
+
+        # c comment
+        m1.y = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
