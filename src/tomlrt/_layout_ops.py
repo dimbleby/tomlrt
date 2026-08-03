@@ -2852,6 +2852,7 @@ def adopt_private_section(
 
     assert value._header_ref is not None  # noqa: SLF001
     _, slots = _gather_headered_subtree_slots(value)
+    _materialise_emptied_orphan_parent(value)
     _detach_from_source_doc(value, slots)
     # Nested headers also retain bindings to the orphan's old ancestors.
     nested_headers = [s for s in slots if isinstance(s, StructuralHeaderSlot)]
@@ -2954,6 +2955,49 @@ def _detach_from_source_doc(value: Container, slots: list[Slot]) -> None:
         unlink_slot(s, src_doc, strip_new_head_leading=False)
 
 
+def _materialise_emptied_orphan_parent(value: Container) -> None:
+    """Keep the parent this move empties, as an empty section.
+
+    Moving a value out of a header-less parent can take the parent's only
+    content with it, leaving it bound but backed by nothing. The public
+    delete has the same problem and answers it by synthesising a header;
+    a move answers it the same way, so a table whose child was taken
+    still renders, and still behaves like the dict entry it remains.
+
+    Runs before the block is unlinked, because the replacement takes the
+    departing primary's place in the stream.
+    """
+    doc = value._layout_root  # noqa: SLF001
+    parent = value._parent  # noqa: SLF001
+    if (
+        doc is None
+        or parent is None
+        or not parent._path  # noqa: SLF001
+        or parent._inline  # noqa: SLF001
+        or parent._header_ref is not None  # noqa: SLF001
+        or len(parent) != 1
+    ):
+        return
+    key = value._path[-1]  # noqa: SLF001
+    # For an AoT entry, `_path` names the *AoT*, so this key may not be
+    # what `value` is bound under — and adopting an earlier entry may
+    # already have unbound it while the parent kept real content. The
+    # delete path gets this for free by looking the key up first.
+    if dict.get(parent, key) is not value:
+        return
+    refs = parent._index.get(key)  # noqa: SLF001
+    assert refs, "a bound key owns slots"
+    primary = refs[0].slot
+    if not isinstance(primary, StructuralHeaderSlot):
+        # A dotted-origin parent has no header of its own to replace,
+        # and the other materialisation turns the table inline
+        # (``a = {}``) — right for a delete, where the key is going
+        # away, but not here, where the table stays live and may still
+        # be given section children.
+        return
+    _materialise_empty_section_header(parent, primary, doc)
+
+
 def adopt_private_implicit(
     dest_parent: Container,
     key: str,
@@ -2980,6 +3024,7 @@ def adopt_private_implicit(
     # slots; a slotless one is synthesised instead.
     assert value._refs, "implicit orphan has no slots"  # noqa: SLF001
     slots = _owned_slots_from(value, value._refs[0].slot)  # noqa: SLF001
+    _materialise_emptied_orphan_parent(value)
     _detach_from_source_doc(value, slots)
     _unfile_stale_same_orphan_ancestors(value, slots)
 

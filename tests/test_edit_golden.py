@@ -6143,3 +6143,77 @@ def test_overwrite_a_key_inside_an_orphan_with_an_earlier_sibling() -> None:
         z = 0
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_the_only_child_of_a_headered_orphan_section() -> None:
+    """Taking a section's only child leaves the section behind.
+
+    The parent's whole physical presence was its child's header, so
+    without a replacement it would be bound but backed by nothing —
+    unable to render, and unable to accept a later write.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.c.y]
+        x = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m1"] = orphan["c"]["y"]
+
+    assert orphan.to_dict() == {"c": {}}
+    orphan["c"] = 2
+    assert orphan.to_dict() == {"c": 2}
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m1]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_both_entries_of_an_orphan_aot_beside_a_dotted_sibling() -> None:
+    """An AoT entry's path names the AoT, not the entry.
+
+    Adopting the first entry unbinds the whole key, so the second must
+    not read that as "the parent is now empty" — the parent still owns
+    a dotted key of its own, and giving it a header would declare it
+    twice.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root]
+        c.q = 5
+
+        [[root.c.t]]
+        x = 1
+
+        [[root.c.t]]
+        x = 2
+        """)
+    )
+    orphan = doc.pop("root")
+    entries = orphan["c"].aot("t")
+    doc["m0"] = entries[0]
+    doc["m1"] = entries[1]
+    doc["back"] = orphan
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [m0]
+        x = 1
+
+        [m1]
+        x = 2
+
+        [back]
+        c.q = 5
+        """)
+    assert _reparses(out) == doc.to_dict()
