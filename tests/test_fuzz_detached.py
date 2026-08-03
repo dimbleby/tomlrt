@@ -177,6 +177,8 @@ def _run_program(src: str, seed: int) -> None:
             "hold",
             "write_held",
             "delete_orphan",
+            "overwrite_orphan",
+            "sort_orphan",
         ]
         op = rng.choice(choices)
         paths = _view_paths(orphan)
@@ -195,6 +197,17 @@ def _run_program(src: str, seed: int) -> None:
                 target[f"h{step}"] = step
             elif isinstance(target, Array):
                 target.append(step)
+        elif op == "overwrite_orphan":
+            # Re-using an existing key is what reaches the reposition
+            # path; every other write here invents a fresh one.
+            target = _resolve(orphan, rng.choice([*paths, ()]))
+            if isinstance(target, Container) and list(target.keys()):
+                key = rng.choice(list(target.keys()))
+                target[key] = rng.choice([step, {"r": step}])
+        elif op == "sort_orphan":
+            target = _resolve(orphan, rng.choice([*paths, ()]))
+            if isinstance(target, Container):
+                target.sort(reverse=bool(rng.getrandbits(1)))
         elif op == "delete_orphan":
             target = _resolve(orphan, rng.choice([*paths, ()]))
             if isinstance(target, Container) and list(target.keys()):

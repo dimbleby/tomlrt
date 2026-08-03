@@ -6101,3 +6101,45 @@ def test_adopting_each_level_of_a_popped_chain_leaves_no_phantom() -> None:
         [m2]
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_a_key_inside_an_orphan_with_an_earlier_sibling() -> None:
+    """The replacement may be the very slot the old binding sat after.
+
+    Repositioning asks for the new block to be placed after whatever
+    preceded the old one — but here that predecessor is part of the
+    block being placed, so there is nowhere to move it to and it stays
+    where the reinstall put it.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        b.c = 1
+
+        [root.a.e]
+        q = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan["k3"] = orphan["a"]["e"]
+    orphan["k3"] = orphan["a"]
+
+    assert orphan.to_dict() == {"k3": {"b": {"c": 1}}}
+    assert tomlrt.dumps(doc) == td("""
+        [dest]
+        z = 0
+        """)
+
+    doc["back"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [back.k3]
+        b.c = 1
+
+        [dest]
+        z = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
