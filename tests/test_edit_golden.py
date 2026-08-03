@@ -5823,3 +5823,67 @@ def test_mutating_orphan_after_adopting_its_aot_does_not_leak() -> None:
         x = 1
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_orphan_repopulated_after_being_emptied() -> None:
+    """An orphan can be written to again after losing its last child.
+
+    Adopting ``a`` away leaves the orphan empty but still usable; the
+    later write lands in the orphan, and adopting the orphan itself
+    carries that content into the document.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        x = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m1"] = orphan["a"]
+    orphan["k"] = 7
+    doc["m2"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m1]
+        x = 1
+
+        [m2]
+        k = 7
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_emptied_aot_from_orphan() -> None:
+    """Adopting an emptied AoT must not drag the orphan's header along.
+
+    The AoT's last entry is removed while it is still inside the
+    orphan, leaving it backed by a placeholder. Adopting it used to
+    also emit the orphan's own ``[root]`` section into the destination.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan.aot("t").pop(0)
+    doc["m0"] = orphan["t"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        m0 = []
+
+        [dest]
+        z = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {"m0": [], "dest": {"z": 0}}
