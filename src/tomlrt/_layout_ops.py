@@ -861,9 +861,19 @@ def _invalidate_body_tail_chain(
 
 
 def _nearest_header_host(c: Container) -> Container:
-    """The closest ancestor (or ``c``) owning a header, else the doc root."""
+    """The closest ancestor (or ``c``) owning a header, else the subtree root.
+
+    The walk stops at a document boundary. A popped subtree's root keeps
+    pointing at the parent it was detached from, which lives in another
+    document; climbing into it would host the new slot there, physically
+    splicing orphan content into a document that does not own it.
+    """
     host = c
-    while host._parent is not None and host._header_ref is None:  # noqa: SLF001
+    while (
+        host._header_ref is None  # noqa: SLF001
+        and host._parent is not None  # noqa: SLF001
+        and host._parent._layout_root is host._layout_root  # noqa: SLF001
+    ):
         host = host._parent  # noqa: SLF001
     return host
 
@@ -1878,20 +1888,20 @@ def _child_header_anchor(parent: Container) -> Slot | None:
 def _splice_block_after(slots: list[Slot], anchor: Slot | None, doc: Document) -> None:
     """Splice a contiguous, internally terminated block after ``anchor``.
 
-    A ``None`` anchor means the document is still empty (the only case
-    the callers produce), so the block's head also becomes the head of
-    the stream and any preamble parked in ``_trailing`` migrates onto
-    its leading.
+    A ``None`` anchor means "no slot in ``doc`` should precede this
+    block", so it goes at the end of the stream. In an empty document
+    that also makes it the head, and any preamble parked in
+    ``_trailing`` migrates onto its leading.
     """
     if not slots:
         return
-    if anchor is None:
-        assert doc._tail is None  # noqa: SLF001
+    tail = doc._tail if anchor is None else anchor  # noqa: SLF001
+    if tail is None:
         insert_before_head(slots[0], doc)
         _promote_trailing_to_preamble(doc)
     else:
-        ensure_terminator(anchor, doc._newline)  # noqa: SLF001
-        insert_after(anchor, slots[0], doc)
+        ensure_terminator(tail, doc._newline)  # noqa: SLF001
+        insert_after(tail, slots[0], doc)
     prev = slots[0]
     for s in slots[1:]:
         ensure_terminator(prev, doc._newline)  # noqa: SLF001
@@ -2686,11 +2696,14 @@ def clone_document_as_section(
 def unfile_orphan_binding(value: Container | AoT) -> None:
     """Scrub a private-orphan ``value``'s binding from its old ancestors.
 
-    Shared entry point for the three adopt paths. Gathers everything the
-    subtree owns and hands it to
+    Gathers everything the subtree owns and hands it to
     :func:`_unfile_stale_same_orphan_ancestors`; a genuinely detached
-    source has no orphan ancestry to scrub, and is skipped before the
-    collection rather than after it.
+    source (no parent) is a no-op.
+
+    Used by the AoT attach path. The two section adopt paths call the
+    inner function directly with the narrower slot set each can prove
+    sufficient — walking their whole subtree instead measured slower
+    for no behavioural difference.
     """
     if value._parent is None or value._layout_root is None:  # noqa: SLF001
         return
@@ -3843,13 +3856,18 @@ def _move_slots_to_anchor(
 
     # Splice [head .. tail] in after saved_anchor_prev (or at doc head).
     if saved_anchor_prev is None:
-        # ``head._prev`` was not None (the early return above), so a slot
-        # preceded the block and survives the detach as the new head.
         next_after = doc._head  # noqa: SLF001
-        assert next_after is not None
         head._prev = None  # noqa: SLF001
         tail._next = next_after  # noqa: SLF001
-        next_after._prev = tail  # noqa: SLF001
+        if next_after is not None:
+            next_after._prev = tail  # noqa: SLF001
+        else:
+            # Only when the detach emptied the stream, which needs
+            # ``head._prev`` to have pointed outside it. No caller
+            # produces that now, but a range splice that left `_tail`
+            # dangling would be far harder to diagnose than this line
+            # is to keep.
+            doc._tail = tail  # noqa: SLF001  # pragma: no cover
         doc._head = head  # noqa: SLF001
     else:
         next_after = saved_anchor_prev._next  # noqa: SLF001

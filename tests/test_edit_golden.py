@@ -5755,3 +5755,71 @@ def test_adopt_orphan_aot_entry_then_the_whole_aot() -> None:
         x = 2
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_key_inside_popped_orphan_leaves_document_alone() -> None:
+    """A popped subtree stays self-contained when mutated.
+
+    Overwriting a key inside the orphan relocates its slots within the
+    orphan's own stream. The block can be the whole of that stream, in
+    which case the move leaves the orphan with a new tail and the source
+    document untouched.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root.a]
+        p = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan["a"] = 5
+    assert tomlrt.dumps(doc) == td("""
+        [dest]
+        z = 0
+        """)
+    assert orphan.to_dict() == {"a": 5}
+
+    doc["back"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [back]
+        a = 5
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_mutating_orphan_after_adopting_its_aot_does_not_leak() -> None:
+    """Orphan writes after an adopt must stay out of the destination.
+
+    Scrubbing the orphan's binding empties its ref cache, so the next
+    write there synthesises a header. That synthesis must anchor inside
+    the orphan and not climb the stale parent link into the document the
+    subtree was popped from.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["dest"]["m0"] = orphan["t"]
+    orphan["n3"] = 1
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [[dest.m0]]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
