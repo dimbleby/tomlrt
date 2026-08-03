@@ -44,6 +44,7 @@ from tomlrt._values import (
     ArrayItem,
     ArrayValue,
 )
+from tomlrt._view import _View
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, MutableMapping
@@ -69,7 +70,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T")
 
 
-class Array(list[Any]):
+class Array(_View, list[Any]):
     """An inline TOML array.
 
     `Array` is a `list` subclass, so ``isinstance(arr, list)`` holds and
@@ -166,6 +167,16 @@ class Array(list[Any]):
             msg = f"item at {index} is {type(v).__name__}, not {label}"
             raise TypeError(msg)
         return v
+
+    @override
+    def _view_children(self) -> Iterable[object]:
+        return self
+
+    @override
+    def _reset_displaced(self) -> None:
+        # ``_value`` stays: the displaced ``ArrayValue`` is reused if
+        # this view is attached somewhere else.
+        self._layout_root = None
 
     @property
     def _attached(self) -> bool:
@@ -309,6 +320,7 @@ class Array(list[Any]):
 
     @override
     def clear(self) -> None:
+        _layout_ops.reset_displaced_views(*self)
         self._value.items.clear()
         # Drop inter-item trivia; preserve bracket leading in final_trivia.
         self._value.header_trivia, self._value.final_trivia = strip_trailing_indent(
@@ -351,6 +363,9 @@ class Array(list[Any]):
 
     def _replace_synthesised(self, index: int, cst: Value, decoded: Any) -> None:
         """Replace an item with an already-synthesised value."""
+        old = self[index]
+        if isinstance(old, _View) and old is not decoded:
+            _layout_ops.reset_displaced_views(old)
         self._value.items[index].value = cst
         list.__setitem__(self, index, decoded)
 
@@ -442,6 +457,7 @@ class Array(list[Any]):
                 return
         else:
             removed = [_norm_index(index, len(items), "list assignment")]
+        _layout_ops.reset_displaced_views(*(self[i] for i in removed))
         list.__delitem__(self, index if isinstance(index, slice) else removed[0])
         splice_out(
             self._value,
@@ -516,7 +532,7 @@ def _make_item(cst: Value, *, has_comma: bool) -> ArrayItem:
     )
 
 
-class AoT(list["Table"]):
+class AoT(_View, list["Table"]):
     """An Array-of-tables, e.g. ``[[products]]`` repeated.
 
     `AoT` is a `list[Table]` subclass, so ``isinstance(aot, list)`` holds
@@ -524,6 +540,10 @@ class AoT(list["Table"]):
     """
 
     __slots__ = ("_layout_root", "_parent", "_path")
+
+    @override
+    def _view_children(self) -> Iterable[object]:
+        return self
 
     def __init__(self, entries: Iterable[Mapping[str, TomlInput]] = ()) -> None:
         """Construct a standalone array-of-tables."""
