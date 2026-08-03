@@ -2683,8 +2683,24 @@ def clone_document_as_section(
     )
 
 
+def unfile_orphan_binding(value: Container | AoT) -> None:
+    """Scrub a private-orphan ``value``'s binding from its old ancestors.
+
+    Shared entry point for the three adopt paths. Gathers everything the
+    subtree owns and hands it to
+    :func:`_unfile_stale_same_orphan_ancestors`; a genuinely detached
+    source has no orphan ancestry to scrub, and is skipped before the
+    collection rather than after it.
+    """
+    if value._parent is None or value._layout_root is None:  # noqa: SLF001
+        return
+    owned: set[Slot] = set()
+    _collect_subtree(value, [], [], owned.add)
+    _unfile_stale_same_orphan_ancestors(value, owned)
+
+
 def _unfile_stale_same_orphan_ancestors(
-    value: Container, target_slots: Iterable[Slot]
+    value: Container | AoT, target_slots: Iterable[Slot]
 ) -> None:
     """Drop ``value``'s bindings from its old same-orphan ancestor chain.
 
@@ -2699,10 +2715,14 @@ def _unfile_stale_same_orphan_ancestors(
     old_parent = value._parent  # noqa: SLF001
     if old_parent is None or old_parent._layout_root is not value._layout_root:  # noqa: SLF001
         return  # `value` is the orphan's own root; nothing to clean up.
-    # A container's `_parent` is always its immediate path parent, and
-    # `value` is still bound there until this rehome completes.
+    # `_parent` is always the immediate path parent, so the key to drop is
+    # the last path component. It may already be gone: an AoT entry's
+    # `_path` names the *AoT*, not the entry, so adopting one entry
+    # unbinds the whole key and a later adopt of a sibling entry — or of
+    # the AoT itself — finds nothing left to remove.
     assert len(value._path) == len(old_parent._path) + 1  # noqa: SLF001
-    dict.__delitem__(old_parent, value._path[-1])  # noqa: SLF001
+    if value._path[-1] in old_parent:  # noqa: SLF001
+        dict.__delitem__(old_parent, value._path[-1])  # noqa: SLF001
 
     stale_container_ids: set[int] = set()
     node: Container | None = old_parent

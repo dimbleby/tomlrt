@@ -5644,3 +5644,114 @@ def test_adopt_orphan_branch_repairs_ancestor_body_tail() -> None:
         appended = 5
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_orphan_aot_then_the_orphan_itself() -> None:
+    """Cloning an orphan's AoT out must unbind it from the orphan.
+
+    The AoT attach path left the orphan still pointing at an AoT that
+    had moved into this document, so adopting the orphan afterwards
+    gathered slots belonging to a different document.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [[root.t]]
+        x = 2
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m0"] = orphan["t"]
+    doc["m1"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [[m0]]
+        x = 1
+
+        [[m0]]
+        x = 2
+
+        [m1]
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {"dest": {"z": 0}, "m0": [{"x": 1}, {"x": 2}], "m1": {}}
+
+
+def test_adopt_two_entries_of_the_same_orphan_aot() -> None:
+    """An AoT entry's path names the AoT, so its key unbinds only once.
+
+    Adopting the first entry drops the whole ``t`` binding from the
+    orphan; adopting a second entry must not expect to find it still
+    there.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [[root.t]]
+        x = 2
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    entries = orphan.aot("t")
+    doc["m0"] = entries[0]
+    doc["m1"] = entries[1]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m0]
+        x = 1
+
+        [m1]
+        x = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_orphan_aot_entry_then_the_whole_aot() -> None:
+    """The AoT itself may be adopted after one of its entries."""
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [[root.t]]
+        x = 2
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    entries = orphan.aot("t")
+    doc["m0"] = entries[0]
+    doc["m1"] = entries
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m0]
+        x = 1
+
+        [[m1]]
+        x = 1
+
+        [[m1]]
+        x = 2
+        """)
+    assert _reparses(out) == doc.to_dict()

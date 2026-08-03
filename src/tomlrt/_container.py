@@ -664,6 +664,11 @@ class Container(dict[str, Any]):
         # trivia, nested sub-sections, and inter-entry separators.
         # The generic add_aot_entry(rehome=) path rebuilds from dict
         # storage and drops that CST.
+        # Scrub the orphan's own binding first: the entries below are
+        # cloned into this document, so leaving the orphan pointing at
+        # them would make a later adopt of the orphan gather slots that
+        # live in the destination. The section adopt paths do the same.
+        _layout_ops.unfile_orphan_binding(value)
         existing_entries: list[Table] = list(value)
         list.clear(value)
         value._layout_root = None  # noqa: SLF001
@@ -1613,9 +1618,11 @@ def _reset_table_for_rehome(t: Container) -> None:
     standard attach path treats `t` as if freshly constructed.
 
     Also resets nested non-inline ``Container`` / ``AoT`` children from
-    the same detached subtree: every caller re-roots a whole subtree to
-    the same orphan in one pass before any of its tables can be
-    independently touched, so descending unconditionally is safe.
+    the same detached subtree, descending unconditionally. Most callers
+    re-root a whole subtree to the same orphan in one pass before any of
+    its tables can be independently touched. The exception is an orphan
+    emptied by adoption: a descendant there may still own slots, whose
+    CST is dropped in favour of synthesis from dict storage.
 
     Used when re-installing a held view that was detached into a
     private orphan ``Document``.
