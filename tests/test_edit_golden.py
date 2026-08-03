@@ -6217,3 +6217,117 @@ def test_adopt_both_entries_of_an_orphan_aot_beside_a_dotted_sibling() -> None:
         c.q = 5
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_the_only_child_of_a_dotted_orphan_section() -> None:
+    """A parent that only ever existed as a dotted prefix still renders.
+
+    `c` has no presence of its own — it is spelled only as part of
+    `root.c.y.x`. Adopting `y` takes that spelling away, so `c` grows a
+    header to keep the key it still holds.
+    """
+    doc = tomlrt.loads("root.c.y.x = 1\n")
+    orphan = doc.pop("root")
+    doc["moved"] = orphan.table("c").table("y")
+    doc["back"] = orphan
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        moved.x = 1
+
+        [back.c]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_an_aot_out_of_a_dotted_orphan_parent() -> None:
+    """Adopting an AoT away empties its parent just as a table does.
+
+    The AoT is the only thing giving `b` a spelling, so taking it has
+    to leave `b` a header of its own.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [root.a]
+        b.c = 3
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan.table("a").table("b")["c"] = orphan.aot("t")
+    doc["moved"] = orphan.table("a").table("b").aot("c")
+    doc["back"] = orphan["a"]
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[moved]]
+        x = 1
+
+        [back]
+
+        [back.b]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_out_of_a_dotted_parent_that_keeps_a_sibling() -> None:
+    """A parent with content left over needs no header of its own."""
+    doc = tomlrt.loads(
+        td("""
+        root.a.b.c = 1
+        root.a.e = 2
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["moved"] = orphan.table("a").table("b")
+    doc["back"] = orphan
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        moved.c = 1
+        back.a.e = 2
+
+        [dest]
+        z = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_repair_of_an_emptied_parent_does_not_move_an_in_place_overwrite() -> None:
+    """Repairing a parent must not disturb the install that emptied it.
+
+    `orphan["z"] = orphan["a"]["b"]` replaces `z` where it stands, which
+    is a repositioned install; the header `a` grows to stay renderable
+    is not part of that install and must not travel to its anchor. `z`
+    therefore keeps its original place ahead of `q`.
+    """
+    doc = tomlrt.loads(
+        td("""
+        root.z = 9
+        root.a.b.c = 1
+        root.q = 7
+
+        [dest]
+        w = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan["z"] = orphan.table("a").table("b")
+    doc["back"] = orphan
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        back.z.c = 1
+        back.q = 7
+
+        [back.a]
+
+        [dest]
+        w = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
