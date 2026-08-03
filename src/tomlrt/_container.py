@@ -69,6 +69,7 @@ from tomlrt._values import (
     make_keypart,
     retarget_value_newlines,
 )
+from tomlrt._view import _View
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, MutableMapping, Sequence
@@ -93,7 +94,7 @@ _ItemT = TypeVar("_ItemT", bound="CommaItem")
 _MISSING: Any = object()
 
 
-class Container(dict[str, Any]):
+class Container(_View, dict[str, Any]):
     """Dict-typed base for `Document` and `Table` views.
 
     Reads are pure dict operations. Section mutations use the
@@ -114,6 +115,18 @@ class Container(dict[str, Any]):
         "_refs",
         "_value",
     )
+
+    @override
+    def _view_children(self) -> Iterable[object]:
+        return self.values()
+
+    @override
+    def _reset_displaced(self) -> None:
+        # A section container's attachment is repaired by the layout
+        # layer; only inline tables resolve through a `_value` that the
+        # displacement invalidates.
+        if self._inline:
+            _reset_inline_for_rehome(self)
 
     def __init__(self) -> None:
         super().__init__()
@@ -963,7 +976,12 @@ class Container(dict[str, Any]):
         # for inline hosts. Non-coerceable types (``set``, custom
         # classes, …) reach ``_synth_value`` for the canonical TypeError.
         cst, decoded = self._synth_local_value(key, value)
-        if key in self and isinstance(dict.__getitem__(self, key), Container):
+        old = dict.__getitem__(self, key) if key in self else None
+        # Either replacement branch displaces the old value, so a view of
+        # it must stop resolving against the entry it no longer owns.
+        if isinstance(old, _View) and old is not decoded:
+            _layout_ops.reset_displaced_views(old)
+        if isinstance(old, Container):
             # Stay on the CST side when replacing a dotted-prefix
             # navigator; dict-level delete would prune the parent chain.
             _inline_ops.overwrite_entry(self, key, cst)
@@ -976,6 +994,10 @@ class Container(dict[str, Any]):
     def _inline_delitem(self, key: str) -> None:
         if key not in self:
             raise KeyError(key)
+        # A held view of the deleted entry must stop resolving against
+        # the CST it no longer owns, or a later write through it would
+        # resurrect the key beside whatever replaced it.
+        _layout_ops.reset_displaced_views(dict.__getitem__(self, key))
         _inline_ops.delete_entry(self, key)
         dict.__delitem__(self, key)
         # Empty dotted-prefix navigators have no backing CST entry; prune
@@ -1659,15 +1681,6 @@ def _reset_inline_for_rehome(t: Container) -> None:
     t._parent = None  # noqa: SLF001
     t._owner_aot_entry = None  # noqa: SLF001
     t._value = None  # noqa: SLF001
-
-
-def _reset_array_for_rehome(a: Array) -> None:
-    """Clear an Array view's attachment so it can be reattached live.
-
-    Leaves ``_value`` (the displaced ``ArrayValue``) intact so the
-    next attach can reuse it.
-    """
-    a._layout_root = None  # noqa: SLF001
 
 
 def _install_attached_subtree(

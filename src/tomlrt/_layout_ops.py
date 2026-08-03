@@ -47,6 +47,7 @@ from tomlrt._values import (
     InlineTableValue,
     make_keyparts,
 )
+from tomlrt._view import _View
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -1184,7 +1185,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
 
         displaced_inlines: list[Container] = []
         displaced_arrays: list[Array] = []
-        _collect_displaced_inline_views(val, displaced_inlines, displaced_arrays)
+        _collect_displaced_inline_views((val,), displaced_inlines, displaced_arrays)
         orphan = Document()
         orphan._newline = doc._newline  # noqa: SLF001
         orphan._is_private = True  # noqa: SLF001
@@ -1210,41 +1211,35 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     dict.__delitem__(c, key)
 
 
-def _walk_view_tree(val: object, visit: Callable[[object], None]) -> None:
-    """Visit every Container / AoT / Array node in a view subtree.
+def _walk_view_tree(vals: Iterable[object], visit: Callable[[object], None]) -> None:
+    """Visit every Container / AoT / Array node in the given view subtrees.
 
-    The three node kinds and their recursion (Container -> values,
-    AoT -> entries, Array -> items) are the shared spine of the
-    delete-side displacement walk (:func:`_collect_displaced_inline_views`)
-    and the adopt-side rehome walk (:func:`_rehome_view_tree`); each
-    caller supplies the per-node action. Scalars are inert.
+    The shared spine of the delete-side displacement walk
+    (:func:`_collect_displaced_inline_views`) and the adopt-side rehome
+    walk (:func:`_rehome_view_tree`); each caller supplies the per-node
+    action. Descent is delegated to `_View._view_children`, so this needs
+    no knowledge of the concrete view classes — and no deferred import of
+    them, which a walk over a long array used to repay per node. Scalars
+    are inert.
 
-    The recursion is an inner function so the deferred imports — needed
-    to break the ``_container`` / ``_array`` import cycle — are resolved
-    once per traversal rather than once per node. Displaced-value walks
-    visit every scalar leaf, so a wide table or long array pays that
-    cost hundreds of times over.
+    Takes a batch of roots so a caller displacing a range — clearing an
+    array, deleting a slice — makes one traversal rather than one per
+    element.
     """
-    from tomlrt._array import AoT, Array  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
 
-    view_types = (Container, AoT, Array)
-
-    def walk(node: Container | AoT | Array) -> None:
+    def walk(node: _View) -> None:
         visit(node)
-        children = node.values() if isinstance(node, Container) else node
-        for child in children:
-            # Also what makes ``walk``'s parameter type sound — don't
-            # hoist this check into ``walk`` itself.
-            if isinstance(child, view_types):
+        for child in node._view_children():  # noqa: SLF001
+            if isinstance(child, _View):
                 walk(child)
 
-    if isinstance(val, view_types):
-        walk(val)
+    for val in vals:
+        if isinstance(val, _View):
+            walk(val)
 
 
 def _collect_displaced_inline_views(
-    val: object,
+    vals: Iterable[object],
     inlines_out: list[Container],
     arrays_out: list[Array],
 ) -> None:
@@ -1267,29 +1262,27 @@ def _collect_displaced_inline_views(
         elif isinstance(node, Array):
             arrays_out.append(node)
 
-    _walk_view_tree(val, visit)
+    _walk_view_tree(vals, visit)
 
 
-def reset_displaced_views(val: object) -> None:
-    """Detach every inline-table / array view nested inside ``val``.
+def _reset_view(node: object) -> None:
+    assert isinstance(node, _View)
+    node._reset_displaced()  # noqa: SLF001
 
-    Used when ``val``'s backing CST is replaced or removed: a nested
+
+def reset_displaced_views(*vals: object) -> None:
+    """Detach every inline-table / array view nested inside ``vals``.
+
+    Used when a value's backing CST is replaced or removed: a nested
     view left pointing at the dead value would keep reporting as
     attached and resolve against it. Resetting the whole subtree — not
     just its root — lets each view re-attach live elsewhere.
-    """
-    from tomlrt._container import (  # noqa: PLC0415
-        _reset_array_for_rehome,
-        _reset_inline_for_rehome,
-    )
 
-    inlines: list[Container] = []
-    arrays: list[Array] = []
-    _collect_displaced_inline_views(val, inlines, arrays)
-    for it in inlines:
-        _reset_inline_for_rehome(it)
-    for ar in arrays:
-        _reset_array_for_rehome(ar)
+    Takes the whole batch at once so a caller displacing a range makes
+    one traversal. Resetting as the walk visits is safe: no view's
+    reset touches the storage the walk descends through.
+    """
+    _walk_view_tree(vals, _reset_view)
 
 
 def _collect_subtree(
@@ -2858,7 +2851,7 @@ def _rehome_view_tree(
         node._layout_root = doc  # noqa: SLF001
 
     root._parent = dest_parent  # noqa: SLF001
-    _walk_view_tree(root, visit)
+    _walk_view_tree((root,), visit)
 
 
 def _detach_from_source_doc(value: Container, slots: list[Slot]) -> None:

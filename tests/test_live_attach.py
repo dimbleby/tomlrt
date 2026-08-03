@@ -1461,3 +1461,94 @@ def test_inline_overwrite_with_inline_detaches_nested_view() -> None:
         y = { b = 2, c = 1 }
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_array_setitem_detaches_the_displaced_item_view() -> None:
+    """Overwriting an array item detaches the view it displaced."""
+    doc = tomlrt.loads("x = [ { c = 1 }, 2 ]\n")
+    item = doc["x"][0]
+    doc["x"][0] = 9
+    assert tomlrt.dumps(doc) == "x = [ 9, 2 ]\n"
+
+    item["d"] = 4
+    doc["y"] = item
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = [ 9, 2 ]
+        y = { c = 1, d = 4 }
+        """)
+    assert doc["y"] is item
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_array_clear_detaches_every_item_view() -> None:
+    """Clearing an array detaches all of its item views at once."""
+    doc = tomlrt.loads("x = [ { c = 1 }, { d = 2 } ]\n")
+    first, second = doc["x"][0], doc["x"][1]
+    doc["x"].clear()
+    assert tomlrt.dumps(doc) == "x = [ ]\n"
+
+    doc["y"] = first
+    doc["z"] = second
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = [ ]
+        y = { c = 1 }
+        z = { d = 2 }
+        """)
+    assert doc["y"] is first
+    assert doc["z"] is second
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_inline_overwrite_detaches_dotted_navigator() -> None:
+    """A displaced dotted navigator must not write back into the table.
+
+    The navigator kept resolving against the inline table it no longer
+    belonged to, so a later write re-added its key alongside the value
+    that replaced it — emitting a table with the key defined twice.
+    """
+    doc = tomlrt.loads("x = { n.a = 1, n.b = 2, z = 9 }\n")
+    inner = doc["x"]["n"]
+    doc["x"]["n"] = 5
+    inner["c"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == "x = { z = 9, n = 5 }\n"
+    assert _reparses(out) == doc.to_dict()
+    assert inner.to_dict() == {"a": 1, "b": 2, "c": 3}
+
+
+def test_inline_delete_detaches_dotted_navigator() -> None:
+    """Deleting a dotted prefix detaches its navigator too."""
+    doc = tomlrt.loads("x = { n.a = 1, n.b = 2, z = 9 }\n")
+    inner = doc["x"]["n"]
+    del doc["x"]["n"]
+    inner["c"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == "x = { z = 9 }\n"
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_inline_overwrite_detaches_displaced_array() -> None:
+    """Replacing an inline entry detaches a displaced array too.
+
+    The reset used to be reachable only when the displaced value was a
+    table, so an array took the other replacement branch and stayed
+    attached to an entry it no longer owned.
+    """
+    doc = tomlrt.loads("x = { n = [ { a = 1 } ], z = 9 }\n")
+    held = doc["x"]["n"]
+    nested = held[0]
+    doc["x"]["n"] = 5
+    assert tomlrt.dumps(doc) == "x = { n = 5, z = 9 }\n"
+
+    held.append(2)
+    doc["y"] = held
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = { n = 5, z = 9 }
+        y = [ { a = 1 }, 2 ]
+        """)
+    assert doc["y"] is held
+    assert doc["y"][0] is nested
+    assert _reparses(out) == doc.to_dict()
