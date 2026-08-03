@@ -73,12 +73,10 @@ _SHAPES = (
     "[root.a]\narr = [ { m = 1 }, 2 ]\n\n[dest]\nz = 0\n",
 )
 
-# Shapes whose orphan holds a dotted key *under an explicit header*
-# are deliberately absent: adopting the dotted part away strands an
-# empty implicit table that renders as nothing while the model keeps
-# it, so every program over them fails the model oracle for a reason
-# that has nothing to do with detaching. Restore them once an emptied
-# intermediate round-trips.
+# Shapes where adopting part of the orphan empties a purely dotted
+# ancestor are absent: such a table does not currently render
+# itself, so the model keeps a key the text does not. The smallest is
+# `root.c.y.x = 1`; re-add them once that is fixed.
 
 
 def _chain(doc: Document) -> list[Slot]:
@@ -203,7 +201,15 @@ def _run_program(src: str, seed: int) -> None:
             target = _resolve(orphan, rng.choice([*paths, ()]))
             if isinstance(target, Container) and list(target.keys()):
                 key = rng.choice(list(target.keys()))
-                target[key] = rng.choice([step, {"r": step}])
+                # Replacing a key with an existing sibling view reaches
+                # the same-document adopt; a fresh value never does.
+                cands: list[Any] = [step, {"r": step}]
+                if paths:
+                    cands.append(_resolve(orphan, rng.choice(paths)))
+                value = rng.choice(cands)
+                if value is target or value is dict.__getitem__(target, key):
+                    value = step
+                target[key] = value
         elif op == "sort_orphan":
             target = _resolve(orphan, rng.choice([*paths, ()]))
             if isinstance(target, Container):
