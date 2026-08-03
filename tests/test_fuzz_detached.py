@@ -71,12 +71,12 @@ _SHAPES = (
     "[[root.t]]\nx = 1\n\n[[root.t.n]]\ny = 2\n\n[dest]\nz = 0\n",
     "[root.a]\nv = { p = 1, q = [1, 2] }\n\n[dest]\nz = 0\n",
     "[root.a]\narr = [ { m = 1 }, 2 ]\n\n[dest]\nz = 0\n",
+    # Adopting out of these empties a purely dotted ancestor, which then
+    # has to grow a header of its own to stay renderable.
+    "root.c.y.x = 1\n",
+    "root.a.b.c = 1\nroot.a.b.d = 2\n\n[dest]\nz = 0\n",
+    "root.a.b.c = 1\n\n# comment\nroot.e.f = 2\n\n[dest]\nz = 0\n",
 )
-
-# Shapes where adopting part of the orphan empties a purely dotted
-# ancestor are absent: such a table does not currently render
-# itself, so the model keeps a key the text does not. The smallest is
-# `root.c.y.x = 1`; re-add them once that is fixed.
 
 
 def _chain(doc: Document) -> list[Slot]:

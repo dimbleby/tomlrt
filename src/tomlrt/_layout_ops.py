@@ -93,6 +93,22 @@ def _record_install(
         doc._install_recorders = prev  # noqa: SLF001
 
 
+@contextlib.contextmanager
+def _suspend_install_recording(doc: Document) -> Iterator[None]:
+    """Hide slots linked inside from any open install transaction.
+
+    A repair made while an install is in flight is not part of the
+    installed block, and letting it be recorded would put it in the
+    span :func:`reposition_install` moves to the saved anchor.
+    """
+    prev = doc._install_recorders  # noqa: SLF001
+    doc._install_recorders = None  # noqa: SLF001
+    try:
+        yield
+    finally:
+        doc._install_recorders = prev  # noqa: SLF001
+
+
 def _record_new_slot(doc: Document, slot: Slot) -> None:
     """Append ``slot`` to ``doc``'s active install recorder, if any."""
     recorder = doc._install_recorders  # noqa: SLF001
@@ -951,6 +967,20 @@ def _transfer_stale_owner(
         slot.entry = None
 
 
+def _bind_own_section_header(
+    c: Container, header: StructuralHeaderSlot, *, host: Container | None = None
+) -> None:
+    """File an already-positioned header as ``c``'s own physical presence."""
+    parent = c._parent  # noqa: SLF001
+    assert parent is not None
+    own_ref = SlotRef(slot=header, container=c)
+    c._refs.append(own_ref)  # noqa: SLF001
+    c._header_ref = own_ref  # noqa: SLF001
+    _extend_entry_slots(c._owner_aot_entry, header)  # noqa: SLF001
+    _file_header_binding_chain(parent, header, host=host)
+    c._body_tail = header  # noqa: SLF001
+
+
 def _materialise_empty_section_header(
     c: Container,
     primary: StructuralHeaderSlot,
@@ -966,17 +996,9 @@ def _materialise_empty_section_header(
     re-parented. The empty section therefore keeps rendering — as ``[a]``
     — exactly where the descendant header was.
     """
-    parent = c._parent  # noqa: SLF001
-    assert parent is not None
-    owner = c._owner_aot_entry  # noqa: SLF001
     header = _new_owned_section_header(c, leading=_build_section_leading(doc), doc=doc)
-    own_ref = SlotRef(slot=header, container=c)
-    c._refs.append(own_ref)  # noqa: SLF001
-    c._header_ref = own_ref  # noqa: SLF001
     _replace_primary_in_place(header, primary, doc)
-    _extend_entry_slots(owner, header)
-    _file_header_binding_chain(parent, header)
-    c._body_tail = header  # noqa: SLF001
+    _bind_own_section_header(c, header)
 
 
 def _materialise_empty_inline_table(
@@ -2852,7 +2874,6 @@ def adopt_private_section(
 
     assert value._header_ref is not None  # noqa: SLF001
     _, slots = _gather_headered_subtree_slots(value)
-    _materialise_emptied_orphan_parent(value)
     _detach_from_source_doc(value, slots)
     # Nested headers also retain bindings to the orphan's old ancestors.
     nested_headers = [s for s in slots if isinstance(s, StructuralHeaderSlot)]
@@ -2955,47 +2976,39 @@ def _detach_from_source_doc(value: Container, slots: list[Slot]) -> None:
         unlink_slot(s, src_doc, strip_new_head_leading=False)
 
 
-def _materialise_emptied_orphan_parent(value: Container) -> None:
-    """Keep the parent this move empties, as an empty section.
+def synthesise_header_for_emptied(parent: Container | None) -> None:
+    """Give a section a header of its own once a move empties it.
 
-    Moving a value out of a header-less parent can take the parent's only
-    content with it, leaving it bound but backed by nothing. The public
-    delete has the same problem and answers it by synthesising a header;
-    a move answers it the same way, so a table whose child was taken
-    still renders, and still behaves like the dict entry it remains.
+    Adopting a value away can take its parent's only content with it,
+    leaving the parent bound in its document but backed by nothing: it
+    could neither render nor accept a later write. A header restores
+    both, and — unlike the inline table the public delete would use for
+    a dotted-origin parent — leaves it able to take section children.
 
-    Runs before the block is unlinked, because the replacement takes the
-    departing primary's place in the stream.
+    Runs after the adopt, not during it: whether the parent is empty is
+    only knowable once the departing block has gone, and mutating the
+    source stream mid-move disturbs the block still being read out of it.
     """
-    doc = value._layout_root  # noqa: SLF001
-    parent = value._parent  # noqa: SLF001
+    if parent is None:
+        return
+    doc = parent._layout_root  # noqa: SLF001
     if (
         doc is None
-        or parent is None
+        or parent._refs  # noqa: SLF001
+        or parent._header_ref is not None  # noqa: SLF001
         or not parent._path  # noqa: SLF001
         or parent._inline  # noqa: SLF001
-        or parent._header_ref is not None  # noqa: SLF001
-        or len(parent) != 1
+        or len(parent) != 0
     ):
         return
-    key = value._path[-1]  # noqa: SLF001
-    # For an AoT entry, `_path` names the *AoT*, so this key may not be
-    # what `value` is bound under — and adopting an earlier entry may
-    # already have unbound it while the parent kept real content. The
-    # delete path gets this for free by looking the key up first.
-    if dict.get(parent, key) is not value:
-        return
-    refs = parent._index.get(key)  # noqa: SLF001
-    assert refs, "a bound key owns slots"
-    primary = refs[0].slot
-    if not isinstance(primary, StructuralHeaderSlot):
-        # A dotted-origin parent has no header of its own to replace,
-        # and the other materialisation turns the table inline
-        # (``a = {}``) — right for a delete, where the key is going
-        # away, but not here, where the table stays live and may still
-        # be given section children.
-        return
-    _materialise_empty_section_header(parent, primary, doc)
+    host, tail = _header_host_and_tail(parent)
+    header = _new_owned_section_header(
+        parent, leading=_build_section_leading(doc), doc=doc
+    )
+    # The repair is not part of whatever install is in flight above it.
+    with _suspend_install_recording(doc):
+        _splice_block_after([header], tail, doc)
+    _bind_own_section_header(parent, header, host=host)
 
 
 def adopt_private_implicit(
@@ -3024,7 +3037,6 @@ def adopt_private_implicit(
     # slots; a slotless one is synthesised instead.
     assert value._refs, "implicit orphan has no slots"  # noqa: SLF001
     slots = _owned_slots_from(value, value._refs[0].slot)  # noqa: SLF001
-    _materialise_emptied_orphan_parent(value)
     _detach_from_source_doc(value, slots)
     _unfile_stale_same_orphan_ancestors(value, slots)
 
@@ -3055,6 +3067,14 @@ def adopt_private_implicit(
         _ensure_leading_blank_line(old_head, doc)
         _terminate_unless_tail(slots[-1], doc)
     else:
+        # A block that leads with a header carries a separator sized for
+        # the orphan it came from, so it is resized for the run it is
+        # joining — the same fix-up the header-bearing adopt makes.
+        # Dotted KVs take their spacing from that run already, and a
+        # block going to the head is separated from the old head instead.
+        first = slots[0]
+        if isinstance(first, StructuralHeaderSlot):
+            _retarget_header_separator(first, _build_section_leading(doc))
         _splice_block_after(slots, anchor, doc)
     # value's own subtree refs travelled intact; re-file only the ancestor
     # binding refs the delete scrubbed: dotted KVs hosted at ``host``

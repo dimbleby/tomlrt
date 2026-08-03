@@ -681,6 +681,7 @@ class Container(_View, dict[str, Any]):
         # cloned into this document, so leaving the orphan pointing at
         # them would make a later adopt of the orphan gather slots that
         # live in the destination. The section adopt paths do the same.
+        emptied = value._parent  # noqa: SLF001
         _layout_ops.unfile_orphan_binding(value)
         existing_entries: list[Table] = list(value)
         list.clear(value)
@@ -703,6 +704,7 @@ class Container(_View, dict[str, Any]):
             _reset_table_for_rehome(entry_table)
             if not preserve_cst:
                 _layout_ops.add_aot_entry(value, None, rehome=entry_table)
+        _layout_ops.synthesise_header_for_emptied(emptied)
 
     def _attach_section(self, key: str, value: Container) -> None:
         """Install ``value`` (a section-flavoured Table) under ``key``.
@@ -744,10 +746,12 @@ class Container(_View, dict[str, Any]):
             # document so identity and trivia both survive. A header-bearing
             # section (an AoT entry is normalised to a plain section) moves
             # its block; a header-less implicit section moves its dotted KVs.
+            emptied = value._parent  # noqa: SLF001
             if value._header_ref is not None:  # noqa: SLF001
                 _layout_ops.adopt_private_section(self, key, value)
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
+            _layout_ops.synthesise_header_for_emptied(emptied)
             return
         # No slots to move — either never attached, or an orphan emptied by
         # adopting its last child away. The latter still points at its
@@ -757,6 +761,10 @@ class Container(_View, dict[str, Any]):
         assert isinstance(value, Table), (
             "internal: detached section source expected to be a Table"
         )
+        # No repair of the source's parent is needed here, unlike the
+        # moves above: a value with no slots contributes no text, so
+        # taking it away cannot cost its parent the spelling it renders
+        # under.
         if value._layout_root is not None:  # noqa: SLF001
             # Unbind it from the orphan before the reset severs the link,
             # or the orphan is left naming a value that now lives here.
