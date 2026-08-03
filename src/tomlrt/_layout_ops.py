@@ -995,7 +995,15 @@ def _materialise_empty_inline_table(
     assert parent is not None
     owner = c._owner_aot_entry  # noqa: SLF001
 
-    host = _nearest_header_host(c)
+    # Take the host from the slot being replaced rather than looking for
+    # the nearest header: inside a private orphan the container standing
+    # in for the host carries no header of its own, so a header search
+    # would climb straight past it.
+    host = c
+    while host._path != primary.host_path:  # noqa: SLF001
+        nxt = host._parent  # noqa: SLF001
+        assert nxt is not None, "KV host must be an ancestor of its binding"
+        host = nxt
     key_path = c._path[len(host._path) :]  # noqa: SLF001
 
     val = InlineTableValue()
@@ -1030,6 +1038,72 @@ def _materialise_empty_inline_table(
     c._body_tail = None  # noqa: SLF001
 
     _extend_entry_slots(owner, kv)
+
+
+def _root_orphan_subtree(
+    orphan: Document, val: Container | AoT, slots: Iterable[Slot]
+) -> None:
+    """Give a transplanted subtree a real home inside ``orphan``.
+
+    The subtree keeps the path it had in the document it left, because
+    its slots still spell that path. Binding it at that same path under
+    ``orphan`` — synthesising the implicit tables above it — makes the
+    private document self-consistent: every ``_parent`` chain ends at
+    its own root, and no walk can wander back into the document the
+    subtree was popped from.
+
+    The new ancestors need the ref projections the builder would have
+    given them, or the caches would be empty where the dict tree is not:
+    headers bind at every path ancestor, while a KV binds at its host
+    and then down its dotted key, never above it.
+    """
+    from tomlrt._array import AoT as AoTType  # noqa: PLC0415
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    path = val._path  # noqa: SLF001
+    parent: Container = orphan
+    for depth, part in enumerate(path[:-1], start=1):
+        step = Table()
+        step._wire(  # noqa: SLF001
+            layout_root=orphan,
+            parent=parent,
+            path=path[:depth],
+            owner=None,
+        )
+        dict.__setitem__(parent, part, step)
+        parent = step
+    val._parent = parent  # noqa: SLF001
+    dict.__setitem__(parent, path[-1], val)
+    if isinstance(val, AoTType):
+        # An entry's parent is the container holding the AoT, not the
+        # AoT itself, so entries need the same re-parenting.
+        for entry in val:
+            entry._parent = parent  # noqa: SLF001
+
+    # ``chain`` is the run of new ancestors, outermost first; a KV hosted
+    # at one of them binds from there down.
+    chain: list[Container] = []
+    node: Container | None = parent
+    while node is not None:
+        chain.append(node)
+        node = node._parent  # noqa: SLF001
+    chain.reverse()
+    by_path = {c._path: c for c in chain}  # noqa: SLF001
+
+    for slot in slots:
+        if isinstance(slot, StructuralHeaderSlot):
+            for anc in chain:
+                record_ref(anc, slot)
+            continue
+        assert isinstance(slot, KVSlot)
+        host = by_path.get(slot.host_path)
+        if host is None:
+            continue  # hosted inside the subtree; its refs travelled with it.
+        # A KV binds at its host and then down its dotted key; the rest
+        # of that descent is inside the subtree and already filed.
+        for anc in chain[chain.index(host) :]:
+            record_ref(anc, slot)
+            maybe_advance_body_tail(anc, slot)
 
 
 def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> None:
@@ -1202,6 +1276,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
             it._layout_root = orphan  # noqa: SLF001
         for ar in displaced_arrays:
             ar._layout_root = orphan  # noqa: SLF001
+        _root_orphan_subtree(orphan, val, ordered_for_transplant)
     else:
         # No orphan (e.g. a top-level inline value): reset so a held
         # reference reports detached and can re-attach cleanly.
@@ -2720,7 +2795,7 @@ def _unfile_stale_same_orphan_ancestors(
     """
     old_parent = value._parent  # noqa: SLF001
     if old_parent is None or old_parent._layout_root is not value._layout_root:  # noqa: SLF001
-        return  # `value` is the orphan's own root; nothing to clean up.
+        return  # nothing above `value` in its own document to scrub.
     # `_parent` is always the immediate path parent, so the key to drop is
     # the last path component. It may already be gone: an AoT entry's
     # `_path` names the *AoT*, not the entry, so adopting one entry

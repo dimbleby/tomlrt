@@ -5887,3 +5887,123 @@ def test_adopt_emptied_aot_from_orphan() -> None:
         """)
     assert _reparses(out) == doc.to_dict()
     assert doc.to_dict() == {"m0": [], "dest": {"z": 0}}
+
+
+def test_write_to_popped_dotted_orphan_then_adopt_it() -> None:
+    """A popped dotted subtree accepts writes and adopts back intact.
+
+    The orphan has no header of its own, so the write has to find a
+    host inside the orphan rather than in the document it was popped
+    from — and the adopted block must carry both the original dotted
+    keys and the new one.
+    """
+    doc = tomlrt.loads(
+        td("""
+        root.a.x = 1
+        root.a.y = 2
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["k0"] = 0
+    orphan["n1"] = 1
+    doc["m2"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        k0 = 0
+        m2.a.x = 1
+        m2.a.y = 2
+        m2.n1 = 1
+
+        [dest]
+        z = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_write_to_popped_orphan_then_adopt_a_child() -> None:
+    """Writing to an orphan leaves its children adoptable."""
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [root.a]
+        b.c = 3
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan["n0"] = 0
+    doc["m1"] = orphan["a"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [m1]
+        b.c = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert orphan.to_dict() == {"t": [{"x": 1}], "n0": 0}
+
+
+def test_delete_dotted_leaf_inside_a_popped_orphan() -> None:
+    """A dotted binding inside an orphan can be emptied in place.
+
+    Materialising the emptied table needs the KV's own host, which
+    inside an orphan is a stand-in container carrying no header — so
+    looking for the nearest header instead climbs straight past it.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        b.c.d = 1
+        q = 0
+        """)
+    )
+    orphan = doc["a"].pop("b")
+    orphan["c"].pop("d")
+    assert orphan.to_dict() == {"c": {}}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        q = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+    doc["back"] = orphan
+    readopted = tomlrt.dumps(doc)
+    assert _reparses(readopted) == doc.to_dict()
+
+
+def test_write_to_orphan_aot_entry_after_its_sibling_is_adopted() -> None:
+    """An orphan AoT entry stays writable once a sibling is adopted away.
+
+    Adopting one entry unbinds the whole AoT key from the orphan, so the
+    indent-inheriting lookup for the remaining entry must cope with its
+    key no longer being bound in its parent.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        [[root.t]]
+        x = 2
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    first = orphan.aot("t")[0]
+    doc["m"] = orphan.aot("t")[1]
+    first["q"] = 9
+
+    assert dict(first) == {"q": 9}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m]
+        x = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
