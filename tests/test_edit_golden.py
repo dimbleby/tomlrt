@@ -6340,8 +6340,7 @@ def test_move_one_entry_out_of_an_orphan_aot_keeps_the_rest() -> None:
 
     An entry's path names the array, so unbinding on that path would
     take the survivors' text with it while dropping them from the
-    model. (The leading blank line is a separate, pre-existing artefact
-    of splicing a block onto the document head.)
+    model.
     """
     doc = tomlrt.loads(
         td("""
@@ -6365,7 +6364,6 @@ def test_move_one_entry_out_of_an_orphan_aot_keeps_the_rest() -> None:
     doc["back"] = orphan
     out = tomlrt.dumps(doc)
     assert out == td("""
-
         [[back.t]]
         x = 2
 
@@ -6458,3 +6456,66 @@ def test_adopting_a_whole_orphan_aot_leaves_no_text_behind() -> None:
         [back]
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_adopt_onto_the_document_head_needs_no_separator() -> None:
+    """A block becoming the head has nothing before it to be spaced from.
+
+    Whatever separator it carried out of the orphan would otherwise
+    open the document with a blank line.
+    """
+    src = td("""
+        root.a = 1
+
+        [root.c.y]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    orphan = doc.pop("root")
+    dest = tomlrt.loads("[dest]\nz = 0\n")
+    dest["moved"] = orphan["c"]
+
+    out = tomlrt.dumps(dest)
+    assert out == td("""
+        [moved.y]
+        x = 1
+
+        [dest]
+        z = 0
+        """)
+    assert _reparses(out) == dest.to_dict()
+
+
+def test_adopt_a_dotted_block_onto_the_head_keeps_its_own_comment() -> None:
+    """Losing the separator must not cost the block its comment block.
+
+    A comment above a blank line belongs to the key beneath it, so it
+    travels with that key. Only the blank lines are positional, and
+    only those go when the block becomes the document head — a header
+    sheds its comment block on every adopt, but a KV owns its own.
+    """
+    doc = tomlrt.loads(
+        td("""
+        fruit.apple.color = "red"
+        # owned by taste.sweet
+
+        fruit.apple.taste.sweet = true
+        """)
+    )
+    orphan = doc.pop("fruit")
+    dest = tomlrt.loads("[dest]\nz = 0\n")
+    dest["moved"] = orphan.table("apple").table("taste")
+
+    out = tomlrt.dumps(dest)
+    assert out == td("""
+        # owned by taste.sweet
+
+        moved.sweet = true
+
+        [dest]
+        z = 0
+        """)
+    assert _reparses(out) == dest.to_dict()
+    assert dict(dest.table("moved").leading_block) == {
+        "sweet": ("owned by taste.sweet", None)
+    }

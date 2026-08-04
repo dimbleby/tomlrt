@@ -2097,18 +2097,15 @@ def _split_leading_for_reorder(slot: Slot) -> tuple[str, str]:
     return leading[:cut], leading[cut:]
 
 
-def _retarget_header_separator(
-    header: StructuralHeaderSlot,
-    new_separator: str,
-) -> None:
-    """Replace ``header.leading``'s positional prefix with ``new_separator``.
+def _retarget_separator(slot: Slot, new_separator: str) -> None:
+    """Replace ``slot.leading``'s positional prefix with ``new_separator``.
 
     See :func:`_split_leading_structural`: the slot's attached
     comments and own indent are kept; the source's positional
     prefix is dropped.
     """
-    _positional, remainder = _split_leading_structural(header.leading)
-    header.leading = new_separator + remainder
+    _positional, remainder = _split_leading_structural(slot.leading)
+    slot.leading = new_separator + remainder
 
 
 def _build_section_leading(doc: Document) -> str:
@@ -2493,9 +2490,9 @@ def _install_cloned_aot_entry(
     assert cloned_header is not None
 
     if ordinal == 0:
-        _retarget_header_separator(cloned_header, _build_section_leading(doc))
+        _retarget_separator(cloned_header, _build_section_leading(doc))
     elif rewrite_separator:
-        _retarget_header_separator(cloned_header, _aot_separator(aot, doc))
+        _retarget_separator(cloned_header, _aot_separator(aot, doc))
     # else: keep source leading verbatim (bulk-clone past entry 0).
 
     append_host, append_anchor = _aot_append_position(aot)
@@ -2557,7 +2554,7 @@ def _install_cloned_section(
     # its own table's header in valid TOML.
     first = cloned_slots[0]
     assert isinstance(first, StructuralHeaderSlot)
-    _retarget_header_separator(first, _build_section_leading(doc))
+    _retarget_separator(first, _build_section_leading(doc))
     return _finish_cloned_section(
         parent,
         key,
@@ -2908,7 +2905,7 @@ def adopt_private_section(
     # A forward-declared descendant may physically precede value's header.
     first = slots[0]
     assert isinstance(first, StructuralHeaderSlot)
-    _retarget_header_separator(first, _build_section_leading(doc))
+    _retarget_separator(first, _build_section_leading(doc))
     _splice_block_after(slots, _child_header_anchor(dest_parent), doc)
     _extend_header_bindings_to_root(dest_parent, slots)
     dict.__setitem__(dest_parent, key, value)
@@ -3090,6 +3087,16 @@ def adopt_private_implicit(
     if anchor is None and doc._head is not None:  # noqa: SLF001
         # Appending would inherit the scope of an unrelated later header.
         old_head = doc._head  # noqa: SLF001
+        # The block is becoming the head, and a head has nothing before
+        # it to be separated from: the blank lines it carried out of the
+        # orphan go, and the old head is separated from it instead. A
+        # header sheds an above-blank comment block with them, as it
+        # does on every other adopt; a KV owns its one, so that stays.
+        first = slots[0]
+        if isinstance(first, StructuralHeaderSlot):
+            _retarget_separator(first, "")
+        else:
+            first.leading = _split_leading_for_reorder(first)[1]
         insert_before_head(slots[0], doc)
         for prev, s in itertools.pairwise(slots):
             insert_after(prev, s, doc)
@@ -3103,7 +3110,7 @@ def adopt_private_implicit(
         # block going to the head is separated from the old head instead.
         first = slots[0]
         if isinstance(first, StructuralHeaderSlot):
-            _retarget_header_separator(first, _build_section_leading(doc))
+            _retarget_separator(first, _build_section_leading(doc))
         _splice_block_after(slots, anchor, doc)
     # value's own subtree refs travelled intact; re-file only the ancestor
     # binding refs the delete scrubbed: dotted KVs hosted at ``host``
