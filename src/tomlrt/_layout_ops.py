@@ -2777,23 +2777,27 @@ def clone_document_as_section(
     )
 
 
-def unfile_orphan_binding(value: Container | AoT) -> None:
-    """Scrub a private-orphan ``value``'s binding from its old ancestors.
+def detach_aot_from_orphan(value: AoT) -> None:
+    """Cut a private-orphan AoT loose from the document it lives in.
 
-    Gathers everything the subtree owns and hands it to
-    :func:`_unfile_stale_same_orphan_ancestors`; a genuinely detached
-    source (no parent) is a no-op.
+    Its entries are cloned into the destination rather than moved, so
+    the orphan must stop naming them: otherwise a later adopt of the
+    orphan would gather slots that now live in the destination. An
+    array emptied by :meth:`AoT.pop` still renders as ``k = []`` and
+    has no entry left to carry that slot away, so it goes here too.
 
-    Used by the AoT attach path. The two section adopt paths call the
-    inner function directly with the narrower slot set each can prove
-    sufficient — walking their whole subtree instead measured slower
-    for no behavioural difference.
+    A genuinely detached source has nothing to cut loose from.
     """
-    if value._parent is None or value._layout_root is None:  # noqa: SLF001
+    if value._layout_root is None:  # noqa: SLF001
         return
+    if not value:
+        ref = _empty_aot_placeholder_ref(value)
+        assert ref is not None, "an attached empty AoT renders as `k = []`"
+        _detach_from_source_doc(value, [ref.slot])
     owned: set[Slot] = set()
     _collect_subtree(value, [], [], owned.add)
     _unfile_stale_same_orphan_ancestors(value, owned)
+    value._unbind_from_document()  # noqa: SLF001
 
 
 def _unfile_stale_same_orphan_ancestors(
@@ -2991,43 +2995,31 @@ def unlink_cloned_orphan_entry(entry: Container) -> None:
     _detach_from_source_doc(entry, slots)
 
 
-def unlink_emptied_orphan_aot(value: AoT) -> None:
-    """Unlink the ``k = []`` slot an emptied orphan array still owns.
-
-    An array emptied by :meth:`AoT.pop` keeps its key bound and renders
-    ``k = []``, which is what its model says at that point. Moving it
-    out of the orphan unbinds the key, and with no entries left there is
-    no departure to take that slot with it.
-    """
-    ref = _empty_aot_placeholder_ref(value)
-    _detach_from_source_doc(value, [ref.slot] if ref is not None else [])
-
-
 def synthesise_header_for_emptied(parent: Container | None) -> None:
-    """Give a section a header of its own once a move empties it.
+    """Give a section a header of its own if it has been emptied.
 
-    Adopting a value away can take its parent's only content with it,
-    leaving the parent bound in its document but backed by nothing: it
-    could neither render nor accept a later write. A header restores
-    both, and — unlike the inline table the public delete would use for
-    a dotted-origin parent — leaves it able to take section children.
+    A parent left bound in its document but backed by nothing can
+    neither render nor accept a later write. A header restores both,
+    and — unlike the inline table the public delete would use for a
+    dotted-origin parent — leaves it able to take section children.
 
-    Runs after the adopt, not during it: whether the parent is empty is
-    only knowable once the departing block has gone, and mutating the
-    source stream mid-move disturbs the block still being read out of it.
+    Does nothing for a parent that is not in that state.
     """
     if parent is None:
         return
     doc = parent._layout_root  # noqa: SLF001
+    # A detached parent has no stream to render into; the document root
+    # renders whatever it holds; and a parent that still owns a slot or
+    # a child was not emptied. An inline parent cannot arrive here: a
+    # section value never lived inside one.
     if (
         doc is None
-        or parent._refs  # noqa: SLF001
-        or parent._header_ref is not None  # noqa: SLF001
         or not parent._path  # noqa: SLF001
-        or parent._inline  # noqa: SLF001
+        or parent._refs  # noqa: SLF001
         or len(parent) != 0
     ):
         return
+    assert not parent._inline  # noqa: SLF001
     host, tail = _header_host_and_tail(parent)
     header = _new_owned_section_header(
         parent, leading=_build_section_leading(doc), doc=doc
