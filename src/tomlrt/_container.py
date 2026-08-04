@@ -7,6 +7,7 @@ through `_index`, `_refs`, `_header_ref`, and `_body_tail`.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import sys
 from collections.abc import Mapping
@@ -72,7 +73,7 @@ from tomlrt._values import (
 from tomlrt._view import _View
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, MutableMapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, MutableMapping, Sequence
 
     from _typeshed import SupportsKeysAndGetItem, SupportsRichComparison
     from typing_extensions import Self
@@ -864,16 +865,20 @@ class Container(_View, dict[str, Any]):
         if len(args) > 1:
             msg = f"update expected at most 1 argument, got {len(args)}"
             raise TypeError(msg)
+        items: list[tuple[str, Any]] = []
         if args:
             other = args[0]
             if hasattr(other, "keys"):
-                for k in other.keys():  # noqa: SIM118
-                    self[k] = other[k]
+                items = [(k, other[k]) for k in other.keys()]  # noqa: SIM118
             else:
-                for k, v in other:
-                    self[k] = v
-        for k, v in kwargs.items():
-            self[k] = v
+                items = list(other)
+        items.extend(kwargs.items())
+        # Updating from a mapping must not consume it, and reading it
+        # once up front keeps an install that unbinds one of its keys
+        # from cutting the read short.
+        with _sources_kept_intact(v for _, v in items):
+            for k, v in items:
+                self[k] = v
 
     @override
     def setdefault(self, key: str, default: Any = None) -> Any:
@@ -1515,8 +1520,15 @@ class Document(Container):
         self._layout_root = self
         if data is not None:
             validated = _validate_mapping(data, label="Document data argument")
-            for k, v in validated.items():
-                self[k] = _coerce_for_document_init(v)
+            # Building from data must not disturb it, so the values are
+            # read out in one go and their documents are presented as
+            # someone else's: an install copies from a live source but
+            # moves out of a private one, and a caller's popped subtree
+            # is theirs to keep.
+            items = list(validated.items())
+            with _sources_kept_intact(v for _, v in items):
+                for k, v in items:
+                    self[k] = _coerce_for_document_init(v)
 
     @property
     @override
@@ -1845,6 +1857,47 @@ def _snapshot_for_overlapping_install(parent: Container, key: str, value: Any) -
     if isinstance(value, AoT):
         return AoT(value.to_list())
     return Document(data=value.to_dict())
+
+
+def _collect_private_roots(value: Any, found: dict[int, Document]) -> None:
+    """Record the private documents any view within ``value`` belongs to.
+
+    A source can be reached through plain mappings and lists that are
+    only wrappers, so the whole shape is walked rather than its top
+    level: those wrappers are rebuilt on the way in, but the views
+    inside them are installed as they are.
+    """
+    if isinstance(value, (Container, AoT, Array)):
+        root = value._layout_root  # noqa: SLF001
+        if root is not None and root._is_private:  # noqa: SLF001
+            found[id(root)] = root
+    if isinstance(value, Mapping):
+        for sub in value.values():
+            _collect_private_roots(sub, found)
+    elif isinstance(value, list):
+        for sub in value:
+            _collect_private_roots(sub, found)
+
+
+@contextlib.contextmanager
+def _sources_kept_intact(values: Iterable[Any]) -> Iterator[None]:
+    """Present any private source document as one that must be copied.
+
+    An install moves out of a private orphan and clones from anything
+    else. Only the former damages the source, so for the duration the
+    orphans reachable from ``values`` claim to be documents in their
+    own right.
+    """
+    roots: dict[int, Document] = {}
+    for value in values:
+        _collect_private_roots(value, roots)
+    for root in roots.values():
+        root._is_private = False  # noqa: SLF001
+    try:
+        yield
+    finally:
+        for root in roots.values():
+            root._is_private = True  # noqa: SLF001
 
 
 def _coerce_for_document_init(v: Any) -> Any:
