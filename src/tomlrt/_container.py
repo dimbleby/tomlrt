@@ -749,28 +749,21 @@ class Container(_View, dict[str, Any]):
                 _layout_ops.adopt_private_section(self, key, value)
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
+            # Only knowable now: the departing block had to go before
+            # its old parent could be seen to be empty.
             _layout_ops.synthesise_header_for_emptied(emptied)
             return
-        # No slots to move, so the source was never attached and is
-        # synthesised. A Container with no layout root can't be a
-        # Document (which is always its own root), so it is a Table.
+        # A source with no slots was never attached: it contributes no
+        # text, so taking it away costs its parent nothing and it is
+        # synthesised at its new home. A section inside a private orphan
+        # always owns a slot, so what arrives here is a detached factory
+        # — which may hold live children that must not be re-rooted.
         assert isinstance(value, Table), (
             "internal: detached section source expected to be a Table"
         )
-        # A section rooted in a private orphan always owns at least one
-        # slot — a parent emptied by a move gets a header synthesised for
-        # it, filed on the parent and every ancestor, and the reset that
-        # drops `_refs` drops `_layout_root` in the same breath. So what
-        # arrives here is a genuinely detached factory, which may hold
-        # live children that the reset must not descend into and re-root.
-        # `adopt_private_implicit` asserts the other half of this.
         assert value._layout_root is None, (  # noqa: SLF001
             "internal: a private-orphan section owns slots"
         )
-        # No repair of the source's parent is needed here, unlike the
-        # moves above: a value with no slots contributes no text, so
-        # taking it away cannot cost its parent the spelling it renders
-        # under.
         _layout_ops.attach_section_at(self, (key,), value)
 
     def _replace_scalar(self, key: str, value: Scalar) -> None:
@@ -935,11 +928,10 @@ class Container(_View, dict[str, Any]):
             new_order = pure_leaves + mixed + pure_sections
         if new_order == current:
             return
-        if self._inline:
+        if self._inline and self._kind is not _Kind.INLINE_FACTORY:
             # A detached factory table has no backing inline value yet;
             # dict order alone decides what is emitted when it attaches.
-            if self._kind is not _Kind.INLINE_FACTORY:
-                _inline_ops.reorder_inline(self, new_order)
+            _inline_ops.reorder_inline(self, new_order)
         elif self._layout_root is not None:
             _layout_ops.reorder_container(self, new_order)
         _reorder_dict_storage(self, new_order)
