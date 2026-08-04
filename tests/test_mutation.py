@@ -7832,6 +7832,65 @@ def test_demote_synthetic_placeholder_inside_aot_entry_updates_membership() -> N
     assert _reparses(out) == doc.to_dict()
 
 
+def test_aot_clone_append_past_first_entry_keeps_trailing_placeholder() -> None:
+    """A placeholder header with nothing after it survives an AoT append.
+
+    Overwriting ``[fruit.orange]`` with a scalar synthesises a
+    ``[fruit]`` header at the document tail, and deleting the scalar
+    leaves it an empty placeholder. The appended entry anchors after its
+    predecessor's subtree — ahead of that placeholder — so there is no
+    successor to hand the placeholder's trivia to and it stays put.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[fruit.k99]]
+        v = 1
+
+        [animal]
+
+        [fruit.orange]
+        """)
+    )
+    doc["fruit"]["orange"] = "str"
+    del doc["fruit"]["orange"]
+    doc.aot("fruit.k99").append(doc.table("animal"))
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[fruit.k99]]
+        v = 1
+
+        [[fruit.k99]]
+
+        [animal]
+
+        [fruit]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_append_past_first_entry_demotes_emptied_placeholder() -> None:
+    """A placeholder that empties after entry 0 is demoted by a later entry.
+
+    Every ``[[path]]`` header makes a synthetic placeholder parent
+    redundant, not just the first: the placeholder here still had a KV
+    body when the AoT was created.
+    """
+    doc = tomlrt.loads("")
+    doc["tool"] = Table.section({"a": 1})
+    doc["tool"]["poetry"] = tomlrt.AoT([{"x": 1}])
+    del doc["tool"]["a"]
+    doc.aot("tool.poetry").append({"x": 2})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[tool.poetry]]
+        x = 1
+
+        [[tool.poetry]]
+        x = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 # ---------------------------------------------------------------------------
 # Non-tail AoT append / section creation
 # ---------------------------------------------------------------------------

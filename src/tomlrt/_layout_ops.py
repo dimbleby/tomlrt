@@ -2016,8 +2016,15 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     # header or EOF. Every Slot is either a KVSlot or a
     # StructuralHeaderSlot, so the body is non-empty iff the very
     # next slot is a KVSlot.
+    #
+    # A placeholder that ends the document keeps its header: demotion
+    # hands its leading trivia to the successor, and with none there is
+    # nowhere to put it. That happens when the block whose attachment
+    # prompted the demote landed ahead of the placeholder — an AoT
+    # append past entry 0 anchors after its predecessor's subtree, which
+    # can precede a placeholder synthesised at the document tail.
     successor = header._next  # noqa: SLF001
-    if isinstance(successor, KVSlot):
+    if successor is None or isinstance(successor, KVSlot):
         return
     layout_root = parent._layout_root  # noqa: SLF001
     from tomlrt._container import Document  # noqa: PLC0415
@@ -2032,9 +2039,6 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     # *from the header* — now redundant — so strip it first, otherwise
     # the transfer stacks a second blank line before the successor.
     unlink_slot(header, doc, strip_new_head_leading=True)
-    # Every caller demotes right after splicing a child header in behind
-    # this one, so the placeholder always has a successor to hand to.
-    assert successor is not None
     _strip_leading_blank_lines(successor)
     successor.leading = header.leading + successor.leading
     parent._body_tail = None  # noqa: SLF001
@@ -2278,11 +2282,10 @@ def add_aot_entry(
     _file_header_binding_chain(parent, header, host=append_host)
     list.append(aot, entry_table)
 
-    # First entry under a synthetic placeholder section makes the
-    # parent header redundant — the dotted-implicit anchor lives
-    # entirely in `[[tool.list]]`.
-    if ordinal == 0:
-        _maybe_demote_synthetic_empty_header(parent)
+    # An entry header under a synthetic placeholder section makes that
+    # placeholder redundant — the dotted-implicit anchor lives entirely
+    # in `[[tool.list]]`.
+    _maybe_demote_synthetic_empty_header(parent)
 
     for k, v in body_items:
         if not (is_scalar(v) or _is_synth_inline(v)):
