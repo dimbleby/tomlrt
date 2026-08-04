@@ -678,19 +678,10 @@ class Container(_View, dict[str, Any]):
         # trivia, nested sub-sections, and inter-entry separators.
         # The generic add_aot_entry(rehome=) path rebuilds from dict
         # storage and drops that CST.
-        # Scrub the orphan's own binding first: the entries below are
-        # cloned into this document, so leaving the orphan pointing at
-        # them would make a later adopt of the orphan gather slots that
-        # live in the destination. The section adopt paths do the same.
         emptied = value._parent  # noqa: SLF001
         existing_entries: list[Table] = list(value)
-        if not existing_entries and src_root is not None:
-            # An orphan array emptied by `pop` still owns the `k = []`
-            # slot it renders as, and has no entry left to carry it away.
-            _layout_ops.unlink_emptied_orphan_aot(value)
-        _layout_ops.unfile_orphan_binding(value)
+        _layout_ops.detach_aot_from_orphan(value)
         list.clear(value)
-        value._unbind_from_document()  # noqa: SLF001
         attached = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, attached)
         for entry_table in existing_entries:
