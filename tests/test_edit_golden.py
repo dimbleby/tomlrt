@@ -5686,11 +5686,11 @@ def test_adopt_orphan_aot_then_the_orphan_itself() -> None:
 
 
 def test_adopt_two_entries_of_the_same_orphan_aot() -> None:
-    """An AoT entry's path names the AoT, so its key unbinds only once.
+    """Moving an entry out of an orphan AoT removes it from that AoT.
 
-    Adopting the first entry drops the whole ``t`` binding from the
-    orphan; adopting a second entry must not expect to find it still
-    there.
+    An entry's path names the AoT rather than itself, so the binding has
+    to survive the departure of any one entry: the array shrinks, the
+    survivors stay bound, and only the last one to leave unbinds ``t``.
     """
     doc = tomlrt.loads(
         td("""
@@ -5707,7 +5707,9 @@ def test_adopt_two_entries_of_the_same_orphan_aot() -> None:
     orphan = doc.pop("root")
     entries = orphan.aot("t")
     doc["m0"] = entries[0]
-    doc["m1"] = entries[1]
+    assert len(entries) == 1
+    doc["m1"] = entries[0]
+    assert len(entries) == 0
     out = tomlrt.dumps(doc)
     assert out == td("""
         [dest]
@@ -5723,7 +5725,11 @@ def test_adopt_two_entries_of_the_same_orphan_aot() -> None:
 
 
 def test_adopt_orphan_aot_entry_then_the_whole_aot() -> None:
-    """The AoT itself may be adopted after one of its entries."""
+    """The AoT itself may be adopted after one of its entries.
+
+    It carries only what it still holds: the entry taken first has
+    already moved, so it is not cloned a second time.
+    """
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -5746,9 +5752,6 @@ def test_adopt_orphan_aot_entry_then_the_whole_aot() -> None:
         z = 0
 
         [m0]
-        x = 1
-
-        [[m1]]
         x = 1
 
         [[m1]]
@@ -6180,12 +6183,11 @@ def test_adopt_the_only_child_of_a_headered_orphan_section() -> None:
 
 
 def test_adopt_both_entries_of_an_orphan_aot_beside_a_dotted_sibling() -> None:
-    """An AoT entry's path names the AoT, not the entry.
+    """An AoT emptied entry-by-entry must not orphan its dotted sibling.
 
-    Adopting the first entry unbinds the whole key, so the second must
-    not read that as "the parent is now empty" — the parent still owns
-    a dotted key of its own, and giving it a header would declare it
-    twice.
+    The last entry to leave unbinds ``t``, and the parent must not read
+    that as "the parent is now empty" — it still owns a dotted key of
+    its own, and giving it a header would declare it twice.
     """
     doc = tomlrt.loads(
         td("""
@@ -6202,7 +6204,7 @@ def test_adopt_both_entries_of_an_orphan_aot_beside_a_dotted_sibling() -> None:
     orphan = doc.pop("root")
     entries = orphan["c"].aot("t")
     doc["m0"] = entries[0]
-    doc["m1"] = entries[1]
+    doc["m1"] = entries[0]
     doc["back"] = orphan
 
     out = tomlrt.dumps(doc)
@@ -6329,5 +6331,130 @@ def test_repair_of_an_emptied_parent_does_not_move_an_in_place_overwrite() -> No
 
         [dest]
         w = 0
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_move_one_entry_out_of_an_orphan_aot_keeps_the_rest() -> None:
+    """Taking one entry shrinks the array; it does not unbind it.
+
+    An entry's path names the array, so unbinding on that path would
+    take the survivors' text with it while dropping them from the
+    model. (The leading blank line is a separate, pre-existing artefact
+    of splicing a block onto the document head.)
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [[root.t]]
+        x = 2
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    entries = orphan.aot("t")
+    doc["m0"] = entries[0]
+
+    assert [dict(e) for e in entries] == [{"x": 2}]
+    assert orphan.to_dict() == {"t": [{"x": 2}]}
+
+    doc["back"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+
+        [[back.t]]
+        x = 2
+
+        [dest]
+        z = 0
+
+        [m0]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_move_the_last_entry_out_of_an_orphan_aot_detaches_it() -> None:
+    """An array emptied by a move stops being a view onto the orphan.
+
+    Its key is gone from the model, so a caller still holding the array
+    must not be able to write through it into a document that no longer
+    names it.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    entries = orphan.aot("t")
+    doc["m"] = entries[0]
+
+    assert orphan.to_dict() == {}
+    entries.add({"y": 2})
+    assert orphan.to_dict() == {}
+
+    doc["later"] = entries
+    doc["back"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [m]
+        x = 1
+
+        [[later]]
+        y = 2
+
+        [back]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_adopting_a_whole_orphan_aot_leaves_no_text_behind() -> None:
+    """The entries are copied out, so the originals leave the orphan.
+
+    Left linked they would be text the orphan's model no longer claims,
+    and adopting the orphan afterwards would carry them along twice.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [[root.t]]
+        x = 2
+
+        [dest]
+        z = 0
+        """)
+    )
+    orphan = doc.pop("root")
+    doc["m"] = orphan.aot("t")
+
+    assert orphan.to_dict() == {}
+
+    doc["back"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        z = 0
+
+        [[m]]
+        x = 1
+
+        [[m]]
+        x = 2
+
+        [back]
         """)
     assert _reparses(out) == doc.to_dict()

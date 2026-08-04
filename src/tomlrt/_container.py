@@ -685,9 +685,7 @@ class Container(_View, dict[str, Any]):
         _layout_ops.unfile_orphan_binding(value)
         existing_entries: list[Table] = list(value)
         list.clear(value)
-        value._layout_root = None  # noqa: SLF001
-        value._parent = None  # noqa: SLF001
-        value._path = ()  # noqa: SLF001
+        value._unbind_from_document()  # noqa: SLF001
         attached = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, attached)
         for entry_table in existing_entries:
@@ -701,6 +699,10 @@ class Container(_View, dict[str, Any]):
                     dst_path=value._path,  # noqa: SLF001
                     preserve_source_separator=True,
                 )
+                # The copy is the one that lives on, so the original
+                # leaves the orphan's stream rather than lingering as
+                # text nothing accounts for.
+                _layout_ops.unlink_cloned_orphan_entry(entry_table)
             _reset_table_for_rehome(entry_table)
             if not preserve_cst:
                 _layout_ops.add_aot_entry(value, None, rehome=entry_table)
@@ -1684,9 +1686,7 @@ def _reset_table_for_rehome(t: Container) -> None:
         elif isinstance(child, AoT):
             for entry in list.__iter__(child):
                 _reset_table_for_rehome(entry)
-            child._layout_root = None  # noqa: SLF001
-            child._parent = None  # noqa: SLF001
-            child._path = ()  # noqa: SLF001
+            child._unbind_from_document()  # noqa: SLF001
 
 
 def _reset_inline_for_rehome(t: Container) -> None:
