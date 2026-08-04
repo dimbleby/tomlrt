@@ -2822,9 +2822,13 @@ def _unfile_stale_same_orphan_ancestors(
     that is no longer filed there, so the chain is revalidated after —
     the same repair the delete path makes for the same reason.
     """
+    from tomlrt._array import AoT  # noqa: PLC0415
+
+    # A private orphan is rooted at the path its slots spell, so every
+    # value inside one has a parent within the same document.
     old_parent = value._parent  # noqa: SLF001
-    if old_parent is None or old_parent._layout_root is not value._layout_root:  # noqa: SLF001
-        return  # nothing above `value` in its own document to scrub.
+    assert old_parent is not None
+    assert old_parent._layout_root is value._layout_root  # noqa: SLF001
     # `_parent` is always the immediate path parent, so the key to drop
     # is the last path component.
     assert len(value._path) == len(old_parent._path) + 1  # noqa: SLF001
@@ -2833,7 +2837,7 @@ def _unfile_stale_same_orphan_ancestors(
     # `value` may be one entry of an AoT bound here — an entry's `_path`
     # names the *array*, not itself — in which case the key outlives its
     # departure and only the entry goes.
-    entries: list[object] = bound if isinstance(bound, list) else []
+    entries: list[Table] = bound if isinstance(bound, AoT) else []
     entry_index = next((i for i, entry in enumerate(entries) if entry is value), None)
     if entry_index is None:
         dict.pop(old_parent, key, None)
@@ -2845,7 +2849,7 @@ def _unfile_stale_same_orphan_ancestors(
             # still holding it would add entries to a document that no
             # longer names it, which would then render what it denies.
             dict.__delitem__(old_parent, key)
-            assert isinstance(bound, _View)
+            assert isinstance(bound, AoT)
             bound._unbind_from_document()  # noqa: SLF001
 
     stale_container_ids: set[int] = set()
