@@ -346,9 +346,9 @@ def maybe_advance_body_tail(c: Container, slot: Slot) -> None:
     an explicit section (the validator rejects that), so a SECTION here
     is always the KV's own host.
 
-    The owner, though, really can differ: ``adopt_private_implicit``
-    moves a KV owned by no AoT entry into a container owned by one, and
-    such a slot sits inside ``c`` without belonging to its body.
+    Owners really can differ, though: a KV owned by no AoT entry can be
+    moved into a container owned by one, and then sits inside ``c``
+    without belonging to its body.
     """
     assert isinstance(slot, KVSlot)
     assert c._kind is not _Kind.SECTION or slot.host_path == c._path  # noqa: SLF001
@@ -4026,11 +4026,7 @@ def _move_slots_to_anchor(
         if next_after is not None:
             next_after._prev = tail  # noqa: SLF001
         else:
-            # Only when the detach emptied the stream, which needs
-            # ``head._prev`` to have pointed outside it. No caller
-            # produces that now, but a range splice that left `_tail`
-            # dangling would be far harder to diagnose than this line
-            # is to keep.
+            # The detach emptied the stream, so this block is now all of it.
             doc._tail = tail  # noqa: SLF001  # pragma: no cover
         doc._head = head  # noqa: SLF001
     else:
