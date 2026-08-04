@@ -79,6 +79,26 @@ _SHAPES = (
     "root.a.b.c = 1\n\n# comment\nroot.e.f = 2\n\n[dest]\nz = 0\n",
 )
 
+# One random operation per step, drawn uniformly; ``adopt`` appears
+# twice because every other op is most interesting on a document an
+# adopt has already reshaped.
+_OPS = (
+    "adopt",
+    "adopt",
+    "write_orphan",
+    "write_doc",
+    "hold",
+    "write_held",
+    "delete_orphan",
+    "overwrite_orphan",
+    "sort_orphan",
+    "adopt_aot_entry",
+    "adopt_into_section",
+    "delete_doc",
+    "mutate_array",
+    "mutate_aot",
+)
+
 
 def _chain(doc: Document) -> list[Slot]:
     """The document's slots, walked forward from its head."""
@@ -243,23 +263,7 @@ def _run_program(src: str, seed: int) -> None:
     held: list[Any] = []
 
     for step in range(rng.randint(1, _MAX_STEPS)):
-        choices = [
-            "adopt",
-            "adopt",
-            "write_orphan",
-            "write_doc",
-            "hold",
-            "write_held",
-            "delete_orphan",
-            "overwrite_orphan",
-            "sort_orphan",
-            "adopt_aot_entry",
-            "adopt_into_section",
-            "delete_doc",
-            "mutate_array",
-            "mutate_aot",
-        ]
-        op = rng.choice(choices)
+        op = rng.choice(_OPS)
         paths = _view_paths(orphan)
         if op == "adopt":
             target = _resolve(orphan, rng.choice([*paths, ()]))
@@ -374,59 +378,57 @@ def test_detached_subtree_programs_keep_model_consistent(src: str) -> None:
         _run_program(src, secrets.randbits(64))
 
 
-def test_displaced_views_never_resolve_against_a_dead_value() -> None:
+_INLINE = "x = { n.a = 1, z = 9 }\n"
+_ARRAY = "x = [ { c = 1 }, 2 ]\n"
+_TABLE = "x = { c = 1 }\n"
+
+
+@pytest.mark.parametrize(
+    ("src", "hold", "displace"),
+    [
+        (_INLINE, lambda d: d["x"]["n"], lambda d: d["x"].__setitem__("n", 5)),
+        (_INLINE, lambda d: d["x"]["n"], lambda d: d["x"].__delitem__("n")),
+        (_INLINE, lambda d: d["x"]["n"], lambda d: d["x"].pop("n")),
+        (_ARRAY, lambda d: d["x"][0], lambda d: d["x"].__setitem__(0, 9)),
+        (_ARRAY, lambda d: d["x"][0], lambda d: d["x"].__delitem__(0)),
+        (_ARRAY, lambda d: d["x"][0], lambda d: d["x"].pop(0)),
+        (_ARRAY, lambda d: d["x"][0], lambda d: d["x"].clear()),
+        (_TABLE, lambda d: d["x"], lambda d: d.__setitem__("x", 5)),
+        (_TABLE, lambda d: d["x"], lambda d: d.__delitem__("x")),
+    ],
+    ids=[
+        "inline-overwrite",
+        "inline-delete",
+        "inline-pop",
+        "array-overwrite",
+        "array-delete",
+        "array-pop",
+        "array-clear",
+        "key-overwrite",
+        "key-delete",
+    ],
+)
+def test_displaced_views_never_resolve_against_a_dead_value(
+    src: str,
+    hold: Callable[[Document], Any],
+    displace: Callable[[Document], object],
+) -> None:
     """A view displaced from a document must not still claim to be in it.
 
     Pins the live-attach rule directly rather than through rendered
     output: after a displacement the held view is detached, and
     re-assigning it makes it the live view at its new home.
     """
-    displacements: tuple[tuple[str, str, str, Callable[[Document], object]], ...] = (
-        (
-            "inline overwrite",
-            "x = { n.a = 1, z = 9 }\n",
-            "x.n",
-            lambda d: d["x"].__setitem__("n", 5),
-        ),
-        (
-            "inline delete",
-            "x = { n.a = 1, z = 9 }\n",
-            "x.n",
-            lambda d: d["x"].__delitem__("n"),
-        ),
-        ("inline pop", "x = { n.a = 1, z = 9 }\n", "x.n", lambda d: d["x"].pop("n")),
-        (
-            "array overwrite",
-            "x = [ { c = 1 }, 2 ]\n",
-            "x.0",
-            lambda d: d["x"].__setitem__(0, 9),
-        ),
-        (
-            "array delete",
-            "x = [ { c = 1 }, 2 ]\n",
-            "x.0",
-            lambda d: d["x"].__delitem__(0),
-        ),
-        ("array pop", "x = [ { c = 1 }, 2 ]\n", "x.0", lambda d: d["x"].pop(0)),
-        ("array clear", "x = [ { c = 1 }, 2 ]\n", "x.0", lambda d: d["x"].clear()),
-        ("key overwrite", "x = { c = 1 }\n", "x", lambda d: d.__setitem__("x", 5)),
-        ("key delete", "x = { c = 1 }\n", "x", lambda d: d.__delitem__("x")),
-    )
-    for label, src, hold, displace in displacements:
-        doc = tomlrt.loads(src)
-        held = doc["x"]
-        if hold.endswith(".n"):
-            held = held["n"]
-        elif hold.endswith(".0"):
-            held = held[0]
-        displace(doc)
+    doc = tomlrt.loads(src)
+    held = hold(doc)
+    displace(doc)
 
-        assert held._layout_root is None, f"{label}: displaced view still attached"  # noqa: SLF001
-        doc["y"] = held
-        assert doc["y"] is held, f"{label}: reassignment cloned instead of attaching"
-        out = tomlrt.dumps(doc)
-        assert tomli.loads(out) == doc.to_dict(), f"{label}: render disagrees"
-        check_slot_chain(doc, label)
+    assert held._layout_root is None, "displaced view still attached"  # noqa: SLF001
+    doc["y"] = held
+    assert doc["y"] is held, "reassignment cloned instead of attaching"
+    out = tomlrt.dumps(doc)
+    assert tomli.loads(out) == doc.to_dict()
+    check_slot_chain(doc, "reattached")
 
 
 def test_writing_to_a_popped_subtree_leaves_no_ref_behind() -> None:
