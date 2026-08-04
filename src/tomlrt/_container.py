@@ -1874,7 +1874,7 @@ def _collect_private_roots(value: Any, found: dict[int, Document]) -> None:
     level: those wrappers are rebuilt on the way in, but the views
     inside them are installed as they are.
     """
-    if isinstance(value, (Container, AoT, Array)):
+    if isinstance(value, _View):
         root = value._layout_root  # noqa: SLF001
         if root is not None and root._is_private:  # noqa: SLF001
             found[id(root)] = root

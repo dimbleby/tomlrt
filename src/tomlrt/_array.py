@@ -555,8 +555,14 @@ class AoT(_View, list["Table"]):
             e = _validate_mapping(entry, label="AoT entry")
             list.append(self, _make_unattached_entry(e))
 
-    @override
     def _unbind_from_document(self) -> None:
+        """Stop being a view onto any document.
+
+        Used when the array this view stood for has left the document
+        that named it, so that a caller still holding the view cannot
+        write through it into a document that no longer accounts for
+        what it writes.
+        """
         self._layout_root = None
         self._parent = None
         self._path = ()
