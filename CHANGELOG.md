@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Values removed from a document, and views of values it has since
+  replaced, can now be edited and re-assigned without corrupting either
+  document.
+- `Document(data=...)` and `update()` no longer consume the mapping they
+  are given.
 - `install()` no longer produces invalid TOML for dotted paths through an existing inline table.
 - Assigning a `datetime` with a sub-minute UTC offset, or a `time` carrying any timezone, now raises `ValueError` instead of producing unparseable TOML.
 - Bulk array mutations now reject invalid items without partially modifying documents.
