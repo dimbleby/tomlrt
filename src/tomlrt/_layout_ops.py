@@ -193,12 +193,6 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     installed = _recorded_install_span(new_slots, doc)
     if installed is None:
         return
-    if saved_anchor_prev is not None and any(s is saved_anchor_prev for s in installed):
-        # The reinstall took over the slot the anchor named — it can
-        # happen when the new value is a sibling that physically
-        # preceded the binding being replaced. "Sit after yourself" has
-        # no answer, so leave the block where the reinstall put it.
-        return
     if not _anchor_accepts_install(
         installed, saved_anchor_prev, in_parent_body=in_body, doc=doc
     ):
@@ -248,7 +242,17 @@ def _anchor_accepts_install(
     in_parent_body: bool,
     doc: Document,
 ) -> bool:
-    """Return whether moving ``slots`` after ``anchor`` preserves TOML scope."""
+    """Return whether ``slots`` may be moved to sit after ``anchor``.
+
+    False either because the anchor is inside the block itself, or
+    because the move would change the block's TOML scope.
+    """
+    if anchor is not None and anchor in slots:
+        # The reinstall took over the slot the anchor named — it can
+        # happen when the new value is a sibling that physically
+        # preceded the binding being replaced. "Sit after yourself" has
+        # no answer, so leave the block where the reinstall put it.
+        return False
     if not any(isinstance(s, StructuralHeaderSlot) for s in slots):
         return in_parent_body
 
