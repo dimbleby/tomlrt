@@ -760,23 +760,26 @@ class Container(_View, dict[str, Any]):
                 _layout_ops.adopt_private_implicit(self, key, value)
             _layout_ops.synthesise_header_for_emptied(emptied)
             return
-        # No slots to move — either never attached, or an orphan emptied by
-        # adopting its last child away. The latter still points at its
-        # (now empty) orphan document, so reset it to a genuinely detached
-        # source and synthesise. A Container with no layout root can't be
-        # a Document (which is always its own root), so it is a Table.
+        # No slots to move, so the source was never attached and is
+        # synthesised. A Container with no layout root can't be a
+        # Document (which is always its own root), so it is a Table.
         assert isinstance(value, Table), (
             "internal: detached section source expected to be a Table"
+        )
+        # A section rooted in a private orphan always owns at least one
+        # slot — a parent emptied by a move gets a header synthesised for
+        # it, filed on the parent and every ancestor, and the reset that
+        # drops `_refs` drops `_layout_root` in the same breath. So what
+        # arrives here is a genuinely detached factory, which may hold
+        # live children that the reset must not descend into and re-root.
+        # `adopt_private_implicit` asserts the other half of this.
+        assert value._layout_root is None, (  # noqa: SLF001
+            "internal: a private-orphan section owns slots"
         )
         # No repair of the source's parent is needed here, unlike the
         # moves above: a value with no slots contributes no text, so
         # taking it away cannot cost its parent the spelling it renders
         # under.
-        if value._layout_root is not None:  # noqa: SLF001
-            # Unbind it from the orphan before the reset severs the link,
-            # or the orphan is left naming a value that now lives here.
-            _layout_ops.unfile_orphan_binding(value)
-            _reset_table_for_rehome(value)
         _layout_ops.attach_section_at(self, (key,), value)
 
     def _replace_scalar(self, key: str, value: Scalar) -> None:
