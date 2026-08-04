@@ -2972,7 +2972,7 @@ def _rehome_view_tree(
     _walk_view_tree((root,), visit)
 
 
-def _detach_from_source_doc(value: Container, slots: list[Slot]) -> None:
+def _detach_from_source_doc(value: Container | AoT, slots: list[Slot]) -> None:
     """Unlink ``slots`` from the private orphan they currently live in.
 
     The adopt paths splice the block into the destination document, which
@@ -3000,6 +3000,18 @@ def unlink_cloned_orphan_entry(entry: Container) -> None:
     """
     _, slots = _gather_headered_subtree_slots(entry)
     _detach_from_source_doc(entry, slots)
+
+
+def unlink_emptied_orphan_aot(value: AoT) -> None:
+    """Unlink the ``k = []`` slot an emptied orphan array still owns.
+
+    An array emptied by :meth:`AoT.pop` keeps its key bound and renders
+    ``k = []``, which is what its model says at that point. Moving it
+    out of the orphan unbinds the key, and with no entries left there is
+    no departure to take that slot with it.
+    """
+    ref = _empty_aot_placeholder_ref(value)
+    _detach_from_source_doc(value, [ref.slot] if ref is not None else [])
 
 
 def synthesise_header_for_emptied(parent: Container | None) -> None:

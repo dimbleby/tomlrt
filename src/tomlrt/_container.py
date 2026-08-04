@@ -683,8 +683,12 @@ class Container(_View, dict[str, Any]):
         # them would make a later adopt of the orphan gather slots that
         # live in the destination. The section adopt paths do the same.
         emptied = value._parent  # noqa: SLF001
-        _layout_ops.unfile_orphan_binding(value)
         existing_entries: list[Table] = list(value)
+        if not existing_entries and src_root is not None:
+            # An orphan array emptied by `pop` still owns the `k = []`
+            # slot it renders as, and has no entry left to carry it away.
+            _layout_ops.unlink_emptied_orphan_aot(value)
+        _layout_ops.unfile_orphan_binding(value)
         list.clear(value)
         value._unbind_from_document()  # noqa: SLF001
         attached = _layout_ops.attach_empty_aot(self, key, value)
