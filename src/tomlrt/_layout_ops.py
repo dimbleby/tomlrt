@@ -1090,18 +1090,21 @@ def _root_orphan_subtree(
     from tomlrt._array import AoT as AoTType  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
 
+    # ``chain`` is the run of new ancestors, outermost first; a KV hosted
+    # at one of them binds from there down.
     path = val._path  # noqa: SLF001
-    parent: Container = orphan
+    chain: list[Container] = [orphan]
     for depth, part in enumerate(path[:-1], start=1):
         step = Table()
         step._wire(  # noqa: SLF001
             layout_root=orphan,
-            parent=parent,
+            parent=chain[-1],
             path=path[:depth],
             owner=None,
         )
-        dict.__setitem__(parent, part, step)
-        parent = step
+        dict.__setitem__(chain[-1], part, step)
+        chain.append(step)
+    parent = chain[-1]
     val._parent = parent  # noqa: SLF001
     dict.__setitem__(parent, path[-1], val)
     if isinstance(val, AoTType):
@@ -1110,15 +1113,7 @@ def _root_orphan_subtree(
         for entry in val:
             entry._parent = parent  # noqa: SLF001
 
-    # ``chain`` is the run of new ancestors, outermost first; a KV hosted
-    # at one of them binds from there down.
-    chain: list[Container] = []
-    node: Container | None = parent
-    while node is not None:
-        chain.append(node)
-        node = node._parent  # noqa: SLF001
-    chain.reverse()
-    by_path = {c._path: c for c in chain}  # noqa: SLF001
+    depth_of = {c._path: i for i, c in enumerate(chain)}  # noqa: SLF001
 
     for slot in slots:
         if isinstance(slot, StructuralHeaderSlot):
@@ -1126,12 +1121,12 @@ def _root_orphan_subtree(
                 record_ref(anc, slot)
             continue
         assert isinstance(slot, KVSlot)
-        host = by_path.get(slot.host_path)
-        if host is None:
+        host_depth = depth_of.get(slot.host_path)
+        if host_depth is None:
             continue  # hosted inside the subtree; its refs travelled with it.
         # A KV binds at its host and then down its dotted key; the rest
         # of that descent is inside the subtree and already filed.
-        for anc in chain[chain.index(host) :]:
+        for anc in chain[host_depth:]:
             record_ref(anc, slot)
             maybe_advance_body_tail(anc, slot)
 
