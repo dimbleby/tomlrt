@@ -400,6 +400,16 @@ wrong.
   different owner than the logical view says. Draws **fresh random
   seeds** each run and reports the failing seed for reproduction.
   Marked `slow`; skips if the corpus is not vendored.
+- **Reproducing a fuzz failure.** The seed-driven fuzzers
+  (`test_fuzz_mutation.py`, `test_fuzz_detached.py`) prefix every
+  failure — oracle mismatch or an exception raised from inside the
+  library — with the seed of the program that caused it. Re-run the
+  same test id with that seed pinned to replay exactly that one
+  program:
+
+  ```bash
+  TOMLRT_FUZZ_SEED=<seed> uv run pytest -m slow "<test id from the report>"
+  ```
 - `tests/test_mutation.py` — the dict/list mutation API.
 - `tests/test_format.py` — the `Container.format()` /
   `Array.format()` canonicaliser.
@@ -411,7 +421,9 @@ wrong.
   of `\n`-escaped strings in new tests), and `reparses(src)` for the
   re-parse sanity check via `tomli` (used unconditionally because, as of
   writing, stdlib `tomllib` is TOML 1.0 only whereas `tomli` 2.4+ accepts
-  TOML 1.1 syntax).
+  TOML 1.1 syntax), plus `fuzz_seeds(n)` / `fuzz_context(ctx)` — the
+  seed source and failure-annotation wrapper every seed-driven fuzzer
+  goes through.
 
 When adding behaviour, add a focused unit test in the relevant file
 **and** consider whether the property tests should grow.

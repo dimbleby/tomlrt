@@ -25,9 +25,15 @@ idempotence check alone cannot see.
 
 Each run draws **fresh random seeds**, so the fuzzer explores new
 programs every time rather than re-checking a frozen grid — it keeps
-finding regressions instead of going stale. A failing example reports
-its 64-bit seed, so it can be reproduced exactly with
-``random.Random(<seed>)``. Raise ``_PROGRAMS`` to fuzz harder per run.
+finding regressions instead of going stale. Every failure — an oracle
+that disagrees or an exception raised from inside the library — reports
+the 64-bit seed of the program that produced it, and re-running the same
+test id with ``TOMLRT_FUZZ_SEED=<seed>`` set replays that one program::
+
+    TOMLRT_FUZZ_SEED=<seed> uv run pytest -m slow \\
+        "tests/test_fuzz_mutation.py::test_mutation_keeps_model_consistent[<id>]"
+
+Raise ``_PROGRAMS`` to fuzz harder per run.
 
 Per file the search runs many short uniform-random programs over the
 parsed document; that is what reaches the precise multi-step states
@@ -39,7 +45,6 @@ of attempts cheaply, while the trivial ones cost almost nothing.
 from __future__ import annotations
 
 import random
-import secrets
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +52,7 @@ import pytest
 import tomli
 
 import tomlrt
-from _helpers import deep_equal
+from _helpers import deep_equal, fuzz_context, fuzz_seeds
 from tomlrt import AoT, Array
 from tomlrt._container import Container, Table
 
@@ -216,29 +221,25 @@ def _mutate_aot(node: AoT, rng: random.Random, pool: list[tuple[str, Any]]) -> N
 def _run_fuzz_programs(
     src: str, foreign_pool: list[tuple[str, Any]], ctx_label: str
 ) -> None:
-    """Run ``_PROGRAMS`` random mutation programs against ``src``, asserting
-    the model stays self-consistent throughout (see module docstring).
+    """Run one random mutation program per seed from :func:`fuzz_seeds`
+    against ``src``, asserting the model stays self-consistent throughout
+    (see module docstring).
     """
-    for _ in range(_PROGRAMS):
-        # A fresh random seed every run, so the fuzzer explores new
-        # programs instead of re-checking a frozen grid. The seed is
-        # captured and reported on failure so any bug it finds is
-        # reproducible (``random.Random(<seed>)``).
-        seed = secrets.randbits(64)
+    for seed in fuzz_seeds(_PROGRAMS):
         rng = random.Random(seed)  # noqa: S311
-        doc = tomlrt.loads(src)
-        for _ in range(rng.randint(1, 15)):
-            _mutate(doc, rng, foreign_pool)
-        out = tomlrt.dumps(doc)
-        ctx = f"{ctx_label} seed={seed}"
-        # Valid TOML and a fixed point of dump -> load -> dump.
-        tomli.loads(out)
-        assert tomlrt.dumps(tomlrt.loads(out)) == out, f"non-idempotent: {ctx}\n{out!r}"
-        # The rendered output reflects the in-memory logical model.
-        assert deep_equal(tomli.loads(out), doc.to_dict()), (
-            f"render/model mismatch: {ctx}\n{out!r}\n"
-            f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
-        )
+        with fuzz_context(f"{ctx_label} seed={seed}"):
+            doc = tomlrt.loads(src)
+            for _ in range(rng.randint(1, 15)):
+                _mutate(doc, rng, foreign_pool)
+            out = tomlrt.dumps(doc)
+            # Valid TOML and a fixed point of dump -> load -> dump.
+            tomli.loads(out)
+            assert tomlrt.dumps(tomlrt.loads(out)) == out, f"non-idempotent\n{out!r}"
+            # The rendered output reflects the in-memory logical model.
+            assert deep_equal(tomli.loads(out), doc.to_dict()), (
+                f"render/model mismatch\n{out!r}\n"
+                f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
+            )
 
 
 @pytest.mark.parametrize(
