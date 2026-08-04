@@ -1287,25 +1287,17 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     if transplanting:
         from tomlrt._container import Document  # noqa: PLC0415
 
-        displaced_inlines: list[Container] = []
-        displaced_arrays: list[Array] = []
-        _collect_displaced_inline_views((val,), displaced_inlines, displaced_arrays)
-        orphan = Document()
-        orphan._newline = doc._newline  # noqa: SLF001
-        orphan._is_private = True  # noqa: SLF001
-        _splice_block_after(ordered_for_transplant, None, orphan)
-        for sc in subtree_containers:
-            sc._layout_root = orphan  # noqa: SLF001
-        for ao in subtree_aots:
-            ao._layout_root = orphan  # noqa: SLF001
         # Keep inline descendants live against the orphan: their backing
         # CST lives inside a transplanted KV, so re-pointing (rather than
         # resetting) lets edits through a held reference flow into the
         # orphaned slot value, which a later rehome moves intact.
-        for it in displaced_inlines:
-            it._layout_root = orphan  # noqa: SLF001
-        for ar in displaced_arrays:
-            ar._layout_root = orphan  # noqa: SLF001
+        displaced = _displaced_inline_views(val)
+        orphan = Document()
+        orphan._newline = doc._newline  # noqa: SLF001
+        orphan._is_private = True  # noqa: SLF001
+        _splice_block_after(ordered_for_transplant, None, orphan)
+        for view in itertools.chain(subtree_containers, subtree_aots, displaced):
+            view._layout_root = orphan  # noqa: SLF001
         _root_orphan_subtree(orphan, val, ordered_for_transplant)
     else:
         # No orphan (e.g. a top-level inline value): reset so a held
@@ -1316,15 +1308,15 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     dict.__delitem__(c, key)
 
 
-def _walk_view_tree(vals: Iterable[object], visit: Callable[[object], None]) -> None:
-    """Visit every Container / AoT / Array node in the given view subtrees.
+def _walk_view_tree(vals: Iterable[object], visit: Callable[[_View], None]) -> None:
+    """Visit every view node in the given subtrees.
 
     The shared spine of the delete-side displacement walk
-    (:func:`_collect_displaced_inline_views`) and the adopt-side rehome
-    walk (:func:`_rehome_view_tree`); each caller supplies the per-node
+    (:func:`_displaced_inline_views`) and the adopt-side rehome walk
+    (:func:`_rehome_view_tree`); each caller supplies the per-node
     action. Descent is delegated to `_View._view_children`, so this needs
     no knowledge of the concrete view classes — and no deferred import of
-    them, which a walk over a long array used to repay per node. Scalars
+    them, which a walk over a long array would repay per node. Scalars
     are inert.
 
     Takes a batch of roots so a caller displacing a range — clearing an
@@ -1343,12 +1335,8 @@ def _walk_view_tree(vals: Iterable[object], visit: Callable[[object], None]) -> 
             walk(val)
 
 
-def _collect_displaced_inline_views(
-    vals: Iterable[object],
-    inlines_out: list[Container],
-    arrays_out: list[Array],
-) -> None:
-    """Walk an about-to-be-displaced subtree, gathering inline views.
+def _displaced_inline_views(val: object) -> list[Container | Array]:
+    """The inline views inside an about-to-be-displaced subtree.
 
     Section Containers and AoTs are handled by ``_collect_subtree``
     + the orphan-rehome step. This walker complements that by
@@ -1360,18 +1348,17 @@ def _collect_displaced_inline_views(
     from tomlrt._array import Array  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
-    def visit(node: object) -> None:
-        if isinstance(node, Container):
-            if node._inline:  # noqa: SLF001
-                inlines_out.append(node)
-        elif isinstance(node, Array):
-            arrays_out.append(node)
+    found: list[Container | Array] = []
 
-    _walk_view_tree(vals, visit)
+    def visit(node: _View) -> None:
+        if isinstance(node, Array) or (isinstance(node, Container) and node._inline):  # noqa: SLF001
+            found.append(node)
+
+    _walk_view_tree((val,), visit)
+    return found
 
 
-def _reset_view(node: object) -> None:
-    assert isinstance(node, _View)
+def _reset_view(node: _View) -> None:
     node._reset_displaced()  # noqa: SLF001
 
 
@@ -2957,9 +2944,11 @@ def _rehome_view_tree(
 
     new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
-    def visit(node: object) -> None:
+    def visit(node: _View) -> None:
+        # Narrows for the assignments below; `_View` has no other subclass.
+        assert isinstance(node, (Container, AoT, Array))
+        node._layout_root = doc  # noqa: SLF001
         if isinstance(node, (Container, AoT)):
-            node._layout_root = doc  # noqa: SLF001
             node._path = _rebase_path(node._path, old_prefix, new_prefix)  # noqa: SLF001
             if (
                 isinstance(node, Container)
@@ -2967,10 +2956,6 @@ def _rehome_view_tree(
                 and node._owner_aot_entry is stale_owner  # noqa: SLF001
             ):
                 node._owner_aot_entry = new_owner  # noqa: SLF001
-            return
-        # `_walk_view_tree` only ever visits Container / AoT / Array.
-        assert isinstance(node, Array)
-        node._layout_root = doc  # noqa: SLF001
 
     root._parent = dest_parent  # noqa: SLF001
     _walk_view_tree((root,), visit)

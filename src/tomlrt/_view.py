@@ -1,11 +1,10 @@
 """The base shared by the three live views over a document.
 
 `Container`, `AoT` and `Array` all present a Python view onto part of a
-parsed document. Traversals need to recognise one and descend it, but
-they live in :mod:`tomlrt._layout_ops`, which those three modules import
-in turn — so naming the classes directly would mean resolving a deferred
-import on every walk. Depending on this module instead breaks the cycle:
-it imports nothing.
+parsed document. Traversals in :mod:`tomlrt._layout_ops` need to
+recognise one and descend it; depending on this module rather than on
+those three classes keeps such a walk free of deferred imports, because
+this module imports nothing.
 """
 
 from __future__ import annotations
@@ -15,11 +14,22 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from tomlrt._container import Document
+
 
 class _View:
-    """Marker base for a live view; carries no state of its own."""
+    """Base for a live view; the subclasses own all the storage.
+
+    ``_layout_root`` — the document a view reads and writes through, or
+    ``None`` when detached — is declared here so a walk can ask a view
+    about its document without first narrowing it to a concrete class.
+    The slot itself stays on each subclass: a slotted base would clash
+    with the ``dict`` / ``list`` they also inherit from.
+    """
 
     __slots__ = ()
+
+    _layout_root: Document | None
 
     def _view_children(self) -> Iterable[object]:
         """The values directly held by this view.
@@ -27,16 +37,6 @@ class _View:
         Mapping views yield their values, sequence views their items;
         either way a walk descends into whichever of those are
         themselves views.
-        """
-        raise NotImplementedError
-
-    def _unbind_from_document(self) -> None:
-        """Stop being a view onto any document.
-
-        Used when the value this view stood for has left the document
-        that named it, so that a caller still holding the view cannot
-        write through it into a document that no longer accounts for
-        what it writes.
         """
         raise NotImplementedError
 
