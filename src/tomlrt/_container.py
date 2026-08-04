@@ -123,11 +123,11 @@ class Container(_View, dict[str, Any]):
 
     @override
     def _reset_displaced(self) -> None:
-        # A section container's attachment is repaired by the layout
-        # layer; only inline tables resolve through a `_value` that the
-        # displacement invalidates.
-        if self._inline:
-            _reset_inline_for_rehome(self)
+        # Only inline values are reachable from a displacement walk: a
+        # section container can only be displaced by the layout layer,
+        # which repairs its attachment itself.
+        assert self._inline
+        _reset_inline_for_rehome(self)
 
     def __init__(self) -> None:
         super().__init__()
@@ -810,10 +810,10 @@ class Container(_View, dict[str, Any]):
         # each can be reattached live. A descendant left pointing at the
         # replaced CST would keep reporting as attached and resolve
         # against a dead inline value; the delete path walks the same
-        # subtree for the same reason. Scalars own no views, so the
-        # common scalar-for-scalar overwrite skips the walk entirely.
-        if _is_inline_table(old) or isinstance(old, Array):
-            _layout_ops.reset_displaced_views(old)
+        # subtree for the same reason. ``__setitem__`` has already
+        # returned if the new value *is* the old one, and the walk
+        # ignores scalars.
+        _layout_ops.reset_displaced_views(old)
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -1004,8 +1004,9 @@ class Container(_View, dict[str, Any]):
         old = dict.__getitem__(self, key) if key in self else None
         # Either replacement branch displaces the old value, so a view of
         # it must stop resolving against the entry it no longer owns.
-        if isinstance(old, _View) and old is not decoded:
-            _layout_ops.reset_displaced_views(old)
+        # ``__setitem__`` has already returned if the new value *is* the
+        # old one.
+        _layout_ops.reset_displaced_views(old)
         if isinstance(old, Container):
             # Stay on the CST side when replacing a dotted-prefix
             # navigator; dict-level delete would prune the parent chain.
