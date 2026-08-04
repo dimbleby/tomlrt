@@ -337,7 +337,10 @@ def _run_program(src: str, seed: int) -> None:
             aots = _typed_paths(orphan, AoT)
             if aots:
                 aot = _resolve(orphan, rng.choice(aots))
-                if len(aot) > 1 and rng.getrandbits(1):
+                # Popping the last entry too: an array emptied that way
+                # keeps its key and renders `k = []`, which is a shape
+                # nothing else here produces.
+                if len(aot) and rng.getrandbits(1):
                     aot.pop(rng.randrange(len(aot)))
                 else:
                     aot.append({f"e{step}": step})

@@ -6458,6 +6458,39 @@ def test_adopting_a_whole_orphan_aot_leaves_no_text_behind() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_adopt_an_orphan_array_emptied_by_popping_its_last_entry() -> None:
+    """An array emptied by `pop` takes its own slot with it when it goes.
+
+    Emptying it leaves the key bound, rendering `t = []`, which is what
+    the model says at that point. Moving it away unbinds the key — and
+    with no entries left, nothing else would carry that slot out.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[root.t]]
+        x = 1
+
+        [root.a]
+        b.c = 3
+        """)
+    )
+    orphan = doc.pop("root")
+    orphan.aot("t").pop(0)
+    doc["m"] = orphan.aot("t")
+    doc["back"] = orphan
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        m = []
+
+        [back]
+
+        [back.a]
+        b.c = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_adopt_onto_the_document_head_needs_no_separator() -> None:
     """A block becoming the head has nothing before it to be spaced from.
 
