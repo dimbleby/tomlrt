@@ -88,6 +88,14 @@ them. Read roughly in this order:
 ### Foundation
 
 - **`_errors.py`** — public exception hierarchy.
+- **`_view.py`** — `_View`, the marker base shared by `Container`,
+  `AoT` and `Array`. It declares `_layout_root` (the document a view
+  reads and writes through, or `None` when detached) plus two hooks:
+  `_view_children` for descent and `_reset_displaced` for detaching a
+  view whose backing CST has gone. It imports nothing, so a traversal
+  in `_layout_ops` can recognise and walk a view without a deferred
+  import of the three concrete classes. `_unbind_from_document` is
+  **not** here — only `AoT` needs it.
 - **`_paths.py`** — key-path argument parsing and validation
   (the `t["a", "b"]` / `t[("a", "b")]` shapes used by the public
   API).
