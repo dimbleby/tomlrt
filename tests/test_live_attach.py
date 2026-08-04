@@ -1552,3 +1552,33 @@ def test_inline_overwrite_detaches_displaced_array() -> None:
     assert doc["y"] is held
     assert doc["y"][0] is nested
     assert _reparses(out) == doc.to_dict()
+
+
+def test_array_item_assigned_to_itself_stays_attached() -> None:
+    """``arr[i] = arr[i]`` re-uses the item view rather than displacing it.
+
+    ``Array.__setitem__`` has no identity short-circuit, so the
+    synthesised replacement for an unattached view is that same view.
+    Detaching it would leave the caller holding a dead reference to a
+    value the array still renders.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [root]
+        arr = [ { c = 1 }, 2 ]
+        """)
+    )
+    orphan = doc.pop("root")
+    arr = orphan["arr"]
+    item = arr[0]
+    arr[0] = item
+
+    assert arr[0] is item
+    item["d"] = 3
+    doc["dest"] = orphan
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [dest]
+        arr = [ { c = 1, d = 3 }, 2 ]
+        """)
+    assert _reparses(out) == doc.to_dict()

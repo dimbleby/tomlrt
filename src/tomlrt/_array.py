@@ -364,7 +364,9 @@ class Array(_View, list[Any]):
     def _replace_synthesised(self, index: int, cst: Value, decoded: Any) -> None:
         """Replace an item with an already-synthesised value."""
         old = self[index]
-        if isinstance(old, _View) and old is not decoded:
+        # Assigning an item to itself re-uses the very view being
+        # replaced, which must stay attached; anything else is displaced.
+        if old is not decoded:
             _layout_ops.reset_displaced_views(old)
         self._value.items[index].value = cst
         list.__setitem__(self, index, decoded)
