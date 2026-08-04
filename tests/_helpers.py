@@ -12,15 +12,25 @@
   NaN-as-equal-to-itself, type-exact at the leaves) used by the
   property/fuzz suites to compare a decoded `Document` against a
   `tomli`-parsed oracle or a Python-dict shadow model.
+* :func:`fuzz_context` — attach the seed to whatever a fuzz program
+  raises, so a CI failure is reproducible.
+* :func:`fuzz_seeds` — the fuzzers' seed source, honouring
+  ``TOMLRT_FUZZ_SEED`` so a reported seed can be replayed.
 """
 
 from __future__ import annotations
 
 import math
+import os
+import secrets
+from contextlib import contextmanager
 from textwrap import dedent
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tomli
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def td(src: str) -> str:
@@ -72,3 +82,38 @@ def deep_equal(a: object, b: object) -> bool:
             deep_equal(x, y) for x, y in zip(a, b, strict=True)
         )
     return type(a) is type(b) and a == b
+
+
+@contextmanager
+def fuzz_context(ctx: str) -> Iterator[None]:
+    """Re-raise whatever the block raises with ``ctx`` prefixed to it.
+
+    A seed-driven fuzzer only earns its keep if a failure says which
+    seed reproduces it. The oracle assertions could carry that in their
+    own messages, but the usual way a fuzzer finds a bug is a raise from
+    inside the library itself, which would otherwise report a traceback
+    with the seed nowhere in it. Wrapping the whole program covers both.
+    """
+    try:
+        yield
+    except Exception as exc:
+        msg = f"{ctx}: {type(exc).__name__}: {exc}"
+        raise AssertionError(msg) from exc
+
+
+def fuzz_seeds(count: int) -> Iterator[int]:
+    """Yield ``count`` fresh 64-bit seeds, or the one pinned by the environment.
+
+    Fresh seeds every run keep the fuzzers exploring new programs rather
+    than re-checking a frozen grid. Setting ``TOMLRT_FUZZ_SEED=<n>``
+    replays exactly one program instead, which is how a seed reported by
+    :func:`fuzz_context` is reproduced::
+
+        TOMLRT_FUZZ_SEED=<n> uv run pytest -m slow <the failing test id>
+    """
+    override = os.environ.get("TOMLRT_FUZZ_SEED")
+    if override is not None:
+        yield int(override)
+        return
+    for _ in range(count):
+        yield secrets.randbits(64)

@@ -26,20 +26,20 @@ much later, on an unrelated operation. Structural checks catch it at the
 step that caused it.
 
 Marked slow, like the other fuzzers. Each run draws fresh seeds and
-reports the failing one for reproduction.
+reports the failing one, which ``TOMLRT_FUZZ_SEED=<seed>`` replays.
 """
 
 from __future__ import annotations
 
 import itertools
 import random
-import secrets
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import tomli
 
 import tomlrt
+from _helpers import fuzz_context, fuzz_seeds
 from tomlrt import AoT, Array
 from tomlrt._container import Container
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
@@ -351,7 +351,7 @@ def _run_program(src: str, seed: int) -> None:
         else:
             doc[f"k{step}"] = step
 
-        ctx = f"seed={seed} step={step} op={op} src={src!r}"
+        ctx = f"step={step} op={op}"
         out = tomlrt.dumps(doc)
         assert tomli.loads(out) == doc.to_dict(), f"{ctx}: render disagrees with model"
         check_slot_chain(doc, ctx)
@@ -374,8 +374,9 @@ def _run_program(src: str, seed: int) -> None:
 @pytest.mark.parametrize("src", _SHAPES)
 def test_detached_subtree_programs_keep_model_consistent(src: str) -> None:
     """Random detach / adopt / held-write programs stay self-consistent."""
-    for _ in range(_PROGRAMS):
-        _run_program(src, secrets.randbits(64))
+    for seed in fuzz_seeds(_PROGRAMS):
+        with fuzz_context(f"seed={seed} src={src!r}"):
+            _run_program(src, seed)
 
 
 _INLINE = "x = { n.a = 1, z = 9 }\n"
