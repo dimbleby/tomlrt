@@ -42,6 +42,7 @@ import tomli
 import tomlrt
 from tomlrt import AoT, Array
 from tomlrt._container import Container
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.slow
 
-_PROGRAMS = 60  # random programs per starting shape, per run
+_PROGRAMS = 200  # random programs per starting shape, per run
 _MAX_STEPS = 6
 
 # Starting shapes chosen for their detach behaviour: dotted keys that
@@ -114,21 +115,12 @@ def check_slot_chain(doc: Document, ctx: str) -> None:
         assert b._prev is a, f"{ctx}: broken back-link"  # noqa: SLF001
 
 
-def foreign_refs(doc: Document) -> list[tuple[tuple[str, ...], Slot]]:
-    """Refs filed on ``doc``'s containers naming slots outside its chain.
-
-    A container's caches should only ever name slots of its own
-    document; anything else means two documents share bookkeeping.
-    """
-    in_chain = {id(s) for s in _chain(doc)}
-    found: list[tuple[tuple[str, ...], Slot]] = []
+def _containers(doc: Document) -> list[Container]:
+    """Every section-backed container reachable from ``doc``."""
+    out: list[Container] = []
 
     def visit(c: Container) -> None:
-        found.extend(
-            (c._path, ref.slot)  # noqa: SLF001
-            for ref in c._refs  # noqa: SLF001
-            if id(ref.slot) not in in_chain
-        )
+        out.append(c)
         for child in c.values():
             if isinstance(child, Container) and not child._inline:  # noqa: SLF001
                 visit(child)
@@ -137,7 +129,86 @@ def foreign_refs(doc: Document) -> list[tuple[tuple[str, ...], Slot]]:
                     visit(entry)
 
     visit(doc)
-    return found
+    return out
+
+
+def foreign_refs(doc: Document) -> list[tuple[tuple[str, ...], Slot]]:
+    """Refs filed on ``doc``'s containers naming slots outside its chain.
+
+    A container's caches should only ever name slots of its own
+    document; anything else means two documents share bookkeeping.
+    """
+    in_chain = {id(s) for s in _chain(doc)}
+    return [
+        (c._path, ref.slot)  # noqa: SLF001
+        for c in _containers(doc)
+        for ref in c._refs  # noqa: SLF001
+        if id(ref.slot) not in in_chain
+    ]
+
+
+def _expected_body_tail(c: Container) -> Slot | None:
+    """The body tail ``_layout_ops._recompute_body_tail`` would derive."""
+    owner = c._owner_aot_entry  # noqa: SLF001
+    for ref in reversed(c._refs):  # noqa: SLF001
+        slot = ref.slot
+        if isinstance(slot, KVSlot) and slot.owner_aot_entry is owner:
+            return slot
+    return c._header_ref.slot if c._header_ref is not None else None  # noqa: SLF001
+
+
+def check_view_caches(doc: Document, ctx: str) -> None:
+    """Assert every container's projections of the slot stream agree with it.
+
+    ``_refs``, ``_index`` and ``_body_tail`` are caches over the one
+    source of physical order, the doc-stream linked list. A mutation
+    that files a ref out of order, or leaves a bucket naming a slot the
+    walk no longer reaches, still renders correctly -- the renderer
+    walks the stream, not the caches -- and only fails later, when an
+    insertion consults a cache to decide where a slot belongs.
+    """
+    pos = {id(s): i for i, s in enumerate(_chain(doc))}
+    for c in _containers(doc):
+        where = f"{ctx}: {c._path}"  # noqa: SLF001
+        for ref in c._refs:  # noqa: SLF001
+            assert id(ref.slot) in pos, f"{where}: ref names a slot off the chain"
+        order = [pos[id(ref.slot)] for ref in c._refs]  # noqa: SLF001
+        assert order == sorted(order), f"{where}: _refs is not in doc order"
+
+        # `_body_tail` is maintained incrementally on every append and
+        # only fully recomputed on a body-affecting delete, so what is
+        # caught here is the incremental path drifting from the
+        # recomputation that is meant to agree with it.
+        want = _expected_body_tail(c)
+        assert c._body_tail is want, (  # noqa: SLF001
+            f"{where}: _body_tail is stale (got {c._body_tail!r}, want {want!r})"  # noqa: SLF001
+        )
+
+        for ref in c._refs:  # noqa: SLF001
+            assert ref.container is c, f"{where}: ref is owned by another container"
+            assert any(back is ref for back in ref.slot._refs), (  # noqa: SLF001
+                f"{where}: slot does not back-point to this ref"
+            )
+        header_ref = c._header_ref  # noqa: SLF001
+        if header_ref is not None:
+            own_header = header_ref.slot
+            own_path = c._path  # noqa: SLF001
+            assert isinstance(own_header, StructuralHeaderSlot), (
+                f"{where}: _header_ref does not name a header"
+            )
+            assert own_header.path == own_path, f"{where}: _header_ref path mismatch"
+
+        for key, bucket in c._index.items():  # noqa: SLF001
+            expected = [ref for ref in c._refs if ref.local_key == key]  # noqa: SLF001
+            assert bucket == expected, f"{where}: _index[{key!r}] is not its projection"
+        for ref in c._refs:  # noqa: SLF001
+            local = ref.local_key
+            if local is None:
+                # The one ref with no local key is the container's own
+                # header, which lives in `_header_ref`, not `_index`.
+                assert c._header_ref is ref, f"{where}: keyless ref is not the header"  # noqa: SLF001
+                continue
+            assert ref in c._index.get(local, []), f"{where}: ref missing from _index"  # noqa: SLF001
 
 
 def _view_paths(node: Container, prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
@@ -159,6 +230,11 @@ def _resolve(node: Any, path: tuple[str, ...]) -> Any:
     return node
 
 
+def _typed_paths(node: Container, want: type) -> list[tuple[str, ...]]:
+    """Paths under ``node`` whose value is an instance of ``want``."""
+    return [p for p in _view_paths(node) if isinstance(_resolve(node, p), want)]
+
+
 def _run_program(src: str, seed: int) -> None:
     """Run one random detach / adopt / write program against ``src``."""
     rng = random.Random(seed)  # noqa: S311
@@ -177,6 +253,11 @@ def _run_program(src: str, seed: int) -> None:
             "delete_orphan",
             "overwrite_orphan",
             "sort_orphan",
+            "adopt_aot_entry",
+            "adopt_into_section",
+            "delete_doc",
+            "mutate_array",
+            "mutate_aot",
         ]
         op = rng.choice(choices)
         paths = _view_paths(orphan)
@@ -193,6 +274,11 @@ def _run_program(src: str, seed: int) -> None:
             target = rng.choice(held)
             if isinstance(target, Container):
                 target[f"h{step}"] = step
+            elif isinstance(target, AoT):
+                # A held array may have been emptied by its last entry
+                # being moved away, which detaches it; writing through
+                # it must not reach the document that dropped it.
+                target.add({f"h{step}": step})
             elif isinstance(target, Array):
                 target.append(step)
         elif op == "overwrite_orphan":
@@ -218,6 +304,43 @@ def _run_program(src: str, seed: int) -> None:
             target = _resolve(orphan, rng.choice([*paths, ()]))
             if isinstance(target, Container) and list(target.keys()):
                 del target[rng.choice(list(target.keys()))]
+        elif op == "adopt_aot_entry":
+            # An entry detaches separately from the AoT that holds it,
+            # and its `_path` names the array rather than the entry.
+            aots = _typed_paths(orphan, AoT)
+            if aots:
+                aot = _resolve(orphan, rng.choice(aots))
+                if len(aot):
+                    doc[f"m{step}"] = aot[rng.randrange(len(aot))]
+        elif op == "adopt_into_section":
+            # Adopting below the destination root exercises a different
+            # host / anchor than adopting at top level.
+            dests = [
+                p for p in _view_paths(doc) if isinstance(_resolve(doc, p), Container)
+            ]
+            if dests:
+                into = _resolve(doc, rng.choice(dests))
+                into[f"m{step}"] = _resolve(orphan, rng.choice([*paths, ()]))
+        elif op == "delete_doc":
+            keys = [k for k in doc if k != "root"]
+            if keys:
+                del doc[rng.choice(keys)]
+        elif op == "mutate_array":
+            arrays = _typed_paths(orphan, Array)
+            if arrays:
+                arr = _resolve(orphan, rng.choice(arrays))
+                if arr and rng.getrandbits(1):
+                    arr.pop(rng.randrange(len(arr)))
+                else:
+                    arr.append(step)
+        elif op == "mutate_aot":
+            aots = _typed_paths(orphan, AoT)
+            if aots:
+                aot = _resolve(orphan, rng.choice(aots))
+                if len(aot) > 1 and rng.getrandbits(1):
+                    aot.pop(rng.randrange(len(aot)))
+                else:
+                    aot.append({f"e{step}": step})
         else:
             doc[f"k{step}"] = step
 
@@ -225,6 +348,7 @@ def _run_program(src: str, seed: int) -> None:
         out = tomlrt.dumps(doc)
         assert tomli.loads(out) == doc.to_dict(), f"{ctx}: render disagrees with model"
         check_slot_chain(doc, ctx)
+        check_view_caches(doc, ctx)
         assert foreign_refs(doc) == [], f"{ctx}: source document holds a foreign ref"
         # The orphan is a document in its own right, so it answers the
         # same questions. Once it has been adopted away it is no longer
@@ -232,7 +356,12 @@ def _run_program(src: str, seed: int) -> None:
         private = orphan._layout_root  # noqa: SLF001
         if private is not None and private is not doc:
             check_slot_chain(private, f"{ctx} [orphan]")
+            check_view_caches(private, f"{ctx} [orphan]")
             assert foreign_refs(private) == [], f"{ctx}: orphan holds a foreign ref"
+            left = tomlrt.dumps(private)
+            assert tomli.loads(left) == private.to_dict(), (
+                f"{ctx}: orphan render disagrees with its model"
+            )
 
 
 @pytest.mark.parametrize("src", _SHAPES)
