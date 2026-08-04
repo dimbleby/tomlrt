@@ -555,6 +555,12 @@ class AoT(_View, list["Table"]):
             e = _validate_mapping(entry, label="AoT entry")
             list.append(self, _make_unattached_entry(e))
 
+    @override
+    def _unbind_from_document(self) -> None:
+        self._layout_root = None
+        self._parent = None
+        self._path = ()
+
     @property
     def _attached_doc(self) -> Document:
         """The owning ``Document``, asserting this AoT is attached."""

@@ -30,6 +30,16 @@ class _View:
         """
         raise NotImplementedError
 
+    def _unbind_from_document(self) -> None:
+        """Stop being a view onto any document.
+
+        Used when the value this view stood for has left the document
+        that named it, so that a caller still holding the view cannot
+        write through it into a document that no longer accounts for
+        what it writes.
+        """
+        raise NotImplementedError
+
     def _reset_displaced(self) -> None:
         """Detach this view because its backing CST is going away.
 

@@ -1560,15 +1560,17 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     if owner is None:
         return None
     parent = c._parent  # noqa: SLF001
-    # Only the document root is parentless, and it never has an owner.
+    # Only the document root is parentless or pathless, and it never
+    # has an owner.
     assert parent is not None
-    key = c._path[-1] if c._path else None  # noqa: SLF001
-    if key is None or key not in parent:
-        return None
+    assert c._path  # noqa: SLF001
 
     from tomlrt._array import AoT  # noqa: PLC0415
 
-    aot = dict.__getitem__(parent, key)
+    # An unbound key answers this the same way a non-AoT one does: an
+    # entry whose array has been emptied has no siblings to inherit
+    # from either.
+    aot = dict.get(parent, c._path[-1])  # noqa: SLF001
     if not isinstance(aot, AoT):
         return None
     found_self = False
@@ -2826,14 +2828,28 @@ def _unfile_stale_same_orphan_ancestors(
     old_parent = value._parent  # noqa: SLF001
     if old_parent is None or old_parent._layout_root is not value._layout_root:  # noqa: SLF001
         return  # nothing above `value` in its own document to scrub.
-    # `_parent` is always the immediate path parent, so the key to drop is
-    # the last path component. It may already be gone: an AoT entry's
-    # `_path` names the *AoT*, not the entry, so adopting one entry
-    # unbinds the whole key and a later adopt of a sibling entry — or of
-    # the AoT itself — finds nothing left to remove.
+    # `_parent` is always the immediate path parent, so the key to drop
+    # is the last path component.
     assert len(value._path) == len(old_parent._path) + 1  # noqa: SLF001
-    if value._path[-1] in old_parent:  # noqa: SLF001
-        dict.__delitem__(old_parent, value._path[-1])  # noqa: SLF001
+    key = value._path[-1]  # noqa: SLF001
+    bound = dict.get(old_parent, key)
+    # `value` may be one entry of an AoT bound here — an entry's `_path`
+    # names the *array*, not itself — in which case the key outlives its
+    # departure and only the entry goes.
+    entries: list[object] = bound if isinstance(bound, list) else []
+    entry_index = next((i for i, entry in enumerate(entries) if entry is value), None)
+    if entry_index is None:
+        dict.pop(old_parent, key, None)
+    else:
+        list.__delitem__(entries, entry_index)
+        if not entries:
+            # The last entry has gone, so the array leaves the model too
+            # — and must stop being a view onto the orphan, or a caller
+            # still holding it would add entries to a document that no
+            # longer names it, which would then render what it denies.
+            dict.__delitem__(old_parent, key)
+            assert isinstance(bound, _View)
+            bound._unbind_from_document()  # noqa: SLF001
 
     stale_container_ids: set[int] = set()
     node: Container | None = old_parent
@@ -2974,6 +2990,19 @@ def _detach_from_source_doc(value: Container, slots: list[Slot]) -> None:
     assert src_doc is not None, "private orphan section must be attached"
     for s in reversed(slots):
         unlink_slot(s, src_doc, strip_new_head_leading=False)
+
+
+def unlink_cloned_orphan_entry(entry: Container) -> None:
+    """Unlink an orphan entry's own slots once it has been cloned out.
+
+    The AoT attach path copies an entry into the destination rather than
+    relinking it. For a private orphan that leaves the originals in a
+    stream nothing refers to any more, so the orphan renders entries its
+    model no longer claims — and a later adopt of the orphan carries
+    that stray text into the destination.
+    """
+    _, slots = _gather_headered_subtree_slots(entry)
+    _detach_from_source_doc(entry, slots)
 
 
 def synthesise_header_for_emptied(parent: Container | None) -> None:
