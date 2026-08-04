@@ -2880,15 +2880,12 @@ def adopt_private_section(
     stale_owner = value._owner_aot_entry  # noqa: SLF001
     new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
-    assert value._header_ref is not None  # noqa: SLF001
     _, slots = _gather_headered_subtree_slots(value)
     _detach_from_source_doc(value, slots)
-    # Nested headers also retain bindings to the orphan's old ancestors.
-    nested_headers = [s for s in slots if isinstance(s, StructuralHeaderSlot)]
-    _unfile_stale_same_orphan_ancestors(
-        value,
-        [value._header_ref.slot, *nested_headers],  # noqa: SLF001
-    )
+    # Every header in the subtree — value's own included — retains
+    # bindings to the orphan's old ancestors.
+    headers = [s for s in slots if isinstance(s, StructuralHeaderSlot)]
+    _unfile_stale_same_orphan_ancestors(value, headers)
     for s in slots:
         _retarget_slot_paths(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
         _transfer_stale_owner(s, stale_owner, new_owner)
@@ -2896,7 +2893,6 @@ def adopt_private_section(
         value, dest_parent, old_prefix, new_prefix, doc, stale_owner=stale_owner
     )
 
-    assert isinstance(value._header_ref.slot, StructuralHeaderSlot)  # noqa: SLF001
     # A forward-declared descendant may physically precede value's header.
     first = slots[0]
     assert isinstance(first, StructuralHeaderSlot)
@@ -3077,33 +3073,32 @@ def adopt_private_implicit(
     anchor = host._body_tail or (  # noqa: SLF001
         host._header_ref.slot if host._header_ref is not None else None  # noqa: SLF001
     )
-    if anchor is None and doc._head is not None:  # noqa: SLF001
-        # Appending would inherit the scope of an unrelated later header.
+    # Appending under a null anchor would inherit the scope of an
+    # unrelated later header, so the block becomes the document head
+    # instead.
+    to_head = anchor is None and doc._head is not None  # noqa: SLF001
+    # The block carries a separator sized for the orphan it came from,
+    # so a leading header is resized for the run it is joining — the
+    # same fix-up the header-bearing adopt makes. A head has nothing
+    # before it to be separated from, so there the separator goes
+    # altogether, taking a header's above-blank comment block with it;
+    # a KV owns its own such block, so that stays. Dotted KVs otherwise
+    # take their spacing from the run already.
+    first = slots[0]
+    if isinstance(first, StructuralHeaderSlot):
+        _retarget_separator(first, "" if to_head else _build_section_leading(doc))
+    elif to_head:
+        first.leading = _split_leading_for_reorder(first)[1]
+
+    if to_head:
         old_head = doc._head  # noqa: SLF001
-        # The block is becoming the head, and a head has nothing before
-        # it to be separated from: the blank lines it carried out of the
-        # orphan go, and the old head is separated from it instead. A
-        # header sheds an above-blank comment block with them, as it
-        # does on every other adopt; a KV owns its one, so that stays.
-        first = slots[0]
-        if isinstance(first, StructuralHeaderSlot):
-            _retarget_separator(first, "")
-        else:
-            first.leading = _split_leading_for_reorder(first)[1]
+        assert old_head is not None
         insert_before_head(slots[0], doc)
         for prev, s in itertools.pairwise(slots):
             insert_after(prev, s, doc)
         _ensure_leading_blank_line(old_head, doc)
         _terminate_unless_tail(slots[-1], doc)
     else:
-        # A block that leads with a header carries a separator sized for
-        # the orphan it came from, so it is resized for the run it is
-        # joining — the same fix-up the header-bearing adopt makes.
-        # Dotted KVs take their spacing from that run already, and a
-        # block going to the head is separated from the old head instead.
-        first = slots[0]
-        if isinstance(first, StructuralHeaderSlot):
-            _retarget_separator(first, _build_section_leading(doc))
         _splice_block_after(slots, anchor, doc)
     # value's own subtree refs travelled intact; re-file only the ancestor
     # binding refs the delete scrubbed: dotted KVs hosted at ``host``
