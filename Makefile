@@ -20,7 +20,7 @@ coverage: ## tests + branch coverage
 	pytest --cov
 
 .PHONY: lint
-lint:fmt ruff ty mypy ## formatting, typechecking, etc
+lint: fmt ruff ty mypy ## formatting, typechecking, etc
 
 .PHONY: fmt
 fmt:
