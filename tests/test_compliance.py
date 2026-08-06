@@ -63,8 +63,8 @@ def _decode_tagged(obj: object) -> object:
     """Convert a toml-test "tagged" JSON value to a plain Python value."""
     if isinstance(obj, dict):
         if "type" in obj and "value" in obj and len(obj) == 2:
-            t = obj["type"]  # ty: ignore[invalid-argument-type]
-            v = obj["value"]  # ty: ignore[invalid-argument-type]
+            t = obj["type"]
+            v = obj["value"]
             assert isinstance(v, str)
             if t == "string":
                 return v
@@ -137,7 +137,7 @@ def _equal(a: object, b: object) -> bool:
     if isinstance(a, dict) and isinstance(b, dict):
         if set(a) != set(b):
             return False
-        return all(_equal(a[k], b[k]) for k in a)  # ty: ignore[invalid-argument-type]
+        return all(_equal(a[k], b[k]) for k in a)
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(_equal(x, y) for x, y in zip(a, b, strict=True))
     return type(a) is type(b) and a == b
