@@ -4050,14 +4050,30 @@ def test_aot_extend_self_duplicates_once() -> None:
     assert [t["a"] for t in aot] == [1, 2, 1, 2]
 
 
-def test_aot_extend_invalid_entry_is_atomic() -> None:
+_BAD_BODY: Any = {"q": object()}
+"""A mapping body carrying a value TOML cannot represent."""
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"x": object()},
+        {"t": {"u": object()}},
+        {"xs": [1, [2, object()]]},
+        {"sub": AoT([_BAD_BODY])},
+        {"sub": Table.section(_BAD_BODY)},
+    ],
+    ids=["scalar", "inline-table", "array", "aot", "section-table"],
+)
+def test_aot_extend_invalid_entry_is_atomic(invalid: Any) -> None:
+    """An invalid leaf anywhere in a later entry rejects the whole call."""
     src = td("""
         [[a]]
         x = 1
         """)
     doc = tomlrt.loads(src)
     aot = doc.aot("a")
-    values: Any = [{"x": 2}, {"x": object()}]
+    values: Any = [{"x": 2}, invalid]
 
     with pytest.raises(TypeError):
         aot.extend(values)
