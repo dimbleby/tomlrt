@@ -36,8 +36,8 @@ Repository = "https://github.com/dimbleby/tomlrt"
 dev = [
   "hypothesis>=6",
   "mypy>=2.1",
-  "pytest-cov>=5",
   "pytest>=9",
+  "pytest-cov>=5",
   "tomli>=2.4",
 ]
 docs = [
@@ -58,8 +58,6 @@ skip_covered = false
 exclude_also = [
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
-  "@overload",
-  "pragma: no cover",
 ]
 
 [tool.mypy]
