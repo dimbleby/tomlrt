@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   untouched.
 - A comment on its own row before an inline array's or inline table's
   closing bracket now reliably stays above an appended item.
+- Removing items from an inline array or inline table now costs time
+  proportional to what is removed, not to the value's length, so
+  deleting in a loop is no longer quadratic.
 
 ## [2.2.1] - 2026-08-04
 
