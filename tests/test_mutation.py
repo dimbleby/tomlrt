@@ -1266,6 +1266,229 @@ def test_array_delete_zero_keeps_next_leading_comment_after_prior_eol() -> None:
         """)
 
 
+# ---------------------------------------------------------------------------
+# Removal seam repair (shared by inline arrays and inline tables)
+# ---------------------------------------------------------------------------
+
+# Every item owns an above-block and an EOL comment, and a dangling comment
+# sits before the closing bracket, so a seam repaired against the wrong
+# boundary shows up as a moved, duplicated, or lost comment.
+_SEAM_ARRAY = td("""
+    arr = [
+        # above a
+        "a", # eol a
+        # above b
+        "b", # eol b
+        # above c
+        "c", # eol c
+        # above d
+        "d", # eol d
+        # above e
+        "e", # eol e
+        # dangling
+    ]
+    """)
+
+_SEAM_TABLE = td("""
+    t = {
+        # above a
+        a = 1, # eol a
+        # above x
+        p.x = 2, # eol x
+        # above y
+        p.y = 3, # eol y
+        # above d
+        d = 4, # eol d
+        # dangling
+    }
+    """)
+
+
+def test_array_delete_first_item_rehomes_head_comments() -> None:
+    doc = tomlrt.loads(_SEAM_ARRAY)
+    del doc.array("arr")[0]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+            # above b
+            "b", # eol b
+            # above c
+            "c", # eol c
+            # above d
+            "d", # eol d
+            # above e
+            "e", # eol e
+            # dangling
+        ]
+        """)
+    assert _reparses(out) == {"arr": ["b", "c", "d", "e"]}
+
+
+def test_array_delete_middle_item_keeps_seam_comments() -> None:
+    doc = tomlrt.loads(_SEAM_ARRAY)
+    del doc.array("arr")[2]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+            # above a
+            "a", # eol a
+            # above b
+            "b", # eol b
+            # above d
+            "d", # eol d
+            # above e
+            "e", # eol e
+            # dangling
+        ]
+        """)
+    assert _reparses(out) == {"arr": ["a", "b", "d", "e"]}
+
+
+def test_array_delete_last_item_keeps_dangling_comment() -> None:
+    doc = tomlrt.loads(_SEAM_ARRAY)
+    del doc.array("arr")[-1]
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            # above a
+            "a", # eol a
+            # above b
+            "b", # eol b
+            # above c
+            "c", # eol c
+            # above d
+            "d", # eol d
+            # dangling
+        ]
+        """)
+
+
+def test_array_delete_contiguous_slice_keeps_seam_comments() -> None:
+    doc = tomlrt.loads(_SEAM_ARRAY)
+    del doc.array("arr")[1:3]
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            # above a
+            "a", # eol a
+            # above d
+            "d", # eol d
+            # above e
+            "e", # eol e
+            # dangling
+        ]
+        """)
+
+
+def test_array_delete_strided_slice_keeps_every_seam_comment() -> None:
+    """Two interior seams in one removal: each survivor keeps its own block."""
+    doc = tomlrt.loads(_SEAM_ARRAY)
+    del doc.array("arr")[1::2]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        arr = [
+            # above a
+            "a", # eol a
+            # above c
+            "c", # eol c
+            # above e
+            "e", # eol e
+            # dangling
+        ]
+        """)
+    assert _reparses(out) == {"arr": ["a", "c", "e"]}
+
+
+def test_array_delete_first_and_last_item_together() -> None:
+    """A removal touching both ends and no interior seam."""
+    doc = tomlrt.loads(_SEAM_ARRAY)
+    del doc.array("arr")[::4]
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            # above b
+            "b", # eol b
+            # above c
+            "c", # eol c
+            # above d
+            "d", # eol d
+            # dangling
+        ]
+        """)
+
+
+def test_array_delete_all_items_keeps_bracket_comments() -> None:
+    doc = tomlrt.loads(_SEAM_ARRAY)
+    del doc.array("arr")[:]
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+            # above a
+            # dangling
+        ]
+        """)
+
+
+def test_inline_table_delete_first_entry_rehomes_head_comments() -> None:
+    doc = tomlrt.loads(_SEAM_TABLE)
+    del doc.table("t")["a"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        t = {
+            # above x
+            p.x = 2, # eol x
+            # above y
+            p.y = 3, # eol y
+            # above d
+            d = 4, # eol d
+            # dangling
+        }
+        """)
+    assert _reparses(out) == {"t": {"p": {"x": 2, "y": 3}, "d": 4}}
+
+
+def test_inline_table_delete_dotted_prefix_keeps_seam_comments() -> None:
+    """A dotted prefix removes a run of entries between two survivors."""
+    doc = tomlrt.loads(_SEAM_TABLE)
+    del doc.table("t")["p"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        t = {
+            # above a
+            a = 1, # eol a
+            # above d
+            d = 4, # eol d
+            # dangling
+        }
+        """)
+    assert _reparses(out) == {"t": {"a": 1, "d": 4}}
+
+
+def test_inline_table_delete_last_entry_keeps_dangling_comment() -> None:
+    doc = tomlrt.loads(_SEAM_TABLE)
+    del doc.table("t")["d"]
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+            # above a
+            a = 1, # eol a
+            # above x
+            p.x = 2, # eol x
+            # above y
+            p.y = 3, # eol y
+            # dangling
+        }
+        """)
+
+
+def test_inline_table_delete_every_entry_keeps_bracket_comments() -> None:
+    doc = tomlrt.loads(_SEAM_TABLE)
+    t = doc.table("t")
+    for key in ("a", "p", "d"):
+        del t[key]
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+            # above d
+            # dangling
+        }
+        """)
+
+
 def test_array_insert_after_eol_item_does_not_duplicate_following_comment() -> None:
     """Regression for #122: when inserting between an EOL-bearing item
     and a follower whose ``leading`` carries an above-block in post-EOL

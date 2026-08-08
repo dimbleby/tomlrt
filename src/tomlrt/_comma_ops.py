@@ -39,7 +39,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from tomlrt._values import (
         ArrayValue,
@@ -748,6 +748,17 @@ def splice_insert(
     _rehome_above(cv, index + 1, displaced, style, nl)
 
 
+def _removed_runs(sorted_removed: Sequence[int]) -> Iterator[tuple[int, int]]:
+    """Yield ``(first, last)`` of each maximal run of consecutive indices."""
+    start = prev = sorted_removed[0]
+    for idx in sorted_removed[1:]:
+        if idx != prev + 1:
+            yield start, prev
+            start = idx
+        prev = idx
+    yield start, prev
+
+
 def splice_out(
     cv: CommaValue[_CV_ItemT],
     removed_indices: Sequence[int],
@@ -766,27 +777,41 @@ def splice_out(
         cv.reset_multiline_cache()
     orig_len = len(items)
     sorted_removed = sorted(removed_indices)
-    removed_set = set(sorted_removed)
     last_idx = orig_len - 1
-    zero_removed = 0 in removed_set
-    tail_removed = last_idx in removed_set
 
-    survivors = [i for i in range(orig_len) if i not in removed_set]
-    seams = [j for j in range(1, len(survivors)) if survivors[j] - survivors[j - 1] > 1]
-    needed = {survivors[j] for j in seams}
-    if survivors and zero_removed:
-        needed.add(survivors[0])
-    if survivors and tail_removed:
-        needed.update((survivors[-1] + 1, orig_len))
+    # Removal only disturbs the boundaries adjacent to a run of removed
+    # items, so walk the runs: the cost is in what is removed, not in how
+    # many items the value holds. A run bounded by survivors on both sides
+    # leaves a seam, recorded as (position after removal, boundary before);
+    # a run reaching an end of the value exposes the survivor beyond it.
+    seams: list[tuple[int, int]] = []
+    first_survivor: int | None = None
+    last_survivor: int | None = None
+    dropped = 0
+    for start, end in _removed_runs(sorted_removed):
+        if start == 0:
+            first_survivor = end + 1 if end < last_idx else None
+        elif end == last_idx:
+            last_survivor = start - 1
+        else:
+            seams.append((start - dropped, end + 1))
+        dropped += end - start + 1
+
+    needed = {boundary for _, boundary in seams}
+    if first_survivor is not None:
+        needed.add(first_survivor)
+    if last_survivor is not None:
+        needed.update((last_survivor + 1, orig_len))
     boundaries_before = {b: Boundary.capture(cv, b) for b in needed}
     new_last_eol = ""
-    if survivors and tail_removed:
-        left_boundary = survivors[-1] + 1
+    new_terminal_has_comma = False
+    if last_survivor is not None:
+        left_boundary = last_survivor + 1
         boundaries_before[left_boundary].copy().remove_above().restore(
             cv, left_boundary
         )
-        new_last_eol = _take_eol(items[survivors[-1]])
-    new_terminal_has_comma = items[last_idx].has_comma if tail_removed else False
+        new_last_eol = _take_eol(items[last_survivor])
+        new_terminal_has_comma = items[last_idx].has_comma
 
     for i in reversed(sorted_removed):
         items.pop(i)
@@ -796,7 +821,7 @@ def splice_out(
             cv.header_trivia, cv.final_trivia
         )
         return
-    if tail_removed:
+    if last_survivor is not None:
         new_last = items[-1]
         new_last.post_comma_trivia = ""
         new_last.has_comma = new_terminal_has_comma
@@ -811,19 +836,14 @@ def splice_out(
                 old=boundaries_before[orig_len],
             )
     if is_multiline:
-        for j in seams:
-            _shift_carried_boundary(
-                cv,
-                j,
-                nl,
-                old=boundaries_before[survivors[j]],
-            )
+        for pos, boundary in seams:
+            _shift_carried_boundary(cv, pos, nl, old=boundaries_before[boundary])
     indent = _value_indent(cv)
-    if zero_removed:
-        _replace_above(cv, 0, boundaries_before[survivors[0]], nl, indent)
-    for j in seams:
-        _replace_above(cv, j, boundaries_before[survivors[j]], nl, indent)
-    if tail_removed:
+    if first_survivor is not None:
+        _replace_above(cv, 0, boundaries_before[first_survivor], nl, indent)
+    for pos, boundary in seams:
+        _replace_above(cv, pos, boundaries_before[boundary], nl, indent)
+    if last_survivor is not None:
         _replace_above(cv, len(items), boundaries_before[orig_len], nl)
 
 
