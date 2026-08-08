@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A value TOML cannot represent is now rejected before anything changes: `install()` no longer leaves empty sections behind, and assigning such a value over an existing section no longer destroys it. The message for an unconvertible value no longer names the key.
-- A comment on its own row before an inline array's or inline table's closing bracket now always stays above an appended item, whatever the layout around it (an end-of-line comment on the previous item, comma-first style, or a block of several rows).
+- A value TOML cannot represent is now rejected before anything
+  changes, so a failed assignment or `install()` leaves the document
+  untouched.
+- A comment on its own row before an inline array's or inline table's
+  closing bracket now reliably stays above an appended item.
 
 ## [2.2.1] - 2026-08-04
 
