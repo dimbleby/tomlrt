@@ -2270,7 +2270,7 @@ def add_aot_entry(
 
     for k, v in body_items:
         if not (is_scalar(v) or _is_synth_inline(v)):
-            entry_table[k] = v
+            entry_table._setitem_validated(k, v)  # noqa: SLF001
             continue
         cst, dec = _synth_value(
             v,
@@ -3378,7 +3378,7 @@ def attach_section_at(
         append_direct_kv(section, k, cst)
         dict.__setitem__(section, k, dec)
     for k, v in structurals:
-        section[k] = v
+        section._setitem_validated(k, v)  # noqa: SLF001
     return section
 
 
@@ -3660,7 +3660,7 @@ def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, Any]) -> None:
     items = list(body.items())
     entry_table.clear()
     for k, v in items:
-        entry_table[k] = v
+        entry_table._setitem_validated(k, v)  # noqa: SLF001
 
 
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:

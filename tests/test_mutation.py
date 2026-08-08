@@ -5797,6 +5797,49 @@ def test_install_invalid_value_messages() -> None:
     assert list(doc) == []
 
 
+def test_install_nested_section_chain_renders_deepest_header_only() -> None:
+    """Installing a chain of section tables emits one header for the chain.
+
+    Intermediate components stay implicit, so only the deepest table
+    that carries a body gets an explicit header.
+    """
+    value = Table.section({"leaf": {"x": 1}})
+    for i in range(2):
+        value = Table.section({f"k{i}": value})
+    doc = tomlrt.loads("[a]\nx = 1\n")
+    doc.install(("root",), value)
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+
+        [root.k1.k0]
+        leaf = { x = 1 }
+        """)
+
+
+def test_nested_invalid_value_messages_name_their_own_key() -> None:
+    """Validation reports the key the offending value is bound to.
+
+    The recursive walk carries each child's key down with it, so a
+    rejection inside a nested mapping is as actionable as one at the
+    top level. A list item has no key of its own, so it keeps the
+    unqualified advice.
+    """
+    doc = tomlrt.loads("")
+    pair: Any = (1, 2)
+    raw: Any = b"x"
+    with pytest.raises(TypeError, match="cannot assign tuple to TOML key 'inner'"):
+        doc["q"] = {"inner": pair}
+    with pytest.raises(TypeError, match="cannot assign bytes to TOML key 'inner'"):
+        doc["q"] = {"inner": raw}
+    with pytest.raises(TypeError, match="cannot assign tuple to TOML key 'deep'"):
+        doc["q"] = Table.section({"deep": pair})
+    with pytest.raises(TypeError, match=r"cannot assign tuple; use a list"):
+        doc["q"] = [pair]
+    assert tomlrt.dumps(doc) == ""
+    assert list(doc) == []
+
+
 def test_ensure_table_on_detached_table_section() -> None:
     t = Table.section()
     sub = t.ensure_table(["a", "b", "c"])

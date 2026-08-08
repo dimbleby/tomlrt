@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     import sys
@@ -29,15 +29,18 @@ from tomlrt._values import (
 
 Scalar = bool | int | float | str | datetime | date | time
 
+# The TOML scalar types, split by whether TOML can always represent
+# them: `validate_scalar` is a no-op for the first group and does the
+# real work for the second. `bool` and `datetime` need no entries of
+# their own, being subclasses of `int` and `date`.
+PLAIN_SCALARS: Final = (int, float, str)
+CHECKED_SCALARS: Final = (date, time)
+_SCALARS: Final = PLAIN_SCALARS + CHECKED_SCALARS
+
 
 def is_scalar(v: object) -> TypeIs[Scalar]:
     """True iff ``v`` is a TOML scalar (and not an array / table)."""
-    # `bool` is an `int` subclass; keep the gate explicit.
-    if isinstance(v, bool):
-        return True
-    if isinstance(v, (int, float, str)):
-        return True
-    return isinstance(v, (datetime, date, time))
+    return isinstance(v, _SCALARS)
 
 
 def coerce_scalar(
