@@ -2196,7 +2196,7 @@ def _aot_separator(aot: AoT, doc: Document) -> str:
         return _peer_separator(None, doc)
     last_entry = aot[-1]._owner_aot_entry  # noqa: SLF001
     assert last_entry is not None
-    return _peer_separator(last_entry.entry_slots[0].leading, doc)
+    return _peer_separator(last_entry.header.leading, doc)
 
 
 def add_aot_entry(
@@ -3603,8 +3603,7 @@ def replace_aot_entry_with_clone(
     # Save the destination header (we keep it in place, only its body
     # changes). The header's leading carries any pre-header comment
     # block — that's the trivia the test pins.
-    dst_header = dst_entry.entry_slots[0]
-    assert isinstance(dst_header, StructuralHeaderSlot)
+    dst_header = dst_entry.header
 
     # Pre-clone source body before any destructive cleanup, so a clone
     # failure can't leave the destination half-emptied. Also covers

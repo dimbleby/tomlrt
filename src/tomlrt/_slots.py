@@ -44,11 +44,16 @@ class AoTEntry:
     entry_slots: list[Slot] = field(default_factory=list)
 
     @property
-    def path(self) -> tuple[str, ...]:
-        """Decoded path of the entry, taken from its header slot."""
+    def header(self) -> StructuralHeaderSlot:
+        """The entry's ``[[a]]`` header, kept first in ``entry_slots``."""
         header = self.entry_slots[0]
         assert isinstance(header, StructuralHeaderSlot)
-        return header.path
+        return header
+
+    @property
+    def path(self) -> tuple[str, ...]:
+        """Decoded path of the entry, taken from its header slot."""
+        return self.header.path
 
 
 # ---------------------------------------------------------------------------
@@ -253,12 +258,11 @@ def retarget_slot_newlines(slot: Slot, target: str) -> None:
     Used by graft paths so cross-document spliced slots adopt the
     destination document's line ending, including nested inline values.
     """
+    assert isinstance(slot, (KVSlot, StructuralHeaderSlot))
     slot.leading = retarget_newlines(slot.leading, target)
+    retarget_eol_newline(slot.eol, target)
     if isinstance(slot, KVSlot):
-        retarget_eol_newline(slot.eol, target)
         retarget_value_newlines(slot.value, target)
-    elif isinstance(slot, StructuralHeaderSlot):
-        retarget_eol_newline(slot.eol, target)
 
 
 __all__ = [
