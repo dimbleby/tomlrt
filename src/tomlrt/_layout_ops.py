@@ -4002,23 +4002,16 @@ def _move_slots_to_anchor(
     # Splice [head .. tail] in after saved_anchor_prev (or at doc head).
     if saved_anchor_prev is None:
         next_after = doc._head  # noqa: SLF001
-        head._prev = None  # noqa: SLF001
-        tail._next = next_after  # noqa: SLF001
-        if next_after is not None:
-            next_after._prev = tail  # noqa: SLF001
-        else:
-            # The detach emptied the stream, so this block is now all of it.
-            doc._tail = tail  # noqa: SLF001  # pragma: no cover
         doc._head = head  # noqa: SLF001
     else:
         next_after = saved_anchor_prev._next  # noqa: SLF001
-        head._prev = saved_anchor_prev  # noqa: SLF001
         saved_anchor_prev._next = head  # noqa: SLF001
-        tail._next = next_after  # noqa: SLF001
-        if next_after is not None:
-            next_after._prev = tail  # noqa: SLF001
-        else:
-            doc._tail = tail  # noqa: SLF001
+    head._prev = saved_anchor_prev  # noqa: SLF001
+    tail._next = next_after  # noqa: SLF001
+    if next_after is not None:
+        next_after._prev = tail  # noqa: SLF001
+    else:
+        doc._tail = tail  # noqa: SLF001
 
     head.leading = saved_leading
     _terminate_unless_tail(tail, doc)
