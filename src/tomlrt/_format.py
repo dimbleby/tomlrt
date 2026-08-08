@@ -277,25 +277,35 @@ def _canon_key_equals(node: KVSlot | InlineTableEntry) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _canon_kv_slot(slot: KVSlot, *, nl: str, options: FormatOptions) -> None:
-    """Normalise a KV slot's body (key/eq/value/eol).
-
-    Leading is handled separately by :func:`_canon_leading` so that
-    the subtree-aware blank-line policy can be applied at the walk
-    level.
-    """
-    _canon_key_equals(slot)
-    _canon_value(slot.value, nl=nl, options=options)
-    _canon_eol(slot.eol, nl=nl, options=options)
-
-
-def _canon_header_slot(
-    slot: StructuralHeaderSlot, *, nl: str, options: FormatOptions
+def _canon_slot(
+    slot: Slot,
+    *,
+    nl: str,
+    target_blanks: int | None,
+    options: FormatOptions,
+    max_preserved_blanks: int | None = None,
 ) -> None:
-    slot.inner_pre = ""
-    slot.inner_post = ""
-    slot.key_seps = ["."] * (len(slot.key_parts) - 1)
+    """Canonicalise one slot: its body, then its leading trivia.
+
+    Leading comes last so the caller's blank-line policy
+    (``target_blanks`` / ``max_preserved_blanks``) has the final say.
+    """
+    if isinstance(slot, KVSlot):
+        _canon_key_equals(slot)
+        _canon_value(slot.value, nl=nl, options=options)
+    else:
+        assert isinstance(slot, StructuralHeaderSlot), "unknown slot type"
+        slot.inner_pre = ""
+        slot.inner_post = ""
+        slot.key_seps = ["."] * (len(slot.key_parts) - 1)
     _canon_eol(slot.eol, nl=nl, options=options)
+    _canon_leading(
+        slot,
+        nl=nl,
+        target_blanks=target_blanks,
+        options=options,
+        max_preserved_blanks=max_preserved_blanks,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -763,16 +773,11 @@ def format_subtree(
         # no-final-newline state survives.
         if prev is not None:
             ensure_terminator(prev, nl)
-        if isinstance(slot, KVSlot):
-            _canon_kv_slot(slot, nl=nl, options=options)
-        else:
-            assert isinstance(slot, StructuralHeaderSlot), "unknown slot type"
-            _canon_header_slot(slot, nl=nl, options=options)
         if prev is None:
             target: int | None = None
         else:
             target = 1 if isinstance(slot, StructuralHeaderSlot) else 0
-        _canon_leading(
+        _canon_slot(
             slot,
             nl=nl,
             target_blanks=target,
@@ -803,10 +808,8 @@ def format_document_trailing(
 
 __all__ = [
     "FormatOptions",
-    "_canon_header_slot",
     "_canon_inline_value",
-    "_canon_kv_slot",
-    "_canon_leading",
+    "_canon_slot",
     "_closing_indent",
     "_resolve_format_options",
     "format_document_trailing",

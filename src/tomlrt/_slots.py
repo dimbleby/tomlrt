@@ -65,7 +65,10 @@ class AoTEntry:
 class Slot:
     """Base for physical slots.
 
-    Subclassed by `KVSlot` and `StructuralHeaderSlot`.
+    Subclassed by `KVSlot` and `StructuralHeaderSlot`. Every slot kind
+    spells one physical line as ``leading`` + body + ``eol``, so both
+    trivia fields — and ``owner_aot_entry`` — live here and all kinds
+    expose them uniformly; only the body differs.
 
     Deliberately not an `abc.ABC`: giving it an `ABCMeta` metaclass
     would make every `isinstance(slot, KVSlot)` /
@@ -83,11 +86,13 @@ class Slot:
     """
 
     leading: str
-    owner_aot_entry: AoTEntry | None
-    """The AoT entry that physically contains this slot, if any.
+    """Trivia before the slot's own text: blank lines, comment lines, indent."""
 
-    Lives on the base so all slot kinds expose the field uniformly.
-    """
+    owner_aot_entry: AoTEntry | None
+    """The AoT entry that physically contains this slot, if any."""
+
+    eol: EolTrivia
+    """Trivia after the slot's own text: comment + line terminator."""
 
     _prev: Slot | None = field(default=None, init=False, repr=False, compare=False)
     _next: Slot | None = field(default=None, init=False, repr=False, compare=False)
@@ -139,7 +144,6 @@ class KVSlot(Slot):
     pre_eq: str
     post_eq: str
     value: Value
-    eol: EolTrivia
 
     @property
     def key(self) -> tuple[str, ...]:
@@ -174,7 +178,6 @@ class StructuralHeaderSlot(Slot):
     key_seps: list[str]
     inner_pre: str
     inner_post: str
-    eol: EolTrivia
 
     entry: AoTEntry | None
     """The AoT entry this header opens; ``None`` for a plain table."""
@@ -248,7 +251,7 @@ def ensure_terminator(slot: Slot, nl: str) -> None:
     mutation moves it off the tail it needs one, or it would run into
     whatever now follows it.
     """
-    if isinstance(slot, (KVSlot, StructuralHeaderSlot)) and not slot.eol.newline:
+    if not slot.eol.newline:
         slot.eol.newline = nl
 
 
@@ -258,7 +261,6 @@ def retarget_slot_newlines(slot: Slot, target: str) -> None:
     Used by graft paths so cross-document spliced slots adopt the
     destination document's line ending, including nested inline values.
     """
-    assert isinstance(slot, (KVSlot, StructuralHeaderSlot))
     slot.leading = retarget_newlines(slot.leading, target)
     retarget_eol_newline(slot.eol, target)
     if isinstance(slot, KVSlot):

@@ -136,13 +136,14 @@ them. Read roughly in this order:
 - **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:
-  - `Slot` — base; carries `leading: str`, `_prev` / `_next`
+  - `Slot` — base; carries the whole-line trivia (`leading: str`,
+    `eol: EolTrivia`) that every slot kind has, `_prev` / `_next`
     intrusive linked-list pointers, `owner_aot_entry`, and a
     `_refs` back-pointer list (every `SlotRef` that targets the
     slot — bounded by path depth, used for O(depth) ref scrub on
     AoT removal).
   - `KVSlot` — one `key = value` line (`host_path`, `key_parts`,
-    `key_seps`, `value`, `eol`).
+    `key_seps`, `value`).
   - `StructuralHeaderSlot` — one `[a.b]` / `[[a.b]]` header (`path`,
     `kind`, `entry`, `synthetic`).
   - `AoTEntry` — bookkeeping for an `[[a]]` entry (its
