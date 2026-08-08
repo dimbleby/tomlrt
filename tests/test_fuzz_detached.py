@@ -41,7 +41,7 @@ import tomli
 import tomlrt
 from _helpers import fuzz_context, fuzz_seeds
 from tomlrt import AoT, Array
-from tomlrt._container import Container
+from tomlrt._container import Container, _is_section
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 
 if TYPE_CHECKING:
@@ -97,6 +97,7 @@ _OPS = (
     "delete_doc",
     "mutate_array",
     "mutate_aot",
+    "attach_empty",
 )
 
 
@@ -142,7 +143,7 @@ def _containers(doc: Document) -> list[Container]:
     def visit(c: Container) -> None:
         out.append(c)
         for child in c.values():
-            if isinstance(child, Container) and not child._inline:  # noqa: SLF001
+            if _is_section(child):
                 visit(child)
             elif isinstance(child, AoT):
                 for entry in child:
@@ -236,7 +237,7 @@ def _view_paths(node: Container, prefix: tuple[str, ...] = ()) -> list[tuple[str
     out: list[tuple[str, ...]] = []
     for key in list(node.keys()):
         value = dict.__getitem__(node, key)
-        if isinstance(value, Container) and not value._inline:  # noqa: SLF001
+        if _is_section(value):
             out.append((*prefix, key))
             out.extend(_view_paths(value, (*prefix, key)))
         elif isinstance(value, (AoT, Array)):
@@ -348,6 +349,19 @@ def _run_program(src: str, seed: int) -> None:
                     aot.pop(rng.randrange(len(aot)))
                 else:
                     aot.append({f"e{step}": step})
+        elif op == "attach_empty":
+            # A section (or AoT entry) attached with no body of its own
+            # is header-only: the one shape whose body-region cache has
+            # nothing but the container's own header to name.
+            aots = _typed_paths(orphan, AoT)
+            if aots and rng.getrandbits(1):
+                _resolve(orphan, rng.choice(aots)).append({})
+            else:
+                target = _resolve(orphan, rng.choice([*paths, ()]))
+                # The orphan root itself may have become inline, which
+                # cannot hold a section.
+                if _is_section(target):
+                    target.ensure_table(f"s{step}")
         else:
             doc[f"k{step}"] = step
 

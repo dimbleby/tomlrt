@@ -338,6 +338,19 @@ def record_ref(c: Container, slot: Slot) -> SlotRef:
     return ref
 
 
+def file_own_header(c: Container, header: StructuralHeaderSlot) -> None:
+    """File ``header`` as ``c``'s own physical presence.
+
+    Every header-filing path establishes ``_header_ref`` and
+    ``_body_tail`` together — the other is
+    `_file_synthetic_header_and_kv`, which lands the tail on the KV it
+    inserts. Here ``c`` has no body yet, so its own header is the tail,
+    which is exactly what `_recompute_body_tail` derives for it.
+    """
+    c._header_ref = record_ref(c, header)  # noqa: SLF001
+    c._body_tail = header  # noqa: SLF001
+
+
 def maybe_advance_body_tail(c: Container, slot: Slot) -> None:
     """Advance ``c._body_tail`` if ``slot`` is a body-region KV of ``c``.
 
@@ -487,14 +500,6 @@ def _wire_section_container(
     c._wire(layout_root=doc, parent=parent, path=path, owner=owner)  # noqa: SLF001
 
 
-def _file_own_header(c: Container, header: StructuralHeaderSlot) -> SlotRef:
-    """File a freshly-wired section's own header."""
-    ref = SlotRef(slot=header, container=c)
-    c._refs.append(ref)  # noqa: SLF001
-    c._header_ref = ref  # noqa: SLF001
-    return ref
-
-
 def _init_implicit_table(
     doc: Document,
     path: tuple[str, ...],
@@ -560,14 +565,6 @@ def _rebuild_index_for_key(c: Container, local_key: str) -> None:
 def _default_eol(doc: Document) -> EolTrivia:
     """A bare-newline `EolTrivia` for a freshly synthesised slot."""
     return EolTrivia(trailing_ws="", comment="", newline=doc._newline)  # noqa: SLF001
-
-
-def _body_anchor(c: Container) -> Slot | None:
-    """Return the end of ``c``'s direct body, including its header fallback."""
-    if c._body_tail is not None:  # noqa: SLF001
-        return c._body_tail  # noqa: SLF001
-    header_ref = c._header_ref  # noqa: SLF001
-    return header_ref.slot if header_ref is not None else None
 
 
 def _insert_between(
@@ -681,12 +678,12 @@ def _splice_body_slot(
     new_slot: Slot,
     *,
     anchor_body_tail: Slot | None,
-    anchor_header_ref: SlotRef | None,
     doc: Document,
 ) -> bool:
     """Splice ``new_slot`` into the doc-stream at the canonical body anchor.
 
-    Anchor preference: body tail > header > head-of-doc seam > empty doc.
+    Anchor preference: body tail (which for a header-bearing container
+    with no body yet is that header) > head-of-doc seam > empty doc.
     Shared by the direct-KV and dotted-KV insert paths. Returns ``True``
     iff ``new_slot`` became the new doc head ahead of an existing head
     (the seam case), where ancestor refs must go at index 0.
@@ -694,10 +691,6 @@ def _splice_body_slot(
     if anchor_body_tail is not None:
         ensure_terminator(anchor_body_tail, doc._newline)  # noqa: SLF001
         insert_after(anchor_body_tail, new_slot, doc)
-        return False
-    if anchor_header_ref is not None:
-        ensure_terminator(anchor_header_ref.slot, doc._newline)  # noqa: SLF001
-        insert_after(anchor_header_ref.slot, new_slot, doc)
         return False
     if doc._head is not None:  # noqa: SLF001
         # Section-only doc: splice before the first slot, separating it.
@@ -832,7 +825,6 @@ def append_direct_kv(
     doc = c._attached_doc  # noqa: SLF001
     # Capture the anchor *before* mutating any cache.
     body_tail = c._body_tail  # noqa: SLF001
-    header_ref = c._header_ref  # noqa: SLF001
 
     new_slot = _build_kv_slot(
         c,
@@ -846,16 +838,12 @@ def append_direct_kv(
     _splice_body_slot(
         new_slot,
         anchor_body_tail=body_tail,
-        anchor_header_ref=header_ref,
         doc=doc,
-    )
-    anchor_slot: Slot | None = body_tail or (
-        header_ref.slot if header_ref is not None else None
     )
     _file_ordered_ref(
         c,
         new_slot,
-        predecessor=anchor_slot,
+        predecessor=body_tail,
     )
     c._body_tail = new_slot  # noqa: SLF001
     _extend_entry_slots(c._owner_aot_entry, new_slot)  # noqa: SLF001
@@ -977,12 +965,9 @@ def _bind_own_section_header(
     """File an already-positioned header as ``c``'s own physical presence."""
     parent = c._parent  # noqa: SLF001
     assert parent is not None
-    own_ref = SlotRef(slot=header, container=c)
-    c._refs.append(own_ref)  # noqa: SLF001
-    c._header_ref = own_ref  # noqa: SLF001
+    file_own_header(c, header)
     _extend_entry_slots(c._owner_aot_entry, header)  # noqa: SLF001
     _file_header_binding_chain(parent, header, host=host)
-    c._body_tail = header  # noqa: SLF001
 
 
 def _materialise_empty_section_header(
@@ -1703,7 +1688,6 @@ def install_dotted_kv_slot(
     assert len(chain) == len(leaf_keypath)
 
     body_tail = leaf_parent._body_tail or host._body_tail  # noqa: SLF001
-    header_ref = host._header_ref  # noqa: SLF001
     owner = host._owner_aot_entry  # noqa: SLF001
 
     new_slot = _new_kv_slot(
@@ -1722,7 +1706,6 @@ def install_dotted_kv_slot(
     _splice_body_slot(
         new_slot,
         anchor_body_tail=body_tail,
-        anchor_header_ref=header_ref,
         doc=doc,
     )
 
@@ -2275,7 +2258,7 @@ def add_aot_entry(
         parent=parent,
         owner=entry,
     )
-    _file_own_header(entry_table, header)
+    file_own_header(entry_table, header)
 
     append_host, append_anchor = _aot_append_position(aot)
     _splice_block_after([header], append_anchor, doc)
@@ -3072,9 +3055,7 @@ def adopt_private_implicit(
 
     # Dotted KVs inherit scope from position, so anchor at the host's
     # direct body rather than its descendant-inclusive subtree.
-    anchor = host._body_tail or (  # noqa: SLF001
-        host._header_ref.slot if host._header_ref is not None else None  # noqa: SLF001
-    )
+    anchor = host._body_tail  # noqa: SLF001
     # Appending under a null anchor would inherit the scope of an
     # unrelated later header, so the block becomes the document head
     # instead.
@@ -3352,7 +3333,7 @@ def attach_section_at(
         parent=deepest_parent,
         owner=owner,
     )
-    _file_own_header(section, header)
+    file_own_header(section, header)
 
     # Anchor past the whole subtree of the nearest header-bearing
     # ancestor: a header re-parents everything after it, so landing it

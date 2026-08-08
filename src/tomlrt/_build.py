@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 from tomlrt._array import AoT, Array
 from tomlrt._comments import _split_preamble
 from tomlrt._container import Container, Document, Table
-from tomlrt._layout_ops import maybe_advance_body_tail, record_ref
+from tomlrt._layout_ops import (
+    file_own_header,
+    maybe_advance_body_tail,
+    record_ref,
+)
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._values import (
     ArrayValue,
@@ -46,9 +50,7 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
         if isinstance(slot, StructuralHeaderSlot):
             if slot.path == root._path:  # noqa: SLF001
                 assert root._header_ref is None  # noqa: SLF001
-                own_ref = record_ref(root, slot)
-                root._header_ref = own_ref  # noqa: SLF001
-                root._body_tail = slot  # noqa: SLF001
+                file_own_header(root, slot)
                 current_host = root
             else:
                 current_host = _apply_header(root, slot)
@@ -66,8 +68,8 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
 # ---------------------------------------------------------------------------
 
 
-# ``record_ref`` and ``maybe_advance_body_tail`` are shared with
-# mutation paths, keeping cache maintenance in one place.
+# ``record_ref``, ``file_own_header`` and ``maybe_advance_body_tail``
+# are shared with mutation paths, keeping cache maintenance in one place.
 
 
 # ---------------------------------------------------------------------------
@@ -96,14 +98,6 @@ def _resolve_parent(
     return parent, path[-1]
 
 
-def _finish_opened_table(table: Table, header: StructuralHeaderSlot) -> Table:
-    """Own-header ref + body-tail reset for a freshly opened ``table``."""
-    own_ref = record_ref(table, header)
-    table._header_ref = own_ref  # noqa: SLF001
-    table._body_tail = header  # noqa: SLF001
-    return table
-
-
 def _open_table(root: Container, header: StructuralHeaderSlot) -> Table:
     """Open ``[a.b.c]`` — return the `Table` view for ``path``.
 
@@ -122,7 +116,8 @@ def _open_table(root: Container, header: StructuralHeaderSlot) -> Table:
             f"{name!r} (got {type(existing).__name__}); validator drift"
         )
         table = existing
-    return _finish_opened_table(table, header)
+    file_own_header(table, header)
+    return table
 
 
 def _open_aot_entry(
@@ -146,7 +141,8 @@ def _open_aot_entry(
     )
     table = _make_table(parent, path, owner=entry)
     list.append(aot, table)
-    return _finish_opened_table(table, header)
+    file_own_header(table, header)
+    return table
 
 
 def _resolve_table_child(

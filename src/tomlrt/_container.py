@@ -1205,7 +1205,7 @@ class Container(_View, dict[str, Any]):
                     first_slot.leading = saved_leading + first_slot.leading
         if len(result) > 0:
             last_entry = result[-1]
-            last_slot = _layout_ops._body_anchor(last_entry)  # noqa: SLF001
+            last_slot = last_entry._body_tail  # noqa: SLF001
             assert last_slot is not None
             if (
                 isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
