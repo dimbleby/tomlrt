@@ -336,7 +336,10 @@ wrong.
   belonging to the body region" (KV with matching owner; or, for
   a header-bearing container with no body, the header itself).
   Maintained eagerly on every body-region append, recomputed by
-  `_recompute_body_tail` on body-affecting deletes.
+  `_recompute_body_tail` on body-affecting deletes. Every header-
+  filing path establishes it, so a container with a `_header_ref`
+  always has a `_body_tail`: insertion anchors read the tail alone
+  and need no header fallback of their own.
 - **`Slot.owner_aot_entry`** lives on the base `Slot`, not on the
   subclasses. Use direct attribute access — never `getattr(slot,
   "owner_aot_entry", None)`.
