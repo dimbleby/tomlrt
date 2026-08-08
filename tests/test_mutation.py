@@ -17,6 +17,9 @@ import pytest
 import tomlrt
 from tomlrt import AoT, Array, Table
 
+# A value with no TOML representation, for rejection tests.
+_OPAQUE: Any = object()
+
 # ---------------------------------------------------------------------------
 # Scalar set/get/del
 # ---------------------------------------------------------------------------
@@ -1082,6 +1085,30 @@ def test_array_extend_invalid_value_is_atomic() -> None:
     rendered = tomlrt.dumps(doc)
     assert rendered == src
     assert _reparses(rendered) == {"xs": [1]}
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        pytest.param(_OPAQUE, TypeError, id="opaque"),
+        pytest.param(Table.section({"a": 1}), tomlrt.TOMLError, id="section"),
+        pytest.param({"nested": AoT([{"a": 1}])}, tomlrt.TOMLError, id="nested-aot"),
+    ],
+)
+def test_array_append_rejects_unstorable_value_atomically(
+    value: Any, error: type[Exception]
+) -> None:
+    """`append` synthesises before splicing, so a value an inline array
+    cannot hold is rejected with the array left untouched."""
+    src = "xs = [1]\n"
+    doc = tomlrt.loads(src)
+    xs = doc.array("xs")
+
+    with pytest.raises(error):
+        xs.append(value)
+
+    assert list(xs) == [1]
+    assert tomlrt.dumps(doc) == src
 
 
 @pytest.mark.parametrize("value", [Array([2]), Table.inline({"x": 2})])
@@ -5706,6 +5733,68 @@ def test_install_dotted_path_promotes_every_promotable_ancestor() -> None:
         x = 9
         """)
     assert _reparses(out) == {"a": {"other": 2, "b": {"c": {"d": 1, "x": 9}}}}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(_OPAQUE, id="opaque"),
+        pytest.param({"x": _OPAQUE}, id="mapping-with-opaque"),
+        pytest.param((1, 2), id="tuple"),
+        pytest.param(b"bytes", id="bytes"),
+        pytest.param(Table.section({"x": _OPAQUE}), id="section"),
+        pytest.param(AoT([{"x": _OPAQUE}]), id="aot"),
+    ],
+)
+def test_install_invalid_value_leaves_document_untouched(value: Any) -> None:
+    """A leaf value `install()` cannot convert is rejected before any
+    part of the path is synthesised."""
+    src = td("""
+        a = 1
+        """)
+    doc = tomlrt.loads(src)
+    with pytest.raises(TypeError):
+        doc.install("p.q.r", value)
+    assert tomlrt.dumps(doc) == src
+    assert list(doc) == ["a"]
+    assert _reparses(tomlrt.dumps(doc)) == {"a": 1}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(_OPAQUE, id="opaque"),
+        pytest.param(Table.section({"x": _OPAQUE}), id="section"),
+        pytest.param(AoT([{"x": _OPAQUE}]), id="aot"),
+    ],
+)
+def test_install_invalid_value_does_not_promote_inline_ancestor(value: Any) -> None:
+    """The value check runs before the ancestor promotion `install()`
+    would otherwise perform, so a rejected value leaves inline
+    ancestors inline."""
+    src = td("""
+        a = {b = 1}
+        """)
+    doc = tomlrt.loads(src)
+    with pytest.raises(TypeError):
+        doc.install("a.c", value)
+    assert tomlrt.dumps(doc) == src
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"b": 1}}
+
+
+def test_install_invalid_value_messages() -> None:
+    """The leaf check keeps `__setitem__`'s key-aware advice."""
+    doc = tomlrt.loads("")
+    pair: Any = (1, 2)
+    raw: Any = bytearray(b"x")
+    with pytest.raises(TypeError, match="cannot convert object to a TOML value"):
+        doc.install("p.q", _OPAQUE)
+    with pytest.raises(TypeError, match="cannot assign tuple to TOML key 'q'"):
+        doc.install("p.q", pair)
+    with pytest.raises(TypeError, match="cannot assign bytes to TOML key 'q'"):
+        doc.install("p.q", raw)
+    assert tomlrt.dumps(doc) == ""
+    assert list(doc) == []
 
 
 def test_ensure_table_on_detached_table_section() -> None:

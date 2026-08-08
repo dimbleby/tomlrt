@@ -535,6 +535,21 @@ class Container(_View, dict[str, Any]):
             owner=self._owner_aot_entry,
         )
 
+    def _validate_value(self, key: str, value: object) -> None:
+        """Reject a value that cannot be stored under ``key`` on ``self``.
+
+        The single pre-mutation check for assignment, run by
+        `__setitem__` and by `install` on its leaf.
+        """
+        # Types we explicitly do not coerce, reported against the key.
+        if isinstance(value, tuple):
+            msg = f"cannot assign tuple to TOML key {key!r}; use a list"
+            raise TypeError(msg)
+        if isinstance(value, (bytes, bytearray)):
+            msg = f"cannot assign bytes to TOML key {key!r}; use a string"
+            raise TypeError(msg)
+        _validate_input(value, inline_only=self._inline)
+
     def _require_promotable_entry(self, key: str, *, action: str) -> object:
         """Return ``self[key]`` after the shared promotion pre-checks."""
         if self._inline:
@@ -556,22 +571,7 @@ class Container(_View, dict[str, Any]):
         _validate_key(key)
         if key in self and self[key] is value:
             return
-        # Reject types we explicitly do not coerce.
-        if isinstance(value, tuple):
-            msg = f"cannot assign tuple to TOML key {key!r}; use a list"
-            raise TypeError(msg)
-        if isinstance(value, (bytes, bytearray)):
-            msg = f"cannot assign bytes to TOML key {key!r}; use a string"
-            raise TypeError(msg)
-        # Inline tables cannot host section-shaped values; fail at the
-        # assignment site, for both attached and detached factories.
-        if self._inline:
-            if isinstance(value, AoT):
-                msg = "cannot store an array-of-tables inside an inline table"
-                raise TOMLError(msg)
-            if _is_section(value):
-                msg = "cannot store a section-style table inside an inline-style table"
-                raise TOMLError(msg)
+        self._validate_value(key, value)
         # Unattached factory mode: dict-only storage until attach.
         if self._layout_root is None:
             dict.__setitem__(self, key, value)
@@ -606,23 +606,11 @@ class Container(_View, dict[str, Any]):
             self._inline_typed_replace(key, value)
             return
         # Structural overwrite keeps the doc-stream anchor but detaches
-        # old user references from the live doc.
-        if (
-            is_scalar(value)
-            or _is_synth_inline(value)
-            or isinstance(value, AoT)
-            or _is_section(value)
-            or isinstance(value, Mapping)
-        ):
-            value = _snapshot_for_overlapping_install(self, key, value)
-            _layout_ops.reposition_install(self, key, value)
-            return
-        # Unsupported value type — TypeError, not NIE.
-        msg = (
-            f"cannot convert value of type {type(value).__name__!r} "
-            f"for TOML key {key!r}"
-        )
-        raise TypeError(msg)
+        # old user references from the live doc: every value
+        # `_validate_value` accepts and the branches above declined is
+        # structural.
+        value = _snapshot_for_overlapping_install(self, key, value)
+        _layout_ops.reposition_install(self, key, value)
 
     def _insert_new(
         self,
@@ -654,12 +642,8 @@ class Container(_View, dict[str, Any]):
         if isinstance(value, AoT):
             self._attach_aot(key, value)
             return
-        if _is_section(value):
-            self._attach_section(key, value)
-            return
-        # Unsupported types get the canonical TypeError.
-        msg = f"cannot convert {type(value).__name__} to a TOML value"
-        raise TypeError(msg)
+        # `_validate_value` leaves only a section table for this branch.
+        self._attach_section(key, value)
 
     def _attach_aot(self, key: str, value: AoT) -> None:
         """Install ``value`` (an AoT) under ``key``.
@@ -989,9 +973,8 @@ class Container(_View, dict[str, Any]):
     # ------------------------------------------------------------------
 
     def _inline_setitem(self, key: str, value: Any) -> None:
-        # ``__setitem__`` has already rejected ``AoT`` / section values
-        # for inline hosts. Non-coerceable types (``set``, custom
-        # classes, …) reach ``_synth_value`` for the canonical TypeError.
+        # ``__setitem__`` has already rejected values an inline host
+        # cannot store (``AoT``, sections, non-coerceable types).
         cst, decoded = self._synth_local_value(key, value)
         old = dict.__getitem__(self, key) if key in self else None
         # Either replacement branch displaces the old value, so a view of
@@ -1040,12 +1023,18 @@ class Container(_View, dict[str, Any]):
         """Set ``value`` at the (possibly dotted) ``path``.
 
         Intermediate sections are created as needed via `ensure_table`.
-        Returns the live view stored at the leaf.
+        Returns the live view stored at the leaf. A value that cannot be
+        stored is rejected before anything is created, so a failed call
+        leaves the document unchanged.
         """
         parts = validate_path(path)
         if self._inline and len(parts) > 1:
             msg = "cannot install dotted path into an inline-style table"
             raise TOMLError(msg)
+        # Validate the leaf before walking or synthesising anything. A
+        # dotted path hosts the leaf in a section, which the check above
+        # guarantees matches ``self``'s flavour.
+        self._validate_value(parts[-1], value)
         # Section / AoT values keep intermediate components implicit;
         # only their own header is explicit.
         is_section = isinstance(value, Table) and not value._inline  # noqa: SLF001
