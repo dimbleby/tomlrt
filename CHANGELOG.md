@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A comment on its own row before an inline array's or inline table's closing bracket now always stays above an appended item, whatever the layout around it (an end-of-line comment on the previous item, comma-first style, or a block of several rows).
+
 ## [2.2.1] - 2026-08-04
 
 ### Fixed

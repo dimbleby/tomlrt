@@ -221,10 +221,10 @@ them. Read roughly in this order:
   entry points consumed by `Array` / `_inline_ops`, plus the
   row-break primitives (`shift_breaks`, `boundary_break_holder`)
   shared with `_comma_comments`; the lower-level boundary-flip and
-  EOL-section helpers stay module-private. The
-  shared bracket-pad re-anchoring uses `split_above_block` /
-  `join_above_block` from `_trivia.py`. A future change to the
-  canonical inline-value model only needs to land here.
+  EOL-section helpers stay module-private. Above-item comment
+  blocks are re-anchored through `Boundary` itself, so an insertion
+  finds them wherever the row break ahead of them lives. A future
+  change to the canonical inline-value model only needs to land here.
 - **`_format.py`** — pure-function canonicaliser invoked by the
   public `Container.format()` / `Array.format()` methods. Walks a
   subtree of slots / values and rewrites trivia to a canonical

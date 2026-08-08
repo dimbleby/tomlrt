@@ -2680,25 +2680,62 @@ def test_append_preserves_empty_array_inner_comment() -> None:
         """)
 
 
-def test_append_preserves_trailing_comment_in_single_item_array() -> None:
+@pytest.mark.parametrize(
+    ("eol", "rows"),
+    [
+        ("", ("# tail",)),
+        ("  # one", ("# tail",)),
+        ("  # one", ("# tail", "# and more")),
+    ],
+)
+def test_append_preserves_trailing_comment_in_single_item_array(
+    eol: str, rows: tuple[str, ...]
+) -> None:
     # A single-item multiline array whose last-item post-comma slot
     # carries a comment used to have that comment collapse onto the
-    # same line as the new item, producing valid-but-ugly output.
-    src = td("""
+    # same line as the new item, producing valid-but-ugly output. The
+    # comment belongs to the item below it whether the row break ahead
+    # of it comes from the pad or from the previous item's EOL section,
+    # and a block of several rows moves as a unit.
+    tail = "\n            ".join(rows)  # continuation rows keep the fixture indent
+    src = td(f"""
         a = [
-            1,
-            # tail
+            1,{eol}
+            {tail}
         ]
         """)
     doc = tomlrt.loads(src)
     doc.array("a").append(2)
-    assert tomlrt.dumps(doc) == td("""
+    assert tomlrt.dumps(doc) == td(f"""
         a = [
-            1,
-            # tail
+            1,{eol}
+            {tail}
             2,
         ]
         """)
+
+
+@pytest.mark.parametrize("eol", ["", " # one"])
+def test_assign_preserves_trailing_comment_in_inline_table(eol: str) -> None:
+    # Inline tables share the boundary machinery with arrays, so a
+    # comment on its own row before the closing brace stays above the
+    # newly added entry regardless of the previous entry's EOL comment.
+    src = td(f"""
+        t = {{
+            a = 1,{eol}
+            # tail
+        }}
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("t")["b"] = 2
+    assert tomlrt.dumps(doc) == td(f"""
+        t = {{
+            a = 1,{eol}
+            # tail
+            b = 2,
+        }}
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"t": {"a": 1, "b": 2}}
 
 
 def test_append_preserves_leading_comment_in_single_item_array() -> None:
@@ -2741,6 +2778,30 @@ def test_append_preserves_comma_first_boundary_in_array() -> None:
         a = [
               1 # comma is on the next line
              ,2
+             ,99
+            ]
+        """)
+
+
+def test_append_preserves_dangling_comment_in_comma_first_array() -> None:
+    # A comma-first array keeps its own comment-above-the-bracket rule:
+    # the block stays on its row and the appended item takes the next
+    # break-before-comma row below it.
+    src = td("""
+        a = [
+              1 # comma is on the next line
+             ,2
+             # tail
+            ]
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.array("a").append(99)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+              1 # comma is on the next line
+             ,2
+             # tail
              ,99
             ]
         """)

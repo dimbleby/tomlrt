@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from tomlrt._trivia import (
     indent_from_trivia,
-    join_above_block,
     leading_break,
     leading_ws,
     restamp_bracket_pad_for_first,
@@ -591,19 +590,6 @@ def _canonical_separator(value: CommaValue[Any], nl: str) -> str:
     return _value_newline(value, nl) + _value_indent(value)
 
 
-def migrate_bracket_above(bracket: str, separator: str) -> tuple[str, str]:
-    """Migrate any above-bracket comment block onto a new item's leading.
-
-    An above-block in ``header_trivia`` / ``final_trivia`` conceptually
-    belongs to the item below it. Inserting a boundary item moves that
-    block from the bracket pad onto the item's leading.
-
-    Returns ``(new_bracket, new_leading)``.
-    """
-    pad, above = split_above_block(bracket)
-    return pad, join_above_block(separator, above)
-
-
 def _carry_above(
     cv: CommaValue[Any],
     i: int,
@@ -634,6 +620,40 @@ def _replace_above(
     )
 
 
+def _detach_above(cv: CommaValue[Any], b: int) -> Boundary:
+    """Snapshot boundary ``b``, stripping any comment block it owns.
+
+    An above-block belongs to the item below it, so an insertion here
+    has to lift the block out of the way and re-home it (with
+    :func:`_rehome_above`) once the items have moved. :class:`Boundary`
+    finds the block wherever the row break ahead of it lives, so every
+    spelling of a layout is treated alike. The returned snapshot retains
+    the block.
+    """
+    boundary = Boundary.capture(cv, b)
+    if "#" in boundary.above:
+        boundary.copy().remove_above().restore(cv, b)
+    return boundary
+
+
+def _rehome_above(
+    cv: CommaValue[Any], i: int, source: Boundary, style: CommaStyle, nl: str
+) -> None:
+    """Put the block ``source`` was detached from above the item at ``i``.
+
+    A comma-first item sits on its comma's row, so that row's authored
+    indent -- possibly none -- is the one the block aligns with.
+    """
+    if "#" not in source.above:
+        return
+    indent = (
+        trailing_ws(style.pre_comma_break)
+        if style.break_before_comma
+        else _value_indent(cv)
+    )
+    _carry_above(cv, i, source, nl, indent)
+
+
 # ---------------------------------------------------------------------------
 # Append / remove / reorder orchestration
 # ---------------------------------------------------------------------------
@@ -655,11 +675,9 @@ def splice_in(
         items.append(new_item)
         flip_to_terminal(new_item, style)
         return
-    cv.final_trivia, new_item.leading = migrate_bracket_above(
-        cv.final_trivia, style.inter_separator
-    )
     old_tail = items[-1]
-    old_final = Boundary.capture(cv, len(items))
+    old_final = _detach_above(cv, len(items))
+    new_item.leading = style.inter_separator
     if style.break_before_comma:
         # Comma-first: the former tail keeps its EOL comment but yields its
         # terminal break (re-homed before the closing bracket) and gains its
@@ -672,20 +690,23 @@ def splice_in(
             cv.final_trivia = nl + cv.final_trivia
         items.append(new_item)
         flip_to_terminal(new_item, style)
-        return
-    flip_to_internal(old_tail)
-    items.append(new_item)
-    flip_to_terminal(new_item, style)
-    if style.is_multiline:
-        # Fresh boundary onto the new item; carried final boundary, whose
-        # predecessor changes from the old tail to the new item.
-        _structural_break(old_tail, new_item, nl)
-        _shift_carried_boundary(
-            cv,
-            len(items),
-            nl,
-            old=old_final,
-        )
+    else:
+        flip_to_internal(old_tail)
+        items.append(new_item)
+        flip_to_terminal(new_item, style)
+        if style.is_multiline:
+            # Fresh boundary onto the new item; carried final boundary, whose
+            # predecessor changes from the old tail to the new item.
+            _structural_break(old_tail, new_item, nl)
+            _shift_carried_boundary(
+                cv,
+                len(items),
+                nl,
+                old=old_final,
+            )
+    # A block that sat above the closing bracket belongs above the
+    # appended item, at the seam the append created.
+    _rehome_above(cv, len(items) - 1, old_final, style, nl)
 
 
 def splice_insert(
@@ -697,10 +718,7 @@ def splice_insert(
 ) -> None:
     """Insert ``new_item`` before the existing item at ``index``."""
     items = cv.items
-    displaced = Boundary.capture(cv, index)
-    carry_above = "#" in displaced.above
-    if carry_above:
-        displaced.copy().remove_above().restore(cv, index)
+    displaced = _detach_above(cv, index)
     if style.break_before_comma:
         new_item.trailing = style.pre_comma_break
         new_item.leading = "" if index == 0 else style.inter_separator
@@ -708,36 +726,26 @@ def splice_insert(
         if index == 0:
             # Item 0 keeps an empty leading; the displaced item takes the pad.
             items[1].leading = style.inter_separator
-        if carry_above:
-            # A comma-first item sits on its comma's row, so that row's
-            # authored indent -- possibly none -- is the one to match.
-            _carry_above(
-                cv, index + 1, displaced, nl, trailing_ws(style.pre_comma_break)
-            )
-        return
-    if index == 0:
-        cv.header_trivia, items[0].leading = migrate_bracket_above(
-            cv.header_trivia, style.inter_separator
-        )
+    elif index == 0:
+        items[0].leading = style.inter_separator
         items.insert(0, new_item)
         if style.is_multiline:
             _structural_break(new_item, items[1], nl)
-        if carry_above:
-            _carry_above(cv, 1, displaced, nl, _value_indent(cv))
-        return
-    pred = items[index - 1]
-    new_item.leading = style.inter_separator
-    items.insert(index, new_item)
-    if style.is_multiline:
-        _structural_break(pred, new_item, nl)
-        _shift_carried_boundary(
-            cv,
-            index + 1,
-            nl,
-            old=displaced,
-        )
-    if carry_above:
-        _carry_above(cv, index + 1, displaced, nl, _value_indent(cv))
+    else:
+        pred = items[index - 1]
+        new_item.leading = style.inter_separator
+        items.insert(index, new_item)
+        if style.is_multiline:
+            _structural_break(pred, new_item, nl)
+            _shift_carried_boundary(
+                cv,
+                index + 1,
+                nl,
+                old=displaced,
+            )
+    # The block belongs to the displaced item, which has moved down past
+    # the new one.
+    _rehome_above(cv, index + 1, displaced, style, nl)
 
 
 def splice_out(
@@ -877,7 +885,6 @@ __all__ = [
     "CommaStyle",
     "boundary_break_holder",
     "detect_style",
-    "migrate_bracket_above",
     "reindent_as_leader",
     "reorder_owned",
     "shift_breaks",
