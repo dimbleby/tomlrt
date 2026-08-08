@@ -280,13 +280,10 @@ class Array(_View, list[Any]):
         )
 
     def _prepare_values(self, values: list[Any]) -> list[tuple[Value, Any]]:
-        """Validate all values, then synthesise each exactly once."""
+        """Validate every value before synthesising: synthesis live-attaches."""
         from tomlrt._container import _validate_input  # noqa: PLC0415
 
         for value in values:
-            if isinstance(value, AoT):
-                msg = "cannot store an array-of-tables inside an inline array"
-                raise TOMLError(msg)
             _validate_input(value, inline_only=True)
         return [self._synth_item(value) for value in values]
 
