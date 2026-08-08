@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from tomlrt._scanner import _Scanner
-from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._slots import KVSlot, StructuralHeaderSlot, stitch_run
 from tomlrt._trivia import leading_has_blank_line, split_eol_section
 from tomlrt._validator import _Validator
 from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
@@ -82,13 +82,7 @@ class _Parser:
                 slot = self._parse_key_value(leading)
             result.slots.append(slot)
 
-        # Stitch the physical slot list.
-        prev: Slot | None = None
-        for slot in result.slots:
-            slot._prev = prev  # noqa: SLF001
-            if prev is not None:
-                prev._next = slot  # noqa: SLF001
-            prev = slot
+        stitch_run(None, result.slots, None)
 
         result.newline = sc.detected_newline()
         return result

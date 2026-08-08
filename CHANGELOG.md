@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removing items from an inline array or inline table now costs time
   proportional to what is removed, not to the value's length, so
   deleting in a loop is no longer quadratic.
+- Replacing a table or array of tables in place now costs time
+  proportional to the replacement rather than to the whole document.
 
 ## [2.2.1] - 2026-08-04
 

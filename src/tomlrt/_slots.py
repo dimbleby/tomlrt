@@ -13,6 +13,8 @@ from dataclasses import MISSING, dataclass, field, fields
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from tomlrt._container import Container
     from tomlrt._trivia import EolTrivia
     from tomlrt._values import KeyPart, Value
@@ -96,6 +98,15 @@ class Slot:
 
     _prev: Slot | None = field(default=None, init=False, repr=False, compare=False)
     _next: Slot | None = field(default=None, init=False, repr=False, compare=False)
+    _order: int = field(default=0, init=False, repr=False, compare=False)
+    """Doc-stream order key: strictly increasing along ``_next``.
+
+    Lets "which of these two slots comes first?" — and hence the
+    position of a slot's ref in a doc-ordered ``Container._refs`` — be
+    answered by comparison instead of by walking the stream. Maintained
+    by `stitch_run`; meaningless for an unlinked slot, which is stamped
+    afresh when it is spliced back in.
+    """
     _refs: list[SlotRef] = field(
         default_factory=list, init=False, repr=False, compare=False
     )
@@ -206,6 +217,112 @@ class StructuralHeaderSlot(Slot):
 
 
 # ---------------------------------------------------------------------------
+# Doc-stream order keys
+# ---------------------------------------------------------------------------
+
+_ORDER_GAP = 1 << 16
+"""Nominal spacing between the order keys of adjacent slots.
+
+Fresh keys are laid out this far apart so that a slot spliced into a
+seam can take the midpoint; only a seam that has absorbed
+``log2(_ORDER_GAP)`` inserts runs out of room and needs `_respread`.
+"""
+
+_ORDER_MIN_STEP = 8
+"""Spacing `_respread` settles for when it has to compress a window.
+
+Small enough that a respread window stays local — the more the nominal
+spacing is insisted on, the further a respread has to reach for the
+room to restore it — but not so small that the window is exhausted
+again immediately.
+"""
+
+
+def stitch_run(prev: Slot | None, run: Sequence[Slot], nxt: Slot | None) -> None:
+    """Link ``run``, in order, between ``prev`` and ``nxt``, stamping order keys.
+
+    The sole point at which slots join a doc-stream, and so the sole
+    point that has to keep :attr:`Slot._order` — the key every
+    doc-ordered projection of the stream is sorted by — monotone. The
+    whole run's keys are allocated up front, from the state of the
+    stream before any of it is linked. A caller holding the enclosing
+    document is responsible for its head and tail.
+    """
+    key, step = _order_run_between(prev, nxt, len(run))
+    for slot in run:
+        slot._order = key  # noqa: SLF001
+        key += step
+        slot._prev = prev  # noqa: SLF001
+        slot._next = nxt  # noqa: SLF001
+        if prev is not None:
+            prev._next = slot  # noqa: SLF001
+        prev = slot
+    if nxt is not None:
+        nxt._prev = prev  # noqa: SLF001
+
+
+def _order_run_between(
+    prev: Slot | None, nxt: Slot | None, count: int
+) -> tuple[int, int]:
+    """First key and step for ``count`` keys between two adjacent slots.
+
+    The keys ``first + i * step`` for ``i`` in ``range(count)`` all lie
+    strictly between the two slots' own keys. ``None`` means "no slot on
+    that side", i.e. the head or tail seam of the document, where there
+    is unlimited room and the nominal spacing is used. Respreads a
+    neighbourhood of the stream when the seam itself cannot hold the
+    whole run. Allocating a run in one go is what keeps a bulk splice —
+    a reorder, a block move — linear, rather than repeatedly halving one
+    seam until it is exhausted and then respreading per slot.
+    """
+    if prev is None:
+        stop = nxt._order if nxt is not None else count * _ORDER_GAP  # noqa: SLF001
+        return stop - count * _ORDER_GAP, _ORDER_GAP
+    if nxt is None:
+        return prev._order + _ORDER_GAP, _ORDER_GAP  # noqa: SLF001
+    if nxt._order - prev._order <= count:  # noqa: SLF001
+        _respread(prev, nxt, count)
+    step = (nxt._order - prev._order) // (count + 1)  # noqa: SLF001
+    return prev._order + step, step  # noqa: SLF001
+
+
+def _respread(left: Slot, right: Slot, count: int) -> None:
+    """Re-lay the order keys of a window around an exhausted seam.
+
+    Grows the window outward from the ``left``/``right`` pair until the
+    key range enclosing it can hold that many slots at ``_ORDER_MIN_STEP``
+    spacing — or wider, if the ``count`` slots about to be inserted
+    between the pair need more room than that — then redistributes them
+    evenly across it. Growth always terminates because reaching an end
+    of the stream gives the window room to expand into rather than
+    compress.
+    """
+    need = max(_ORDER_MIN_STEP, count + 1)
+    lo, hi, window = left, right, 2
+    below, above = lo._prev, hi._next  # noqa: SLF001
+    while below is not None and above is not None:
+        room = above._order - below._order  # noqa: SLF001
+        if room >= (window + 1) * need:
+            break
+        lo, hi, window = below, above, window + 2
+        below, above = lo._prev, hi._next  # noqa: SLF001
+
+    # An absent bound is an end of the stream, where the window can have
+    # all the room it wants; keys are plain ints, so a head-end window
+    # simply extends below the current head key, negative if need be.
+    span = (window + 1) * max(_ORDER_GAP, need)
+    low = below._order if below is not None else lo._order - span  # noqa: SLF001
+    high = above._order if above is not None else low + span  # noqa: SLF001
+
+    step = (high - low) // (window + 1)
+    cur: Slot | None = lo
+    for i in range(1, window + 1):
+        assert cur is not None
+        cur._order = low + i * step  # noqa: SLF001
+        cur = cur._next  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
 # SlotRef (per-container occurrence)
 # ---------------------------------------------------------------------------
 
@@ -275,4 +392,5 @@ __all__ = [
     "StructuralHeaderSlot",
     "ensure_terminator",
     "retarget_slot_newlines",
+    "stitch_run",
 ]

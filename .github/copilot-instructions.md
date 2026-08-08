@@ -184,9 +184,11 @@ them. Read roughly in this order:
     where the same predicate composition is reused or carries a
     fast-path; one-off walks pass the predicate inline. Don't add a
     third ad-hoc walk.
-  - **Ordered ref filing** goes through `_file_ordered_ref`; physical
-    region permutations finish through `_finish_region_permutation`,
-    which updates every affected `_refs` / `_index` projection.
+  - **Ordered ref filing** goes through `record_ref`, which places a
+    ref by its slot's order key; a physical change to a region of the
+    stream is wrapped in `_refile_region_refs`, which puts every
+    affected `_refs` / `_index` projection back in the refreshed key
+    order.
   - **Container sorting is region-local** and keeps leaf / dotted-KV
     blocks before structural section / AoT blocks so re-parsing cannot
     change ownership. `key` / `reverse` apply within those partitions.
@@ -321,18 +323,25 @@ wrong.
   seam completely, then restore it once. Keep reorder linear; do not
   mutate then recapture or deep-copy every trivia channel.
 - **Slot-stream linked list** is the single source of physical
-  ordering. Mutation primitives splice exactly one slot at a time
-  and update `_prev` / `_next`. Never rebuild the list.
+  ordering. `stitch_run` is the one place a slot joins it: every
+  splice goes through there (via `_link_run_between`, which adds the
+  document's own head and tail), updating `_prev` / `_next` and
+  stamping order keys. Never rebuild the list.
+- **`Slot._order` is a doc-stream order key**, strictly increasing
+  along `_next`, so "which slot comes first?" is a comparison rather
+  than a walk. Keys are laid out with gaps, a whole run at a time,
+  and a local window is relabelled when a seam runs out of room;
+  they are arbitrary and meaningless for an unlinked slot.
 - **`SlotRef.local_key` is derived** from `(slot, container)` —
   never assigned, never stored. The property asserts the
   geometric invariant on every read; an out-of-place ref fails
   fast at the property boundary rather than corrupting an
   `_index` bucket.
 - **`Container._index[k]`** is the in-order list of refs in
-  `_refs` whose `local_key == k`. File mid-stream refs through
-  `_file_ordered_ref`; after block reordering, update the contiguous
-  region and its per-key projections through
-  `_finish_region_permutation`.
+  `_refs` whose `local_key == k`. Both it and `_refs` are sorted by
+  `Slot._order`: file refs through `record_ref`, and make physical
+  changes to a region inside `_refile_region_refs`, which re-files
+  the region's contiguous run in each projection.
 - **`Container._body_tail`** ≡ "the most recent slot in `_refs`
   belonging to the body region" (KV with matching owner; or, for
   a header-bearing container with no body, the header itself).
@@ -356,7 +365,7 @@ wrong.
   its order is *not* the doc-stream order. Anything that needs the
   entry's doc-stream order or subtree tail must **derive** it from
   the linked stream (`_owned_slots_ordered`, `_parent_subtree_tail`,
-  `_aot_append_position`), never read `entry_slots[-1]`. Clone
+  `_aot_append_anchor`), never read `entry_slots[-1]`. Clone
   bookkeeping, in turn, relies on append-order slices and
   `entry_slots[0]` being the header.
 - **Container shape** is named explicitly by the `_Kind` enum in

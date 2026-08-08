@@ -20,9 +20,11 @@ Design notes:
 
 from __future__ import annotations
 
+import bisect
 import contextlib
 import copy
 import itertools
+import operator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -36,6 +38,7 @@ from tomlrt._slots import (
     StructuralHeaderSlot,
     ensure_terminator,
     retarget_slot_newlines,
+    stitch_run,
 )
 from tomlrt._trivia import (
     EolTrivia,
@@ -280,18 +283,14 @@ def _ancestor_chain(c: Container | AoT) -> list[Container]:
     return out
 
 
-def _resort_and_recompute_tails(c: Container, doc: Document) -> None:
-    """Repair ancestor ref order and cached tails after moving slots."""
-    position: dict[Slot, int] = {}
-    cur = doc._head  # noqa: SLF001
-    while cur is not None:
-        position[cur] = len(position)
-        cur = cur._next  # noqa: SLF001
+def _recompute_tails(c: Container) -> None:
+    """Repair the cached body tails of ``c`` and its ancestors after a move.
 
+    Only a container with refs on both sides of the move can have gained
+    a different last body slot, and those are exactly ``c`` (the
+    container whose binding moved) and its ancestors.
+    """
     for cn in [c, *_ancestor_chain(c)]:
-        cn._refs.sort(key=lambda ref: position[ref.slot])  # noqa: SLF001
-        for refs in cn._index.values():  # noqa: SLF001
-            refs.sort(key=lambda ref: position[ref.slot])
         if cn._body_tail is not None:  # noqa: SLF001
             cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
 
@@ -318,24 +317,117 @@ def _anchor_in_parent_direct_body(parent: Container, anchor_prev: Slot | None) -
     )
 
 
-def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:
-    """Append ``ref`` to ``c._refs`` and (when keyed) ``c._index``."""
-    c._refs.append(ref)  # noqa: SLF001
+_ref_order = operator.attrgetter("slot._order")
+"""Order key of a `SlotRef`'s slot — the sort key of every ref projection."""
+
+
+def _ordered_projections(
+    c: Container, ref: SlotRef
+) -> tuple[list[SlotRef], list[SlotRef] | None]:
+    """``c``'s doc-ordered ref lists that hold ``ref``: ``_refs`` + its bucket.
+
+    The container's own header ref has no ``local_key`` and so lives in
+    ``_refs`` alone, and the bucket is ``None``.
+    """
     local_key = ref.local_key
-    if local_key is not None:
-        c._index.setdefault(local_key, []).append(ref)  # noqa: SLF001
+    index = c._index  # noqa: SLF001
+    bucket = index.setdefault(local_key, []) if local_key is not None else None
+    return c._refs, bucket  # noqa: SLF001
+
+
+def _ordered_index(refs: list[SlotRef], order: int) -> int:
+    """Index at which order key ``order`` sits, or belongs, in ``refs``.
+
+    Serves both "where is the ref for this slot?" and "where would a new
+    one go?": a ref list holds at most one ref per slot, so the answers
+    coincide, and no caller has to know which existing ref its new one
+    follows.
+    """
+    return bisect.bisect_left(refs, order, key=_ref_order)
+
+
+def _filed_predecessor(c: Container, slot: Slot) -> Slot | None:
+    """Slot of ``c``'s last filed ref that precedes ``slot`` in the doc-stream."""
+    refs = c._refs  # noqa: SLF001
+    idx = _ordered_index(refs, slot._order)  # noqa: SLF001
+    return refs[idx - 1].slot if idx else None
 
 
 def record_ref(c: Container, slot: Slot) -> SlotRef:
-    """Create a `SlotRef(slot, c)` and file it at the tail of ``c``'s caches.
+    """Create a `SlotRef(slot, c)` and file it in doc order on ``c``.
 
     The ``_index`` key is :attr:`SlotRef.local_key`, derived from
     ``(slot, container)`` geometry, so callers cannot file under a
-    disagreeing key. Used by ``_build`` and section-clone installers.
+    disagreeing key. ``slot`` must already be linked into the
+    doc-stream, since its order key is what places the ref.
     """
     ref = SlotRef(slot, c)
-    _file_ref_at_tail(c, ref)
+    order = slot._order  # noqa: SLF001
+    for refs in _ordered_projections(c, ref):
+        if refs is None:
+            continue
+        if not refs or refs[-1].slot._order < order:  # noqa: SLF001
+            # Filing in doc order — the builder's whole-document pass,
+            # every sequential body append — lands at the tail.
+            refs.append(ref)
+        else:
+            refs.insert(_ordered_index(refs, order), ref)
     return ref
+
+
+@contextlib.contextmanager
+def _refile_region_refs(
+    doc: Document,
+    predecessor: Slot | None,
+    successor: Slot | None,
+) -> Iterator[None]:
+    """Re-file the refs of a doc-stream region around a physical change to it.
+
+    The region is the open interval between two slots that stay put.
+    Every doc-ordered projection it appears in — a container's ``_refs``
+    and each of its ``_index`` buckets — holds its refs as one
+    contiguous run, so each run is put back in the order, and at the
+    position, the refreshed order keys imply once the change is done.
+    The cost is proportional to the region rather than to the document,
+    and one mechanism serves every flavour of change: moving the region
+    elsewhere, permuting it in place, or both.
+    """
+    runs: dict[int, tuple[list[SlotRef], list[SlotRef]]] = {}
+    for slot in _slots_between(doc, predecessor, successor):
+        for ref in slot._refs:  # noqa: SLF001
+            for refs in _ordered_projections(ref.container, ref):
+                # A projection holding this ref alone has nothing to
+                # reorder and nowhere else to sit.
+                if refs is not None and len(refs) > 1:
+                    runs.setdefault(id(refs), (refs, []))[1].append(ref)
+    placed = [
+        (refs, run, _ordered_index(refs, _ref_order(run[0])))
+        for refs, run in runs.values()
+    ]
+    for refs, run, start in placed:
+        assert refs[start : start + len(run)] == run, "region refs must be one run"
+    yield
+    for refs, run, start in placed:
+        _replace_ordered_run(refs, run, start)
+
+
+def _replace_ordered_run(refs: list[SlotRef], run: list[SlotRef], start: int) -> None:
+    """Put ``run``, the former slice of ``refs`` at ``start``, back in key order.
+
+    It goes straight back where it was if its refs' order keys still sit
+    between the same neighbours — the whole projection, or a region
+    permuted in place — and is otherwise lifted out and placed afresh.
+    """
+    run.sort(key=_ref_order)
+    end = start + len(run)
+    if (start == 0 or _ref_order(refs[start - 1]) < _ref_order(run[0])) and (
+        end == len(refs) or _ref_order(run[-1]) < _ref_order(refs[end])
+    ):
+        refs[start:end] = run
+        return
+    del refs[start:end]
+    at = _ordered_index(refs, _ref_order(run[0]))
+    refs[at:at] = run
 
 
 def file_own_header(c: Container, header: StructuralHeaderSlot) -> None:
@@ -369,84 +461,23 @@ def maybe_advance_body_tail(c: Container, slot: Slot) -> None:
         c._body_tail = slot  # noqa: SLF001
 
 
-def _host_tail_predecessors(
-    chain: list[Container],
-    host: Container,
-) -> list[Slot | None]:
-    """Derive filed predecessors for a header appended after ``host``."""
-    host_index = next((i for i, c in enumerate(chain) if c is host), None)
-    if host_index is None:
-        host_ancestors = _ancestor_chain(host)
-        assert len(chain) <= len(host_ancestors)
-        assert all(c is a for c, a in zip(chain, host_ancestors, strict=False))
-        tail_count = 0
-    else:
-        tail_count = host_index + 1
-
-    last = host._refs[-1].slot if host._refs else None  # noqa: SLF001
-    header_ref = host._header_ref  # noqa: SLF001
-    host_predecessor: Slot | None
-    if isinstance(last, StructuralHeaderSlot):
-        host_predecessor = last
-    elif header_ref is not None:
-        host_predecessor = header_ref.slot
-    else:
-        host_predecessor = None
-    predecessor_container_ids = (
-        {id(ref.container) for ref in host_predecessor._refs}  # noqa: SLF001
-        if host_predecessor is not None
-        else set()
-    )
-
-    predecessors: list[Slot | None] = []
-    for i, c in enumerate(chain):
-        if i < tail_count:
-            refs = c._refs  # noqa: SLF001
-            predecessors.append(refs[-1].slot if refs else None)
-        else:
-            predecessors.append(
-                host_predecessor if id(c) in predecessor_container_ids else None
-            )
-    return predecessors
-
-
 def _file_header_binding_chain(
     deepest: Container,
     header: StructuralHeaderSlot,
-    *,
-    host: Container | None = None,
 ) -> None:
-    """File ``header`` in doc order on ``deepest`` and every ancestor.
-
-    ``host`` identifies the subtree whose physical tail immediately
-    precedes ``header``. Its cached projection supplies the predecessors
-    without a doc-stream walk; arbitrary insertion positions omit it.
-    """
-    chain = [deepest, *_ancestor_chain(deepest)]
-    predecessors = (
-        _nearest_filed_predecessors(chain, header)
-        if host is None
-        else _host_tail_predecessors(chain, host)
-    )
-    for c, predecessor in zip(chain, predecessors, strict=True):
-        _file_ordered_ref(c, header, predecessor=predecessor)
+    """File ``header`` in doc order on ``deepest`` and every ancestor."""
+    for c in [deepest, *_ancestor_chain(deepest)]:
+        record_ref(c, header)
 
 
 def _extend_header_bindings_to_root(
     parent: Container,
     slots: Iterable[Slot],
-    *,
-    host: Container | None = None,
 ) -> None:
-    """Extend headers through ``parent``'s ancestors in physical order.
-
-    ``host`` applies only to the first header; later headers are interior
-    to the installed block and use their actual doc-stream predecessors.
-    """
+    """Extend headers through ``parent``'s ancestors in physical order."""
     for s in slots:
         if isinstance(s, StructuralHeaderSlot):
-            _file_header_binding_chain(parent, s, host=host)
-            host = None
+            _file_header_binding_chain(parent, s)
 
 
 def _file_synthetic_header_and_kv(
@@ -457,7 +488,6 @@ def _file_synthetic_header_and_kv(
     value: Value,
     doc: Document,
     owner: AoTEntry | None,
-    header_ref_index: int,
 ) -> KVSlot:
     """Common tail of the two header-synthesis paths.
 
@@ -468,9 +498,7 @@ def _file_synthetic_header_and_kv(
     Anchoring and ancestor binding-ref filing stay explicit in callers;
     both are highly position-sensitive and not safe to share.
     """
-    own_header_ref = SlotRef(slot=header_slot, container=c)
-    c._refs.insert(header_ref_index, own_header_ref)  # noqa: SLF001
-    c._header_ref = own_header_ref  # noqa: SLF001
+    c._header_ref = record_ref(c, header_slot)  # noqa: SLF001
 
     new_kv = _new_kv_slot(
         host_path=c._path,  # noqa: SLF001
@@ -481,9 +509,7 @@ def _file_synthetic_header_and_kv(
         leading="",
     )
     insert_after(header_slot, new_kv, doc)
-    kv_ref = SlotRef(slot=new_kv, container=c)
-    c._refs.insert(header_ref_index + 1, kv_ref)  # noqa: SLF001
-    c._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
+    record_ref(c, new_kv)
     c._body_tail = new_kv  # noqa: SLF001
     return new_kv
 
@@ -546,42 +572,47 @@ def ensure_implicit_chain(
     return cur
 
 
-def _rebuild_index_for_key(c: Container, local_key: str) -> None:
-    """Restore ``c._index[local_key]`` as the doc-stream subset of ``c._refs``.
-
-    The invariant is that ``_index[k]`` equals the in-order list of refs
-    in ``_refs`` whose ``local_key == k``. Rebuild after any mid-stream
-    insertion under ``k`` rather than blindly appending — appending
-    would be wrong when the new ref is followed by other contributors
-    sharing the same key (e.g. a later ``[a.b]`` header).
-    """
-    c._index[local_key] = [  # noqa: SLF001
-        r
-        for r in c._refs  # noqa: SLF001
-        if r.local_key == local_key
-    ]
-
-
 def _default_eol(doc: Document) -> EolTrivia:
     """A bare-newline `EolTrivia` for a freshly synthesised slot."""
     return EolTrivia(trailing_ws="", comment="", newline=doc._newline)  # noqa: SLF001
 
 
+def _link_run_between(
+    prev: Slot | None, run: Sequence[Slot], nxt: Slot | None, doc: Document
+) -> None:
+    """Link ``run``, in order, between ``prev`` and ``nxt`` in ``doc``.
+
+    `stitch_run` does the linking and the order-key stamping; this adds
+    the document's own ends, which it knows nothing about. A ``prev`` or
+    ``nxt`` of ``None`` names one of those ends, so the run — which may
+    be empty, leaving the two ends to meet — takes it over.
+    """
+    stitch_run(prev, run, nxt)
+    if prev is None:
+        doc._head = run[0] if run else nxt  # noqa: SLF001
+    if nxt is None:
+        doc._tail = run[-1] if run else prev  # noqa: SLF001
+
+
 def _insert_between(
     prev: Slot | None, new_slot: Slot, nxt: Slot | None, doc: Document
 ) -> None:
-    """Splice ``new_slot`` between ``prev`` and ``nxt`` in ``doc``."""
-    new_slot._prev = prev  # noqa: SLF001
-    new_slot._next = nxt  # noqa: SLF001
-    if prev is not None:
-        prev._next = new_slot  # noqa: SLF001
-    else:
-        doc._head = new_slot  # noqa: SLF001
-    if nxt is not None:
-        nxt._prev = new_slot  # noqa: SLF001
-    else:
-        doc._tail = new_slot  # noqa: SLF001
+    """Splice a newly materialised ``new_slot`` between ``prev`` and ``nxt``."""
+    _link_run_between(prev, (new_slot,), nxt, doc)
     _record_new_slot(doc, new_slot)
+
+
+def _relink_run_after(
+    anchor: Slot | None, slots: Sequence[Slot], doc: Document
+) -> None:
+    """Link an unlinked run of slots back into ``doc``, in order, after ``anchor``.
+
+    The shared re-splice of the two block-permutation paths. The slots
+    already belong to the document, so this is a relink rather than an
+    install and nothing is recorded against an install in flight.
+    """
+    nxt = anchor._next if anchor is not None else doc._head  # noqa: SLF001
+    _link_run_between(anchor, slots, nxt, doc)
 
 
 def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
@@ -704,85 +735,6 @@ def _splice_body_slot(
     return False
 
 
-def _project_bucket_index(
-    refs: list[SlotRef], bucket: list[SlotRef], insert_idx: int
-) -> int:
-    """Position in ``bucket`` for a ref inserted into ``refs`` at ``insert_idx``.
-
-    ``bucket`` is the same-key ordered subsequence of ``refs`` (a
-    ``Container._index`` entry). The new ref belongs immediately after its
-    nearest predecessor that is also in ``bucket``, or at the front if it has
-    none. A fresh key (empty bucket), an append past the last ref, and — the
-    sequential-append common case — an append directly after the last same-key
-    ref all resolve in O(1); only an insert that lands *between* two same-key
-    refs builds the position map and scans left for the predecessor.
-    """
-    if not bucket:
-        return 0
-    # A non-empty bucket means ``refs`` is non-empty too, and an append
-    # right after the last ref took ``_file_ordered_ref``'s fast path.
-    assert insert_idx < len(refs)
-    if insert_idx > 0 and refs[insert_idx - 1] is bucket[-1]:
-        return len(bucket)
-    pos = {r: i for i, r in enumerate(bucket)}
-    for k in range(insert_idx - 1, -1, -1):
-        i = pos.get(refs[k])
-        if i is not None:
-            return i + 1
-    # No same-key predecessor: the new ref precedes every existing ref of its
-    # key, so it heads the bucket. Reached e.g. when overwriting a dotted
-    # sub-table whose key also heads a later sub-section header.
-    return 0
-
-
-def _nearest_filed_predecessors(
-    ancestors: Sequence[Container], slot: Slot
-) -> list[Slot | None]:
-    """Find each ancestor's nearest filed predecessor in one backward walk."""
-    remaining = {id(a) for a in ancestors}
-    anchors: dict[int, Slot] = {}
-    cur = slot._prev  # noqa: SLF001
-    while cur is not None and remaining:
-        for r in cur._refs:  # noqa: SLF001
-            cid = id(r.container)
-            if cid in remaining:
-                anchors[cid] = cur
-                remaining.discard(cid)
-        cur = cur._prev  # noqa: SLF001
-    return [anchors.get(id(a)) for a in ancestors]
-
-
-def _file_ordered_ref(
-    c: Container,
-    slot: Slot,
-    *,
-    predecessor: Slot | None,
-) -> SlotRef:
-    """File ``slot`` on ``c`` immediately after its nearest filed predecessor.
-
-    ``c._index[local_key]`` is updated as the same-key projection of
-    ``c._refs``. With no predecessor the ref belongs at the front.
-    """
-    new_ref = SlotRef(slot=slot, container=c)
-    local_key = new_ref.local_key
-    assert local_key is not None
-    refs = c._refs  # noqa: SLF001
-    bucket = c._index.setdefault(local_key, [])  # noqa: SLF001
-    if refs and refs[-1].slot is predecessor:
-        # Common case: sequential tail append. Skip the index search
-        # and bucket projection below.
-        refs.append(new_ref)
-        bucket.append(new_ref)
-        return new_ref
-    insert_idx = (
-        _find_ref_index_by_slot(c, predecessor) + 1 if predecessor is not None else 0
-    )
-    bucket_idx = _project_bucket_index(refs, bucket, insert_idx)
-    refs.insert(insert_idx, new_ref)
-    bucket.insert(bucket_idx, new_ref)
-    return new_ref
-
-
 def append_direct_kv(
     c: Container,
     key: str,
@@ -840,11 +792,7 @@ def append_direct_kv(
         anchor_body_tail=body_tail,
         doc=doc,
     )
-    _file_ordered_ref(
-        c,
-        new_slot,
-        predecessor=body_tail,
-    )
+    record_ref(c, new_slot)
     c._body_tail = new_slot  # noqa: SLF001
     _extend_entry_slots(c._owner_aot_entry, new_slot)  # noqa: SLF001
 
@@ -959,15 +907,13 @@ def _transfer_stale_owner(
         slot.entry = None
 
 
-def _bind_own_section_header(
-    c: Container, header: StructuralHeaderSlot, *, host: Container | None = None
-) -> None:
+def _bind_own_section_header(c: Container, header: StructuralHeaderSlot) -> None:
     """File an already-positioned header as ``c``'s own physical presence."""
     parent = c._parent  # noqa: SLF001
     assert parent is not None
     file_own_header(c, header)
     _extend_entry_slots(c._owner_aot_entry, header)  # noqa: SLF001
-    _file_header_binding_chain(parent, header, host=host)
+    _file_header_binding_chain(parent, header)
 
 
 def _materialise_empty_section_header(
@@ -1036,14 +982,14 @@ def _materialise_empty_inline_table(
     )
     _replace_primary_in_place(kv, primary, doc)
 
-    # File the binding chain ``[host, ..., parent]``, slipping each new
-    # ref in just before ``primary``'s ref so it lands at ``primary``'s
-    # doc-stream position; the scrub removes ``primary``'s refs next.
+    # File the binding chain ``[host, ..., parent]``. ``kv`` is spliced
+    # in ahead of ``primary``, so ordered filing lands each new ref at
+    # ``primary``'s doc-stream position; the scrub removes ``primary``'s
+    # refs next.
     chain = _dotted_chain(host, parent)
     for i, anc in enumerate(chain):
-        idx = _find_ref_index_by_slot(anc, primary)
-        anc._refs.insert(idx, SlotRef(slot=kv, container=anc))  # noqa: SLF001
-        _rebuild_index_for_key(anc, key_path[i])
+        ref = record_ref(anc, kv)
+        assert ref.local_key == key_path[i]
 
     # ``c`` becomes an inline-root table, which keeps no ``_refs`` /
     # ``_index`` of its own (the binding lives on the parent chain, and
@@ -1707,17 +1653,14 @@ def install_dotted_kv_slot(
         doc=doc,
     )
 
-    # Each ancestor needs its own physical predecessor; cached tails can
-    # lie on either side of this newly-spliced slot.
-    anchors = _nearest_filed_predecessors(chain, new_slot)
-    for i, (anc, anchor) in enumerate(zip(chain, anchors, strict=True)):
-        ref = _file_ordered_ref(
-            anc,
-            new_slot,
-            predecessor=anchor,
-        )
+    # A cached tail can lie on either side of this newly-spliced slot, so
+    # each ancestor advances its own only when nothing of its own is
+    # filed in between.
+    for i, anc in enumerate(chain):
+        predecessor = _filed_predecessor(anc, new_slot)
+        ref = record_ref(anc, new_slot)
         assert ref.local_key == leaf_keypath[i]
-        if anchor is anc._body_tail or anc._body_tail is None:  # noqa: SLF001
+        if predecessor is anc._body_tail or anc._body_tail is None:  # noqa: SLF001
             anc._body_tail = new_slot  # noqa: SLF001
 
     # ``entry_slots`` is membership + header-first order only (doc
@@ -1738,7 +1681,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     doc = c._attached_doc  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
     anchor_slot = c._refs[0].slot if c._refs else None  # noqa: SLF001
-    host: Container | None = None
 
     if anchor_slot is not None:
         adopted_leading = anchor_slot.leading
@@ -1751,7 +1693,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
             recorder[1].append((anchor_slot, anchor_slot.leading, original_pred))
         anchor_slot.leading = new_descendant_leading
     else:
-        host, host_tail = _header_host_and_tail(c)
+        host_tail = _nearest_header_host_tail(c)
         header_slot = _new_owned_section_header(
             c, leading=_build_section_leading(doc), doc=doc
         )
@@ -1763,7 +1705,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
 
     parent = c._parent  # noqa: SLF001
     assert parent is not None
-    _file_header_binding_chain(parent, header_slot, host=host)
+    _file_header_binding_chain(parent, header_slot)
 
     new_kv = _file_synthetic_header_and_kv(
         c,
@@ -1772,7 +1714,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         value=value,
         doc=doc,
         owner=owner,
-        header_ref_index=0,
     )
 
     # ``entry_slots`` is membership + header-first order, not doc order.
@@ -1803,30 +1744,6 @@ def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
     if "\n" in leading and "#" not in leading.split("\n", 1)[0]:
         return
     slot.leading = doc._newline + slot.leading  # noqa: SLF001
-
-
-def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
-    """Locate ``slot``'s ref in ``c._refs``, scanning from both ends.
-
-    Callers pass body-tail / anchor slots whose position in ``c._refs``
-    is either near the end (typical: body sits before a few trailing
-    sub-section header refs) or near the start (e.g. doc-root with a
-    handful of top-level KVs preceding many section headers, as in
-    bulk ``doc[k] = inline`` patterns). A two-pronged scan converges
-    in O(min(P, N-P)) instead of always degrading to O(N) at one end.
-    """
-    refs = c._refs  # noqa: SLF001
-    lo, hi = 0, len(refs) - 1
-    while lo <= hi:
-        if refs[hi].slot is slot:
-            return hi
-        if refs[lo].slot is slot:
-            return lo
-        lo += 1
-        hi -= 1
-    # Unreachable: every caller passes a slot it just filed on ``c``.
-    msg = "internal: anchor slot not found in c._refs"  # pragma: no cover
-    raise AssertionError(msg)  # pragma: no cover
 
 
 def _recompute_body_tail(c: Container) -> Slot | None:
@@ -1922,10 +1839,9 @@ def _parent_subtree_tail(parent: Container) -> Slot | None:
     return cur
 
 
-def _header_host_and_tail(c: Container) -> tuple[Container, Slot | None]:
-    """Return ``c``'s nearest header-bearing host and its subtree tail."""
-    host = _nearest_header_host(c)
-    return host, _parent_subtree_tail(host)
+def _nearest_header_host_tail(c: Container) -> Slot | None:
+    """Return the subtree tail of ``c``'s nearest header-bearing host."""
+    return _parent_subtree_tail(_nearest_header_host(c))
 
 
 def _safe_header_anchor(anchor: Slot | None) -> Slot | None:
@@ -1948,7 +1864,7 @@ def _safe_header_anchor(anchor: Slot | None) -> Slot | None:
 def _child_header_anchor(parent: Container) -> Slot | None:
     """Return a safe anchor for a new header-backed child of ``parent``."""
     return _safe_header_anchor(
-        _parent_subtree_tail(parent) or _header_host_and_tail(parent)[1]
+        _parent_subtree_tail(parent) or _nearest_header_host_tail(parent)
     )
 
 
@@ -2256,11 +2172,11 @@ def add_aot_entry(
         parent=parent,
         owner=entry,
     )
+    # Splice before filing: a ref is placed by its slot's order key, so
+    # the slot has to be in the doc-stream first.
+    _splice_block_after([header], _aot_append_anchor(aot), doc)
     file_own_header(entry_table, header)
-
-    append_host, append_anchor = _aot_append_position(aot)
-    _splice_block_after([header], append_anchor, doc)
-    _file_header_binding_chain(parent, header, host=append_host)
+    _file_header_binding_chain(parent, header)
     list.append(aot, entry_table)
 
     # An entry header under a synthetic placeholder section makes that
@@ -2384,7 +2300,6 @@ def _install_cloned_structural_block(
     owner: AoTEntry | None,
     cloned_slots: list[Slot],
     anchor: Slot | None,
-    host: Container | None = None,
 ) -> None:
     """Wire ``table``'s own-header ref, splice its slots, then build views.
 
@@ -2409,7 +2324,7 @@ def _install_cloned_structural_block(
         target_prefix=target_path,
         doc=doc,
     )
-    _extend_header_bindings_to_root(parent, cloned_slots, host=host)
+    _extend_header_bindings_to_root(parent, cloned_slots)
     _maybe_demote_synthetic_empty_header(parent)
 
 
@@ -2465,7 +2380,7 @@ def _install_cloned_aot_entry(
         _retarget_separator(cloned_header, _aot_separator(aot, doc))
     # else: keep source leading verbatim (bulk-clone past entry 0).
 
-    append_host, append_anchor = _aot_append_position(aot)
+    append_anchor = _aot_append_anchor(aot)
     entry_table = Table()
     _install_cloned_structural_block(
         entry_table,
@@ -2475,7 +2390,6 @@ def _install_cloned_aot_entry(
         owner=new_entry,
         cloned_slots=cloned_slots,
         anchor=append_anchor,
-        host=append_host,
     )
 
     list.append(aot, entry_table)
@@ -2999,14 +2913,14 @@ def synthesise_header_for_emptied(parent: Container | None) -> None:
     ):
         return
     assert not parent._inline  # noqa: SLF001
-    host, tail = _header_host_and_tail(parent)
+    tail = _nearest_header_host_tail(parent)
     header = _new_owned_section_header(
         parent, leading=_build_section_leading(doc), doc=doc
     )
     # The repair is not part of whatever install is in flight above it.
     with _suspend_install_recording(doc):
         _splice_block_after([header], tail, doc)
-    _bind_own_section_header(parent, header, host=host)
+    _bind_own_section_header(parent, header)
 
 
 def adopt_private_implicit(
@@ -3094,9 +3008,8 @@ def adopt_private_implicit(
             continue
         if isinstance(s, KVSlot) and s.host_path != host_path:
             continue
-        predecessors = _nearest_filed_predecessors(chain, s)
-        for anc, predecessor in zip(chain, predecessors, strict=True):
-            _file_ordered_ref(anc, s, predecessor=predecessor)
+        for anc in chain:
+            record_ref(anc, s)
             maybe_advance_body_tail(anc, s)
     dict.__setitem__(dest_parent, key, value)
     return value
@@ -3331,21 +3244,21 @@ def attach_section_at(
         parent=deepest_parent,
         owner=owner,
     )
-    file_own_header(section, header)
-
     # Anchor past the whole subtree of the nearest header-bearing
     # ancestor: a header re-parents everything after it, so landing it
     # mid-section would capture that host's trailing KVs (e.g. a ``d = 4``
     # sibling of an implicit ``parent``) under the new header on re-parse.
-    host, anchor = _header_host_and_tail(parent)
-    _splice_block_after([header], anchor, doc)
+    # Splice before filing: a ref is placed by its slot's order key, so
+    # the slot has to be in the doc-stream first.
+    _splice_block_after([header], _nearest_header_host_tail(parent), doc)
+    file_own_header(section, header)
     # Own the new header on the AoT entry so a later delete of the
     # entry takes the promoted section with it.
     _extend_entry_slots(owner, header)
 
     # File the binding ref under the deepest implicit parent and
     # propagate ancestor-prefix bindings up to the doc root.
-    _file_header_binding_chain(deepest_parent, header, host=host)
+    _file_header_binding_chain(deepest_parent, header)
     dict.__setitem__(deepest_parent, sub[-1], section)
 
     _maybe_demote_synthetic_empty_header(parent)
@@ -3382,8 +3295,8 @@ def attach_section_at(
     return section
 
 
-def _aot_append_position(aot: AoT) -> tuple[Container, Slot | None]:
-    """Return the host and anchor for a newly-appended ``[[path]]`` entry.
+def _aot_append_anchor(aot: AoT) -> Slot | None:
+    """Return the anchor for a newly-appended ``[[path]]`` entry.
 
     Non-empty AoTs anchor after the last entry's complete subtree,
     including nested AoTs. Empty AoTs anchor in their nearest
@@ -3392,11 +3305,11 @@ def _aot_append_position(aot: AoT) -> tuple[Container, Slot | None]:
     if aot:
         last = aot[-1]
         assert last._owner_aot_entry is not None  # noqa: SLF001
-        return last, _parent_subtree_tail(last)
+        return _parent_subtree_tail(last)
     parent = aot._parent  # noqa: SLF001
     assert parent is not None, "attached AoT must have a parent"
     # A document-tail anchor could place the first entry under a later sibling.
-    return _header_host_and_tail(parent)
+    return _nearest_header_host_tail(parent)
 
 
 _PopT = TypeVar("_PopT")
@@ -3703,7 +3616,6 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
 
     region_predecessor = physical_blocks[0][0]._prev  # noqa: SLF001
     region_successor = physical_blocks[-1][-1]._next  # noqa: SLF001
-    old_region_slots = _slots_between(doc, region_predecessor, region_successor)
 
     new_order_indices = [
         phys_idx_by_id[id(t)] for t in new_logical_order if id(t) in phys_idx_by_id
@@ -3711,13 +3623,8 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     output_blocks = [physical_blocks[phys_idx] for phys_idx in new_order_indices]
     movable_slots = [slot for block in physical_blocks for slot in block]
     placements = _peer_placements(physical_blocks, output_blocks)
-    _splice_blocks_in_order(doc, movable_slots, placements)
-    _finish_region_permutation(
-        doc,
-        predecessor=region_predecessor,
-        successor=region_successor,
-        old_slots=old_region_slots,
-    )
+    with _refile_region_refs(doc, region_predecessor, region_successor):
+        _splice_blocks_in_order(doc, movable_slots, placements)
 
     # Reflect the new order in the AoT's own list view.
     list.clear(aot)
@@ -3738,109 +3645,6 @@ def _slots_between(
         out.append(cur)
         cur = cur._next  # noqa: SLF001
     return out
-
-
-def _ref_projections(
-    slots: list[Slot],
-) -> dict[int, list[SlotRef]]:
-    """Project a doc-ordered slot interval onto every container referencing it."""
-    projections: dict[int, list[SlotRef]] = {}
-    for slot in slots:
-        for ref in slot._refs:  # noqa: SLF001
-            projections.setdefault(id(ref.container), []).append(ref)
-    return projections
-
-
-def _replace_ref_projection(
-    refs: list[SlotRef],
-    old: list[SlotRef],
-    new: list[SlotRef],
-) -> None:
-    """Replace one reordered physical-region projection in doc order."""
-    assert old
-    assert old != new
-    assert len(old) == len(new)
-    start = refs.index(old[0])
-    end = start + len(old)
-    assert refs[start:end] == old, "region projection must be contiguous"
-    refs[start:end] = new
-
-
-def _changed_key_projections(
-    old_refs: list[SlotRef],
-    new_refs: list[SlotRef],
-) -> tuple[dict[str, list[SlotRef]], dict[str, list[SlotRef]]]:
-    """Return only keyed projections whose relative order changed."""
-    first_by_key: dict[str, SlotRef] = {}
-    old_multiple: dict[str, list[SlotRef]] = {}
-    for ref in old_refs:
-        local_key = ref.local_key
-        if local_key is None:
-            continue
-        first = first_by_key.get(local_key)
-        if first is None:
-            first_by_key[local_key] = ref
-            continue
-        old_multiple.setdefault(local_key, [first]).append(ref)
-
-    if not old_multiple:
-        return {}, {}
-
-    new_multiple: dict[str, list[SlotRef]] = {key: [] for key in old_multiple}
-    for ref in new_refs:
-        local_key = ref.local_key
-        if local_key is not None and local_key in new_multiple:
-            new_multiple[local_key].append(ref)
-
-    old_changed: dict[str, list[SlotRef]] = {}
-    new_changed: dict[str, list[SlotRef]] = {}
-    for key, old_key_refs in old_multiple.items():
-        new_key_refs = new_multiple[key]
-        if old_key_refs != new_key_refs:
-            old_changed[key] = old_key_refs
-            new_changed[key] = new_key_refs
-    return old_changed, new_changed
-
-
-def _reorder_region_refs(
-    old_slots: list[Slot],
-    new_slots: list[Slot],
-) -> None:
-    """Apply a physical region's permutation to its ref projections."""
-    old_by_container = _ref_projections(old_slots)
-    new_by_container = _ref_projections(new_slots)
-    assert old_by_container.keys() == new_by_container.keys()
-
-    for container_id, old_refs in old_by_container.items():
-        c = old_refs[0].container
-        new_refs = new_by_container[container_id]
-        if old_refs == new_refs:
-            continue
-        _replace_ref_projection(
-            c._refs,  # noqa: SLF001
-            old_refs,
-            new_refs,
-        )
-        old_by_key, new_by_key = _changed_key_projections(old_refs, new_refs)
-        for key, old_key_refs in old_by_key.items():
-            _replace_ref_projection(
-                c._index[key],  # noqa: SLF001
-                old_key_refs,
-                new_by_key[key],
-            )
-
-
-def _finish_region_permutation(
-    doc: Document,
-    *,
-    predecessor: Slot | None,
-    successor: Slot | None,
-    old_slots: list[Slot],
-) -> None:
-    """Validate a physical permutation and apply it to every ref projection."""
-    new_slots = _slots_between(doc, predecessor, successor)
-    assert set(new_slots) == set(old_slots)
-    _reorder_region_refs(old_slots, new_slots)
 
 
 @dataclass(slots=True)
@@ -3897,15 +3701,11 @@ def _splice_blocks_in_order(
     for slot in movable_slots:
         unlink_slot(slot, doc, strip_new_head_leading=False)
 
-    insert_after_slot = anchor_prev
+    ordered: list[Slot] = []
     for block, leading in placements:
         block[0].leading = leading
-        for slot in block:
-            if insert_after_slot is None:
-                insert_before_head(slot, doc)
-            else:
-                insert_after(insert_after_slot, slot, doc)
-            insert_after_slot = slot
+        ordered.extend(block)
+    _relink_run_after(anchor_prev, ordered, doc)
 
     _terminate_unless_tail(former_region_tail, doc)
 
@@ -3964,8 +3764,9 @@ def _move_slots_to_anchor(
     """Move ``slots`` to ``saved_anchor_prev`` in the doc-stream.
 
     Splices the contiguous block immediately after ``saved_anchor_prev``
-    (or to doc head), applies ``saved_leading`` to the new head,
-    and resorts affected ancestor ``_refs``. Used by the
+    (or to doc head), applies ``saved_leading`` to the new head, re-files
+    the block's refs at their new doc position and repairs the cached
+    body tails the move can have invalidated. Used by the
     ``Container.__setitem__`` position-preserving structural replace
     path.
 
@@ -3981,42 +3782,15 @@ def _move_slots_to_anchor(
     head = slots[0]
     tail = slots[-1]
 
-    if head._prev is saved_anchor_prev:  # noqa: SLF001
-        # Already at the saved position — only the leading needs fixing.
-        head.leading = saved_leading
-        _terminate_unless_tail(tail, doc)
-        return
-
-    # Detach [head .. tail] from its current position in the linked list.
-    p = head._prev  # noqa: SLF001
-    n = tail._next  # noqa: SLF001
-    if p is not None:
-        p._next = n  # noqa: SLF001
-    else:
-        doc._head = n  # noqa: SLF001
-    if n is not None:
-        n._prev = p  # noqa: SLF001
-    else:
-        doc._tail = p  # noqa: SLF001
-
-    # Splice [head .. tail] in after saved_anchor_prev (or at doc head).
-    if saved_anchor_prev is None:
-        next_after = doc._head  # noqa: SLF001
-        doc._head = head  # noqa: SLF001
-    else:
-        next_after = saved_anchor_prev._next  # noqa: SLF001
-        saved_anchor_prev._next = head  # noqa: SLF001
-    head._prev = saved_anchor_prev  # noqa: SLF001
-    tail._next = next_after  # noqa: SLF001
-    if next_after is not None:
-        next_after._prev = tail  # noqa: SLF001
-    else:
-        doc._tail = tail  # noqa: SLF001
+    if head._prev is not saved_anchor_prev:  # noqa: SLF001
+        with _refile_region_refs(doc, head._prev, tail._next):  # noqa: SLF001
+            for slot in slots:
+                unlink_slot(slot, doc, strip_new_head_leading=False)
+            _relink_run_after(saved_anchor_prev, slots, doc)
+        _recompute_tails(parent)
 
     head.leading = saved_leading
     _terminate_unless_tail(tail, doc)
-
-    _resort_and_recompute_tails(parent, doc)
 
 
 def _direct_child_key(
@@ -4139,7 +3913,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     latest_owned = movable_slots[-1]
     region_predecessor = earliest_owned._prev  # noqa: SLF001
     region_successor = latest_owned._next  # noqa: SLF001
-    old_region_slots = _slots_between(doc, region_predecessor, region_successor)
 
     # Foreign slots interleaved in c's owned span must keep their
     # re-parse scope. Hoist foreign KVs that still belong to c's
@@ -4160,9 +3933,10 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     if front_foreign:
         head_structural, head_remainder = _split_leading_for_reorder(earliest_owned)
         earliest_owned.leading = head_remainder
-        for f in front_foreign:
-            unlink_slot(f, doc, strip_new_head_leading=False)
-            insert_before(earliest_owned, f, doc)
+        with _refile_region_refs(doc, region_predecessor, region_successor):
+            for f in front_foreign:
+                unlink_slot(f, doc, strip_new_head_leading=False)
+                insert_before(earliest_owned, f, doc)
         front_foreign[0].leading = head_structural + front_foreign[0].leading
 
     key_rank = {key: rank for rank, key in enumerate(new_key_order)}
@@ -4216,14 +3990,8 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         prefix = next(prefix_iterators[(unit.structural, unit.mixed)])
         placements.append((unit.slots, prefix + unit.remainder))
 
-    _splice_blocks_in_order(doc, movable_slots, placements)
-
-    _finish_region_permutation(
-        doc,
-        predecessor=region_predecessor,
-        successor=region_successor,
-        old_slots=old_region_slots,
-    )
+    with _refile_region_refs(doc, region_predecessor, region_successor):
+        _splice_blocks_in_order(doc, movable_slots, placements)
     moved_ids = movable_ids | set(front_foreign)
     _invalidate_body_tail_chain(c, moved_ids)
 

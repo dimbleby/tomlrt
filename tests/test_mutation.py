@@ -264,6 +264,337 @@ def test_overwrite_section_with_aot_only_section_does_not_wipe_doc() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_overwrite_section_moving_block_earlier_keeps_later_edits_in_order() -> None:
+    """A structural overwrite moves the new block back to the old position.
+
+    The block is installed at the end of the document and moved earlier;
+    everything filed after it must keep its doc-stream order so later
+    edits still land in the right section.
+    """
+    doc = tomlrt.loads(
+        td("""
+        # preamble
+        [a]
+        x = 1
+
+        [b]
+        w = 2
+
+        # comment for c
+        [c]
+        u = 3
+        tail = 4
+        """)
+    )
+    doc["a"] = Table.section({"x": 9, "y": 10})
+    doc["a"]["z"] = 11
+    doc["c"]["v"] = 12
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        # preamble
+        [a]
+        x = 9
+        y = 10
+        z = 11
+
+        [b]
+        w = 2
+
+        # comment for c
+        [c]
+        u = 3
+        tail = 4
+        v = 12
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_subsection_moving_block_later_keeps_ancestor_order() -> None:
+    """The mirror case: the replacement block moves *later*.
+
+    ``[a.b]`` reinstalls directly after ``[a]``'s body and is moved back
+    down past ``[m]``, so both ``a``'s and the document's ref lists have
+    to follow it; a later ``a`` key must still land in the ``[a]`` block.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+
+        [m]
+        z = 0
+
+        [a.b]
+        y = 2
+        """)
+    )
+    doc["a"]["b"] = Table.section({"q": 9})
+    doc["a"]["b"]["r"] = 10
+    doc["a"]["x2"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        x = 1
+        x2 = 3
+
+        [m]
+        z = 0
+
+        [a.b]
+        q = 9
+        r = 10
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_in_aot_entry_with_trailing_entries_keeps_order() -> None:
+    """The moved block is owned by an AoT entry and trailing entries follow."""
+    doc = tomlrt.loads(
+        td("""
+        [[p]]
+        a = 1
+        keep = 2
+
+        [[p]]
+        a = 3
+
+        [tail]
+        t = 1
+        """)
+    )
+    doc["p"][0]["a"] = Table.section({"x": 1})
+    doc["p"][0]["more"] = 5
+    doc["tail"]["u"] = 6
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[p]]
+        keep = 2
+        more = 5
+
+        [p.a]
+        x = 1
+
+        [[p]]
+        a = 3
+
+        [tail]
+        t = 1
+        u = 6
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_section_before_bulk_trailing_content() -> None:
+    """Trailing content after the moved block is untouched by the move.
+
+    The repositioning cost is proportional to the moved block, but what
+    matters here is that the rest of the stream — and the ref order of
+    every container that spans it — comes through unchanged.
+    """
+    trailing = "".join(f"\n[s{i}]\nv = {i}\n" for i in range(3))
+    doc = tomlrt.loads("[a]\nx = 1\n" + trailing)
+    doc["a"] = Table.section({"x": 2})
+    doc["s1"]["extra"] = 7
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        x = 2
+
+        [s0]
+        v = 0
+
+        [s1]
+        v = 1
+        extra = 7
+
+        [s2]
+        v = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_long_runs_of_appends_keep_landing_in_the_right_section() -> None:
+    """Hundreds of appends into the same two spots, in document order.
+
+    Each new key is placed relative to what is physically around it, and
+    the bookkeeping that supports that has to be re-laid as a region
+    fills up — repeatedly, and over a widening span as it gets denser.
+    Every append must still land at the end of its own section.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+        """)
+    )
+    for i in range(120):
+        doc["a"][f"k{i:03d}"] = i
+    # ``[b]`` is last, so its appends have the open end of the document
+    # after them rather than another section's content.
+    for i in range(20):
+        doc["b"][f"j{i:02d}"] = i
+
+    out = tomlrt.dumps(doc)
+    assert out == (
+        td("""
+        [a]
+        x = 1
+        """)
+        + "".join(f"k{i:03d} = {i}\n" for i in range(120))
+        + td("""
+
+        [b]
+        y = 2
+        """)
+        + "".join(f"j{i:02d} = {i}\n" for i in range(20))
+    )
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_overwrite_moves_a_block_into_a_crowded_seam() -> None:
+    """A block move claims order-key room for the whole block at once.
+
+    Sustained appends in the middle of a document pack its order keys
+    tight, so a structural overwrite there can want more room between
+    two neighbours than is left. Re-laying the neighbourhood has to
+    account for the whole incoming block, not just one slot of it.
+    """
+    sections = 100
+    fill, replacement = 800, 100
+    mid = sections // 2
+    doc = tomlrt.loads("".join(f"[s{i:04d}]\nx = {i}\n\n" for i in range(sections)))
+    for i in range(fill):
+        doc[f"s{mid:04d}"][f"k{i:04d}"] = i
+    doc[f"s{mid + 1:04d}"] = Table.section({f"m{j:03d}": j for j in range(replacement)})
+
+    frames = [f"[s{i:04d}]\nx = {i}\n\n" for i in range(sections)]
+    frames[mid] = (
+        f"[s{mid:04d}]\nx = {mid}\n"
+        + "".join(f"k{i:04d} = {i}\n" for i in range(fill))
+        + "\n"
+    )
+    frames[mid + 1] = (
+        f"[s{mid + 1:04d}]\n"
+        + "".join(f"m{j:03d} = {j}\n" for j in range(replacement))
+        + "\n"
+    )
+    out = tomlrt.dumps(doc)
+    assert out == "".join(frames)
+    assert _reparses(out) == doc.to_dict()
+
+    # Keep editing around the move: a later insert or delete has to
+    # find its place relative to the block that moved.
+    doc[f"s{mid + 1:04d}"]["extra"] = -1
+    doc[f"s{mid + 2:04d}"]["extra"] = -2
+    del doc[f"s{mid + 1:04d}"]["m050"]
+
+    frames[mid + 1] = (
+        f"[s{mid + 1:04d}]\n"
+        + "".join(f"m{j:03d} = {j}\n" for j in range(replacement) if j != 50)
+        + "extra = -1\n\n"
+    )
+    frames[mid + 2] = f"[s{mid + 2:04d}]\nx = {mid + 2}\nextra = -2\n\n"
+    out = tomlrt.dumps(doc)
+    assert out == "".join(frames)
+    assert _reparses(out) == doc.to_dict()
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
+def test_mixed_inserts_deletes_and_moves_keep_the_document_consistent() -> None:
+    """Every kind of splice, interleaved, then edits on top of the result.
+
+    Inserts, deletes and the block move of a structural overwrite all
+    reshuffle where later edits belong, so the document has to keep
+    telling itself the same story about its own physical order: the
+    rendered bytes, a re-parse of them, and the logical view must all
+    agree once the dust settles.
+    """
+    doc = tomlrt.loads(
+        td("""
+        top = 0
+
+        [a]
+        x = 1
+        y = 2
+
+        [[p]]
+        n = 1
+
+        [[p]]
+        n = 2
+
+        [z]
+        q = 3
+        """)
+    )
+    doc["a"] = Table.section({"x": 10})
+    del doc["z"]["q"]
+    doc["a"]["w"] = 4
+    doc["p"].append({"n": 3})
+    doc["b"] = Table.section({"k": 5})
+    del doc["p"][0]
+    doc["top"] = 99
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        top = 99
+
+        [a]
+        x = 10
+        w = 4
+
+        [[p]]
+        n = 2
+
+        [[p]]
+        n = 3
+
+        [z]
+
+        [b]
+        k = 5
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+    # Edit each container the shuffle touched: a new key lands next to
+    # its container's existing content, wherever that ended up.
+    doc["a"]["v"] = 6
+    doc["z"]["r"] = 7
+    doc["b"]["l"] = 8
+    doc["p"][0]["m"] = 9
+    doc["p"][1]["m"] = 10
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        top = 99
+
+        [a]
+        x = 10
+        w = 4
+        v = 6
+
+        [[p]]
+        n = 2
+        m = 9
+
+        [[p]]
+        n = 3
+        m = 10
+
+        [z]
+        r = 7
+
+        [b]
+        k = 5
+        l = 8
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
 def test_overwrite_dotted_intermediate_keeps_dotted_form() -> None:
     """Overwriting a dotted intermediate (whose value is a subtable) with a
     scalar keeps the dotted form rather than promoting to an ``[a]`` header.
