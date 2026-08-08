@@ -40,7 +40,7 @@ import tomli
 
 import tomlrt
 from _helpers import fuzz_context, fuzz_seeds
-from tomlrt import AoT, Array
+from tomlrt import AoT, Array, Table
 from tomlrt._container import Container, _is_section
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 
@@ -122,7 +122,8 @@ def check_slot_chain(doc: Document, ctx: str) -> None:
     later, on an unrelated operation:
 
     * the chain is acyclic and its links are symmetric;
-    * ``_head`` / ``_tail`` really are its ends.
+    * ``_head`` / ``_tail`` really are its ends;
+    * the order keys that place refs in doc order increase along it.
     """
     slots = _chain(doc)
 
@@ -134,6 +135,7 @@ def check_slot_chain(doc: Document, ctx: str) -> None:
 
     for a, b in itertools.pairwise(slots):
         assert b._prev is a, f"{ctx}: broken back-link"  # noqa: SLF001
+        assert a._order < b._order, f"{ctx}: order keys are not increasing"  # noqa: SLF001
 
 
 def _containers(doc: Document) -> list[Container]:
@@ -391,6 +393,48 @@ def test_detached_subtree_programs_keep_model_consistent(src: str) -> None:
     for seed in fuzz_seeds(_PROGRAMS):
         with fuzz_context(f"seed={seed} src={src!r}"):
             _run_program(src, seed)
+
+
+_CROWD_SECTIONS = 40
+_CROWD_FILL = 2000
+_CROWD_BODY = 1000
+
+
+def test_bulk_move_into_a_seam_with_no_room_left() -> None:
+    """A block moved into an exhausted seam leaves the chain ordered.
+
+    The order keys that place refs in doc order are laid out with gaps,
+    and a seam runs out of them only after thousands of writes into the
+    one place -- far more than the programs above generate. A *bulk*
+    move landing in such a seam is the case that needs the most room:
+    getting it wrong hands several slots the same key, which reorders
+    every cache built over those keys while leaving the render
+    untouched, so only :func:`check_slot_chain` sees it.
+    """
+    src = "".join(f"[s{i:04d}]\nx = {i}\n\n" for i in range(_CROWD_SECTIONS))
+    doc = tomlrt.loads(src)
+    mid = _CROWD_SECTIONS // 2
+    crowded = doc.table(f"s{mid:04d}")
+    for i in range(_CROWD_FILL):
+        crowded[f"k{i}"] = i
+
+    def check(ctx: str) -> None:
+        check_slot_chain(doc, ctx)
+        check_view_caches(doc, ctx)
+        assert foreign_refs(doc) == [], f"{ctx}: document holds a foreign ref"
+        out = tomlrt.dumps(doc)
+        assert tomli.loads(out) == doc.to_dict(), f"{ctx}: render disagrees with model"
+
+    check("crowded")
+    # The block replacing the section right after the crowded one lands
+    # in the seam those writes compressed, and wants several times the
+    # room left there.
+    doc[f"s{mid + 1:04d}"] = Table.section({f"b{i}": i for i in range(_CROWD_BODY)})
+    check("bulk move into the crowded seam")
+    crowded["last"] = 1
+    check("write into the crowded section")
+    doc.sort()
+    check("permute the compressed region")
 
 
 _INLINE = "x = { n.a = 1, z = 9 }\n"
