@@ -361,9 +361,10 @@ class Container(_View, dict[str, Any]):
             raise TOMLError(msg)
         for ref in list(self._refs):
             slot = ref.slot
+            assert isinstance(slot, (KVSlot, StructuralHeaderSlot))
             if isinstance(slot, KVSlot):
                 _canon_kv_slot(slot, nl=nl, options=resolved)
-            elif isinstance(slot, StructuralHeaderSlot):
+            else:
                 _canon_header_slot(slot, nl=nl, options=resolved)
             _canon_leading(slot, nl=nl, target_blanks=None, options=resolved)
         for value in self.values():
@@ -1130,20 +1131,22 @@ class Container(_View, dict[str, Any]):
         result = dict.__getitem__(self, key)
         assert isinstance(result, Table)
         _layout_ops.populate_promoted_inline_entries(result, entries)
-        new_header = result._header_ref.slot if result._header_ref else None  # noqa: SLF001
-        if isinstance(new_header, StructuralHeaderSlot):
-            new_header.leading = saved_leading
-            new_header.eol = saved_eol
-            # A promoted KV becomes a section header and needs a visual
-            # separator from the parent's direct entries.
-            if (
-                self._body_tail is not None
-                and new_header._prev is self._body_tail  # noqa: SLF001
-                and not leading_has_blank_line(new_header.leading)
-            ):
-                layout_root = self._layout_root
-                nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
-                new_header.leading = nl + new_header.leading
+        header_ref = result._header_ref  # noqa: SLF001
+        assert header_ref is not None
+        new_header = header_ref.slot
+        assert isinstance(new_header, StructuralHeaderSlot)
+        new_header.leading = saved_leading
+        new_header.eol = saved_eol
+        # A promoted KV becomes a section header and needs a visual
+        # separator from the parent's direct entries.
+        if (
+            self._body_tail is not None
+            and new_header._prev is self._body_tail  # noqa: SLF001
+            and not leading_has_blank_line(new_header.leading)
+        ):
+            layout_root = self._layout_root
+            nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
+            new_header.leading = nl + new_header.leading
         return result
 
     def promote_array(self, key: str) -> AoT:
@@ -1195,25 +1198,16 @@ class Container(_View, dict[str, Any]):
             _layout_ops.populate_promoted_inline_entries(entry, body)
         # Apply saved leading to the first entry header and saved eol to
         # the last entry's last slot.
-        if len(result) > 0:
-            first_entry = result[0]
-            entry_record = first_entry._owner_aot_entry  # noqa: SLF001
-            if entry_record is not None and entry_record.entry_slots:
-                first_slot = entry_record.entry_slots[0]
-                if isinstance(first_slot, StructuralHeaderSlot):
-                    # Preserve any separator already placed on the header.
-                    first_slot.leading = saved_leading + first_slot.leading
-        if len(result) > 0:
-            last_entry = result[-1]
-            last_slot = last_entry._body_tail  # noqa: SLF001
-            assert last_slot is not None
-            if (
-                isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
-                and saved_eol.comment
-                and not last_slot.eol.comment
-            ):
-                last_slot.eol.comment = saved_eol.comment
-                last_slot.eol.trailing_ws = saved_eol.trailing_ws
+        first_record = result[0]._owner_aot_entry  # noqa: SLF001
+        assert first_record is not None
+        # Preserve any separator already placed on the header.
+        first_header = first_record.header
+        first_header.leading = saved_leading + first_header.leading
+        last_slot = result[-1]._body_tail  # noqa: SLF001
+        assert isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
+        if saved_eol.comment and not last_slot.eol.comment:
+            last_slot.eol.comment = saved_eol.comment
+            last_slot.eol.trailing_ws = saved_eol.trailing_ws
         return result
 
 
@@ -1711,9 +1705,9 @@ def _install_attached_subtree(
     order; the dotted-form preservation is the win.
     """
     direct_kvs: list[tuple[str, object]] = []
-    structural: list[tuple[str, object]] = []
+    structural: list[tuple[str, AoT | Container]] = []
     for k, v in src_table.items():
-        if isinstance(v, AoT) or (_is_section(v)):
+        if isinstance(v, AoT) or _is_section(v):
             structural.append((k, v))
         else:
             direct_kvs.append((k, v))
@@ -1723,9 +1717,7 @@ def _install_attached_subtree(
 
     for k, v in structural:
         sub_path = (*dst_path, k)
-        if isinstance(v, AoT) or (
-            isinstance(v, Container) and v._header_ref is not None  # noqa: SLF001
-        ):
+        if isinstance(v, AoT) or v._header_ref is not None:  # noqa: SLF001
             # Bypass Container.install()'s tuple-path validation here:
             # `k` is a key already known valid on a live source Container
             # (an empty string is a legal — if unusual — TOML key), not a
@@ -1734,7 +1726,7 @@ def _install_attached_subtree(
             # a direct assignment only validates `k` as a single key.
             leaf_parent = _layout_ops.ensure_implicit_chain(dst_parent, sub_path[:-1])
             leaf_parent[sub_path[-1]] = v
-        elif isinstance(v, Container):
+        else:
             _install_attached_subtree(dst_parent, sub_path, v)
 
 

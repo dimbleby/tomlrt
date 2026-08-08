@@ -168,16 +168,14 @@ def _resolve_table_child(
         child._inline = inline  # noqa: SLF001
         dict.__setitem__(parent, name, child)
         return child
-    if isinstance(sub, Table):
-        return sub
     if descend_aot and isinstance(sub, AoT):
         assert sub, "validator should have rejected empty-AoT prefix"
         return sub[-1]
-    msg = (
+    assert isinstance(sub, Table), (
         f"path component {name!r} is bound to "
         f"{type(sub).__name__}, not a table (validator drift)"
     )
-    raise AssertionError(msg)
+    return sub
 
 
 def _make_table(
