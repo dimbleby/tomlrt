@@ -53,6 +53,8 @@ from tomlrt._kind import _Kind
 from tomlrt._paths import validate_path
 from tomlrt._render import render
 from tomlrt._scalar import (
+    CHECKED_SCALARS,
+    PLAIN_SCALARS,
     coerce_scalar,
     is_scalar,
     validate_scalar,
@@ -528,21 +530,6 @@ class Container(_View, dict[str, Any]):
             owner=self._owner_aot_entry,
         )
 
-    def _validate_value(self, key: str, value: object) -> None:
-        """Reject a value that cannot be stored under ``key`` on ``self``.
-
-        The single pre-mutation check for assignment, run by
-        `__setitem__` and by `install` on its leaf.
-        """
-        # Types we explicitly do not coerce, reported against the key.
-        if isinstance(value, tuple):
-            msg = f"cannot assign tuple to TOML key {key!r}; use a list"
-            raise TypeError(msg)
-        if isinstance(value, (bytes, bytearray)):
-            msg = f"cannot assign bytes to TOML key {key!r}; use a string"
-            raise TypeError(msg)
-        _validate_input(value, inline_only=self._inline)
-
     def _require_promotable_entry(self, key: str, *, action: str) -> object:
         """Return ``self[key]`` after the shared promotion pre-checks."""
         if self._inline:
@@ -559,12 +546,28 @@ class Container(_View, dict[str, Any]):
 
     @override
     def __setitem__(self, key: str, value: Any) -> None:
-        # Reject non-str keys before they reach the layout pipeline and
-        # fail later with an opaque TypeError.
+        # Reject a bad key or value before they reach the layout
+        # pipeline and fail later with an opaque error, or — worse —
+        # after a structural overwrite has already torn down the old
+        # binding.
         _validate_key(key)
+        _validate_input(value, inline_only=self._inline, key=key)
+        self._setitem_validated(key, value)
+
+    def _setitem_validated(self, key: str, value: Any) -> None:
+        """Bind ``key`` to a ``value`` already checked for this container.
+
+        The body of `__setitem__` below the validation boundary.
+        `_validate_input` walks a value recursively, so re-entering
+        `__setitem__` from a path that has already validated costs the
+        whole walk again — quadratically so for the `_layout_ops`
+        population loops, which re-enter once per structural child.
+        Callers that validated at their own boundary — `install` on its
+        leaf, the AoT mutators via `_prepare_aot_entries` — use this
+        instead.
+        """
         if key in self and self[key] is value:
             return
-        self._validate_value(key, value)
         # Unattached factory mode: dict-only storage until attach.
         if self._layout_root is None:
             dict.__setitem__(self, key, value)
@@ -600,7 +603,7 @@ class Container(_View, dict[str, Any]):
             return
         # Structural overwrite keeps the doc-stream anchor but detaches
         # old user references from the live doc: every value
-        # `_validate_value` accepts and the branches above declined is
+        # `_validate_input` accepts and the branches above declined is
         # structural.
         value = _snapshot_for_overlapping_install(self, key, value)
         _layout_ops.reposition_install(self, key, value)
@@ -635,7 +638,7 @@ class Container(_View, dict[str, Any]):
         if isinstance(value, AoT):
             self._attach_aot(key, value)
             return
-        # `_validate_value` leaves only a section table for this branch.
+        # `_validate_input` leaves only a section table for this branch.
         self._attach_section(key, value)
 
     def _attach_aot(self, key: str, value: AoT) -> None:
@@ -1026,8 +1029,9 @@ class Container(_View, dict[str, Any]):
             raise TOMLError(msg)
         # Validate the leaf before walking or synthesising anything. A
         # dotted path hosts the leaf in a section, which the check above
-        # guarantees matches ``self``'s flavour.
-        self._validate_value(parts[-1], value)
+        # guarantees matches ``self``'s flavour — so the host reached
+        # below can store it through `_setitem_validated`.
+        _validate_input(value, inline_only=self._inline, key=parts[-1])
         # Section / AoT values keep intermediate components implicit;
         # only their own header is explicit.
         is_section = isinstance(value, Table) and not value._inline  # noqa: SLF001
@@ -1037,7 +1041,7 @@ class Container(_View, dict[str, Any]):
                 self, parts, action="install", limit=len(parts) - 1, promote_inline=True
             )
             anchor = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
-            anchor[parts[-1]] = value
+            anchor._setitem_validated(parts[-1], value)  # noqa: SLF001
             return anchor[parts[-1]]
         # A scalar/inline leaf needs its immediate parent to be an
         # explicit table regardless, so any inline ancestor along the
@@ -1049,7 +1053,7 @@ class Container(_View, dict[str, Any]):
                 parts[:-1], promote_inline=self._layout_root is not None
             )
         )
-        host[parts[-1]] = value
+        host._setitem_validated(parts[-1], value)  # noqa: SLF001
         return host[parts[-1]]
 
     def ensure_table(
@@ -1956,9 +1960,22 @@ def _is_synth_inline(v: object) -> bool:
     return isinstance(v, list)
 
 
-def _validate_input(v: object, *, inline_only: bool) -> None:
-    """Validate a value recursively for an inline or section context."""
-    if is_scalar(v):
+def _validate_input(v: object, *, inline_only: bool, key: str | None = None) -> None:
+    """Validate a value recursively for an inline or section context.
+
+    ``key`` names the entry ``v`` is bound to, if it has one. The
+    recursion passes each child's own key, so a rejection deep inside a
+    nested mapping still reports where it came from. Types TOML cannot
+    represent are named in the terminal branch rather than tested for up
+    front, so the accepting paths never pay for them.
+
+    The scalar arms are spelled out rather than delegated to
+    `is_scalar` + `validate_scalar`: splitting the ladder where
+    behaviour actually differs classifies and checks in one pass.
+    """
+    if isinstance(v, PLAIN_SCALARS):
+        return
+    if isinstance(v, CHECKED_SCALARS):
         validate_scalar(v)
         return
     if isinstance(v, AoT):
@@ -1976,21 +1993,30 @@ def _validate_input(v: object, *, inline_only: bool) -> None:
         return
     if isinstance(v, Mapping):
         mapping = _validate_mapping(v, label="inline table")
-        for child in mapping.values():
-            _validate_input(child, inline_only=True)
+        for child_key, child in mapping.items():
+            _validate_input(child, inline_only=True, key=child_key)
         return
     if isinstance(v, list):
         for child in v:
             _validate_input(child, inline_only=True)
         return
-    msg = f"cannot convert {type(v).__name__} to a TOML value"
-    raise TypeError(msg)
+    raise TypeError(_unrepresentable_message(v, key))
+
+
+def _unrepresentable_message(v: object, key: str | None) -> str:
+    """Explain why ``v`` cannot be stored, naming ``key`` when known."""
+    at = f" to TOML key {key!r}" if key is not None else ""
+    if isinstance(v, tuple):
+        return f"cannot assign tuple{at}; use a list"
+    if isinstance(v, (bytes, bytearray)):
+        return f"cannot assign bytes{at}; use a string"
+    return f"cannot convert {type(v).__name__} to a TOML value"
 
 
 def _validate_section_values(mapping: Mapping[str, object]) -> None:
     """Validate values in a mapping whose keys were already checked."""
-    for value in mapping.values():
-        _validate_input(value, inline_only=False)
+    for key, value in mapping.items():
+        _validate_input(value, inline_only=False, key=key)
 
 
 def _synth_value(
