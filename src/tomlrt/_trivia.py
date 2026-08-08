@@ -236,10 +236,10 @@ def split_eol_section(t: str) -> tuple[str, str]:
 class EolTrivia:
     """End-of-line tail of a single physical line.
 
-    Used by `KVSlot` and `StructuralHeaderSlot` to capture the
-    optional inline comment plus the line terminator. Each part is
-    verbatim source text, empty when absent; ``newline`` is empty only
-    for the last line of a file with no final newline.
+    Carried by every `Slot` to capture the optional inline comment plus
+    the line terminator. Each part is verbatim source text, empty when
+    absent; ``newline`` is empty only for the last line of a file with no
+    final newline.
     """
 
     trailing_ws: str  # whitespace before any comment / newline

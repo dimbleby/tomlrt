@@ -38,9 +38,7 @@ from tomlrt._comments import (
 )
 from tomlrt._errors import TOMLError
 from tomlrt._format import (
-    _canon_header_slot,
-    _canon_kv_slot,
-    _canon_leading,
+    _canon_slot,
     _resolve_format_options,
     format_document_trailing,
     format_inline_root,
@@ -360,13 +358,7 @@ class Container(_View, dict[str, Any]):
             msg = "format() requires the container to be attached to a Document"
             raise TOMLError(msg)
         for ref in list(self._refs):
-            slot = ref.slot
-            assert isinstance(slot, (KVSlot, StructuralHeaderSlot))
-            if isinstance(slot, KVSlot):
-                _canon_kv_slot(slot, nl=nl, options=resolved)
-            else:
-                _canon_header_slot(slot, nl=nl, options=resolved)
-            _canon_leading(slot, nl=nl, target_blanks=None, options=resolved)
+            _canon_slot(ref.slot, nl=nl, target_blanks=None, options=resolved)
         for value in self.values():
             if isinstance(value, (Container, Array)):
                 value.format(options=resolved)
@@ -1204,7 +1196,7 @@ class Container(_View, dict[str, Any]):
         first_header = first_record.header
         first_header.leading = saved_leading + first_header.leading
         last_slot = result[-1]._body_tail  # noqa: SLF001
-        assert isinstance(last_slot, (KVSlot, StructuralHeaderSlot))
+        assert last_slot is not None
         if saved_eol.comment and not last_slot.eol.comment:
             last_slot.eol.comment = saved_eol.comment
             last_slot.eol.trailing_ws = saved_eol.trailing_ws

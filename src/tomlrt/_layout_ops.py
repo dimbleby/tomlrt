@@ -909,8 +909,8 @@ def _dotted_chain(host: Container, leaf: Container) -> list[Container]:
 
 
 def _replace_primary_in_place(
-    new_slot: KVSlot | StructuralHeaderSlot,
-    primary: KVSlot | StructuralHeaderSlot,
+    new_slot: Slot,
+    primary: Slot,
     doc: Document,
 ) -> None:
     """Splice ``new_slot`` into the doc-stream where ``primary`` sits.
@@ -972,7 +972,7 @@ def _bind_own_section_header(
 
 def _materialise_empty_section_header(
     c: Container,
-    primary: StructuralHeaderSlot,
+    primary: Slot,
     doc: Document,
 ) -> None:
     """Re-materialise a header for a now-empty header-origin section.
@@ -1160,14 +1160,12 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         and c._header_ref is None  # noqa: SLF001
         and len(c) == 1
     )
-    mat_primary: KVSlot | StructuralHeaderSlot | None = None
+    mat_primary: Slot | None = None
     if will_materialise:
         # ``_index[key]`` is scrubbed below; grab the removed descendant's
         # doc-stream-first slot now (its trivia / position is read at
         # materialise time, while it is still linked).
-        primary = c._index[key][0].slot  # noqa: SLF001
-        assert isinstance(primary, (KVSlot, StructuralHeaderSlot))
-        mat_primary = primary
+        mat_primary = c._index[key][0].slot  # noqa: SLF001
 
     # Owned-slot identity set + retained slot objects (for unlink).
     owned_ids: set[Slot] = set()
@@ -1190,16 +1188,16 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     # Synthesise the now-empty section's physical presence while the
     # descendant's primary slot is still linked, so the replacement takes
     # its position in place. The descendant's *origin* picks the form: a
-    # header-origin section (``[a.b]``) re-materialises as a header
-    # ``[a]``; a dotted-origin section (``a.b.x = 1``) re-materialises as
-    # an inline table ``a = {}``, which — unlike a header — re-parents
-    # nothing and so can sit among surviving sibling KVs untouched.
+    # dotted-origin section (``a.b.x = 1``) re-materialises as an inline
+    # table ``a = {}``, which — unlike a header — re-parents nothing and
+    # so can sit among surviving sibling KVs untouched; a header-origin
+    # section (``[a.b]``) re-materialises as a header ``[a]``.
     if will_materialise:
         assert mat_primary is not None
-        if isinstance(mat_primary, StructuralHeaderSlot):
-            _materialise_empty_section_header(c, mat_primary, doc)
-        else:
+        if isinstance(mat_primary, KVSlot):
             _materialise_empty_inline_table(c, mat_primary, doc)
+        else:
+            _materialise_empty_section_header(c, mat_primary, doc)
 
     # Slot-driven scrub via back-pointers, *skipping* subtree containers:
     # those move to a fresh Document and keep their internal caches.
@@ -1622,13 +1620,13 @@ def _new_kv_slot(
     return KVSlot(
         leading,
         owner,
+        _default_eol(doc),
         host_path,
         make_keyparts(key) if key_parts is None else list(key_parts),
         ["."] * (len(key) - 1) if key_seps is None else list(key_seps),
         " ",
         " ",
         value,
-        _default_eol(doc),
     )
 
 
@@ -1858,12 +1856,12 @@ def _new_section_header(
     return StructuralHeaderSlot(
         leading,
         owner_aot_entry,
+        _default_eol(doc),
         path,
         make_keyparts(path),
         ["."] * (len(path) - 1),
         "",
         "",
-        _default_eol(doc),
         entry,
         synthetic=True,
     )

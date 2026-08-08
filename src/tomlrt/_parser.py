@@ -126,12 +126,12 @@ class _Parser:
         slot = StructuralHeaderSlot(
             leading,
             owner,
+            eol,
             path,
             key_parts,
             key_seps,
             inner_pre,
             inner_post,
-            eol,
             new_entry,
             synthetic=False,
         )
@@ -160,13 +160,13 @@ class _Parser:
         slot = KVSlot(
             leading,
             owner,
+            eol,
             host_path,
             key_parts,
             key_seps,
             pre_eq,
             post_eq,
             value,
-            eol,
         )
         if owner is not None:
             owner.entry_slots.append(slot)
