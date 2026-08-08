@@ -17,9 +17,6 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
-# One trivia piece: a whitespace run, a line terminator, or a comment.
-_RE_PIECE: Final = re.compile(r"[ \t]+|\r?\n|#[^\r\n]*")
-
 # The row-attached end-of-line section: inline whitespace, a comment,
 # and that row's terminator.
 _RE_EOL_SECTION: Final = re.compile(r"[ \t]*#[^\r\n]*(?:\r?\n)?")
@@ -118,36 +115,17 @@ def _pad_above_from(t: str, body_start: int) -> tuple[str, str]:
 
 
 def split_above_block(t: str) -> tuple[str, str]:
-    """Split ``t`` into ``(pad, above)``.
+    """Split a bracket pad ``t`` into ``(pad, above)``.
 
-    ``above`` is the item-attached comment block; ``pad`` is the opening
-    newline plus value indent that surrounds it. Boundary mutators use
-    this to move an above-item block between bracket pads and
-    item-leading trivia.
-
-    The parts are *not* a simple concatenation: reconstruct with
-    :func:`join_above_block`, which splices ``above`` after ``pad``'s
-    first piece. ``above`` is empty iff that middle region carries no
-    comment.
+    ``above`` is the item-attached comment block below the pad's opening
+    newline; ``pad`` is the framing around it -- that newline plus the
+    trailing value indent -- so the two are not a simple concatenation.
+    ``above`` is empty iff that middle region carries no comment.
     """
     first_nl = t.find("\n")
     if first_nl == -1:
         return t, ""
     return _pad_above_from(t, first_nl + 1)
-
-
-def join_above_block(pad: str, above: str) -> str:
-    """Splice ``above`` back into ``pad``.
-
-    ``above`` is inserted after ``pad``'s first piece (the opening
-    newline) and before the rest (the value indent). Inverse of
-    :func:`split_above_block`.
-    """
-    if not pad:
-        return above
-    m = _RE_PIECE.match(pad)
-    cut = m.end() if m is not None else 0
-    return pad[:cut] + above + pad[cut:]
 
 
 def indent_from_trivia(t: str) -> str:
@@ -281,7 +259,6 @@ def retarget_eol_newline(eol: EolTrivia, target: str) -> None:
 __all__ = [
     "EolTrivia",
     "indent_from_trivia",
-    "join_above_block",
     "leading_break",
     "leading_has_blank_line",
     "leading_ws",

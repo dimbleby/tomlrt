@@ -1609,6 +1609,35 @@ def test_array_append_migrates_last_eol_comment() -> None:
     assert dict(re_arr.comments) == {1: "last"}
 
 
+@pytest.mark.parametrize("eol", ["", " # last"])
+def test_array_append_adopts_dangling_comment_as_leading(eol: str) -> None:
+    # A comment on its own row before "]" belongs to the item below it,
+    # so an append adopts it as the new item's leading block -- whether
+    # or not the previous item already closed its row with an EOL
+    # comment.
+    doc = tomlrt.loads(
+        td(f"""
+        arr = [
+          1,{eol}
+          # dangling
+        ]
+        """)
+    )
+    arr = doc.array("arr")
+    assert dict(arr.leading_comments) == {}
+    arr.append(2)
+    assert dict(arr.leading_comments) == {1: ("dangling",)}
+    out = tomlrt.dumps(doc)
+    assert out == td(f"""
+        arr = [
+          1,{eol}
+          # dangling
+          2,
+        ]
+        """)
+    assert dict(tomlrt.loads(out).array("arr").leading_comments) == {1: ("dangling",)}
+
+
 def test_array_comments_view_contains_iter_len() -> None:
     src = td("""
         arr = [
