@@ -79,6 +79,20 @@ class Array(_View, list[Any]):
 
     __slots__ = ("_layout_root", "_value")
 
+    @classmethod
+    def _view(cls, value: ArrayValue, layout_root: Document | None) -> Array:
+        """An `Array` view over the existing ``value``, holding no items yet.
+
+        The public constructor goes the other way — it synthesises fresh
+        CST from Python items. Callers that already hold the CST (the
+        builder's decode pass, the synth path) want only the view, and
+        fill the items in themselves.
+        """
+        arr = cls.__new__(cls)
+        arr._value = value  # noqa: SLF001
+        arr._layout_root = layout_root  # noqa: SLF001
+        return arr
+
     def __init__(
         self,
         items: Iterable[TomlInput] = (),
@@ -93,29 +107,27 @@ class Array(_View, list[Any]):
         """
         super().__init__()
 
-        indent_str = " " * indent
-        self._value: ArrayValue = ArrayValue()
+        val = ArrayValue()
+        self._value: ArrayValue = val
         self._layout_root: Document | None = None
         items_list = list(items)
-        if not items_list:
-            if multiline:
-                self._value.final_trivia = f"\n{indent_str}"
-            return
-        from tomlrt._container import _synth_inline_array  # noqa: PLC0415
+        if items_list:
+            from tomlrt._container import _fill_inline_array  # noqa: PLC0415
 
-        val, arr = _synth_inline_array(items_list, layout_root=None, owner=None)
-        self._value = val
-        for v in arr:
-            list.append(self, v)
-        if multiline and val.items:
-            row_indent = f"\n{indent_str}"
-            val.header_trivia = row_indent
-            val.final_trivia = "\n"
-            for k, it in enumerate(val.items):
-                it.leading = "" if k == 0 else row_indent
-                it.post_comma_trivia = ""
-                it.trailing = ""
-                it.has_comma = True
+            _fill_inline_array(self, items_list, layout_root=None, owner=None)
+        if not multiline:
+            return
+        row_indent = f"\n{' ' * indent}"
+        if not val.items:
+            val.final_trivia = row_indent
+            return
+        val.header_trivia = row_indent
+        val.final_trivia = "\n"
+        for k, it in enumerate(val.items):
+            it.leading = "" if k == 0 else row_indent
+            it.post_comma_trivia = ""
+            it.trailing = ""
+            it.has_comma = True
 
     def to_list(self) -> list[Any]:
         """Materialise a plain-Python ``list`` (recursive)."""
