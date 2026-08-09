@@ -179,11 +179,11 @@ them. Read roughly in this order:
   / delete / sort on the doc-stream linked list; `_index` and `_refs`
   bookkeeping; KV / section / AoT-entry append; subtree rehome.
   By far the largest file. Internal hot-path conventions:
-  - **Reverse-walks of `c._refs`** go through `_last_kv(c, predicate)`.
-    The wrappers (`_last_direct_kv`, `_recompute_body_tail`) exist
-    where the same predicate composition is reused or carries a
-    fast-path; one-off walks pass the predicate inline. Don't add a
-    third ad-hoc walk.
+  - **Reverse-walks of `c._refs`** go through `_last_kv(c, predicate)`,
+    and only for the two questions the caches cannot answer:
+    recomputing an invalidated `_body_tail` (`_recompute_body_tail`)
+    and finding the last *direct* KV hiding behind a dotted one
+    (`_last_direct_kv`). Don't add a third walk.
   - **Ordered ref filing** goes through `record_ref`, which places a
     ref by its slot's order key; a physical change to a region of the
     stream is wrapped in `_refile_region_refs`, which puts every
@@ -196,9 +196,9 @@ them. Read roughly in this order:
     `_scrub_owned_slots_via_backptrs`, not ancestor-wide cache scans.
   - **`Container._body_tail`** is the cached doc-stream-tail of
     the container's region; treat it as ground truth for
-    "what's the latest body slot of `c`?". `_last_direct_kv`
-    uses it as an O(1) fast path before falling back to a
-    reverse-walk.
+    "what's the latest body slot of `c`?". `_last_body_kv` reads
+    it — every insert takes its new slot's leading trivia from
+    there rather than searching `_refs` for the last body KV.
 - **`_inline_ops.py`** — inline-table mutation primitives. Inline
   tables are decoupled from the doc-stream linked list: a top-
   level inline table is one `KVSlot` whose `value` is an
