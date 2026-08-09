@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deleting in a loop is no longer quadratic.
 - Replacing a table or array of tables in place now costs time
   proportional to the replacement rather than to the whole document.
+- Adding a key to a dotted or implicit table now costs time
+  proportional to that table rather than to the whole document, so
+  filling one is no longer quadratic.
 
 ## [2.2.1] - 2026-08-04
 

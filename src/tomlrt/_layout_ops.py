@@ -13,7 +13,9 @@ Design notes:
   ref (or at the front), not blindly at the tail where child-section
   refs may already sit.
 * ``c._body_tail`` is incremental: O(1) on insert, O(len(c._refs)) only
-  when deleting the current tail.
+  when deleting the current tail. It is also the answer to "what is
+  ``c``'s last body KV?" (`_last_body_kv`), so no insert has to search
+  for one.
 * A non-dotted direct KV files exactly one ref on its host container;
   ancestors are unaffected.
 """
@@ -1418,10 +1420,26 @@ def _surviving_aot_entries(doc: Document, candidates: set[AoTEntry]) -> set[AoTE
 # ---------------------------------------------------------------------------
 
 
+def _last_body_kv(c: Container) -> KVSlot | None:
+    """``c``'s latest body-region KV, or ``None`` if its body holds none.
+
+    A cache read, not a search: ``_body_tail`` is maintained as exactly
+    this slot, and holds ``c``'s own header instead only when the body
+    has no KV at all — which is what `_recompute_body_tail` derives.
+    """
+    tail = c._body_tail  # noqa: SLF001
+    return tail if isinstance(tail, KVSlot) else None
+
+
 def _last_kv(c: Container, *, direct: bool = False) -> KVSlot | None:
     """Reverse-walk ``c._refs`` for the last KV slot owned by ``c``.
 
     ``direct=True``: further restrict to single-key-part.
+
+    Only the two queries the cache cannot answer come here: recomputing
+    ``_body_tail`` once it has been invalidated, and finding the last
+    *direct* KV behind a dotted one. "The last body KV" itself is
+    `_last_body_kv`.
 
     No host-path filter is needed: a KV's refs propagate from its host
     container *down* its dotted path, so a KV under ``[a.b]`` is filed
@@ -1440,11 +1458,10 @@ def _last_kv(c: Container, *, direct: bool = False) -> KVSlot | None:
     return None
 
 
-def _is_direct_kv(c: Container, s: Slot) -> bool:
+def _is_direct_kv(c: Container, s: KVSlot) -> bool:
     """True iff ``s`` is a direct (single-key-part, host=c) KV of ``c``."""
     return (
-        isinstance(s, KVSlot)
-        and s.host_path == c._path  # noqa: SLF001
+        s.host_path == c._path  # noqa: SLF001
         and len(s.key_parts) == 1
         and s.owner_aot_entry is c._owner_aot_entry  # noqa: SLF001
     )
@@ -1453,15 +1470,14 @@ def _is_direct_kv(c: Container, s: Slot) -> bool:
 def _last_direct_kv(c: Container) -> KVSlot | None:
     """Return the most-recent direct KV slot of ``c`` in doc-stream order.
 
-    Fast path: ``c._body_tail`` is by construction the latest body-region
-    slot, and on every direct-KV append it IS the new direct KV — so for
-    the typical "just-appended" case this is O(1). Otherwise (body_tail
-    is a header or a dotted KV) reverse-walk ``c._refs``.
+    The last body KV answers this whenever it is direct (always so
+    just after a direct-KV append) and rules the question out entirely
+    when the body has no KV; only a dotted tail leaves a direct KV
+    hiding further back, and that alone needs the walk.
     """
-    body_tail = c._body_tail  # noqa: SLF001
-    if body_tail is not None and _is_direct_kv(c, body_tail):
-        assert isinstance(body_tail, KVSlot)
-        return body_tail
+    tail = _last_body_kv(c)
+    if tail is None or _is_direct_kv(c, tail):
+        return tail
     return _last_kv(c, direct=True)
 
 
@@ -1642,7 +1658,7 @@ def install_dotted_kv_slot(
         owner=owner,
         leading=leading
         if leading is not None
-        else _kv_leading_after(_last_kv(host), doc),
+        else _kv_leading_after(_last_body_kv(host), doc),
         key_parts=key_parts,
         key_seps=key_seps,
     )

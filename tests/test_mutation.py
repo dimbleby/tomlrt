@@ -4864,6 +4864,176 @@ def test_dotted_add_anchors_at_implicit_tail_with_unrelated_dotted_trailer() -> 
         """)
 
 
+# ---------------------------------------------------------------------------
+# Dotted-KV insert: leading trivia comes from the host's last body KV
+# ---------------------------------------------------------------------------
+
+
+def test_dotted_add_at_document_head_ahead_of_sections() -> None:
+    """A root-hosted dotted KV inherits from the root's last KV.
+
+    The sections that follow are the bulk of the root's bookkeeping but
+    none of them is a body KV, so they contribute nothing to the choice.
+    """
+    src = td("""
+        a.b = 1
+
+        [s0]
+        x = 1
+
+        [s1]
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["a"]["c"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a.b = 1
+        a.c = 3
+
+        [s0]
+        x = 1
+
+        [s1]
+        y = 2
+        """)
+    assert _reparses(out) == {"a": {"b": 1, "c": 3}, "s0": {"x": 1}, "s1": {"y": 2}}
+
+
+def test_dotted_add_in_middle_section_with_subsections_following() -> None:
+    """Descendant headers filed on the host don't disturb the indent."""
+    src = td("""
+        [s0]
+        x = 1
+
+        [s1]
+          a.b = 1
+
+        [s1.sub]
+        y = 2
+
+        [s2]
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc["s1"]["a"]["c"] = 4
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s0]
+        x = 1
+
+        [s1]
+          a.b = 1
+          a.c = 4
+
+        [s1.sub]
+        y = 2
+
+        [s2]
+        z = 3
+        """)
+    assert _reparses(out)["s1"] == {"a": {"b": 1, "c": 4}, "sub": {"y": 2}}
+
+
+def test_dotted_add_at_document_tail_mirrors_host_kv_after_dotted_body() -> None:
+    """The host's *last* KV sets the spacing, even when it is not the
+    dotted region's own tail: the new slot groups with its peers but
+    keeps the host's most recent blank-line convention.
+    """
+    src = td("""
+        [s0]
+        x = 1
+
+        [s1]
+        a.b = 1
+
+        z = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["s1"]["a"]["c"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s0]
+        x = 1
+
+        [s1]
+        a.b = 1
+
+        a.c = 3
+
+        z = 2
+        """)
+    assert _reparses(out)["s1"] == {"a": {"b": 1, "c": 3}, "z": 2}
+
+
+def test_dotted_add_mirrors_blank_gap_but_not_comment_block() -> None:
+    """A comment block in the peer's leading is separation, not content
+    to duplicate: the new slot inherits the blank line above it and the
+    peer's indent, and nothing else.
+    """
+    src = td("""
+        [s]
+          a.b = 1
+
+          # why c matters
+          a.c = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"]["a"]["d"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+          a.b = 1
+
+          # why c matters
+          a.c = 2
+
+          a.d = 3
+        """)
+    assert _reparses(out)["s"] == {"a": {"b": 1, "c": 2, "d": 3}}
+
+
+def test_dotted_add_after_commented_peer_without_blank_gap() -> None:
+    src = td("""
+        [s]
+        \t# about b
+        \ta.b = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"]["a"]["c"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        \t# about b
+        \ta.b = 1
+        \ta.c = 2
+        """)
+    assert _reparses(out)["s"] == {"a": {"b": 1, "c": 2}}
+
+
+def test_promote_inline_installs_dotted_entries_into_empty_section() -> None:
+    """The first dotted entry lands in a section with no body KV yet, so
+    it has no peer to inherit from; the rest follow it.
+    """
+    src = td("""
+        [s]
+        a = {b.c = 1, b.d = 2}
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"].promote_inline("a")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        z = 3
+
+        [s.a]
+        b.c = 1
+        b.d = 2
+        """)
+    assert _reparses(out)["s"] == {"z": 3, "a": {"b": {"c": 1, "d": 2}}}
+
+
 def test_clear_doc_with_sections_drops_all_and_keeps_doc_empty() -> None:
     src = td("""
         [a]
