@@ -53,6 +53,10 @@ class _Parser:
         sc = self._sc
         src = sc.src
         end = sc.end
+        # The document's most recent inter-section gap is the one that
+        # decides ``section_blank_separated``, so keep the gap itself
+        # and classify it once at the end rather than at every header.
+        latest_section_gap: str | None = None
         seen_header = False
 
         # TOML 1.1 permits a leading UTF-8 BOM only at document start.
@@ -74,9 +78,7 @@ class _Parser:
             if ch == "[":
                 slot = self._parse_header(leading)
                 if seen_header:
-                    result.section_blank_separated = leading_has_blank_line(
-                        slot.leading
-                    )
+                    latest_section_gap = leading
                 seen_header = True
             else:
                 slot = self._parse_key_value(leading)
@@ -84,6 +86,8 @@ class _Parser:
 
         stitch_run(None, result.slots, None)
 
+        if latest_section_gap is not None:
+            result.section_blank_separated = leading_has_blank_line(latest_section_gap)
         result.newline = sc.detected_newline()
         return result
 
