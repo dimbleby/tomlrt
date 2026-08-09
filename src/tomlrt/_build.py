@@ -48,12 +48,13 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
     current_host = root
     for slot in slots:
         if isinstance(slot, StructuralHeaderSlot):
-            if slot.path == root._path:  # noqa: SLF001
+            path = slot.path
+            if path == root._path:  # noqa: SLF001
                 assert root._header_ref is None  # noqa: SLF001
                 file_own_header(root, slot)
                 current_host = root
             else:
-                current_host = _apply_header(root, slot)
+                current_host = _apply_header(root, slot, path)
         else:
             assert isinstance(slot, KVSlot)
             assert slot.host_path == current_host._path, (  # noqa: SLF001
@@ -77,11 +78,13 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _apply_header(root: Container, slot: StructuralHeaderSlot) -> Table:
-    if slot.kind == "aot-entry":
-        assert slot.entry is not None
-        return _open_aot_entry(root, slot, slot.entry)
-    return _open_table(root, slot)
+def _apply_header(
+    root: Container, slot: StructuralHeaderSlot, path: tuple[str, ...]
+) -> Table:
+    entry = slot.entry
+    if entry is not None:
+        return _open_aot_entry(root, slot, path, entry)
+    return _open_table(root, slot, path)
 
 
 def _resolve_parent(
@@ -98,13 +101,14 @@ def _resolve_parent(
     return parent, path[-1]
 
 
-def _open_table(root: Container, header: StructuralHeaderSlot) -> Table:
+def _open_table(
+    root: Container, header: StructuralHeaderSlot, path: tuple[str, ...]
+) -> Table:
     """Open ``[a.b.c]`` — return the `Table` view for ``path``.
 
     Creates implicit ancestors as needed. A non-table intermediate is
     validator drift and raises.
     """
-    path = header.path
     parent, name = _resolve_parent(root, path, header)
     existing = parent.get(name)
     if existing is None:
@@ -123,10 +127,10 @@ def _open_table(root: Container, header: StructuralHeaderSlot) -> Table:
 def _open_aot_entry(
     root: Container,
     header: StructuralHeaderSlot,
+    path: tuple[str, ...],
     entry: AoTEntry,
 ) -> Table:
     """Open ``[[a.b]]`` — append a fresh `Table` to the AoT at ``path``."""
-    path = header.path
     parent, name = _resolve_parent(root, path, header)
     aot = parent.get(name)
     if aot is None:
