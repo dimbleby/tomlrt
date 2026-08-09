@@ -2093,7 +2093,10 @@ def _synth_value(
         )
     # Plain ``list`` → inline array (synthesise from items).
     if isinstance(v, list):
-        return _synth_inline_array(v, layout_root=layout_root, owner=owner)
+        val = ArrayValue()
+        arr = Array._view(val, layout_root)  # noqa: SLF001
+        _fill_inline_array(arr, v, layout_root=layout_root, owner=owner)
+        return val, arr
     msg = f"cannot convert {type(v).__name__} to a TOML value"
     raise TypeError(msg)
 
@@ -2189,17 +2192,20 @@ def _populate_inline_table(
     return val, table
 
 
-def _synth_inline_array(
+def _fill_inline_array(
+    arr: Array,
     items: Sequence[object],
     *,
     layout_root: Document | None,
     owner: AoTEntry | None,
-) -> tuple[ArrayValue, Array]:
-    val = ArrayValue()
-    arr = Array()
-    arr._value = val  # noqa: SLF001
-    arr._layout_root = layout_root  # noqa: SLF001
+) -> None:
+    """Append ``items`` to ``arr`` and to the `ArrayValue` behind it.
 
+    ``arr`` is already a view over the value to fill; the items are laid
+    out with canonical single-line spacing.
+    """
+    val = arr._value  # noqa: SLF001
+    last = len(items) - 1
     for i, sub in enumerate(items):
         sub_cst, sub_dec = _synth_value(
             sub,
@@ -2208,7 +2214,6 @@ def _synth_inline_array(
             path=(),
             owner=owner,
         )
-        is_last = i == len(items) - 1
         # Under the canonical model, inter-item separators live in the
         # NEXT item's leading; items[0].leading is always empty;
         # post_comma_trivia carries only EOL sections (empty here).
@@ -2216,12 +2221,11 @@ def _synth_inline_array(
             leading="" if i == 0 else " ",
             value=sub_cst,
             trailing="",
-            has_comma=not is_last,
+            has_comma=i != last,
             post_comma_trivia="",
         )
         val.items.append(item)
         list.append(arr, sub_dec)
-    return val, arr
 
 
 __all__ = ["AoT", "Array", "Container", "Document", "Table", "TomlInput"]
