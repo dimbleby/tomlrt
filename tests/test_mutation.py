@@ -2602,9 +2602,10 @@ def test_append_aot_entry_after_sorting_an_entrys_keys() -> None:
 
     Regression: ``reorder_container`` permuted the entry's KV slots in
     the doc-stream but left ``AoTEntry.entry_slots`` in its old order.
-    ``_aot_append_position`` trusts ``entry_slots[-1]`` as the append anchor,
-    so the new ``[[p]]`` header was spliced *inside* the reordered
-    entry, splitting it and re-parenting the trailing key on re-parse.
+    ``_aot_append_anchor``'s predecessor trusted ``entry_slots[-1]`` as the
+    append anchor, so the new ``[[p]]`` header was spliced *inside* the
+    reordered entry, splitting it and re-parenting the trailing key on
+    re-parse.
     """
     doc = tomlrt.loads("[[p]]\nb = 2\na = 1\n")
     doc["p"][0].sort()
@@ -2645,10 +2646,10 @@ def test_append_aot_entry_when_last_entry_owns_nested_aot() -> None:
     """Appending a new ``[[p]]`` must anchor after the last entry's whole
     subtree, including a nested ``[[p.sub]]`` it owns.
 
-    Regression: ``_aot_append_position`` returned ``entry_slots[-1]``, which
-    excludes slots owned by nested AoT entries, so the new ``[[p]]``
-    header was spliced *before* the nested ``[[p.sub]]`` block — which
-    re-parse then attributed to the new entry.
+    Regression: ``_aot_append_anchor``'s predecessor returned
+    ``entry_slots[-1]``, which excludes slots owned by nested AoT entries,
+    so the new ``[[p]]`` header was spliced *before* the nested
+    ``[[p.sub]]`` block — which re-parse then attributed to the new entry.
     """
     doc = tomlrt.loads(
         td("""
