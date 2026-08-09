@@ -42,9 +42,10 @@ _RE_LITERAL_STR_BODY: Final = re.compile(r"[^'\n\r\x00-\x08\x0b-\x1f\x7f]+")
 # so the caller handles them; stop at \r to verify CRLF before emitting it.
 _RE_ML_BASIC_BODY: Final = re.compile(r'[^"\\\r\n\x00-\x08\x0b-\x1f\x7f]+')
 _RE_ML_LITERAL_BODY: Final = re.compile(r"[^'\r\n\x00-\x08\x0b-\x1f\x7f]+")
-# Bare key: ASCII alphanum + underscore + dash. (TOML 1.1 broadens
-# this; if/when tomlrt opts in, widen the pattern here.)
-_RE_BARE_KEY: Final = re.compile(r"[A-Za-z0-9_\-]+")
+# Bare key (ASCII letters, digits, underscore, dash — the same set in
+# TOML 1.0 and 1.1), plus the inline whitespace that follows it: one
+# scan of adjacent source rather than two.
+_RE_BARE_KEY: Final = re.compile(r"([A-Za-z0-9_\-]+)([ \t]*)")
 
 # Per-flavour multi-line string body pattern and name for diagnostics.
 _ML_FLAVOURS: Final = {
@@ -463,36 +464,48 @@ class _Scanner:
             raise self.error(msg)
         return chr(cp)
 
-    def scan_key(self) -> tuple[list[KeyPart], list[str], str]:
-        """Scan a dotted key; return its parts, separators, trailing ws.
+    def scan_key(self) -> tuple[list[KeyPart], list[str], str, tuple[str, ...]]:
+        """Scan a dotted key; return parts, separators, trailing ws, path.
 
         Each part is bare, basic-quoted or literal-quoted; each
         separator is the literal ``ws "." ws`` between two parts. The
         whitespace after the last part is consumed too, and can be used
         directly as ``pre_eq`` / ``inner_post``.
+
+        The decoded path is accumulated here rather than derived from
+        ``parts`` again by each caller: every one of them needs it, to
+        hand to the validator.
         """
         src = self.src
+        end = self.end
         parts: list[KeyPart] = []
         seps: list[str] = []
+        path: list[str] = []
         while True:
             start = self.pos
-            ch = src[start] if start < self.end else ""
+            ch = src[start] if start < end else ""
             if ch == '"' or ch == "'":
                 quoted = self.scan_string(allow_multiline=False)
                 parts.append(KeyPart(quoted.lexeme, quoted.value))
+                path.append(quoted.value)
+                ws = self.scan_inline_ws_text()
             else:
                 m = _RE_BARE_KEY.match(src, start)
                 if m is None:
                     msg = f"expected key, got {ch!r}"
                     raise self.error(msg)
-                self.pos = m.end()
-                raw = src[start : self.pos]
+                raw = m[1]
+                ws = m[2]
                 parts.append(KeyPart(raw, raw))
-            sep_start = self.pos
-            ws = self.scan_inline_ws_text()
-            if self.pos >= self.end or src[self.pos] != ".":
-                return parts, seps, ws
-            self.pos += 1
+                path.append(raw)
+                self.pos = m.end()
+            pos = self.pos
+            if pos >= end or src[pos] != ".":
+                return parts, seps, ws, tuple(path)
+            # The separator runs from the end of the part just scanned,
+            # which is where the whitespace already consumed began.
+            sep_start = pos - len(ws)
+            self.pos = pos + 1
             self.scan_inline_ws_text()
             seps.append(src[sep_start : self.pos])
 

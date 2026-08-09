@@ -105,7 +105,7 @@ class _Parser:
             closer, what = "]", "table"
 
         inner_pre = sc.scan_inline_ws_text()
-        key_parts, key_seps, inner_post = sc.scan_key()
+        key_parts, key_seps, inner_post, path = sc.scan_key()
 
         if not src.startswith(closer, sc.pos):
             msg = f"expected {closer!r} to close {what} header"
@@ -113,7 +113,6 @@ class _Parser:
         sc.pos += len(closer)
 
         eol = sc.scan_eol()
-        path = tuple([p.value for p in key_parts])
         new_entry = self._validator.enter_header(path, kind, at=sc.pos)
         owner = self._validator.current_owner_aot_entry
 
@@ -134,7 +133,7 @@ class _Parser:
 
     def _parse_key_value(self, leading: str) -> KVSlot:
         sc = self._sc
-        key_parts, key_seps, pre_eq = sc.scan_key()
+        key_parts, key_seps, pre_eq, key_path = sc.scan_key()
         src = sc.src
         pos = sc.pos
         if pos >= sc.end or src[pos] != "=":
@@ -146,7 +145,6 @@ class _Parser:
         value = self._parse_value()
         eol = sc.scan_eol()
 
-        key_path = tuple([p.value for p in key_parts])
         self._validator.record_keyvalue(key_path, value, at=sc.pos)
         host_path = self._validator.current_section
         owner = self._validator.current_owner_aot_entry
@@ -251,8 +249,7 @@ class _Parser:
         entries = node.items
         while True:
             key_at = sc.pos
-            key_parts, key_seps, pre_eq = sc.scan_key()
-            key_path = tuple([p.value for p in key_parts])
+            key_parts, key_seps, pre_eq, key_path = sc.scan_key()
             self._validator.check_inline_key_conflict(
                 key_path, seen_values, seen_prefixes, at=key_at
             )
