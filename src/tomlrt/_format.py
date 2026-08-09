@@ -1,32 +1,30 @@
 """Canonicalise Container / Array layout without losing comments.
 
-Pure, idempotent slot/trivia/value helpers for ``Container.format`` and
-``Array.format``. Inline values are shape-preserving: single-line stays
-single-line; multi-line stays multi-line.
+Pure and idempotent. Shape-preserving: single-line inline values stay
+single-line, multi-line stay multi-line.
 
-Canonical layout enforced here:
+Canonical layout:
 
 KV slot
-    pre_eq=" ", post_eq=" ", key_seps=".", strip column-indent WS,
-    configurable EOL spacing before comments.
+    ``pre_eq=" "``, ``post_eq=" "``, ``key_seps="."``, no column-indent
+    whitespace, configurable EOL spacing before comments.
 
 Section / AoT-entry header
-    inner_pre="", inner_post="", strip column-indent WS, EOL as for KV.
+    ``inner_pre=""``, ``inner_post=""``, otherwise as for KV.
 
-Sibling spacing (within the subtree of the container being formatted)
-    Between body KVs of the same container: 0 blank lines.
-    Between sibling sections / AoT entries / between body and next
-    section: exactly 1 blank line.
+Sibling spacing (within the subtree being formatted)
+    0 blank lines between body KVs of the same container; 1 blank line
+    between sibling sections / AoT entries, or between body and the
+    next section.
 
 Inline arrays / inline tables
-    Single-line: ``[a, b, c]`` / ``{ a = 1, b = 2 }``.
-    Multi-line: each item on its own line with configurable recursive
-    indentation and a configurable final comma.
+    Single-line: ``[a, b, c]`` / ``{ a = 1, b = 2 }``. Multi-line: one
+    item per line, with configurable indentation and a configurable
+    final comma.
 
-Orphan comment blocks (``# …`` runs separated from the slot/header
-by a blank line) and EOL / leading-attached comments are preserved
-in place. Runs of blank lines collapse to one; comment text is
-rewritten to ``# body`` form when ``normalize_comments`` is enabled.
+Orphan comment blocks and EOL / leading-attached comments are preserved
+in place. Blank-line runs collapse to one; comment text is rewritten to
+``# body`` form when ``normalize_comments`` is enabled.
 """
 
 from __future__ import annotations
@@ -134,11 +132,7 @@ def _resolve_format_options(
 
 
 def _canon_comment_text(text: str) -> str:
-    """Rewrite a comment lexeme to canonical ``# body`` / ``#`` form.
-
-    Input starts with ``#``; leading body whitespace collapses to one
-    space and trailing whitespace is stripped.
-    """
+    """Rewrite a comment lexeme to canonical ``# body`` / ``#`` form."""
     assert text.startswith("#"), text
     body = text[1:].rstrip().lstrip(" \t")
     return "# " + body if body else "#"
@@ -153,15 +147,15 @@ def _canon_trivia_text(
 ) -> str:
     r"""Return ``t`` with its content normalised.
 
-    Strips trailing whitespace on blank lines. Full-line comments drop
-    pre-comment whitespace, or restamp to ``comment_indent`` for
-    multi-line inline element comments.
+    Strips trailing whitespace from blank lines; full-line comments drop
+    pre-comment whitespace, restamped to ``comment_indent`` for
+    multi-line inline elements.
 
-    ``first_line_is_eol`` treats only the pre-first-newline run as an
-    EOL context; this covers bracket pads whose opening row stores a
-    row-attached EOL comment. When ``comments`` is true, comment text is
-    rewritten via :func:`_canon_comment_text`. Newline text is retargeted
-    by callers.
+    ``first_line_is_eol`` restricts EOL context to the text before the
+    first newline, for bracket pads whose opening row holds a row-
+    attached EOL comment. Comment text is rewritten via
+    :func:`_canon_comment_text` when ``comments`` is true; newline
+    retargeting is left to the caller.
     """
     out: list[str] = []
     in_eol = first_line_is_eol
@@ -201,15 +195,14 @@ def _canon_leading(
 ) -> None:
     """Rewrite ``slot.leading`` to canonical form.
 
-    Splits leading trivia into head blanks, middle comment/orphan block,
-    and trailing column indent. Canonical form keeps the middle (with
-    newline/comment cleanup), drops the column indent, and applies
-    ``target_blanks`` to the head.
+    Splits into head blanks, middle comment/orphan block, and trailing
+    column indent; keeps the middle (with newline/comment cleanup),
+    drops the indent, and applies ``target_blanks`` to the head.
 
     ``target_blanks=None`` preserves preamble/subtree-boundary blanks,
-    optionally capped by ``max_preserved_blanks``. When ``middle`` is
-    non-empty, clamp the authored head gap to 0/1, but never below the
-    canonical target, so comment-block separation intent survives without
+    capped by ``max_preserved_blanks``. When ``middle`` is non-empty,
+    clamp the authored head gap to 0/1 but never below the canonical
+    target, so comment-block separation intent survives without
     suppressing structural-header spacing.
     """
     lines = split_lines(slot.leading)
@@ -226,8 +219,6 @@ def _canon_leading(
     middle_t = retarget_newlines("".join(middle), nl)
     middle_t = _canon_trivia_text(middle_t, comments=options.normalize_comments)
 
-    # Preamble/subtree boundaries keep authored head gaps; attached
-    # comment blocks clamp to 0/1 so separation intent survives.
     if target_blanks is None:
         n_blanks = head_count
         if max_preserved_blanks is not None:
@@ -245,12 +236,7 @@ def _canon_leading(
 
 
 def _canon_eol(eol: EolTrivia, *, nl: str, options: FormatOptions) -> None:
-    """Normalise an :class:`EolTrivia`.
-
-    Retargets newline to ``nl`` (leaving ``None`` for a no-final-newline
-    tail), canonicalises optional comment text, and applies the configured
-    separator before comments.
-    """
+    """Normalise an :class:`EolTrivia`: retarget, canonicalise, respace."""
     retarget_eol_newline(eol, nl)
     if not eol.comment:
         eol.trailing_ws = ""
@@ -353,10 +339,9 @@ def _canon_multiline_shape(
 ) -> None:
     """Apply multi-line canonical shape to ``v``.
 
-    Shared by the format walk and ``Array.set_multiline``. Canonicalises
-    per-item trivia, restamps bracket pads, then retargets newlines and
-    rewrites comment text. The single-line path bypasses this because it
-    produces only empty/single-space trivia.
+    Canonicalises per-item trivia, restamps bracket pads, then
+    retargets newlines and rewrites comment text. The single-line path
+    bypasses this: it produces only empty/single-space trivia.
     """
     items = v.items
     above_blocks: list[str] = []
@@ -447,10 +432,8 @@ def _compose_pad(
 ) -> str:
     r"""Compose a bracket-pad from (row-attached EOL, above-block, indent).
 
-    Layout is ``head_eol`` (already terminated when non-empty), optional
-    structural ``\n``, above-block, then trailing indent. Skip the
-    structural newline when ``head_eol`` or the upstream item EOL channel
-    already closed the row.
+    Skips the structural newline when ``head_eol`` or the upstream item
+    EOL channel already closed the row.
     """
     head = head_eol if head_eol or row_already_closed else nl
     return head + above + trailing_indent
@@ -488,13 +471,13 @@ def _finalise_inline_trivia(
 ) -> None:
     """Retarget newlines + canonicalise comment / blank-WS text across ``v``.
 
-    Runs after shape canonicalisation over bracket pads and all per-item
+    Runs after shape canonicalisation over bracket pads and per-item
     trivia. ``item_indent`` keeps full-line comments aligned with
     multi-line items, not stripped to column 0.
 
     ``final_first_line_is_eol`` covers the empty-value case where the
-    opening bracket's row-attached EOL lives in ``final_trivia`` and must
-    be treated as EOL context.
+    opening bracket's row-attached EOL lives in ``final_trivia`` and
+    must be treated as EOL context.
     """
     v.header_trivia = retarget_newlines(v.header_trivia, nl)
     v.final_trivia = retarget_newlines(v.final_trivia, nl)
@@ -536,18 +519,13 @@ def _canon_multi_line_items(
 ) -> bool:
     r"""Canonicalise per-item trivia for a multi-line inline value.
 
-    Returns whether the last item's EOL channel closed its row, so the caller
-    can avoid adding a duplicate ``final_trivia`` newline.
+    Returns whether the last item's EOL channel closed its row, so the
+    caller can avoid adding a duplicate ``final_trivia`` newline.
 
-    Item 0's structural pad lives in ``header_trivia``, so its leading is
-    empty. Later items keep their above-item comment block but get
+    Item 0's structural pad lives in ``header_trivia``, so its leading
+    is empty. Later items keep their above-item comment block but get
     canonical newline+indent, suppressed when the previous item's
     upstream EOL channel already closed the row.
-
-    Internal items and, when requested, the final item use commas. Any
-    EOL comment moves between ``trailing`` and ``post_comma_trivia`` as
-    the comma state changes; both channels are then reduced to the
-    canonical EOL section or empty.
     """
     previous_row_closed = False
     last_index = len(items) - 1
@@ -641,7 +619,6 @@ def set_comma_value_multiline(
 ) -> None:
     """Switch a comma-value between flush single-line and multi-line form.
 
-    Shared by `Array.set_multiline` and inline-table ``set_multiline``.
     Collapsing raises `TOMLError` when a comment would be orphaned. The
     single-line bracket pad is driven by ``value._single_line_pad`` (via
     `_canon_single_line_inline`), so arrays collapse tight (``[1, 2]``)
@@ -757,10 +734,10 @@ def format_subtree(
     The first slot's leading head-blanks belong to the parent subtree.
     ``head_blank_cap`` bounds how many survive: ``None`` preserves them
     (a nested subtree owns its opening boundary), while a whole-document
-    walk passes the count that leaves one blank line between the document
-    start -- or a preamble, which already supplies one -- and the first
-    slot. Later slots get the canonical count: 1 blank line before a
-    structural header, 0 otherwise.
+    walk passes the count that leaves one blank line between the
+    document start -- or a preamble, which already supplies one -- and
+    the first slot. Later slots get the canonical count: 1 blank line
+    before a structural header, 0 otherwise.
     """
     prev: Slot | None = None
     slot = start
@@ -796,10 +773,9 @@ def format_document_trailing(
 ) -> str:
     """Canonicalise the trailing trivia of a :class:`Document`.
 
-    Retargets newlines, collapses blank-line runs, strips blank-line
-    trailing whitespace and column-indent whitespace before orphan
-    comments, and optionally rewrites comment text. The
-    preamble/epilogue split is unaffected.
+    Retargets newlines and applies the same blank-line / comment
+    cleanup as :func:`_canon_trivia_text`. The preamble/epilogue split
+    is unaffected.
     """
     return _canon_trivia_text(
         retarget_newlines(trailing, nl), comments=options.normalize_comments

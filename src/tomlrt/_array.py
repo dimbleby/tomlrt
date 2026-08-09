@@ -1,8 +1,4 @@
-"""Array views.
-
-`Array(list)` backs inline TOML arrays. `AoT(list[Table])` backs
-array-of-tables entries via `AoTEntry` records.
-"""
+"""Array views: `Array` for inline arrays, `AoT` for arrays-of-tables."""
 
 from __future__ import annotations
 
@@ -81,12 +77,11 @@ class Array(_View, list[Any]):
 
     @classmethod
     def _view(cls, value: ArrayValue, layout_root: Document | None) -> Array:
-        """An `Array` view over the existing ``value``, holding no items yet.
+        """View over existing CST, holding no items yet.
 
-        The public constructor goes the other way — it synthesises fresh
-        CST from Python items. Callers that already hold the CST (the
-        builder's decode pass, the synth path) want only the view, and
-        fill the items in themselves.
+        The public constructor goes the other way: it synthesises CST from
+        Python items. This is for callers that already have CST and fill
+        the items in themselves.
         """
         arr = cls.__new__(cls)
         arr._value = value  # noqa: SLF001
@@ -186,22 +181,21 @@ class Array(_View, list[Any]):
 
     @override
     def _reset_displaced(self) -> None:
-        # ``_value`` stays: the displaced ``ArrayValue`` is reused if
-        # this view is attached somewhere else.
+        # ``_value`` stays: it's reused if this view is attached elsewhere.
         self._layout_root = None
 
     @property
     def _attached(self) -> bool:
-        """True iff this array is wired to a user-visible document.
+        """True iff wired to a user-visible document.
 
-        Mirrors :attr:`Container._attached` — see that docstring.
+        Mirrors :attr:`Container._attached`.
         """
         lr = self._layout_root
         return lr is not None and not lr._is_private  # noqa: SLF001
 
     @property
     def _doc_newline(self) -> str:
-        r"""The active newline of the owning document, or ``"\n"`` if detached.
+        r"""Active newline of the owning document, or ``"\n"`` if detached.
 
         Mirrors :attr:`Container._doc_newline`.
         """
@@ -307,8 +301,8 @@ class Array(_View, list[Any]):
     def _append_with_style(self, cst: Value, decoded: Any, style: CommaStyle) -> None:
         """Append ``cst`` / ``decoded`` using a precomputed ``style``.
 
-        `__imul__` snapshots style before mutating so trailing-comma
-        decisions reflect the original layout, not a half-mutated one.
+        Precomputing avoids re-deriving style from array state that
+        mutation has already changed (e.g. mid-``__imul__``).
         """
         new_item = _make_item(cst, has_comma=False)
         splice_in(self._value, new_item, style, self._doc_newline)
@@ -452,9 +446,8 @@ class Array(_View, list[Any]):
             for offset, (cst, decoded) in enumerate(prepared):
                 self._insert_synthesised(start + offset, cst, decoded)
             return
-        # int index: just replace the value CST in place.
-        # Reject before synthesising or mutating any CST, matching the
-        # IndexError that ``list.__setitem__`` raises for a bad index.
+        # int index: reject before synthesising or mutating any CST, to
+        # match the IndexError ``list.__setitem__`` raises for a bad index.
         i = _norm_index(index, len(self._value.items), "list assignment")
         cst, dec = self._synth_item(value)
         self._replace_synthesised(i, cst, dec)
@@ -567,12 +560,10 @@ class AoT(_View, list["Table"]):
             list.append(self, _make_unattached_entry(e))
 
     def _unbind_from_document(self) -> None:
-        """Stop being a view onto any document.
+        """Detach from the owning document.
 
-        Used when the array this view stood for has left the document
-        that named it, so that a caller still holding the view cannot
-        write through it into a document that no longer accounts for
-        what it writes.
+        Called once this AoT has left its document, so a caller still
+        holding the view can no longer write through it.
         """
         self._layout_root = None
         self._parent = None
@@ -611,8 +602,8 @@ class AoT(_View, list["Table"]):
     def _add_entry_attached(self, value: Mapping[str, Any]) -> Table:
         """Dispatch a new attached AoT entry from ``value``.
 
-        Pre: attached AoT. Selects the trivia-preserving clone path for
-        attached AoT entries or sections.
+        Precondition: attached AoT. Prefers the trivia-preserving clone
+        path for an existing AoT entry or section.
         """
         from tomlrt._container import Table as TableType  # noqa: PLC0415
 
@@ -636,8 +627,8 @@ class AoT(_View, list["Table"]):
             return
         _layout_ops.replace_aot_entry(self, index, value)
 
-    # Unsupported list mutators fail closed rather than corrupt the
-    # doc-stream via inherited `list` behaviour.
+    # Each of these must route attached vs. detached AoTs differently:
+    # inherited `list` behaviour alone would corrupt the doc-stream.
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Table:
@@ -722,7 +713,7 @@ class AoT(_View, list["Table"]):
                 if cur != list(self):
                     _layout_ops.renormalise_aot_order(self, cur)
                 return
-            # Extended slice with matching length: replace in place.
+            # Extended slice: length already matched, so replace in place.
             for i, v in zip(indices, typed_values, strict=True):
                 self._replace_entry_attached(i, v)
             return

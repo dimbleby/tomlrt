@@ -1,10 +1,7 @@
-"""Expose comment side-channel views for ``Array``.
+"""Comment side-channel views for `Array`, keyed by item index.
 
-``Array.comments``, ``Array.leading_comments``, and
-``Array.leading_block`` are indexed by item position. All of the per-item
-read / write plumbing and the mapping logic live in `_comma_comments`;
-this module supplies only the integer keying and the multi-line promotion
-policy via a small adapter.
+All read / write plumbing lives in `_comma_comments`; this module supplies
+only the integer keying and the multi-line promotion policy.
 """
 
 from __future__ import annotations

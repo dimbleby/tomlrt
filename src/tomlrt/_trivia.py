@@ -1,14 +1,10 @@
 """Source-preserving whitespace, newlines, and comments.
 
-Trivia is verbatim source text: a run of inline whitespace, line
-terminators and ``#`` comments, hanging off slots and value nodes.
-Together with value lexemes it captures every byte needed for exact
-round-trips, so it is stored as a plain ``str`` and the helpers here
-are ordinary string operations.
-
-The text decomposes into *pieces* -- a whitespace run, a line
-terminator, or a comment -- and several helpers below talk in those
-terms even though nothing materialises them.
+Trivia is verbatim source text -- inline whitespace, line terminators
+and ``#`` comments -- hanging off slots and value nodes. With value
+lexemes it captures every byte needed for exact round-trips, so it is
+stored as a plain ``str`` and the helpers here are ordinary string
+operations.
 """
 
 from __future__ import annotations
@@ -47,9 +43,8 @@ def split_line(line: str) -> tuple[str, str, str]:
 def leading_has_blank_line(leading: str) -> bool:
     r"""Whether ``leading`` contains at least one blank physical line.
 
-    A blank line is a line in the leading-trivia stream that carries no
-    comment. A comment-line terminator (e.g. ``# foo\n``) does not count
-    as a blank -- the newline belongs to the comment.
+    A comment line does not count as blank: its terminating newline
+    belongs to the comment.
     """
     return any("#" not in line for line in leading.split("\n")[:-1])
 
@@ -57,9 +52,8 @@ def leading_has_blank_line(leading: str) -> bool:
 def leading_break(t: str) -> int:
     r"""Length of the row break at the start of ``t``, or 0 if there is none.
 
-    An optional inline-whitespace run is skipped first, so trailing
-    whitespace from the previous row (``1,  \n``) does not mask the
-    break.
+    Whitespace is skipped first, so a trailing run from the previous
+    row (``1,  \n``) does not mask the break.
     """
     m = _RE_BREAK.match(t)
     return m.end() if m is not None else 0
@@ -68,9 +62,8 @@ def leading_break(t: str) -> int:
 def split_lines(t: str) -> list[str]:
     r"""Split ``t`` into lines, each keeping its terminator.
 
-    A trailing run without a terminator becomes the final element.
-    Trivia only ever breaks on ``\n``, so this is deliberately not
-    ``str.splitlines``, which also splits on other Unicode separators.
+    Deliberately not ``str.splitlines``, which also breaks on other
+    Unicode separators; trivia only ever breaks on ``\n``.
     """
     lines = [line + "\n" for line in t.split("\n")]
     last = lines.pop()[:-1]
@@ -102,10 +95,8 @@ def leading_ws(t: str) -> str:
 def _pad_above_from(t: str, body_start: int) -> tuple[str, str]:
     """Split ``t`` into ``(pad, above)`` at ``body_start``.
 
-    ``above`` is the comment block from ``body_start`` up to any trailing
-    value-indent whitespace; ``pad`` is everything around it. Absent a
-    comment in that span there is nothing to detach, so ``above`` is
-    empty and ``pad`` is the whole input.
+    ``above`` is the comment block from ``body_start`` up to any
+    trailing value-indent whitespace; ``pad`` is everything around it.
     """
     tail_start = len(t) - len(trailing_ws(t[body_start:]))
     middle = t[body_start:tail_start]
@@ -120,7 +111,6 @@ def split_above_block(t: str) -> tuple[str, str]:
     ``above`` is the item-attached comment block below the pad's opening
     newline; ``pad`` is the framing around it -- that newline plus the
     trailing value indent -- so the two are not a simple concatenation.
-    ``above`` is empty iff that middle region carries no comment.
     """
     first_nl = t.find("\n")
     if first_nl == -1:
@@ -131,10 +121,8 @@ def split_above_block(t: str) -> tuple[str, str]:
 def indent_from_trivia(t: str) -> str:
     """Extract a logical indent from a bracket pad.
 
-    Prefers the indent of the last comment line (so a varied-indent or
-    blank-line-prefixed comment block aligns the new item with the *most
-    recent* commented line). Falls back to the indent of the last
-    non-empty whitespace-after-newline run, then to "".
+    Prefers the last comment line's indent, so that a block with varied
+    indents aligns the new item with the most recent commented line.
     """
     last_comment_indent: str | None = None
     last_ws: str | None = None
@@ -152,16 +140,9 @@ def indent_from_trivia(t: str) -> str:
 def restamp_bracket_pad_for_first(ft: str) -> tuple[str, str]:
     r"""Reframe an empty bracket pad ahead of inserting the first item.
 
-    For an empty value, ``final_trivia`` owns everything between the
-    brackets. Return the ``(header_trivia, final_trivia)`` pair for an
-    about-to-be-inserted first item:
-
-    * Empty pad: two empty trivia.
-    * Single-line pad: mirror the pad on both bracket faces.
-    * Multi-line pad: split at the last newline; keep a value-indent on
-      ``header_trivia`` and the row break on ``final_trivia``.
-
-    Shared between :class:`Array` and inline-table append paths.
+    For an empty value ``final_trivia`` owns everything between the
+    brackets; return the ``(header_trivia, final_trivia)`` pair that
+    ownership should become once an item sits between them.
     """
     if not ft:
         return "", ""
@@ -179,13 +160,10 @@ def strip_trailing_indent(header_trivia: str, final_trivia: str) -> tuple[str, s
 
     After deleting the last item, ``header_trivia`` may still hold the
     removed item's indent or a bracket-EOL comment. Without comments,
-    drop the trailing whitespace/newline run so ``final_trivia`` owns
-    the canonical empty ``[\n]`` / ``{\n}`` newline.
-
-    With a bracket-EOL comment, migrate the surviving block into
-    ``final_trivia``. That matches the parse-empty ownership for
-    ``[ # tail\n]`` / ``{ # tail\n}``, so the next append can re-stamp
-    via :func:`restamp_bracket_pad_for_first`.
+    drop the trailing whitespace run so ``final_trivia`` owns the
+    canonical empty ``[\n]`` / ``{\n}`` newline. With one, migrate the
+    surviving block into ``final_trivia``, matching how ``[ # tail\n]``
+    parses when empty so the next append can re-stamp it.
     """
     if "#" not in header_trivia:
         return header_trivia.rstrip(" \t\r\n"), final_trivia
@@ -200,13 +178,12 @@ def strip_trailing_indent(header_trivia: str, final_trivia: str) -> tuple[str, s
 def split_item_above(t: str) -> tuple[str, str, str]:
     """Split an item-leading region into ``(head_pad, above, tail_pad)``.
 
-    Unlike :func:`split_above_block`, this is for ``items[i].leading``
-    (i >= 1) where there is no bracket and the leading newline may have
-    been hoisted onto item ``i-1``'s EOL section.
+    ``head_pad`` is the leading newline, ``tail_pad`` the trailing
+    value-indent, ``above`` the comment block between them.
 
-    ``head_pad`` is the leading newline (or empty); ``tail_pad`` is the
-    trailing value-indent whitespace (or empty); ``above`` is the
-    comment block between them.
+    Unlike :func:`split_above_block` this is for ``items[i].leading``
+    (i >= 1), where there is no bracket and the leading newline may have
+    been hoisted onto item ``i-1``'s EOL section.
     """
     m = _RE_NEWLINE.match(t)
     head = m.group() if m is not None else ""
@@ -219,15 +196,12 @@ def split_eol_section(t: str) -> tuple[str, str]:
     """Split ``t`` into the inline EOL section and the structural rest.
 
     The EOL section is row-attached: inline whitespace, an EOL comment,
-    and that row's terminating newline. Anything beyond -- additional
+    and that row's terminating newline. Anything beyond -- further
     newlines, indent, above-item blocks -- is structural and belongs to
     the *next* item's leading.
-
-    If no EOL comment is present on the comma's row, the whole input is
-    structural and the EOL half is empty.
     """
-    # The pattern needs a `#` to match at all, and most trivia has none;
-    # asking the string directly is much cheaper than asking the engine.
+    # The pattern cannot match without a `#`, and most trivia has none;
+    # asking the string directly is much cheaper than starting the engine.
     if "#" not in t:
         return "", t
     m = _RE_EOL_SECTION.match(t)

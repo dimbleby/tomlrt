@@ -65,15 +65,6 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cache primitives
-# ---------------------------------------------------------------------------
-
-
-# ``record_ref``, ``file_own_header`` and ``maybe_advance_body_tail``
-# are shared with mutation paths, keeping cache maintenance in one place.
-
-
-# ---------------------------------------------------------------------------
 # Header handling
 # ---------------------------------------------------------------------------
 
@@ -257,11 +248,11 @@ def _decode_value(
     """Decode any TOML value to its Python representation.
 
     ``parent``/``name`` -- the container and key ``value`` is bound
-    under -- are only consulted for an ``InlineTableValue``: its
-    decoded ``Table`` view is the one kind of result that needs a real
-    path for its own navigation, built here rather than by every
-    caller. Pass ``parent=None`` (with ``name=None``) for a value with
-    no such binding, e.g. an array element.
+    under -- are only consulted for an ``InlineTableValue``: its decoded
+    ``Table`` view needs a real path for its own navigation, computed
+    here rather than by every caller. Pass ``parent=None`` (with
+    ``name=None``) for a value with no such binding, e.g. an array
+    element.
     """
     if isinstance(value, ArrayValue):
         return _decode_array(value, layout_root=layout_root, owner=owner)

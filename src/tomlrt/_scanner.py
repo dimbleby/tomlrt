@@ -92,8 +92,7 @@ class _Scanner:
         self.src = src
         self.end = len(src)
         self.pos = 0
-        # Track newline kinds during scanning so Document needn't walk
-        # the CST. Report CRLF only when every emitted newline was CRLF.
+        # Track newline kinds during scanning so Document needn't walk the CST.
         self._seen_lf = False
         self._seen_crlf = False
 
@@ -146,11 +145,7 @@ class _Scanner:
         return src[start:end_pos]
 
     def scan_doc_trivia(self) -> str:
-        """Consume a document-scope trivia block.
-
-        Whitespace, blank lines and full-line comments are consumed.
-        Stops before the next structural token (or EOF).
-        """
+        """Consume whitespace, blank lines and comments up to the next token."""
         start = self.pos
         src = self.src
         end = self.end
@@ -179,10 +174,9 @@ class _Scanner:
         return src[start:pos]
 
     def scan_inline_ws_text(self) -> str:
-        """Consume one run of inline whitespace; return raw text (or "").
+        """Consume a run of spaces/tabs; return raw text (or "").
 
-        Newlines and comments are not whitespace here; the cursor stops
-        at the first character that is neither space nor tab.
+        Unlike `scan_array_trivia`, newlines and comments don't count here.
         """
         src = self.src
         end = self.end
@@ -205,8 +199,7 @@ class _Scanner:
     def scan_array_trivia(self) -> str:
         """Consume trivia inside an array (or TOML 1.1 inline table).
 
-        Whitespace, newlines and comments are all permitted. Stops
-        before the next structural character.
+        Unlike `scan_inline_ws_text`, newlines and comments are permitted.
         """
         start = self.pos
         src = self.src
@@ -262,15 +255,13 @@ class _Scanner:
         return EolTrivia(trailing, comment, newline)
 
     def scan_string(self, *, allow_multiline: bool = True) -> StringValue:
-        """Scan a string starting at the cursor; populate `raw`.
+        """Scan a string starting at the cursor and return its `StringValue`.
 
-        Dispatches on the opening quote character and returns a
-        `StringValue` with verbatim source (for round-tripping), decoded
-        value, and style. Key parsers pass ``allow_multiline=False`` to
-        reject multi-line strings.
+        Dispatches on the opening quote character. Key parsers pass
+        ``allow_multiline=False`` to reject multi-line strings.
 
-        Precondition: cursor is at `"` or `'`. Callers look at the
-        character first; this is asserted, not validated.
+        Precondition: cursor is at `"` or `'`; callers check the
+        character first, so this only asserts it.
         """
         src = self.src
         start = self.pos
@@ -473,9 +464,9 @@ class _Scanner:
         whitespace after the last part is consumed too, and can be used
         directly as ``pre_eq`` / ``inner_post``.
 
-        The decoded path is accumulated here rather than derived from
-        ``parts`` again by each caller: every one of them needs it, to
-        hand to the validator.
+        The decoded path is accumulated here, rather than derived from
+        ``parts`` separately by each caller, because every caller needs
+        it to hand to the validator.
         """
         src = self.src
         end = self.end
@@ -510,8 +501,8 @@ class _Scanner:
             self.scan_inline_ws_text()
             seps.append(src[sep_start : self.pos])
 
-    # Bare value tokens: bool, special floats, numbers, and date/time values.
-    # The parser dispatches strings, arrays, and inline tables itself.
+    # Bare value tokens (bool, special float, number, date/time); the parser
+    # dispatches strings, arrays and inline tables itself.
 
     def scan_value_atom(self) -> Value:
         """Scan a non-container, non-string value at the cursor.
@@ -526,7 +517,6 @@ class _Scanner:
             msg = f"expected value, got {self.src[start : start + 1]!r}"
             raise self.error(msg)
 
-        # Whole-token keyword classification.
         if token in ("true", "false"):
             return BoolValue(token, token == "true")  # noqa: S105
         if token in ("inf", "+inf"):
@@ -601,7 +591,6 @@ class _Scanner:
             msg = f"invalid integer {token!r}"
             raise self.error(msg, at=at)
         digits_only = body
-        # Underscore placement only has rules where there are underscores.
         if "_" in body:
             if body.startswith("_") or body.endswith("_"):
                 msg = f"invalid integer {token!r}"
@@ -630,7 +619,6 @@ class _Scanner:
             sign = body[0]
             body = body[1:]
         norm = body
-        # As for integers: no underscores, no underscore rules to apply.
         if "_" in body:
             if "__" in body:
                 msg = f"consecutive underscores in {token!r}"

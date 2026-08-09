@@ -1,11 +1,7 @@
-"""Expose comment side-channel views for inline tables.
+"""Comment side-channel views for inline tables, keyed by direct leaf key.
 
-`Table.comments`, `Table.leading_comments`, and `Table.leading_block` on
-an inline table are keyed by direct leaf key (like the section views),
-but operate on the backing `InlineTableValue` items (like the array
-views). All of the per-item read / write plumbing and the mapping logic
-live in `_comma_comments`; this module supplies only the leaf-key
-resolution and the multi-line promotion policy via a small adapter.
+All read / write plumbing lives in `_comma_comments`; this module supplies
+only leaf-key resolution and the multi-line promotion policy.
 
 A leaf is exposed only when it names exactly one physical entry. A
 dotted-prefix leaf (``a`` in ``{a.b = 1, a.c = 2}``) names no single
