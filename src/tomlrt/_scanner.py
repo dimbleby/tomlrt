@@ -68,8 +68,9 @@ def _is_ascii_digits(s: str) -> bool:
     return bool(s) and s.isascii() and s.isdecimal()
 
 
-# First character that ends a bare-value token.
-_RE_VALUE_END: Final = re.compile(r"[ \t\n\r,\]}#]")
+# A bare-value token: everything up to the first character that can end
+# one. Matches empty, which the caller reports as a missing value.
+_RE_VALUE_TOKEN: Final = re.compile(r"[^ \t\n\r,\]}#]*")
 
 # Shared simple backslash-escape map.
 _SIMPLE_ESCAPES: Final[dict[str, str]] = {
@@ -520,12 +521,10 @@ class _Scanner:
         ``true`` / ``inf`` followed by garbage.
         """
         start = self.pos
-        end = self._scan_value_end(start)
-        token = self.src[start:end]
+        token = self._scan_value_token()
         if not token:
             msg = f"expected value, got {self.src[start : start + 1]!r}"
             raise self.error(msg)
-        self.pos = end
 
         # Whole-token keyword classification.
         if token in ("true", "false"):
@@ -548,10 +547,12 @@ class _Scanner:
 
         return self._parse_integer_token(token, at=start)
 
-    def _scan_value_end(self, start: int) -> int:
-        """Return the offset of the first char that ends a bare value."""
-        m = _RE_VALUE_END.search(self.src, start)
-        return m.start() if m is not None else len(self.src)
+    def _scan_value_token(self) -> str:
+        """Consume the bare-value token at the cursor and return its text."""
+        m = _RE_VALUE_TOKEN.match(self.src, self.pos)
+        assert m is not None  # the pattern matches empty
+        self.pos = m.end()
+        return m[0]
 
     @staticmethod
     def _looks_like_datetime(token: str) -> bool:
@@ -693,10 +694,8 @@ class _Scanner:
             and src[pos + 1] in _DEC_DIGITS
             and src[pos + 3] == ":"
         ):
-            pos += 1
-            extra_end = self._scan_value_end(pos)
-            extra = src[pos:extra_end]
-            self.pos = extra_end
+            self.pos = pos + 1
+            extra = self._scan_value_token()
             return self._parse_datetime_text(token + " " + extra, at=at)
         return self._parse_datetime_text(token, at=at)
 
