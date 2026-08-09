@@ -106,15 +106,15 @@ class _Scanner:
         return "\n"
 
     def line_col(self, pos: int) -> tuple[int, int]:
-        """Return the 1-based (line, column) for source offset `pos`."""
-        line = 1
-        last_nl = -1
-        for i in range(pos):
-            if self.src[i] == "\n":
-                line += 1
-                last_nl = i
-        col = pos - last_nl
-        return line, col
+        r"""Return the 1-based (line, column) for source offset `pos`.
+
+        Columns count code points, and a `\r` counts as one of them, so
+        both halves of a CRLF belong to the line they terminate.
+        """
+        src = self.src
+        # rfind gives -1 when `pos` is on the first line, which is
+        # exactly the "column base" that makes offset 0 column 1.
+        return src.count("\n", 0, pos) + 1, pos - src.rfind("\n", 0, pos)
 
     def error(self, message: str, *, at: int | None = None) -> TOMLParseError:
         """Build a `TOMLParseError` pointing at `at` (default: cursor)."""
