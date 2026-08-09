@@ -2162,6 +2162,7 @@ def _populate_inline_table(
     table._inline = True  # noqa: SLF001
     table._value = val  # noqa: SLF001
 
+    last = len(items) - 1
     for i, (raw_k, sub) in enumerate(items):
         k = _validate_key(raw_k)
         sub_cst, sub_dec = _synth_value(
@@ -2171,18 +2172,17 @@ def _populate_inline_table(
             path=(*path, k),
             owner=owner,
         )
-        is_last = i == len(items) - 1
         entry = InlineTableEntry(
-            leading="" if i == 0 else " ",
-            key_parts=[make_keypart(k)],
-            key_seps=[],
-            pre_eq=" ",
-            post_eq=" ",
-            value=sub_cst,
-            trailing="",
-            has_comma=not is_last,
-            post_comma_trivia="",
-            key_path=(k,),
+            "" if i == 0 else " ",
+            sub_cst,
+            "",
+            i != last,
+            "",
+            [make_keypart(k)],
+            [],
+            " ",
+            " ",
+            (k,),
         )
         val.items.append(entry)
         dict.__setitem__(table, k, sub_dec)

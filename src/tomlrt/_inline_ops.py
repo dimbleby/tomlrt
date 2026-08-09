@@ -111,16 +111,16 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         eq_pre = " "
         eq_post = " "
     new_entry = InlineTableEntry(
-        leading="",
-        value=new_value,
-        trailing="",
-        has_comma=False,
-        post_comma_trivia="",
-        key_parts=make_keyparts(key_path),
-        key_seps=["."] * (len(key_path) - 1),
-        pre_eq=eq_pre,
-        post_eq=eq_post,
-        key_path=key_path,
+        "",
+        new_value,
+        "",
+        False,  # noqa: FBT003
+        "",
+        make_keyparts(key_path),
+        ["."] * (len(key_path) - 1),
+        eq_pre,
+        eq_post,
+        key_path,
     )
     style = detect_style(iv, nl=root._doc_newline)  # noqa: SLF001
     splice_in(iv, new_entry, style, root._doc_newline)  # noqa: SLF001
