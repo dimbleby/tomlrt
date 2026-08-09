@@ -226,6 +226,10 @@ def split_eol_section(t: str) -> tuple[str, str]:
     If no EOL comment is present on the comma's row, the whole input is
     structural and the EOL half is empty.
     """
+    # The pattern needs a `#` to match at all, and most trivia has none;
+    # asking the string directly is much cheaper than asking the engine.
+    if "#" not in t:
+        return "", t
     m = _RE_EOL_SECTION.match(t)
     if m is None:
         return "", t
