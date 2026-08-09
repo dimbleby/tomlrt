@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A key added to a table now takes its indent and blank-line spacing
+  from the table's last entry even when that entry is a dotted key.
+
 ### Fixed
 
 - A value TOML cannot represent is now rejected before anything
@@ -22,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Adding a key to a dotted or implicit table now costs time
   proportional to that table rather than to the whole document, so
   filling one is no longer quadratic.
+- Adding a key to a table now costs constant time however many dotted
+  keys precede it.
 
 ## [2.2.1] - 2026-08-04
 

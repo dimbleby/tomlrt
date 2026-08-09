@@ -92,6 +92,61 @@ def test_kv_append_preserves_indent_and_adds_blank() -> None:
         """)
 
 
+def test_kv_append_after_dotted_tail_mirrors_its_gap() -> None:
+    """The nearest preceding KV sets the convention, dotted or not."""
+    src = td("""
+        [t]
+        a = 1
+
+        b.c = 2
+        """)
+    doc = tomlrt.loads(src)
+    tbl = doc.table("t")
+    tbl["d"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        [t]
+        a = 1
+
+        b.c = 2
+
+        d = 3
+        """)
+
+
+def test_kv_append_after_packed_dotted_tail_stays_packed() -> None:
+    src = td("""
+        [t]
+
+        a = 1
+        b.c = 2
+        """)
+    doc = tomlrt.loads(src)
+    tbl = doc.table("t")
+    tbl["d"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        [t]
+
+        a = 1
+        b.c = 2
+        d = 3
+        """)
+
+
+def test_kv_append_after_dotted_tail_inherits_indent() -> None:
+    src = td("""
+        [t]
+            b.c = 1
+        """)
+    doc = tomlrt.loads(src)
+    tbl = doc.table("t")
+    tbl["d"] = 2
+    assert tomlrt.dumps(doc) == td("""
+        [t]
+            b.c = 1
+            d = 2
+        """)
+
+
 # ---------------------------------------------------------------------------
 # AoT append / insert
 # ---------------------------------------------------------------------------
@@ -243,6 +298,25 @@ def test_aot_extend_inherits_blank_after_first_added_entry() -> None:
             x = 4
             """)
     )
+
+
+def test_aot_entry_inherits_indent_from_dotted_sibling() -> None:
+    """A sibling entry whose only KVs are dotted still sets the indent."""
+    src = td("""
+        [[i]]
+          a.b = 1
+
+        [[i]]
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("i")[1]["z"] = 2
+    assert tomlrt.dumps(doc) == td("""
+        [[i]]
+          a.b = 1
+
+        [[i]]
+          z = 2
+        """)
 
 
 # ---------------------------------------------------------------------------

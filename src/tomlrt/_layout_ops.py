@@ -1417,61 +1417,11 @@ def _last_body_kv(c: Container) -> KVSlot | None:
     return tail if isinstance(tail, KVSlot) else None
 
 
-def _last_kv(c: Container, *, direct: bool = False) -> KVSlot | None:
-    """Reverse-walk ``c._refs`` for the last KV slot owned by ``c``.
-
-    ``direct=True``: further restrict to single-key-part.
-
-    Only the two queries the cache cannot answer come here: recomputing
-    ``_body_tail`` once it has been invalidated, and finding the last
-    *direct* KV behind a dotted one. "The last body KV" itself is
-    `_last_body_kv`.
-
-    No host-path filter is needed: a KV's refs propagate from its host
-    container *down* its dotted path, so a KV under ``[a.b]`` is filed
-    on ``a.b``, never on ``a``. A host container therefore only ever
-    sees KVs hosted at its own path, and an implicit dotted container —
-    the one shape that does see foreign-host KVs — wants them all.
-    """
-    owner = c._owner_aot_entry  # noqa: SLF001
-    for ref in reversed(c._refs):  # noqa: SLF001
-        s = ref.slot
-        if not isinstance(s, KVSlot) or s.owner_aot_entry is not owner:
-            continue
-        if direct and len(s.key_parts) != 1:
-            continue
-        return s
-    return None
-
-
-def _is_direct_kv(c: Container, s: KVSlot) -> bool:
-    """True iff ``s`` is a direct (single-key-part, host=c) KV of ``c``."""
-    return (
-        s.host_path == c._path  # noqa: SLF001
-        and len(s.key_parts) == 1
-        and s.owner_aot_entry is c._owner_aot_entry  # noqa: SLF001
-    )
-
-
-def _last_direct_kv(c: Container) -> KVSlot | None:
-    """Return the most-recent direct KV slot of ``c`` in doc-stream order.
-
-    The last body KV answers this whenever it is direct (always so
-    just after a direct-KV append) and rules the question out entirely
-    when the body has no KV; only a dotted tail leaves a direct KV
-    hiding further back, and that alone needs the walk.
-    """
-    tail = _last_body_kv(c)
-    if tail is None or _is_direct_kv(c, tail):
-        return tail
-    return _last_kv(c, direct=True)
-
-
 def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
-    """Return the last direct KV of the most recent prior AoT sibling.
+    """Return the last body KV of the most recent prior AoT sibling.
 
-    Used to inherit indent when ``c`` is an AoT entry root with no
-    direct KVs of its own yet.
+    Used to inherit indent when ``c`` is an AoT entry root with no body
+    KV of its own yet.
     """
     owner = c._owner_aot_entry  # noqa: SLF001
     if owner is None:
@@ -1497,7 +1447,7 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
             continue
         if not found_self:
             continue
-        sib = _last_direct_kv(entry_table)
+        sib = _last_body_kv(entry_table)
         if sib is not None:
             return sib
     return None
@@ -1538,10 +1488,14 @@ def _kv_leading_after(
 def _kv_separator_leading(c: Container, doc: Document) -> str:
     """Pick leading trivia for a new direct-KV slot in container ``c``.
 
-    For an AoT entry with no own KVs yet, falls back to inheriting
-    indent (only) from the previous sibling entry's last KV.
+    The new slot lands straight after ``c``'s body tail, so that KV is
+    the peer whose indent and blank-gap it continues — the same
+    question `install_dotted_kv_slot` asks, and neither cares whether
+    the peer is dotted. For an AoT entry with no body KV of its own
+    yet, falls back to inheriting indent (only) from the previous
+    sibling entry's last one.
     """
-    last = _last_direct_kv(c)
+    last = _last_body_kv(c)
     if last is not None:
         return _kv_leading_after(last, doc)
     sibling = _aot_sibling_last_kv(c)
@@ -1749,10 +1703,23 @@ def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
 
 
 def _recompute_body_tail(c: Container) -> Slot | None:
-    """Last body-region ref's slot in ``c._refs`` (mirrors invariants rule)."""
-    found = _last_kv(c)
-    if found is not None:
-        return found
+    """Last body-region ref's slot in ``c._refs`` (mirrors invariants rule).
+
+    The one query the ``_body_tail`` cache cannot answer, and so the
+    only reverse walk of ``c._refs``: it runs exactly when the cache
+    has been invalidated by a delete or a move.
+
+    No host-path filter is needed: a KV's refs propagate from its host
+    container *down* its dotted path, so a KV under ``[a.b]`` is filed
+    on ``a.b``, never on ``a``. A host container therefore only ever
+    sees KVs hosted at its own path, and an implicit dotted container —
+    the one shape that does see foreign-host KVs — wants them all.
+    """
+    owner = c._owner_aot_entry  # noqa: SLF001
+    for ref in reversed(c._refs):  # noqa: SLF001
+        s = ref.slot
+        if isinstance(s, KVSlot) and s.owner_aot_entry is owner:
+            return s
     if c._header_ref is not None:  # noqa: SLF001
         # Header-only container falls back to its own header.
         return c._header_ref.slot  # noqa: SLF001
