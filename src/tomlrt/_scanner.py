@@ -566,7 +566,7 @@ class _Scanner:
     def _looks_like_float(token: str) -> bool:
         # Decimal floats contain ``.``, ``e`` or ``E``; hex/oct/bin
         # integers never do.
-        body = token[1:] if token[:1] in "+-" else token
+        body = token[1:] if token[0] in "+-" else token
         if body.startswith(("0x", "0o", "0b")):
             return False
         return "." in body or "e" in body or "E" in body
@@ -594,23 +594,26 @@ class _Scanner:
             return IntegerValue(token, value)
 
         sign = ""
-        if body and body[0] in "+-":
+        if body[0] in "+-":
             sign = body[0]
             body = body[1:]
         if not body:
             msg = f"invalid integer {token!r}"
             raise self.error(msg, at=at)
-        if body.startswith("_") or body.endswith("_"):
-            msg = f"invalid integer {token!r}"
-            raise self.error(msg, at=at)
-        if "__" in body:
-            msg = f"consecutive underscores in {token!r}"
-            raise self.error(msg, at=at)
-        digits_only = body.replace("_", "")
+        digits_only = body
+        # Underscore placement only has rules where there are underscores.
+        if "_" in body:
+            if body.startswith("_") or body.endswith("_"):
+                msg = f"invalid integer {token!r}"
+                raise self.error(msg, at=at)
+            if "__" in body:
+                msg = f"consecutive underscores in {token!r}"
+                raise self.error(msg, at=at)
+            digits_only = body.replace("_", "")
         if not _is_ascii_digits(digits_only):
             msg = f"invalid integer {token!r}"
             raise self.error(msg, at=at)
-        if len(digits_only) > 1 and digits_only.startswith("0"):
+        if len(digits_only) > 1 and digits_only[0] == "0":
             msg = f"leading zeros are not allowed in {token!r}"
             raise self.error(msg, at=at)
         try:
@@ -623,31 +626,31 @@ class _Scanner:
     def _parse_float_token(self, token: str, *, at: int) -> FloatValue:
         body = token
         sign = ""
-        if body and body[0] in "+-":
+        if body[0] in "+-":
             sign = body[0]
             body = body[1:]
-        if "__" in body:
-            msg = f"consecutive underscores in {token!r}"
-            raise self.error(msg, at=at)
-        for i, c in enumerate(body):
-            if c == "_" and not (
-                0 < i < len(body) - 1
-                and body[i - 1] in _DEC_DIGITS
-                and body[i + 1] in _DEC_DIGITS
-            ):
-                msg = f"misplaced underscore in {token!r}"
+        norm = body
+        # As for integers: no underscores, no underscore rules to apply.
+        if "_" in body:
+            if "__" in body:
+                msg = f"consecutive underscores in {token!r}"
                 raise self.error(msg, at=at)
+            for i, c in enumerate(body):
+                if c == "_" and not (
+                    0 < i < len(body) - 1
+                    and body[i - 1] in _DEC_DIGITS
+                    and body[i + 1] in _DEC_DIGITS
+                ):
+                    msg = f"misplaced underscore in {token!r}"
+                    raise self.error(msg, at=at)
+            norm = body.replace("_", "")
 
         # Validate structure manually; ``float`` accepts forms TOML doesn't.
-        norm = body.replace("_", "")
-        exp_pos = -1
-        for i, c in enumerate(norm):
-            if c in ("e", "E"):
-                exp_pos = i
-                break
-        if exp_pos != -1:
-            mantissa = norm[:exp_pos]
-            exponent = norm[exp_pos + 1 :]
+        # A decimal float carries at most one ``e``/``E`` marker.
+        mantissa, marker, exponent = norm.partition("e")
+        if not marker:
+            mantissa, marker, exponent = norm.partition("E")
+        if marker:
             if not exponent or (exponent[0] in "+-" and len(exponent) == 1):
                 msg = f"invalid float exponent in {token!r}"
                 raise self.error(msg, at=at)
@@ -656,8 +659,6 @@ class _Scanner:
             if not _is_ascii_digits(exponent):
                 msg = f"invalid float exponent in {token!r}"
                 raise self.error(msg, at=at)
-        else:
-            mantissa = norm
 
         if "." in mantissa:
             int_part, _, frac_part = mantissa.partition(".")
