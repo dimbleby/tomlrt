@@ -9102,6 +9102,7 @@ def test_overwrite_with_own_grandchild_then_clone_elsewhere() -> None:
     assert out == td("""
         name.first = "Arthur"
         "name".'last' = "Dent"
+
         k9 = -7
 
         [name.k75]

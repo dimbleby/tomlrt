@@ -181,11 +181,10 @@ them. Read roughly in this order:
   / delete / sort on the doc-stream linked list; `_index` and `_refs`
   bookkeeping; KV / section / AoT-entry append; subtree rehome.
   By far the largest file. Internal hot-path conventions:
-  - **Reverse-walks of `c._refs`** go through `_last_kv(c, predicate)`,
-    and only for the two questions the caches cannot answer:
-    recomputing an invalidated `_body_tail` (`_recompute_body_tail`)
-    and finding the last *direct* KV hiding behind a dotted one
-    (`_last_direct_kv`). Don't add a third walk.
+  - **Reverse-walks of `c._refs`** happen in exactly one place,
+    `_recompute_body_tail`, for the one question the caches cannot
+    answer: recomputing an invalidated `_body_tail`. Everything else
+    reads the cache through `_last_body_kv`. Don't add a second walk.
   - **Ordered ref filing** goes through `record_ref`, which places a
     ref by its slot's order key; a physical change to a region of the
     stream is wrapped in `_refile_region_refs`, which puts every
@@ -494,8 +493,8 @@ of any public API.
 - Storing data on a `SlotRef` other than `slot` and `container` —
   `local_key` is derived; if you need another piece of state,
   derive it too or push it onto the slot itself.
-- Adding a fourth ad-hoc reverse-walk of `c._refs` instead of
-  expressing the predicate to `_last_kv`.
+- Adding a second ad-hoc reverse-walk of `c._refs` instead of reading
+  the `_body_tail` cache through `_last_body_kv`.
 - "Fixing" formatting differences in the writer's output without
   adding a round-trip test that proves it.
 - Touching `vendor/` (it is third-party, vendored verbatim).
