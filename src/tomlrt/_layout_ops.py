@@ -142,7 +142,7 @@ def _effective_header_path_before(anchor: Slot | None) -> tuple[str, ...] | None
     cur = anchor
     while cur is not None:
         if isinstance(cur, StructuralHeaderSlot):
-            return tuple(cur.path)
+            return cur.path
         cur = cur._prev  # noqa: SLF001
     return None
 
@@ -1790,7 +1790,6 @@ def _new_section_header(
         leading,
         owner_aot_entry,
         _default_eol(doc),
-        path,
         make_keyparts(path),
         ["."] * (len(path) - 1),
         "",
@@ -2832,8 +2831,7 @@ def _retarget_slot_paths(
         return
     # `KVSlot` and `StructuralHeaderSlot` are the only concrete slots.
     assert isinstance(s, StructuralHeaderSlot)
-    s.path = _rebase_path(s.path, src_prefix, target_prefix)
-    s.key_parts = make_keyparts(s.path)
+    s.key_parts = make_keyparts(_rebase_path(s.path, src_prefix, target_prefix))
     s.key_seps = ["."] * (len(s.key_parts) - 1)
 
 
@@ -3729,7 +3727,7 @@ def _splice_blocks_in_order(
 def _slot_binding_root(slot: Slot) -> tuple[str, ...]:
     """Return the direct binding path represented by ``slot``."""
     if isinstance(slot, StructuralHeaderSlot):
-        return tuple(slot.path)
+        return slot.path
     assert isinstance(slot, KVSlot)
     return (*slot.host_path, slot.key_parts[0].value)
 

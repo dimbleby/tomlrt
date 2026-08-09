@@ -138,14 +138,16 @@ them. Read roughly in this order:
 - **`_slots.py`** — the **physical slot stream**:
   - `Slot` — base; carries the whole-line trivia (`leading: str`,
     `eol: EolTrivia`) that every slot kind has, `_prev` / `_next`
-    intrusive linked-list pointers, `owner_aot_entry`, and a
+    intrusive linked-list pointers, the `_order` doc-stream order
+    key, `owner_aot_entry`, and a
     `_refs` back-pointer list (every `SlotRef` that targets the
     slot — bounded by path depth, used for O(depth) ref scrub on
     AoT removal).
   - `KVSlot` — one `key = value` line (`host_path`, `key_parts`,
-    `key_seps`, `value`).
-  - `StructuralHeaderSlot` — one `[a.b]` / `[[a.b]]` header (`path`,
-    `kind`, `entry`, `synthetic`).
+    `key_seps`, `value`); `key` is derived from `key_parts`.
+  - `StructuralHeaderSlot` — one `[a.b]` / `[[a.b]]` header
+    (`key_parts`, `key_seps`, `entry`, `synthetic`); `path` and
+    `kind` are derived, from `key_parts` and `entry` respectively.
   - `AoTEntry` — bookkeeping for an `[[a]]` entry (its
     `entry_slots`, the table view it backs).
   - `SlotRef` — a per-container *occurrence* of a slot.

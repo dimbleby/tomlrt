@@ -121,7 +121,6 @@ class _Parser:
             leading,
             owner,
             eol,
-            path,
             key_parts,
             key_seps,
             inner_pre,

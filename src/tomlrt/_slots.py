@@ -159,7 +159,9 @@ class KVSlot(Slot):
     @property
     def key(self) -> tuple[str, ...]:
         """Decoded dotted-key path, derived from ``key_parts``."""
-        return tuple(p.value for p in self.key_parts)
+        # A list comprehension, not a generator: `tuple` can size the
+        # result up front, and these are read on the build hot path.
+        return tuple([p.value for p in self.key_parts])
 
     def render_key(self) -> str:
         return render_dotted(self.key_parts, self.key_seps)
@@ -182,9 +184,6 @@ class StructuralHeaderSlot(Slot):
     is derived from ``entry`` so the two cannot drift.
     """
 
-    path: tuple[str, ...]
-    """Full decoded path of the section / AoT entry header."""
-
     key_parts: list[KeyPart]
     key_seps: list[str]
     inner_pre: str
@@ -195,6 +194,11 @@ class StructuralHeaderSlot(Slot):
 
     synthetic: bool
     """True iff this header was introduced by mutation."""
+
+    @property
+    def path(self) -> tuple[str, ...]:
+        """Full decoded path of the section / AoT entry, from ``key_parts``."""
+        return tuple([p.value for p in self.key_parts])
 
     @property
     def kind(self) -> Literal["table", "aot-entry"]:
@@ -356,9 +360,9 @@ class SlotRef:
         if isinstance(slot, KVSlot):
             return slot.key_parts[len(c_path) - len(slot.host_path)].value
         assert isinstance(slot, StructuralHeaderSlot)
-        if slot.path == c_path:
-            return None
-        return slot.path[len(c_path)]
+        parts = slot.key_parts
+        depth = len(c_path)
+        return parts[depth].value if len(parts) > depth else None
 
 
 def ensure_terminator(slot: Slot, nl: str) -> None:
