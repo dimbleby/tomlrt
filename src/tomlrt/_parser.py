@@ -209,26 +209,25 @@ class _Parser:
             ch = src[sc.pos] if sc.pos < end else ""
             if ch == ",":
                 sc.pos += 1
-                scanned = sc.scan_array_trivia()
-                post_comma, next_leading = split_eol_section(scanned)
-                items.append(ArrayItem(leading, value, trailing, True, post_comma))  # noqa: FBT003
-                if sc.pos < end and src[sc.pos] == "]":
-                    # Trailing-comma terminator: rest is bracket pad.
-                    node.final_trivia = next_leading
-                    sc.pos += 1
-                    return node
-                leading = next_leading
+                post_comma, next_leading = split_eol_section(sc.scan_array_trivia())
             elif ch == "]":
-                items.append(ArrayItem(leading, value, trailing, False, ""))  # noqa: FBT003
-                # No trailing comma: split item EOL from bracket pad.
-                eol, rest = split_eol_section(items[-1].trailing)
-                items[-1].trailing = eol
-                node.final_trivia = rest
-                sc.pos += 1
-                return node
+                post_comma = next_leading = ""
             else:
                 msg = f"expected ',' or ']' in array, got {ch!r}"
                 raise sc.error(msg)
+            item = ArrayItem(leading, value, trailing, ch == ",", post_comma)
+            items.append(item)
+            if ch == "]":
+                # No trailing comma: split item EOL from bracket pad.
+                item.trailing, node.final_trivia = split_eol_section(trailing)
+                sc.pos += 1
+                return node
+            if sc.pos < end and src[sc.pos] == "]":
+                # Trailing-comma terminator: rest is bracket pad.
+                node.final_trivia = next_leading
+                sc.pos += 1
+                return node
+            leading = next_leading
 
     def _parse_inline_table(self) -> InlineTableValue:
         """Parse a ``{...}`` inline table.
@@ -269,50 +268,36 @@ class _Parser:
             ch = src[sc.pos] if sc.pos < end else ""
             if ch == ",":
                 sc.pos += 1
-                scanned = sc.scan_array_trivia()
-                post_comma, next_leading = split_eol_section(scanned)
-                entries.append(
-                    InlineTableEntry(
-                        leading=leading,
-                        key_parts=key_parts,
-                        key_seps=key_seps,
-                        pre_eq=pre_eq,
-                        post_eq=post_eq,
-                        value=value,
-                        trailing=trailing,
-                        has_comma=True,
-                        post_comma_trivia=post_comma,
-                        key_path=key_path,
-                    )
-                )
-                if sc.pos < end and src[sc.pos] == "}":
-                    node.final_trivia = next_leading
-                    sc.pos += 1
-                    return node
-                leading = next_leading
+                post_comma, next_leading = split_eol_section(sc.scan_array_trivia())
             elif ch == "}":
-                entries.append(
-                    InlineTableEntry(
-                        leading=leading,
-                        key_parts=key_parts,
-                        key_seps=key_seps,
-                        pre_eq=pre_eq,
-                        post_eq=post_eq,
-                        value=value,
-                        trailing=trailing,
-                        has_comma=False,
-                        post_comma_trivia="",
-                        key_path=key_path,
-                    )
-                )
-                eol, rest = split_eol_section(entries[-1].trailing)
-                entries[-1].trailing = eol
-                node.final_trivia = rest
-                sc.pos += 1
-                return node
+                post_comma = next_leading = ""
             else:
                 msg = f"expected ',' or '}}' in inline table, got {ch!r}"
                 raise sc.error(msg)
+            entry = InlineTableEntry(
+                leading,
+                value,
+                trailing,
+                ch == ",",
+                post_comma,
+                key_parts,
+                key_seps,
+                pre_eq,
+                post_eq,
+                key_path,
+            )
+            entries.append(entry)
+            if ch == "}":
+                # No trailing comma: split entry EOL from bracket pad.
+                entry.trailing, node.final_trivia = split_eol_section(trailing)
+                sc.pos += 1
+                return node
+            if sc.pos < end and src[sc.pos] == "}":
+                # Trailing-comma terminator: rest is bracket pad.
+                node.final_trivia = next_leading
+                sc.pos += 1
+                return node
+            leading = next_leading
 
 
 __all__ = ["ParseResult", "_Parser"]

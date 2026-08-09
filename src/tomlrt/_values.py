@@ -169,13 +169,18 @@ class InlineTableEntry(CommaItem):
 
     The shared trivia/comma machinery lives on `CommaItem`; this leaf
     adds only the key-prefix fields and keyed rendering.
+
+    Its fields are positional, like a `Slot`'s and for the same reason:
+    an entry is built once per parsed ``key = value``, and binding ten
+    fields by keyword costs several times as much as binding them
+    positionally.
     """
 
-    key_parts: list[KeyPart] = field(kw_only=True)
-    key_seps: list[str] = field(kw_only=True)  # len = len(key_parts) - 1
-    pre_eq: str = field(kw_only=True)
-    post_eq: str = field(kw_only=True)
-    key_path: tuple[str, ...] = field(kw_only=True)
+    key_parts: list[KeyPart]
+    key_seps: list[str]  # len = len(key_parts) - 1
+    pre_eq: str
+    post_eq: str
+    key_path: tuple[str, ...]
     """Decoded dotted-key path.
 
     Set by every construction site and read by inline-table validation,
