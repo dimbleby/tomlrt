@@ -63,11 +63,7 @@ def _find_entry(
 
 
 def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> list[int]:
-    """Return indices of entries whose ``key_parts`` start with ``key_path``.
-
-    Used when deleting a synthetic dotted-prefix container, e.g.
-    ``del obj["a"]`` for ``{a.b = 1, a.c = 2}``.
-    """
+    """Return indices of entries whose ``key_parts`` start with ``key_path``."""
     n = len(key_path)
     out: list[int] = []
     for i, e in enumerate(iv.items):

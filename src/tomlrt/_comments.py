@@ -1,10 +1,10 @@
 """Expose comment side-channel views over slot trivia.
 
 `Container.comments` maps direct keys to decoded EOL comments;
-`Container.leading_comments` maps them to attached leading comment
-blocks. A slot is exposed under its leaf key on its immediate parent
-(``b.c = 1`` under ``[a]`` appears on ``a["b"]``). Inline tables have
-no comment view because TOML forbids comments inside them.
+`Container.leading_comments` maps them to attached leading blocks. A
+key is exposed on its immediate parent (``b.c = 1`` under ``[a]``
+appears on ``a["b"]``). These views are for section-backed containers;
+the inline-table equivalents live in `_inline_comments`.
 """
 
 from __future__ import annotations
@@ -36,8 +36,6 @@ def _validate_comment_controls(text: str) -> None:
     """Reject ASCII control characters (other than TAB) and DEL."""
     for ch in text:
         cp = ord(ch)
-        # TOML comments allow TAB plus printable Unicode; reject other
-        # ASCII controls and DEL.
         if cp == 0x09:
             continue
         if cp < 0x20 or cp == 0x7F:
@@ -197,18 +195,16 @@ class EolCommentView(_SlotKeyedView[str]):
 def _split_preamble(leading: str) -> tuple[str, str]:
     """Split the head slot's leading at the first blank line into (preamble, rest).
 
-    The dual of :func:`_split_attached_block` (which cuts at the *last* blank).
-    The preamble is the opening contiguous comment run, but only when a blank
-    line follows it (and travels with it). If that run is attached straight to
-    the first construct, or the leading starts with a blank, there is no
-    preamble. ``rest`` keeps the construct's own leading block, blanks and all.
+    Dual of :func:`_split_attached_block`, which cuts at the *last* blank.
+    There is no preamble if the opening comment run attaches straight to
+    the first construct, or the leading starts with a blank line.
     """
     lines = split_lines(leading)
     i = 0
     while i < len(lines) and "#" in lines[i]:
         i += 1
-    # A separating blank line is a newline with no comment — not the slot's
-    # trailing indent (whitespace, no newline).
+    # A blank *separator* line is a newline with no comment, distinct from
+    # the slot's trailing indent (whitespace with no newline).
     if i == 0 or i >= len(lines) or "\n" not in lines[i]:
         return "", leading
     return "".join(lines[: i + 1]), "".join(lines[i + 1 :])
@@ -331,11 +327,10 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
 class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
     """Mapping view over the full leading-trivia block of each direct key.
 
-    Entries are source-order comment strings and ``None`` for blank
-    lines; the slot's own column indent is excluded and re-applied on
-    write. This is the full-fidelity peer of :class:`LeadingCommentView`.
+    Entries are comment strings in source order, with ``None`` for blank
+    lines; the slot's column indent is excluded and reapplied on write.
 
-    The document head preamble is disjoint and lives on
+    The document head preamble lives separately, on
     :attr:`Document.preamble`.
     """
 
@@ -397,9 +392,9 @@ def _require_header_slot(c: Container, msg: str) -> StructuralHeaderSlot:
 
 def _header_comment_get(c: Container) -> str | None:
     if (h := _header_slot(c)) is None:
-        # No header line means no header comment; mirror the empty
-        # state of an explicit section. Setters still raise; silently
-        # dropping a write would be a footgun.
+        # No header means no comment to return, mirroring an explicit
+        # section. Setters still raise -- silently dropping a write
+        # would be a footgun.
         return None
     eol = h.eol
     if not eol.comment:

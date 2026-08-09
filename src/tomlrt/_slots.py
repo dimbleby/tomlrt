@@ -65,26 +65,21 @@ class AoTEntry:
 
 @dataclass(slots=True, eq=False)
 class Slot:
-    """Base for physical slots.
+    """Base for physical slots, subclassed by `KVSlot` and `StructuralHeaderSlot`.
 
-    Subclassed by `KVSlot` and `StructuralHeaderSlot`. Every slot kind
-    spells one physical line as ``leading`` + body + ``eol``, so both
-    trivia fields — and ``owner_aot_entry`` — live here and all kinds
-    expose them uniformly; only the body differs.
+    Every slot spells one physical line as ``leading`` + body + ``eol``;
+    those trivia fields, plus ``owner_aot_entry``, live here so every kind
+    exposes them uniformly and only the body differs.
 
-    Deliberately not an `abc.ABC`: giving it an `ABCMeta` metaclass
-    would make every `isinstance(slot, KVSlot)` /
-    `isinstance(slot, StructuralHeaderSlot)` check on the parse /
-    mutation hot path go through the much slower ABC instance-check
-    machinery instead of the plain-type fast path. `render` still
-    raises rather than being left unimplemented so a missing override
-    fails loudly instead of silently.
+    Deliberately not an `abc.ABC`: an `ABCMeta` metaclass would slow every
+    `isinstance(slot, KVSlot)` / `isinstance(slot, StructuralHeaderSlot)`
+    check on the parse/mutation hot path. `render` raises rather than
+    being left unimplemented so a missing override fails loudly.
 
-    Constructor fields are positional and required: a slot is built once
-    per physical line, and keyword binding roughly doubles that cost.
-    ``_prev`` / ``_next`` / ``_order`` / ``_refs`` are runtime wiring,
-    declared ``init=False`` so they take no constructor argument and
-    don't force subclass fields keyword-only.
+    Constructor fields are positional and required — a slot is built once
+    per line and keyword binding roughly doubles that cost. ``_prev`` /
+    ``_next`` / ``_order`` / ``_refs`` are runtime wiring, declared
+    ``init=False`` so they don't force subclass fields keyword-only.
     """
 
     leading: str
@@ -101,11 +96,10 @@ class Slot:
     _order: int = field(default=0, init=False, repr=False, compare=False)
     """Doc-stream order key: strictly increasing along ``_next``.
 
-    Lets "which of these two slots comes first?" — and hence the
-    position of a slot's ref in a doc-ordered ``Container._refs`` — be
-    answered by comparison instead of by walking the stream. Maintained
-    by `stitch_run`; meaningless for an unlinked slot, which is stamped
-    afresh when it is spliced back in.
+    Lets "which slot comes first?" — and so where a ref belongs in a
+    doc-ordered ``Container._refs`` — be a comparison rather than a walk.
+    Maintained by `stitch_run`; meaningless for an unlinked slot, which
+    is stamped afresh when spliced back in.
     """
     _refs: list[SlotRef] = field(
         default_factory=list, init=False, repr=False, compare=False
@@ -120,8 +114,8 @@ class Slot:
         """Deep-copy without following ``_refs``/``_prev``/``_next``.
 
         Clones start with empty refs and no doc-stream links; callers
-        file new refs and splice them in. Following ``_prev``/``_next``
-        would drag the whole source document into the deepcopy.
+        file new refs and splice them in themselves. Following
+        ``_prev``/``_next`` would drag the whole source document in.
         """
         new = type(self).__new__(type(self))
         memo[id(self)] = new
@@ -202,7 +196,7 @@ class StructuralHeaderSlot(Slot):
 
     @property
     def kind(self) -> Literal["table", "aot-entry"]:
-        """``"aot-entry"`` iff ``entry is not None``, else ``"table"``."""
+        """See ``entry`` for the derivation."""
         return "aot-entry" if self.entry is not None else "table"
 
     def render_key(self) -> str:
@@ -235,22 +229,20 @@ seam can take the midpoint; only a seam that has absorbed
 _ORDER_MIN_STEP = 8
 """Spacing `_respread` settles for when it has to compress a window.
 
-Small enough that a respread window stays local — the more the nominal
-spacing is insisted on, the further a respread has to reach for the
-room to restore it — but not so small that the window is exhausted
-again immediately.
+Small enough to keep the respread window local — insisting on the
+nominal spacing makes it reach further for the room — but not so small
+that the window is exhausted again immediately.
 """
 
 
 def stitch_run(prev: Slot | None, run: Sequence[Slot], nxt: Slot | None) -> None:
     """Link ``run``, in order, between ``prev`` and ``nxt``, stamping order keys.
 
-    The sole point at which slots join a doc-stream, and so the sole
-    point that has to keep :attr:`Slot._order` — the key every
-    doc-ordered projection of the stream is sorted by — monotone. The
-    whole run's keys are allocated up front, from the state of the
-    stream before any of it is linked. A caller holding the enclosing
-    document is responsible for its head and tail.
+    The sole point where slots join a doc-stream, so the sole point
+    responsible for keeping :attr:`Slot._order` monotone. The whole
+    run's keys are allocated up front, from the stream state before any
+    of it is linked. The caller is responsible for the document's own
+    head and tail.
     """
     key, step = _order_run_between(prev, nxt, len(run))
     for slot in run:
@@ -271,13 +263,12 @@ def _order_run_between(
     """First key and step for ``count`` keys between two adjacent slots.
 
     The keys ``first + i * step`` for ``i`` in ``range(count)`` all lie
-    strictly between the two slots' own keys. ``None`` means "no slot on
-    that side", i.e. the head or tail seam of the document, where there
-    is unlimited room and the nominal spacing is used. Respreads a
-    neighbourhood of the stream when the seam itself cannot hold the
-    whole run. Allocating a run in one go is what keeps a bulk splice —
-    a reorder, a block move — linear, rather than repeatedly halving one
-    seam until it is exhausted and then respreading per slot.
+    strictly between the two slots' own keys. ``None`` means "no slot
+    on that side" — the head or tail seam, with unlimited room at
+    nominal spacing. Respreads a neighbourhood of the stream if the
+    seam can't hold the whole run; allocating one run in a single pass
+    is what keeps a bulk splice (reorder, block move) linear, rather
+    than respreading per slot.
     """
     if prev is None:
         stop = nxt._order if nxt is not None else count * _ORDER_GAP  # noqa: SLF001
@@ -293,13 +284,12 @@ def _order_run_between(
 def _respread(left: Slot, right: Slot, count: int) -> None:
     """Re-lay the order keys of a window around an exhausted seam.
 
-    Grows the window outward from the ``left``/``right`` pair until the
-    key range enclosing it can hold that many slots at ``_ORDER_MIN_STEP``
-    spacing — or wider, if the ``count`` slots about to be inserted
-    between the pair need more room than that — then redistributes them
-    evenly across it. Growth always terminates because reaching an end
-    of the stream gives the window room to expand into rather than
-    compress.
+    Grows the window outward from ``left``/``right`` until the enclosing
+    key range can hold ``count`` slots at ``_ORDER_MIN_STEP`` spacing —
+    or wider, if the slots about to be inserted need more room than that
+    — then redistributes them evenly. Growth always terminates because
+    reaching an end of the stream gives the window room to expand into
+    rather than compress.
     """
     need = max(_ORDER_MIN_STEP, count + 1)
     lo, hi, window = left, right, 2
@@ -379,8 +369,8 @@ def ensure_terminator(slot: Slot, nl: str) -> None:
 def retarget_slot_newlines(slot: Slot, target: str) -> None:
     """Rewrite every line terminator reachable from ``slot`` to ``target``.
 
-    Used by graft paths so cross-document spliced slots adopt the
-    destination document's line ending, including nested inline values.
+    Used when splicing slots across documents, so they adopt the
+    destination's line ending, including in nested inline values.
     """
     slot.leading = retarget_newlines(slot.leading, target)
     retarget_eol_newline(slot.eol, target)

@@ -227,10 +227,9 @@ class CommaValue(Generic[_ItemT]):
     header_trivia: str = ""
     final_trivia: str = ""
 
-    # Memoised `is_multiline()` result; None means "not computed".
-    # Append/insert/sort/reorder preserve multi-line shape, so the hot
-    # build path leaves it warm; only item removal and the explicit
-    # single<->multi toggle can flip it, and those invalidate it.
+    # Memoised `is_multiline()` result; None means "not computed". Mutations
+    # that preserve multi-line shape (append/insert/sort/reorder) leave it
+    # warm; item removal and the explicit single<->multi toggle invalidate it.
     _ml_cache: bool | None = field(default=None, init=False, compare=False, repr=False)
 
     _open: ClassVar[str] = ""
@@ -248,23 +247,21 @@ class CommaValue(Generic[_ItemT]):
     def is_multiline(self) -> bool:
         """Whether this value renders across multiple physical lines.
 
-        Memoised: the scan is O(n) for a single-line value, but the answer
-        only flips on item removal or an explicit single<->multi toggle (see
-        ``reset_multiline_cache``), so building a value with repeated appends
-        stays linear overall.
+        Memoised via `_ml_cache`: the first call after a cache-invalidating
+        mutation costs an O(n) scan, every other call is O(1).
         """
         if self._ml_cache is None:
             self._ml_cache = _scan_multiline(self)
         return self._ml_cache
 
     def reset_multiline_cache(self) -> None:
-        """Drop the memoised ``is_multiline`` result so it recomputes.
+        """Drop the memoised `is_multiline` result so it recomputes.
 
-        Call after any mutation that can change the multi-line shape: item
-        removal (the removed item may carry the sole newline, or emptying may
-        collapse the bracket pads) and the explicit single<->multi toggle.
-        Append / insert / sort / reorder preserve the shape and deliberately
-        do *not* reset it, keeping the build path warm.
+        Call after any mutation that can change the multi-line shape:
+        item removal (the removed item may carry the sole newline, or
+        emptying may collapse the bracket pads), or the explicit
+        single<->multi toggle. Append / insert / sort / reorder preserve
+        the shape and deliberately leave the cache alone.
         """
         self._ml_cache = None
 

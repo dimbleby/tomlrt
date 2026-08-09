@@ -59,10 +59,10 @@ class _Validator:
         """
         path_kinds = self._path_kinds
         active_aot_entries = self._active_aot_entries
-        # ``owner`` is the deepest active AoT path among the ancestor
-        # prefixes visited so far (shortest first): once a prefix is
-        # itself an active AoT, every longer prefix is owned by it, so
-        # one forward pass finds each prefix's owner directly.
+        # ``owner`` becomes the deepest active AoT path among the
+        # ancestor prefixes (visited shortest-first): once a prefix is
+        # itself active, every longer prefix is owned by it, so one
+        # forward pass finds each prefix's owner directly.
         owner: tuple[str, ...] | None = None
         for i in range(1, len(path)):
             prefix = path[:i]
@@ -134,10 +134,9 @@ class _Validator:
         if current_kind is not None:
             msg = f"key {'.'.join(full)!r} already defined as a table"
             raise self._error(msg, at=at)
-        # A value/dotted-key path is always within the current
-        # section's own tree, never itself a ``[[header]]``-established
-        # AoT path, so its owner (if any) is just the owning entry's
-        # own path, already resolved for the section.
+        # A value/dotted-key path is always within the current section's
+        # own tree, so its owner (if any) is just the current section's
+        # owner, already resolved.
         owner = self.current_owner_path
         # Intermediate-prefix conflicts.
         slen = len(section)

@@ -1,18 +1,11 @@
 """Mutate inline-array / inline-table item lists structurally.
 
 All structural changes to a :class:`tomlrt._values.CommaValue` pass
-through this module so the canonical model stays central: per-item
-trivia ownership, ``header_trivia`` / ``final_trivia`` bracket-pad
-attachment, one-row-break-per-row, EOL section placement, and
-trailing-comma policy. :mod:`tomlrt._format` is the counterpart that
-canonicalises an existing layout without changing structure.
-
-The small public surface covers append, removal, reorder, comma-state
-flips, and EOL-section helpers for arrays and inline tables.
-
-Inline-array and inline-table mutation both drive structural changes
-through these helpers, so a future change to the comma-value model only
-needs to land here.
+through this module: per-item trivia ownership, ``header_trivia`` /
+``final_trivia`` bracket-pad attachment, one-row-break-per-row, EOL
+section placement, and trailing-comma policy. :mod:`tomlrt._format` is
+the counterpart that canonicalises an existing layout without changing
+structure.
 """
 
 from __future__ import annotations
@@ -493,12 +486,11 @@ def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
 class CommaStyle:
     """Hold inferred layout policy for inline array/table append paths.
 
-    Carries the inter-item separator, whether the value is multi-line, and
-    whether the terminal item should keep a trailing comma. A non-empty
-    ``pre_comma_break`` marks a *break-before-comma* (comma-first) value:
-    one that parks each row break in the item's own ``trailing`` ahead of
-    its comma rather than downstream in the next item's ``leading``, so
-    ``inter_separator`` is just the post-comma pad.
+    A non-empty ``pre_comma_break`` marks a *break-before-comma*
+    (comma-first) value: one that parks each row break in the item's
+    own ``trailing`` ahead of its comma rather than downstream in the
+    next item's ``leading``, so ``inter_separator`` is just the
+    post-comma pad.
     """
 
     is_multiline: bool
@@ -526,13 +518,13 @@ def _pre_comma_break(item: CommaItem) -> str:
 def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle:
     """Infer a :class:`CommaStyle` for ``value``.
 
-    Multi-line shape is read from the value's own trivia
-    (:meth:`CommaValue.is_multiline`) — the value is the single source of
-    truth, so there is no separate "force multi-line" flag. The inter-item
-    separator is sampled from ``items[1].leading``; a comma-last multi-line
-    value that cannot sample one (single item) falls back to
-    :func:`_canonical_separator`. When item 0 parks its break before its comma
-    the value is comma-first: the post-comma pad is kept and ``pre_comma_break``
+    Multi-line shape comes from the value's own trivia
+    (:meth:`CommaValue.is_multiline`) -- there is no separate "force
+    multi-line" flag. The inter-item separator is sampled from
+    ``items[1].leading``, falling back to :func:`_canonical_separator`
+    for a comma-last multi-line value with only one item to sample
+    from. When item 0 parks its break before its comma the value is
+    comma-first: the post-comma pad is kept and ``pre_comma_break``
     seeded from that item. ``nl`` is the owning document's newline.
     """
     items = value.items

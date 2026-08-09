@@ -373,8 +373,7 @@ class Container(_View, dict[str, Any]):
         """True iff this container is attached to a live document root.
 
         Attached means the layout root is a user-visible document: not
-        ``None`` (factory mode) and not a private orphan root. Mirrors
-        :attr:`Array._attached` for cross-document live-attach dispatch.
+        ``None`` (factory mode) and not a private orphan root.
         """
         lr = self._layout_root
         return lr is not None and not lr._is_private  # noqa: SLF001
@@ -562,9 +561,6 @@ class Container(_View, dict[str, Any]):
         `__setitem__` from a path that has already validated costs the
         whole walk again — quadratically so for the `_layout_ops`
         population loops, which re-enter once per structural child.
-        Callers that validated at their own boundary — `install` on its
-        leaf, the AoT mutators via `_prepare_aot_entries` — use this
-        instead.
         """
         if key in self and self[key] is value:
             return
@@ -687,15 +683,10 @@ class Container(_View, dict[str, Any]):
     def _attach_section(self, key: str, value: Container) -> None:
         """Install ``value`` (a section-flavoured Table) under ``key``.
 
-        AoT-entry sources clone as a table so trivia survives and the
-        head normalises from ``[[..]]`` to ``[..]``. Attached
-        header-bearing sections clone slots; a whole attached
-        ``Document`` clones its body under a synthesised header (so body
-        comments and inline pad survive); attached implicit sources
-        recurse via ``_install_attached_subtree``. A private orphan is
-        rehomed in place — its slots move into the document, preserving
-        identity and trivia; a truly detached source (no slots) is
-        synthesised.
+        Clones from a live source so identity and trivia survive where
+        possible — including normalising an AoT-entry source's
+        ``[[..]]`` head to ``[..]``. Falls back to synthesis only for a
+        truly detached source with no slots of its own.
         """
         src_root = value._layout_root
         live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
@@ -759,15 +750,11 @@ class Container(_View, dict[str, Any]):
         """Swap an existing direct-KV slot's value to a synthesised inline value.
 
         Works for any existing scalar / inline-table / inline-array
-        binding bound by a single direct-KV slot. Dotted KV slots are
-        also fine: the new value is just an inline value at the same
-        leaf position.
+        binding backed by a single direct-KV slot (dotted or not).
 
         If the displaced value is itself a typed view (inline Table,
-        Array), its attachment state is cleared so a subsequent
-        assignment of that view elsewhere re-attaches live with
-        identity preserved (rather than going through the
-        cross-doc clone path).
+        Array), its attachment state is cleared so a later assignment
+        elsewhere re-attaches live instead of cloning.
         """
         refs = self._index.get(key)
         assert refs is not None, "inline value must have a slot"
@@ -780,12 +767,10 @@ class Container(_View, dict[str, Any]):
         slot.value = cst
         dict.__setitem__(self, key, decoded)
         # Detach the displaced view *and every view nested beneath it* so
-        # each can be reattached live. A descendant left pointing at the
-        # replaced CST would keep reporting as attached and resolve
-        # against a dead inline value; the delete path walks the same
-        # subtree for the same reason. ``__setitem__`` has already
-        # returned if the new value *is* the old one, and the walk
-        # ignores scalars.
+        # each can be reattached live; a descendant left pointing at the
+        # replaced CST would keep resolving against a dead inline value.
+        # Safe because `_setitem_validated` has already returned if the
+        # new value *is* the old one.
         _layout_ops.reset_displaced_views(old)
 
     @override
@@ -1112,11 +1097,7 @@ class Container(_View, dict[str, Any]):
         return self._promote_inline_entry(key, cur)
 
     def _promote_inline_entry(self, key: str, cur: Container) -> Table:
-        """Promote already-checked inline table ``cur`` at ``key``.
-
-        Shared with `_walk_existing_sections`, which skips re-checking
-        ancestors its preflight pass already validated.
-        """
+        """Promote already-checked inline table ``cur`` at ``key``."""
         value = cur._value
         assert isinstance(value, InlineTableValue)
         entries = _layout_ops.prepare_promoted_inline_entries(value.items)
@@ -1584,9 +1565,8 @@ def _inline_value_has_inner_comments(v: object) -> bool:
 def _check_inline_promotable(v: Container, key: str) -> None:
     """Raise `TOMLError` if promoting ``v`` (bound to ``key``) would lose comments.
 
-    Shared by `Container.promote_inline` and `_walk_existing_sections`'s
-    preflight pass. Callers are expected to have already confirmed
-    ``v`` is an inline table (e.g. via `_is_inline_table`).
+    Callers are expected to have already confirmed ``v`` is an inline
+    table (e.g. via `_is_inline_table`).
     """
     if _inline_value_has_inner_comments(v._value):  # noqa: SLF001
         msg = (
@@ -1638,10 +1618,9 @@ def _deep_clone(c: Container) -> Container:
 def _reset_table_for_rehome(t: Container) -> None:
     """Clear a Table's slot infrastructure so it can be reattached.
 
-    Preserves dict storage (so post-detach mutations survive) but
-    drops `_layout_root` / `_path` / `_parent` / `_owner_aot_entry`
-    / `_refs` / `_index` / `_header_ref` / `_body_tail` so the
-    standard attach path treats `t` as if freshly constructed.
+    Preserves dict storage (so post-detach mutations survive) but drops
+    every slot-linkage field, so the standard attach path treats ``t``
+    as freshly constructed.
 
     Also resets nested non-inline ``Container`` / ``AoT`` children from
     the same detached subtree, descending unconditionally. Most callers
@@ -1784,11 +1763,6 @@ def _to_python(v: Any) -> Any:
     return v
 
 
-# ---------------------------------------------------------------------------
-# Scalar coercion
-# ---------------------------------------------------------------------------
-
-
 def _is_section(v: object) -> TypeGuard[Container]:
     """True iff ``v`` is a non-inline (section-style) Container."""
     return isinstance(v, Container) and not v._inline  # noqa: SLF001
@@ -1871,12 +1845,10 @@ def _sources_kept_intact(values: Iterable[Any]) -> Iterator[None]:
 def _coerce_for_document_init(v: Any) -> Any:
     """Pick a sensible structural shape for ``Document(data=...)`` values.
 
-    * Mapping → section ``Table.section`` (recursively coerced).
-    * Plain ``list`` of mappings (non-empty) → ``AoT`` of section tables.
-    * Anything else passes through unchanged.
-
-    A user-supplied ``Array`` (even one carrying mappings) is *not*
-    coerced — the caller has explicitly chosen inline-array shape.
+    * ``Mapping`` → section ``Table.section``, recursively coerced.
+    * Non-empty ``list`` of mappings → ``AoT`` of section tables.
+    * Anything else unchanged, including a user-supplied ``Array``,
+      whose caller has explicitly chosen inline-array shape.
     """
     if isinstance(v, AoT):
         return v
@@ -1937,12 +1909,10 @@ the value is assigned.
 def _is_synth_inline(v: object) -> bool:
     """True iff ``v`` is a value we can synthesise to an inline TOML value.
 
-    Accepts:
-    - any ``Mapping`` or inline ``Container`` view (deep-copy semantics)
-    - ``list`` or ``Array`` views (deep-copy semantics)
-
-    Rejects everything else (tuple, bytes, sets, AoT, section
-    Container, …) so the caller can route to a stronger error.
+    Accepts any ``Mapping``, inline ``Container``, ``list``, or
+    ``Array`` (deep-copy semantics); rejects everything else (tuple,
+    bytes, sets, AoT, section Container, …) so the caller can route to
+    a stronger error.
     """
     if isinstance(v, AoT):
         return False

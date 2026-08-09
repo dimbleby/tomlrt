@@ -1,19 +1,9 @@
 """Flavour-agnostic comment plumbing shared by inline arrays and tables.
 
 Both `Array` (int-keyed) and inline-table (str-keyed) comment views
-operate on the same `CommaValue` / `CommaItem` trivia model, so the
-per-item read / write of EOL comments and above-item comment blocks
-lives here once. The view classes in `_array_comments` /
-`_inline_comments` add only the keying (item index vs entry leaf key)
-and the multi-line promotion policy.
-
-Per-item trivia ownership (see `CommaValue`):
-
-  - Above-item region for item ``i``:
-      ``header_trivia``       if i == 0
-      ``items[i].leading``    if i >= 1 (comma-first parks it in the
-                              previous item's ``trailing`` after its EOL)
-  - EOL for item ``i``: ``item_eol_channel(item)``
+operate on the same `CommaValue` / `CommaItem` trivia model (see
+`CommaValue` for the canonical ownership rules), so the per-item read /
+write of EOL comments and above-item comment blocks lives here once.
 """
 
 from __future__ import annotations
@@ -153,11 +143,7 @@ def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]
 
 
 def _value_indent(value: CommaValue[_ItemT]) -> str:
-    """Best-effort indent string for this value's items.
-
-    ``Boundary`` resolves the value-indent uniformly across
-    bracket-pad, conventional, and comma-first layouts.
-    """
+    """Best-effort indent string for this value's items."""
     for i in range(len(value.items)):
         tail = Boundary.capture(value, i).target_tail
         if tail:
