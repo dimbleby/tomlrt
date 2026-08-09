@@ -82,9 +82,9 @@ class Slot:
 
     Constructor fields are positional and required: a slot is built once
     per physical line, and keyword binding roughly doubles that cost.
-    ``_prev`` / ``_next`` / ``_refs`` are runtime wiring, declared
-    ``init=False`` so they take no constructor argument and don't force
-    subclass fields keyword-only.
+    ``_prev`` / ``_next`` / ``_order`` / ``_refs`` are runtime wiring,
+    declared ``init=False`` so they take no constructor argument and
+    don't force subclass fields keyword-only.
     """
 
     leading: str
