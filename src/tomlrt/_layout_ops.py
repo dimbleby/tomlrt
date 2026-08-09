@@ -285,18 +285,6 @@ def _ancestor_chain(c: Container | AoT) -> list[Container]:
     return out
 
 
-def _recompute_tails(c: Container) -> None:
-    """Repair the cached body tails of ``c`` and its ancestors after a move.
-
-    Only a container with refs on both sides of the move can have gained
-    a different last body slot, and those are exactly ``c`` (the
-    container whose binding moved) and its ancestors.
-    """
-    for cn in [c, *_ancestor_chain(c)]:
-        if cn._body_tail is not None:  # noqa: SLF001
-            cn._body_tail = _recompute_body_tail(cn)  # noqa: SLF001
-
-
 def _anchor_in_parent_direct_body(parent: Container, anchor_prev: Slot | None) -> bool:
     """True iff a direct KV spliced after ``anchor_prev`` would belong to ``parent``.
 
@@ -323,18 +311,17 @@ _ref_order = operator.attrgetter("slot._order")
 """Order key of a `SlotRef`'s slot — the sort key of every ref projection."""
 
 
-def _ordered_projections(
-    c: Container, ref: SlotRef
-) -> tuple[list[SlotRef], list[SlotRef] | None]:
+def _ordered_projections(c: Container, ref: SlotRef) -> tuple[list[SlotRef], ...]:
     """``c``'s doc-ordered ref lists that hold ``ref``: ``_refs`` + its bucket.
 
     The container's own header ref has no ``local_key`` and so lives in
-    ``_refs`` alone, and the bucket is ``None``.
+    ``_refs`` alone; every other ref is also filed in its ``_index``
+    bucket.
     """
     local_key = ref.local_key
-    index = c._index  # noqa: SLF001
-    bucket = index.setdefault(local_key, []) if local_key is not None else None
-    return c._refs, bucket  # noqa: SLF001
+    if local_key is None:
+        return (c._refs,)  # noqa: SLF001
+    return c._refs, c._index.setdefault(local_key, [])  # noqa: SLF001
 
 
 def _ordered_index(refs: list[SlotRef], order: int) -> int:
@@ -366,8 +353,6 @@ def record_ref(c: Container, slot: Slot) -> SlotRef:
     ref = SlotRef(slot, c)
     order = slot._order  # noqa: SLF001
     for refs in _ordered_projections(c, ref):
-        if refs is None:
-            continue
         if not refs or refs[-1].slot._order < order:  # noqa: SLF001
             # Filing in doc order — the builder's whole-document pass,
             # every sequential body append — lands at the tail.
@@ -400,7 +385,7 @@ def _refile_region_refs(
             for refs in _ordered_projections(ref.container, ref):
                 # A projection holding this ref alone has nothing to
                 # reorder and nowhere else to sit.
-                if refs is not None and len(refs) > 1:
+                if len(refs) > 1:
                     runs.setdefault(id(refs), (refs, []))[1].append(ref)
     placed = [
         (refs, run, _ordered_index(refs, _ref_order(run[0])))
@@ -801,7 +786,7 @@ def append_direct_kv(
 
 def _invalidate_body_tail_chain(
     start: Container | None,
-    owned_slots: set[Slot],
+    owned_slots: set[Slot] | None,
     *,
     min_depth: int = 0,
 ) -> None:
@@ -809,6 +794,9 @@ def _invalidate_body_tail_chain(
 
     For each container ``cc`` along the chain whose existing
     ``_body_tail`` slot is in ``owned_slots``, recompute the tail.
+    ``owned_slots`` of ``None`` means "every cached tail is suspect" —
+    used after a block move, which can hand a container a later body
+    slot than the one it was caching.
 
     Walks until either the chain is exhausted or
     ``len(cc._path) < min_depth``. The depth bound is a
@@ -819,10 +807,8 @@ def _invalidate_body_tail_chain(
     """
     cur = start
     while cur is not None and len(cur._path) >= min_depth:  # noqa: SLF001
-        if (
-            cur._body_tail is not None  # noqa: SLF001
-            and cur._body_tail in owned_slots  # noqa: SLF001
-        ):
+        tail = cur._body_tail  # noqa: SLF001
+        if tail is not None and (owned_slots is None or tail in owned_slots):
             cur._body_tail = _recompute_body_tail(cur)  # noqa: SLF001
         cur = cur._parent  # noqa: SLF001
 
@@ -3801,7 +3787,7 @@ def _move_slots_to_anchor(
             for slot in slots:
                 unlink_slot(slot, doc, strip_new_head_leading=False)
             _relink_run_after(saved_anchor_prev, slots, doc)
-        _recompute_tails(parent)
+        _invalidate_body_tail_chain(parent, None)
 
     head.leading = saved_leading
     _terminate_unless_tail(tail, doc)
@@ -3950,7 +3936,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         with _refile_region_refs(doc, region_predecessor, region_successor):
             for f in front_foreign:
                 unlink_slot(f, doc, strip_new_head_leading=False)
-                insert_before(earliest_owned, f, doc)
+            _relink_run_after(region_predecessor, front_foreign, doc)
         front_foreign[0].leading = head_structural + front_foreign[0].leading
 
     key_rank = {key: rank for rank, key in enumerate(new_key_order)}
