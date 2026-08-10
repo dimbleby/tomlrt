@@ -149,6 +149,14 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     The binding is deleted, reinstalled via ``parent[key] = value``,
     captured with ``_record_install``, then moved back to the saved anchor.
 
+    Reinstalling at the tail is what keeps `_insert_new` and the
+    attach paths under it anchor-free: a ``[a]`` header claims each
+    following line until the next, so a part-built block mid-stream
+    owns the wrong lines while one at the tail can swallow nothing.
+    Only its position is then wrong. The move is best-effort — an
+    anchor the reinstall invalidated, or a destination that would
+    change what the block owns, leaves it at the tail.
+
     A surviving neighbour keeps its pre-op leading iff, after the move,
     it sits immediately after the slot that legitimately precedes it:
     the relocated block tail for the original successor, or the original
