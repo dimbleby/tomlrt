@@ -216,6 +216,28 @@ class StructuralHeaderSlot(Slot):
 
 # ---------------------------------------------------------------------------
 # Doc-stream order keys
+#
+# Handing every item of a list an integer label that stays monotone in
+# list order under insertion is the *list-labeling* problem, and the
+# shape here — lay keys out with gaps, and on collision redistribute a
+# neighbourhood — is its standard solution, not something invented for
+# tomlrt.
+#
+# `_respread` is a folklore variant of that solution rather than one of
+# the published algorithms, though. Those (Itai, Konheim and Rodeh, ICALP
+# 1981; Bender et al., ESA 2002) redistribute an interval of the *label
+# range*, aligned to an implicit binary tree over it, and pick which
+# interval by a density threshold that tightens the larger the interval
+# gets. The tightening is what keeps labels inside a bounded range, which
+# matters when they have to fit a fixed universe. `_respread` instead
+# redistributes a window of neighbouring *slots*, unaligned, taking the
+# first window whose keys leave room for the run.
+#
+# So there is no published amortised bound here. What there is: a repair
+# stays next to the edit that caused it, and these labels are Python ints
+# with no universe to keep them inside, so a tightening threshold buys
+# nothing — measured, it only makes each respread reach further for room
+# it does not need.
 # ---------------------------------------------------------------------------
 
 _ORDER_GAP = 1 << 16
@@ -284,12 +306,17 @@ def _order_run_between(
 def _respread(left: Slot, right: Slot, count: int) -> None:
     """Re-lay the order keys of a window around an exhausted seam.
 
-    Grows the window outward from ``left``/``right`` until the enclosing
-    key range can hold ``count`` slots at ``_ORDER_MIN_STEP`` spacing —
-    or wider, if the slots about to be inserted need more room than that
-    — then redistributes them evenly. Growth always terminates because
-    reaching an end of the stream gives the window room to expand into
-    rather than compress.
+    Grows a window of slots outward from ``left``/``right`` until the
+    enclosing key range can hold ``count`` slots at ``_ORDER_MIN_STEP``
+    spacing — or wider, if the slots about to be inserted need more room
+    than that — then redistributes them evenly. Growth always terminates
+    because reaching an end of the stream gives the window room to expand
+    into rather than compress.
+
+    The window doubles at each probe rather than creeping outward one
+    slot at a time, which settles within a factor of two of the smallest
+    window that would serve; the room that overshoot carries is what
+    pushes the next exhaustion of the same seam further out.
     """
     need = max(_ORDER_MIN_STEP, count + 1)
     lo, hi, window = left, right, 2
@@ -298,8 +325,10 @@ def _respread(left: Slot, right: Slot, count: int) -> None:
         room = above._order - below._order  # noqa: SLF001
         if room >= (window + 1) * need:
             break
-        lo, hi, window = below, above, window + 2
-        below, above = lo._prev, hi._next  # noqa: SLF001
+        target = window * 2
+        while window < target and below is not None and above is not None:
+            lo, hi, window = below, above, window + 2
+            below, above = lo._prev, hi._next  # noqa: SLF001
 
     # An absent bound is an end of the stream, where the window can have
     # all the room it wants; keys are plain ints, so a head-end window
