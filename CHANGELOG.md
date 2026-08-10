@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A generated `[table]` / `[[array]]` header replacing a key/value line is
+  no longer glued to the line above it; header spacing now follows the
+  document's own convention for `promote_inline` too.
 - A value TOML cannot represent is now rejected before anything
   changes, so a failed assignment or `install()` leaves the document
   untouched.
