@@ -255,7 +255,7 @@ def _canon_key_equals(node: KVSlot | InlineTableEntry) -> None:
     """Canonicalise the key / ``=`` body of a KV slot or inline-table entry."""
     node.pre_eq = " "
     node.post_eq = " "
-    node.key_seps = ["."] * (len(node.key_parts) - 1)
+    node.key_seps = (".",) * (len(node.key_parts) - 1)
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +283,7 @@ def _canon_slot(
         assert isinstance(slot, StructuralHeaderSlot), "unknown slot type"
         slot.inner_pre = ""
         slot.inner_post = ""
-        slot.key_seps = ["."] * (len(slot.key_parts) - 1)
+        slot.key_seps = (".",) * (len(slot.key_parts) - 1)
     _canon_eol(slot.eol, nl=nl, options=options)
     _canon_leading(
         slot,
