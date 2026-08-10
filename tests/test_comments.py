@@ -2035,6 +2035,43 @@ def test_epilogue_set_with_blank_lines() -> None:
     assert tomlrt.loads(tomlrt.dumps(doc)).epilogue == ("group one", None, "group two")
 
 
+def test_epilogue_set_terminates_unterminated_last_line() -> None:
+    """A last line with no newline gets one before the epilogue lands.
+
+    Otherwise the first epilogue comment would be appended to that line
+    and read back as its end-of-line comment.
+    """
+    doc = tomlrt.loads("x = 1")
+    doc.epilogue = ("bye", "two")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 1
+        # bye
+        # two
+        """)
+    reloaded = tomlrt.loads(out)
+    assert reloaded.epilogue == ("bye", "two")
+    assert dict(reloaded.comments) == {}
+
+    # An empty epilogue adds nothing, terminator included.
+    unchanged = tomlrt.loads("x = 1")
+    unchanged.epilogue = ()
+    assert tomlrt.dumps(unchanged) == "x = 1"
+
+
+def test_epilogue_set_does_not_merge_into_unterminated_eol_comment() -> None:
+    doc = tomlrt.loads("x = 1 # c")
+    doc.epilogue = ("bye",)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 1 # c
+        # bye
+        """)
+    reloaded = tomlrt.loads(out)
+    assert reloaded.epilogue == ("bye",)
+    assert dict(reloaded.comments) == {"x": "c"}
+
+
 def test_del_preamble_clears_block() -> None:
     """``del doc.preamble`` is equivalent to ``doc.preamble = ()``."""
     doc = tomlrt.loads(

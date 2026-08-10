@@ -21,7 +21,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
 
 from tomlrt._errors import TOMLError
 from tomlrt._kind import _Kind
-from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import split_line, split_lines
 
 if TYPE_CHECKING:
@@ -522,6 +522,12 @@ def _doc_epilogue_set(doc: Document, value: tuple[str | None, ...]) -> None:
         msg = "cannot set epilogue: document has no structural content"
         raise TOMLError(msg)
     nl = doc._newline  # noqa: SLF001
+    if block:
+        # The epilogue starts on its own line, which a file whose last
+        # line has no terminator does not provide.
+        tail = doc._tail  # noqa: SLF001
+        assert tail is not None
+        ensure_terminator(tail, nl)
     doc._trailing = _render_comment_lines(block, nl)  # noqa: SLF001
 
 
