@@ -36,6 +36,7 @@ uvx ty check                     # second (Astral) type-checker
 uv run ruff check .              # lint
 uv run ruff format .             # apply formatting
 uv run ruff format --check .     # CI-style format check
+uv run pytest benchmarks --benchmark-only -q   # benchmarks (~75s)
 ```
 
 A `Makefile` wraps the most common invocations (`make test`, `make
@@ -461,6 +462,44 @@ When adding behaviour, add a focused unit test in the relevant file
   Source line numbers shift on every refactor; an explanatory note
   that names the function and the behaviour it pins ages well, a
   line-number reference doesn't.
+
+## Benchmarks
+
+`benchmarks/` holds `pytest-benchmark` suites, kept out of `testpaths`
+so a plain `pytest` run does not collect them. `make bench` runs them.
+
+- **`make bench` records where we are; comparing answers whether a
+  change cost anything.** Save a baseline on the parent commit, then
+  compare:
+
+  ```bash
+  pytest benchmarks --benchmark-only -q --benchmark-autosave
+  pytest benchmarks --benchmark-only -q --benchmark-compare
+  ```
+
+  Comparing switches to the plugin's own table, grouped so that each one
+  holds the baseline and this run with the ratio between them.
+- **The `+/-` column is sampling noise within one run, not a regression
+  threshold.** It is twice the standard error of the median, estimated
+  as `0.93 * IQR / sqrt(rounds)` — where `0.93 = sqrt(pi/2) / 1.349`
+  converts an IQR to the *median's* error, 1.349 being the IQR of a
+  standard normal. It is a floor: between runs the machine drifts by far
+  more, so a change larger than `+/-` still needs a baseline comparison
+  before you believe it.
+- **A non-idempotent case needs `benchmark.pedantic(setup=...)`.**
+  Appending grows the document and deleting twice raises, so each round
+  needs its own parse, and `setup` is pedantic-only. Plain
+  `benchmark(...)` suits anything that only reads, and calibrates
+  iteration counts for you.
+- **`rounds` is then yours to choose, so choose it from data.** Setup
+  dominates — a 10k-line fixture costs ~60ms to parse to time ~1ms of
+  work — so a needlessly large `rounds` buys nothing but wall time.
+  Watch `+/-` rather than guessing.
+- **Nothing single-process can see machine-level noise.** A loaded
+  machine moves every case together by 15% or more, and two `make bench`
+  runs ten minutes apart have disagreed by 50% on this hardware. Compare
+  against a saved baseline, or measure two implementations interleaved
+  in one process.
 
 ## Documentation
 

@@ -47,10 +47,8 @@ docs-serve: ## preview the docs locally
 	$(UV) run --group docs zensical serve
 
 .PHONY: bench
-bench: ## run the parse-throughput benchmark
-	benchmarks/bench_parse.py
-	benchmarks/bench_mutate.py
-	benchmarks/bench_pyproject.py
+bench: ## run the parse and mutation benchmarks
+	pytest benchmarks --benchmark-only -q
 
 .PHONY: clean
 clean: ## remove caches and build artefacts

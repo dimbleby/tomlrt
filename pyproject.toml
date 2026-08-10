@@ -37,6 +37,7 @@ dev = [
   "hypothesis>=6",
   "mypy>=2.1",
   "pytest>=9",
+  "pytest-benchmark>=5",
   "pytest-cov>=5",
   "tomli>=2.4",
 ]
@@ -86,7 +87,7 @@ strict = true
 testpaths = ["tests"]
 
 [tool.ruff]
-src = ["src", "tests"]
+src = ["src", "tests", "benchmarks"]
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
@@ -119,4 +120,4 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "DOC"]
-"benchmarks/**" = ["T201"]
+"benchmarks/**" = ["D", "DOC"]
