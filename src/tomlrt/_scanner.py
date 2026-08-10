@@ -456,7 +456,7 @@ class _Scanner:
             raise self.error(msg)
         return chr(cp)
 
-    def scan_key(self) -> tuple[list[KeyPart], list[str], str, tuple[str, ...]]:
+    def scan_key(self) -> tuple[list[KeyPart], tuple[str, ...], str, tuple[str, ...]]:
         """Scan a dotted key; return parts, separators, trailing ws, path.
 
         Each part is bare, basic-quoted or literal-quoted; each
@@ -471,7 +471,7 @@ class _Scanner:
         src = self.src
         end = self.end
         parts: list[KeyPart] = []
-        seps: list[str] = []
+        seps: tuple[str, ...] = ()
         path: list[str] = []
         while True:
             start = self.pos
@@ -499,7 +499,7 @@ class _Scanner:
             sep_start = pos - len(ws)
             self.pos = pos + 1
             self.scan_inline_ws_text()
-            seps.append(src[sep_start : self.pos])
+            seps += (src[sep_start : self.pos],)
 
     # Bare value tokens (bool, special float, number, date/time); the parser
     # dispatches strings, arrays and inline tables itself.

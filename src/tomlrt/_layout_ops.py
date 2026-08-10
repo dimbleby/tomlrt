@@ -1480,7 +1480,7 @@ def _new_kv_slot(
         _default_eol(doc),
         host_path,
         make_keyparts(key) if key_parts is None else list(key_parts),
-        ["."] * (len(key) - 1) if key_seps is None else list(key_seps),
+        (".",) * (len(key) - 1) if key_seps is None else tuple(key_seps),
         " ",
         " ",
         value,
@@ -1695,7 +1695,7 @@ def _new_section_header(
         owner_aot_entry,
         _default_eol(doc),
         make_keyparts(path),
-        ["."] * (len(path) - 1),
+        (".",) * (len(path) - 1),
         "",
         "",
         entry,
@@ -2732,7 +2732,7 @@ def _retarget_slot_paths(
     # `KVSlot` and `StructuralHeaderSlot` are the only concrete slots.
     assert isinstance(s, StructuralHeaderSlot)
     s.key_parts = make_keyparts(_rebase_path(s.path, src_prefix, target_prefix))
-    s.key_seps = ["."] * (len(s.key_parts) - 1)
+    s.key_seps = (".",) * (len(s.key_parts) - 1)
 
 
 def _rehome_view_tree(
@@ -2950,7 +2950,7 @@ def _rebase_implicit_slot_in_place(
             make_keyparts(new_key[:head_n])
             + s.key_parts[len(s.key_parts) - len(within) :]
         )
-        s.key_seps = ["."] * (len(new_key) - 1)
+        s.key_seps = (".",) * (len(new_key) - 1)
     else:
         _retarget_slot_paths(s, old_prefix, new_prefix, nl)
 

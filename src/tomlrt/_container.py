@@ -2139,7 +2139,7 @@ def _populate_inline_table(
             i != last,
             "",
             [make_keypart(k)],
-            [],
+            (),
             " ",
             " ",
             (k,),

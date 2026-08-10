@@ -113,7 +113,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         False,  # noqa: FBT003
         "",
         make_keyparts(key_path),
-        ["."] * (len(key_path) - 1),
+        (".",) * (len(key_path) - 1),
         eq_pre,
         eq_post,
         key_path,

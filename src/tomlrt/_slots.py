@@ -143,8 +143,13 @@ class KVSlot(Slot):
     key_parts: list[KeyPart]
     """The dotted-key parts as written. ``len >= 1``."""
 
-    key_seps: list[str]
-    """Whitespace + ``.`` between parts. Length ``len(key_parts) - 1``."""
+    key_seps: tuple[str, ...]
+    """Whitespace + ``.`` between parts. Length ``len(key_parts) - 1``.
+
+    A tuple, not a list: it is always replaced wholesale, never mutated
+    in place, and the empty tuple every non-dotted key gets is a shared
+    singleton rather than a per-slot allocation.
+    """
 
     pre_eq: str
     post_eq: str
@@ -179,7 +184,7 @@ class StructuralHeaderSlot(Slot):
     """
 
     key_parts: list[KeyPart]
-    key_seps: list[str]
+    key_seps: tuple[str, ...]
     inner_pre: str
     inner_post: str
 
