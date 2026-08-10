@@ -140,7 +140,7 @@ class KVSlot(Slot):
     host_path: tuple[str, ...]
     """Full path of the table body this KV physically belongs to."""
 
-    key_parts: list[KeyPart]
+    key_parts: tuple[KeyPart, ...]
     """The dotted-key parts as written. ``len >= 1``."""
 
     key_seps: tuple[str, ...]
@@ -183,7 +183,7 @@ class StructuralHeaderSlot(Slot):
     is derived from ``entry`` so the two cannot drift.
     """
 
-    key_parts: list[KeyPart]
+    key_parts: tuple[KeyPart, ...]
     key_seps: tuple[str, ...]
     inner_pre: str
     inner_post: str
