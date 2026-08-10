@@ -110,12 +110,12 @@ def make_keypart(name: str) -> KeyPart:
     return KeyPart(quote_basic_key(name), name)
 
 
-def make_keyparts(path: tuple[str, ...]) -> list[KeyPart]:
-    """Build a list of ``KeyPart``s for each segment of ``path``."""
-    return [make_keypart(p) for p in path]
+def make_keyparts(path: tuple[str, ...]) -> tuple[KeyPart, ...]:
+    """Build a ``KeyPart`` for each segment of ``path``."""
+    return tuple([make_keypart(p) for p in path])
 
 
-def render_dotted(parts: list[KeyPart], seps: tuple[str, ...]) -> str:
+def render_dotted(parts: tuple[KeyPart, ...], seps: tuple[str, ...]) -> str:
     """Render a dotted key as ``part0 sep0 part1 sep1 ...``.
 
     ``seps`` has length ``len(parts) - 1``; each entry is the literal
@@ -176,7 +176,7 @@ class InlineTableEntry(CommaItem):
     positionally.
     """
 
-    key_parts: list[KeyPart]
+    key_parts: tuple[KeyPart, ...]
     key_seps: tuple[str, ...]  # len = len(key_parts) - 1
     pre_eq: str
     post_eq: str

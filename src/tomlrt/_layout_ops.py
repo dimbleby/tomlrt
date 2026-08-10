@@ -1479,7 +1479,7 @@ def _new_kv_slot(
         owner,
         _default_eol(doc),
         host_path,
-        make_keyparts(key) if key_parts is None else list(key_parts),
+        make_keyparts(key) if key_parts is None else tuple(key_parts),
         (".",) * (len(key) - 1) if key_seps is None else tuple(key_seps),
         " ",
         " ",

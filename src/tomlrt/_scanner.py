@@ -456,7 +456,9 @@ class _Scanner:
             raise self.error(msg)
         return chr(cp)
 
-    def scan_key(self) -> tuple[list[KeyPart], tuple[str, ...], str, tuple[str, ...]]:
+    def scan_key(
+        self,
+    ) -> tuple[tuple[KeyPart, ...], tuple[str, ...], str, tuple[str, ...]]:
         """Scan a dotted key; return parts, separators, trailing ws, path.
 
         Each part is bare, basic-quoted or literal-quoted; each
@@ -470,7 +472,7 @@ class _Scanner:
         """
         src = self.src
         end = self.end
-        parts: list[KeyPart] = []
+        parts: tuple[KeyPart, ...] = ()
         seps: tuple[str, ...] = ()
         path: list[str] = []
         while True:
@@ -478,7 +480,7 @@ class _Scanner:
             ch = src[start] if start < end else ""
             if ch == '"' or ch == "'":
                 quoted = self.scan_string(allow_multiline=False)
-                parts.append(KeyPart(quoted.lexeme, quoted.value))
+                parts += (KeyPart(quoted.lexeme, quoted.value),)
                 path.append(quoted.value)
                 ws = self.scan_inline_ws_text()
             else:
@@ -488,7 +490,7 @@ class _Scanner:
                     raise self.error(msg)
                 raw = m[1]
                 ws = m[2]
-                parts.append(KeyPart(raw, raw))
+                parts += (KeyPart(raw, raw),)
                 path.append(raw)
                 self.pos = m.end()
             pos = self.pos
