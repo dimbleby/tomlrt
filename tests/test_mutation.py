@@ -9794,7 +9794,7 @@ def test_adopt_private_section_adds_terminator_when_not_at_doc_tail() -> None:
 
 
 def test_reposition_install_scattered_source_via_disjoint_span_fallback() -> None:
-    """``_ordered_recorded_span`` detects when an implicit source's
+    """``_recorded_install_span`` detects when an implicit source's
     recorded slots don't form one contiguous doc-stream span — the
     direct KVs and structural children land at different anchors, e.g.
     because the destination promoted from headerless to header-bearing
