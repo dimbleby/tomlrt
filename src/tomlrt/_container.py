@@ -60,7 +60,7 @@ from tomlrt._scalar import (
     validate_scalar,
 )
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import leading_has_blank_line, retarget_newlines
+from tomlrt._trivia import retarget_newlines
 from tomlrt._typecheck import _validate_key, _validate_mapping
 from tomlrt._values import (
     ArrayItem,
@@ -1112,18 +1112,8 @@ class Container(_View, dict[str, Any]):
         assert header_ref is not None
         new_header = header_ref.slot
         assert isinstance(new_header, StructuralHeaderSlot)
-        new_header.leading = saved_leading
+        _layout_ops.restore_captured_leading(new_header, saved_leading, from_kv=True)
         new_header.eol = saved_eol
-        # A promoted KV becomes a section header and needs a visual
-        # separator from the parent's direct entries.
-        if (
-            self._body_tail is not None
-            and new_header._prev is self._body_tail  # noqa: SLF001
-            and not leading_has_blank_line(new_header.leading)
-        ):
-            layout_root = self._layout_root
-            nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
-            new_header.leading = nl + new_header.leading
         return result
 
     def promote_array(self, key: str) -> AoT:
@@ -1177,9 +1167,9 @@ class Container(_View, dict[str, Any]):
         # the last entry's last slot.
         first_record = result[0]._owner_aot_entry  # noqa: SLF001
         assert first_record is not None
-        # Preserve any separator already placed on the header.
-        first_header = first_record.header
-        first_header.leading = saved_leading + first_header.leading
+        _layout_ops.restore_captured_leading(
+            first_record.header, saved_leading, from_kv=True
+        )
         last_slot = result[-1]._body_tail  # noqa: SLF001
         assert last_slot is not None
         if saved_eol.comment and not last_slot.eol.comment:

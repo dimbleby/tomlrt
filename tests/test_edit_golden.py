@@ -3160,6 +3160,59 @@ def test_promoted_values_do_not_alias_displaced_views() -> None:
         """)
 
 
+def test_promote_inline_separates_relocated_header() -> None:
+    """A promoted header lands blank-separated from the body above it.
+
+    The promoted ``[a]`` is appended past ``[z]``'s body, so it needs the
+    separator the install path chose, not the bare leading of the KV it
+    replaces.
+    """
+    src = td("""
+        a = {q = 1}
+
+        [z]
+        k = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc.promote_inline("a")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [z]
+        k = 1
+
+        [a]
+        q = 1
+        """)
+    assert _reparses(out) == {"z": {"k": 1}, "a": {"q": 1}}
+
+
+def test_promote_array_keeps_captured_blank_and_indent() -> None:
+    """``promote_array`` merges captured trivia the same way."""
+    src = td("""
+        [t]
+
+          # note
+          a = [{q = 1}]
+
+        [z]
+        k = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc["t"].promote_array("a")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [t]
+
+          # note
+          [[t.a]]
+        q = 1
+
+        [z]
+        k = 1
+        """)
+    assert _reparses(out) == {"t": {"a": [{"q": 1}]}, "z": {"k": 1}}
+
+
 def test_promote_array_rejects_empty_array() -> None:
     doc = tomlrt.loads("a = []\n")
     with pytest.raises(tomlrt.TOMLError, match="empty array"):
@@ -4847,6 +4900,122 @@ def test_scalar_overwrite_of_explicit_subsection_preserves_position() -> None:
         [other]
         z = 3
         """)
+
+
+def test_structural_overwrite_of_scalar_separates_new_header() -> None:
+    """A header replacing a scalar KV keeps its blank-line separator.
+
+    The KV's captured leading positions the new binding, but a generated
+    ``[other.n1]`` / ``[[other.n1]]`` header must not end up glued to the
+    key/value line above it.
+    """
+    src = td("""
+        [other]
+        p = 1
+        n1 = 5
+        """)
+    doc = tomlrt.loads(src)
+    doc["other"]["n1"] = Table.section({"q": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [other]
+        p = 1
+
+        [other.n1]
+        q = 1
+        """)
+    assert _reparses(out) == {"other": {"p": 1, "n1": {"q": 1}}}
+
+    doc = tomlrt.loads(src)
+    doc["other"]["n1"] = AoT([{"q": 1}])
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [other]
+        p = 1
+
+        [[other.n1]]
+        q = 1
+        """)
+    assert _reparses(out) == {"other": {"p": 1, "n1": [{"q": 1}]}}
+
+
+def test_structural_overwrite_keeps_captured_blank_line() -> None:
+    """Captured trivia that already separates is not doubled up."""
+    src = td("""
+        [other]
+        p = 1
+
+        # about n1
+        n1 = 5
+        """)
+    doc = tomlrt.loads(src)
+    doc["other"]["n1"] = Table.section({"q": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [other]
+        p = 1
+
+        # about n1
+        [other.n1]
+        q = 1
+        """)
+    assert _reparses(out) == {"other": {"p": 1, "n1": {"q": 1}}}
+
+
+def test_structural_overwrite_of_section_restores_leading_verbatim() -> None:
+    """A header replacing a header inherits its spacing, glued or not.
+
+    The captured leading already positions a header, so the document's
+    own convention wins over the separator the install path chose.
+    """
+    src = td("""
+        x = 1
+        [b]
+        y = 2
+        """)
+    expected = td("""
+        x = 1
+        [b]
+        q = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc["b"] = Table.section({"q": 1})
+    out = tomlrt.dumps(doc)
+    assert out == expected
+    assert _reparses(out) == {"x": 1, "b": {"q": 1}}
+
+    aot_doc = tomlrt.loads(src.replace("[b]", "[[b]]"))
+    aot_doc["b"] = Table.section({"q": 1})
+    out = tomlrt.dumps(aot_doc)
+    assert out == expected
+    assert _reparses(out) == {"x": 1, "b": {"q": 1}}
+
+
+def test_scalar_overwrite_of_dotted_key_restores_captured_indent() -> None:
+    """A KV replacing a KV takes the captured indent, not the fresh one.
+
+    The reinstalled binding is placed as a new peer of ``b`` — after the
+    blank line and at its indent — before the move puts it back where
+    ``c.d`` was, where only the captured leading applies.
+    """
+    src = td("""
+        [t]
+          a = 1
+
+          b = 2
+          c.d = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc["t"]["c"] = 5
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [t]
+          a = 1
+
+          b = 2
+          c = 5
+        """)
+    assert _reparses(out) == {"t": {"a": 1, "b": 2, "c": 5}}
 
 
 def test_synth_inline_overwrite_of_implicit_table_preserves_position() -> None:

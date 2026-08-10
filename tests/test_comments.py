@@ -495,20 +495,23 @@ def test_inline_promotion_inserts_after_parent_block() -> None:
     doc = tomlrt.loads(src)
     parent = doc.table("parent")
     parent.promote_inline("pkg")
-    # A blank line separates the parent's direct entries from the
-    # promoted child header, matching ``promote_array`` and other
+    # The promoted header takes the parent KV's place and follows this
+    # document's header-spacing convention (headers here are not
+    # blank-separated), matching ``promote_array`` and other
     # section-installing operations.
-    assert tomlrt.dumps(doc) == (
-        td("""
-            [parent]
-            a = 1
+    expected = td("""
+        [parent]
+        a = 1
+        [parent.pkg]
+        x = 10
+        [other]
+        b = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
 
-            [parent.pkg]
-            x = 10
-            [other]
-            b = 2
-            """)
-    )
+    array_doc = tomlrt.loads(src.replace("{ x = 10 }", "[{ x = 10 }]"))
+    array_doc.table("parent").promote_array("pkg")
+    assert tomlrt.dumps(array_doc) == expected.replace("[parent.pkg]", "[[parent.pkg]]")
 
 
 def test_promote_non_inline_raises() -> None:

@@ -178,14 +178,14 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     # the dotted form when re-emitted into an emptied implicit container
     # — replacing ``a.b.c = 1`` with a scalar yields ``a.b = "str"``, not
     # a new ``[a]`` header.
-    reinstall_as_dotted = isinstance(old_primary, KVSlot)
+    old_is_kv = isinstance(old_primary, KVSlot)
     delete_key(parent, key)
     doc = parent._attached_doc  # noqa: SLF001
     with _record_install(doc) as (new_slots, displaced):
         parent._insert_new(  # noqa: SLF001
             key,
             value,
-            reinstall_as_dotted=reinstall_as_dotted,
+            reinstall_as_dotted=old_is_kv,
         )
     # Header demotion during reinstall can invalidate the saved anchor.
     if saved_anchor_prev is not None and not _slot_is_linked(saved_anchor_prev, doc):
@@ -197,7 +197,9 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
         installed, saved_anchor_prev, in_parent_body=in_body, doc=doc
     ):
         return
-    _move_slots_to_anchor(parent, installed, saved_anchor_prev, saved_leading)
+    _move_slots_to_anchor(
+        parent, installed, saved_anchor_prev, saved_leading, from_kv=old_is_kv
+    )
     # Restore each perturbed neighbour's pre-op leading iff the move left
     # it directly after the predecessor that makes that leading correct.
     restores: list[tuple[Slot, str, Slot | None]] = list(displaced)
@@ -1897,6 +1899,25 @@ def _retarget_separator(slot: Slot, new_separator: str) -> None:
     """
     _positional, remainder = _split_leading_structural(slot.leading)
     slot.leading = new_separator + remainder
+
+
+def restore_captured_leading(slot: Slot, saved: str, *, from_kv: bool) -> None:
+    """Reapply the leading trivia captured from the binding ``slot`` replaces.
+
+    Applied verbatim, except that a header replacing a KV (``from_kv``)
+    directly below a body line also keeps the separator the install path
+    gave it: the captured leading is a body line's, and alone would glue
+    the header to the line above.
+
+    ``slot`` must already sit at its final doc-stream position.
+    """
+    separates_body = (
+        from_kv
+        and isinstance(slot, StructuralHeaderSlot)
+        and isinstance(slot._prev, KVSlot)  # noqa: SLF001
+        and not leading_has_blank_line(saved)
+    )
+    slot.leading = (slot.leading if separates_body else "") + saved
 
 
 def _build_section_leading(doc: Document) -> str:
@@ -3632,13 +3653,16 @@ def _move_slots_to_anchor(
     slots: list[Slot],
     saved_anchor_prev: Slot | None,
     saved_leading: str,
+    *,
+    from_kv: bool,
 ) -> None:
     """Move ``slots`` to ``saved_anchor_prev`` in the doc-stream.
 
     Splices the contiguous block immediately after ``saved_anchor_prev``
-    (or to doc head), applies ``saved_leading`` to the new head, re-files
-    the block's refs at their new doc position and repairs the cached
-    body tails the move can have invalidated.
+    (or to doc head), restores ``saved_leading`` on the new head via
+    :func:`restore_captured_leading`, re-files the block's refs at their
+    new doc position and repairs the cached body tails the move can have
+    invalidated.
 
     ``slots`` must be in doc-stream order and contiguous
     (``slots[i]._next is slots[i + 1]`` for all i), and non-empty:
@@ -3659,7 +3683,7 @@ def _move_slots_to_anchor(
             _relink_run_after(saved_anchor_prev, slots, doc)
         _invalidate_body_tail_chain(parent, None)
 
-    head.leading = saved_leading
+    restore_captured_leading(head, saved_leading, from_kv=from_kv)
     _terminate_unless_tail(tail, doc)
 
 

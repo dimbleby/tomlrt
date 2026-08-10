@@ -6453,6 +6453,7 @@ def test_install_dotted_path_promotes_every_promotable_ancestor() -> None:
     assert out == td("""
         [a]
         other = 2
+
         [a.b.c]
         d = 1
         x = 9
@@ -9514,6 +9515,7 @@ def test_dotted_kv_chain_ref_files_before_unrelated_descendant_header() -> None:
     assert out == td("""
         top.key = 1
         a.k6.c = 42.666
+
         [[a.few]]
         a.b.c = 1
         a.b.d = 2
@@ -9820,6 +9822,7 @@ def test_reposition_install_scattered_source_via_disjoint_span_fallback() -> Non
         physical.shape."google.com" = true
         site."google.com" = true
         name."google.com" = true
+
         [site.k96."google.com"]
         "google.com" = true
 
