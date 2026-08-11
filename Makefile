@@ -52,5 +52,6 @@ bench: ## run the parse and mutation benchmarks
 
 .PHONY: clean
 clean: ## remove caches and build artefacts
-	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov site dist build
+	rm -rf .benchmarks .cache .hypothesis .mypy_cache .pytest_cache .ruff_cache \
+		.coverage htmlcov site dist build
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
