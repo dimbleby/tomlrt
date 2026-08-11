@@ -315,7 +315,9 @@ class Container(_View, dict[str, Any]):
 
         if kind is _Kind.INLINE_ROOT:
             assert self._value is not None
-            format_inline_root(self._value, nl=nl, options=resolved)
+            format_inline_root(
+                self._value, nl=nl, options=resolved, root=self._layout_root
+            )
             return
 
         if kind in (_Kind.INLINE_FACTORY, _Kind.INLINE_DOTTED_INNER):
@@ -1360,7 +1362,8 @@ class Table(Container):
         """Switch this inline table between single-line and multi-line form.
 
         When laying out multi-line, entries are indented by ``indent``
-        spaces.
+        spaces and the closing brace lines up with the row the table
+        starts on.
 
         Raises [`TOMLError`][tomlrt.TOMLError] on a non-inline table, and
         when collapsing a multi-line table that carries comments anywhere

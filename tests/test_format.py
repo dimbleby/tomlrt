@@ -786,6 +786,32 @@ def test_table_scoped_format_preserves_outer_indent_with_custom_step() -> None:
     """)
 
 
+def test_single_line_scoped_format_indents_nested_value_from_its_own_row() -> None:
+    src = td("""
+        [s]
+          outer = [ {
+            value=1,
+          } ]
+          t = { u = {
+            a=1,
+          } }
+    """)
+    doc = tomlrt.loads(src)
+    doc["s"].array("outer").format(options=tomlrt.FormatOptions(indent=4))
+    doc["s"].table("t").format()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+          outer = [{
+              value = 1,
+          }]
+          t = { u = {
+            a = 1,
+          } }
+    """)
+    assert reparses(out) == {"s": {"outer": [{"value": 1}], "t": {"u": {"a": 1}}}}
+
+
 def test_format_options_zero_indent() -> None:
     src = td("""
         outer = [

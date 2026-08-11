@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Expanding a single-line inline array or inline table to multi-line now
+  puts its closing bracket at the indent of the row it starts on, instead
+  of at column zero.
 - A generated `[table]` / `[[array]]` header replacing a key/value line is
   no longer glued to the line above it; header spacing now follows the
   document's own convention for `promote_inline` too.

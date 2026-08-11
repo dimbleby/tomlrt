@@ -214,6 +214,7 @@ def set_inline_multiline(root: Container, *, multiline: bool, indent: str) -> No
         multiline=multiline,
         nl=root._doc_newline,  # noqa: SLF001
         indent=indent,
+        root=root._layout_root,  # noqa: SLF001
     )
 
 
