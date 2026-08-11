@@ -1915,8 +1915,7 @@ def restore_captured_leading(slot: Slot, saved: str, *, from_kv: bool) -> None:
     Applied verbatim, except that a header replacing a KV (``from_kv``)
     that has a line above it also keeps the separator the install path
     gave it: the captured leading is a body line's, and alone would glue
-    the header to that line — be it a body line or the enclosing
-    section's own header.
+    the header to whatever precedes it.
 
     ``slot`` must already sit at its final doc-stream position.
     """

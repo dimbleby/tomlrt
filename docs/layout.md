@@ -66,10 +66,6 @@ arr.set_multiline(multiline=True, indent=2)
 Collapsing a multi-line array to single-line is rejected if any item carries a
 comment; clear them first (see [Comments](comments.md)).
 
-`indent` is the column the items are laid out at; the closing bracket lines up
-with the row the array itself starts on, so a nested or indented array stays in
-step with its surroundings.
-
 ## Inline-table layout
 
 Inline tables expose the same controls. `Table.multiline` and

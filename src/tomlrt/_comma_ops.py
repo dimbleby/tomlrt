@@ -514,7 +514,7 @@ def _pre_comma_break(item: CommaItem) -> str:
     return ("\r\n" if t[i - 1 : i] == "\r" else "\n") + trailing_ws(t)
 
 
-def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle:
+def detect_style(value: ArrayValue | InlineTableValue) -> CommaStyle:
     """Infer a :class:`CommaStyle` for ``value``.
 
     Multi-line shape comes from the value's own trivia
@@ -524,14 +524,14 @@ def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle
     for a comma-last multi-line value with only one item to sample
     from. When item 0 parks its break before its comma the value is
     comma-first: the post-comma pad is kept and ``pre_comma_break``
-    seeded from that item. ``nl`` is the owning document's newline.
+    seeded from that item.
     """
     items = value.items
     is_multiline = value.is_multiline()
     inter_sep = inter_item_separator(items)
     leader = items[0] if items and item_breaks_before_comma(items[0]) else None
     if is_multiline and leader is None and "\n" not in inter_sep:
-        inter_sep = _canonical_separator(value, nl)
+        inter_sep = _canonical_separator(value)
     trailing_comma = items[-1].has_comma if items else is_multiline
     pad_ft, _above_ft = split_above_block(value.final_trivia)
     trailing_post = pad_ft or value.final_trivia
@@ -548,70 +548,58 @@ def _row_runs(value: CommaValue[Any]) -> Iterator[str]:
     """Yield ``value``'s interior trivia as physically contiguous runs.
 
     One run per boundary, in document order: the bracket pad, then each
-    item's post-value section (trailing, comma, post-comma trivia) glued
-    to the next item's leading -- or, past the last item, to the closing
-    bracket pad. Gluing what a boundary owns keeps a row break and the
-    indent it opens in one string however ownership splits them.
+    item's render tail glued to the next item's leading -- or, past the
+    last item, to the closing bracket pad. Gluing what a boundary owns
+    keeps a row break and the indent it opens in one string however
+    ownership splits them.
     """
     items = value.items
     run = value.header_trivia
     for i, item in enumerate(items):
         yield run
-        run = item.trailing + ("," if item.has_comma else "") + item.post_comma_trivia
+        run = item.render_tail()
         if i + 1 < len(items):
             run += items[i + 1].leading
     yield run + value.final_trivia
 
 
-def _first_row_indent(run: str) -> str | None:
-    """Indent of the rows ``run`` opens, or None if it opens none.
+def _value_newline(value: CommaValue[Any]) -> str:
+    """Return the newline text ``value`` already breaks its rows with.
 
-    A row at column zero says nothing about the value's indent while a
-    later row still might -- as with a comment sitting hard against the
-    bracket -- so the first non-empty indent wins, and only rows that
-    are all flush left mean column zero.
+    The first break wins, wherever it lives -- an item's EOL section
+    included. Only a multi-line value has a break to sample, and always
+    has one: the runs cover every region `CommaValue.is_multiline` reads
+    bar a comma-less item's ``post_comma_trivia``, which the item does
+    not render either and so is always empty.
     """
-    lines = run.split("\n")[1:]
-    if not lines:
-        return None
-    for line in lines:
-        if ws := leading_ws(line):
-            return ws
-    return ""
-
-
-def _value_newline(value: CommaValue[Any], nl: str) -> str:
-    """Return the newline text sampled from ``value`` bracket pads, else ``nl``.
-
-    ``nl`` is the owning document's newline: the fallback for a value whose
-    bracket pads carry no break to sample (e.g. a multi-line array whose only
-    newline lives in an item's EOL section), so a synthesised break matches
-    the document instead of defaulting to LF.
-    """
-    for trivia in (value.header_trivia, value.final_trivia):
-        i = trivia.find("\n")
-        if i != -1:
-            return "\r\n" if trivia[i - 1 : i] == "\r" else "\n"
-    return nl
+    run = next(run for run in _row_runs(value) if "\n" in run)
+    i = run.index("\n")
+    return "\r\n" if run[i - 1 : i] == "\r" else "\n"
 
 
 def _value_indent(value: CommaValue[Any]) -> str:
     """Return the row indent sampled from ``value`` (4 spaces if none).
 
-    The first row the value opens wins, wherever its break lives -- a
-    value that already breaks rows always lends its own indent, even
-    when its opening row packs several items.
+    The first indented row the value opens wins, wherever its break
+    lives -- so a value that already breaks rows lends its own indent
+    even when its opening row packs several items, and a row at column
+    zero yields to a later indented one, as when a comment sits hard
+    against the bracket. Only a value whose rows are all flush left
+    means column zero.
     """
+    opens_row = False
     for run in _row_runs(value):
-        indent = _first_row_indent(run)
-        if indent is not None:
-            return indent
-    return "    "
+        rows = run.split("\n")[1:]
+        opens_row = opens_row or bool(rows)
+        for row in rows:
+            if ws := leading_ws(row):
+                return ws
+    return "" if opens_row else "    "
 
 
-def _canonical_separator(value: CommaValue[Any], nl: str) -> str:
+def _canonical_separator(value: CommaValue[Any]) -> str:
     """Return the fallback inter-item newline plus value indent."""
-    return _value_newline(value, nl) + _value_indent(value)
+    return _value_newline(value) + _value_indent(value)
 
 
 def _carry_above(

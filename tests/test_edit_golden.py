@@ -5856,6 +5856,46 @@ def test_append_to_column_zero_rows_stays_at_column_zero() -> None:
     assert _reparses(tomlrt.dumps(doc)) == {"a": [1, 2, 3, 4, 9]}
 
 
+def test_append_prefers_an_indented_row_over_a_flush_one() -> None:
+    """A row at column zero yields to a later indented row.
+
+    The indent is sampled from the first indented row the value opens,
+    wherever the break that opens it lives -- so an opening row flush
+    against the bracket does not decide the question on its own.
+    """
+    doc = tomlrt.loads(
+        td("""
+        a = [
+        1, 2,
+            3, 4]
+        """)
+    )
+    doc.array("a").append(9)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+        1, 2,
+            3, 4,
+            9]
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"a": [1, 2, 3, 4, 9]}
+
+    doc = tomlrt.loads(
+        td("""
+        t = {
+        x = 1, y = 2,
+            z = 3}
+        """)
+    )
+    doc.table("t")["w"] = 4
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+        x = 1, y = 2,
+            z = 3,
+            w = 4}
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"t": {"x": 1, "y": 2, "z": 3, "w": 4}}
+
+
 def test_comma_first_insert_uses_the_comma_row_indent() -> None:
     """A comma-first insert indents the new comma row as the value authored it.
 

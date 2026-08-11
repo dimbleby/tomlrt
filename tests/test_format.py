@@ -812,6 +812,49 @@ def test_single_line_scoped_format_indents_nested_value_from_its_own_row() -> No
     assert reparses(out) == {"s": {"outer": [{"value": 1}], "t": {"u": {"a": 1}}}}
 
 
+def test_scoped_format_realigns_a_misaligned_closing_bracket() -> None:
+    """A scoped format lines the bracket up with the row the value starts on.
+
+    Where the value sits is the only signal; the column the closing
+    bracket was authored at is not one, so `format()` and
+    `set_multiline()` give the same answer for the same value.
+    """
+    src = td("""
+        [s]
+          a = [
+        1,
+        ]
+          t = {
+        b = 1,
+        }
+    """)
+    expected = td("""
+        [s]
+          a = [
+            1,
+          ]
+          t = {
+            b = 1,
+          }
+    """)
+    doc = tomlrt.loads(src)
+    doc["s"].array("a").format()
+    doc["s"].table("t").format()
+    out = tomlrt.dumps(doc)
+    assert out == expected
+    doc["s"].array("a").format()
+    doc["s"].table("t").format()
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(out) == {"s": {"a": [1], "t": {"b": 1}}}
+
+    doc = tomlrt.loads(src)
+    # `set_multiline` indents absolutely where `FormatOptions` steps in
+    # from the enclosing row; both close the bracket in the same place.
+    doc["s"].array("a").set_multiline(multiline=True, indent=4)
+    doc["s"].table("t").set_multiline(multiline=True, indent=4)
+    assert tomlrt.dumps(doc) == expected
+
+
 def test_format_options_zero_indent() -> None:
     src = td("""
         outer = [

@@ -6201,13 +6201,22 @@ def test_insert_top_level_kv_crlf_doc() -> None:
     assert tomlrt.dumps(doc) == "new = 1\r\n\r\n[s]\r\nx = 1\r\n"
 
 
-def test_append_multiline_array_pad_free_newline_uses_doc_newline_crlf() -> None:
+def test_append_multiline_array_pad_free_newline_matches_its_rows() -> None:
     # The array is multi-line but its only newline lives in item 0's EOL
     # comment section, not the bracket pads. A synthesised inter-item
-    # separator must still use the document newline (CRLF), not a hardcoded LF.
+    # separator matches the break the array's own rows use, not a
+    # hardcoded LF.
     doc = tomlrt.loads("xs = [1, # c\r\n    2]\r\n")
     doc["xs"].append(3)
     assert tomlrt.dumps(doc) == "xs = [1, # c\r\n    2,\r\n    3]\r\n"
+
+
+def test_append_matches_a_row_break_the_document_does_not_use() -> None:
+    # Sampling the value's own rows rather than the document's newline
+    # keeps a mixed-ending document's array internally consistent.
+    doc = tomlrt.loads("xs = [1, 2,\r\n  3]\n")
+    doc["xs"].append(4)
+    assert tomlrt.dumps(doc) == "xs = [1, 2,\r\n  3,\r\n  4]\n"
 
 
 def test_emptied_multiline_array_refill_collapses_to_single_line() -> None:
@@ -6980,19 +6989,21 @@ def test_set_multiline_true_closes_value_after_multiline_sibling() -> None:
     src = td("""
         outer = [ [
             1,
-          ], { nested = { a = 1 } },
+          ] , { nested = { a = 1 } },
              { other = { b = 2 } } ]
         """)
     doc = tomlrt.loads(src)
     # The first target's row is opened by the preceding item's own line
-    # break, the second's by the break in its own leading trivia.
+    # break, the second's by the break in its own leading trivia. The pad
+    # after the sibling's closing bracket is not row indent, so the first
+    # target starts where that bracket left the row, not past it.
     doc.array("outer").table(1).table("nested").set_multiline(multiline=True, indent=4)
     doc.array("outer").table(2).table("other").set_multiline(multiline=True, indent=7)
     out = tomlrt.dumps(doc)
     assert out == td("""
         outer = [ [
             1,
-          ], { nested = {
+          ] , { nested = {
             a = 1,
           } },
              { other = {
@@ -7000,6 +7011,29 @@ def test_set_multiline_true_closes_value_after_multiline_sibling() -> None:
              } } ]
         """)
     assert _reparses(out) == {"outer": [[1], {"nested": {"a": 1}}, {"other": {"b": 2}}]}
+
+
+def test_set_multiline_true_closes_value_after_a_multiline_string() -> None:
+    """A sibling's own line breaks move the row the value starts on.
+
+    A multi-line string carries its breaks in its lexeme rather than in
+    any trivia, so the row is tracked through what each item renders,
+    not through the trivia alone.
+    """
+    src = td('''
+        a = [ """
+          x""", [1] ]
+        ''')
+    doc = tomlrt.loads(src)
+    doc["a"].array(1).set_multiline(multiline=True)
+    out = tomlrt.dumps(doc)
+    assert out == td('''
+        a = [ """
+          x""", [
+            1,
+          ] ]
+        ''')
+    assert _reparses(out) == {"a": ["  x", [1]]}
 
 
 def test_comment_write_promotes_indented_inline_table_at_its_own_indent() -> None:

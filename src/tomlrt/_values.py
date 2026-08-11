@@ -151,11 +151,14 @@ class CommaItem:
     has_comma: bool
     post_comma_trivia: str
 
+    def render_tail(self) -> str:
+        """Everything the item renders after its value."""
+        if not self.has_comma:
+            return self.trailing
+        return f"{self.trailing},{self.post_comma_trivia}"
+
     def render(self) -> str:
-        out = f"{self.leading}{self.value.render()}{self.trailing}"
-        if self.has_comma:
-            out += f",{self.post_comma_trivia}"
-        return out
+        return f"{self.leading}{self.value.render()}{self.render_tail()}"
 
 
 @dataclass(slots=True, eq=False)
@@ -192,14 +195,11 @@ class InlineTableEntry(CommaItem):
 
     @override
     def render(self) -> str:
-        out = (
+        return (
             f"{self.leading}{self.render_key()}"
             f"{self.pre_eq}={self.post_eq}"
-            f"{self.value.render()}{self.trailing}"
+            f"{self.value.render()}{self.render_tail()}"
         )
-        if self.has_comma:
-            out += f",{self.post_comma_trivia}"
-        return out
 
 
 _ItemT = TypeVar("_ItemT", bound=CommaItem)

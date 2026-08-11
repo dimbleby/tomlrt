@@ -203,7 +203,7 @@ class Array(_View, list[Any]):
         return lr._newline if lr is not None else "\n"  # noqa: SLF001
 
     def _style(self) -> CommaStyle:
-        return detect_style(self._value, nl=self._doc_newline)
+        return detect_style(self._value)
 
     @property
     def multiline(self) -> bool:
@@ -244,7 +244,8 @@ class Array(_View, list[Any]):
 
         Rewrites whitespace, indentation, separators, and newlines
         while preserving shape (single-line stays single-line, multi-line
-        stays multi-line) and orphan comment text.
+        stays multi-line) and orphan comment text. A multi-line array's
+        closing bracket lines up with the row the array starts on.
 
         ``comments=`` is deprecated; use
         ``FormatOptions(normalize_comments=...)`` instead. Supplying both
@@ -252,7 +253,7 @@ class Array(_View, list[Any]):
         """
         resolved = _resolve_format_options(options=options, comments=comments)
         format_inline_root(
-            self._value, nl=self._doc_newline, options=resolved, root=self._layout_root
+            self._value, nl=self._doc_newline, options=resolved, doc=self._layout_root
         )
 
     def set_multiline(self, *, multiline: bool, indent: int = 4) -> Array:
@@ -273,7 +274,7 @@ class Array(_View, list[Any]):
             multiline=multiline,
             nl=self._doc_newline,
             indent=" " * indent,
-            root=self._layout_root,
+            doc=self._layout_root,
         )
         return self
 
