@@ -298,7 +298,8 @@ class Container(_View, dict[str, Any]):
         * Orphan comment blocks above slots are preserved, with each
           blank-line run collapsed to one.
         * Inline values keep their shape (single-line stays single-line,
-          multi-line stays multi-line).
+          multi-line stays multi-line), and a multi-line one closes on
+          the row it starts on.
         * Newlines use the owning document's style.
 
         ``comments=`` is deprecated; use
@@ -316,7 +317,7 @@ class Container(_View, dict[str, Any]):
         if kind is _Kind.INLINE_ROOT:
             assert self._value is not None
             format_inline_root(
-                self._value, nl=nl, options=resolved, root=self._layout_root
+                self._value, nl=nl, options=resolved, doc=self._layout_root
             )
             return
 

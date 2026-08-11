@@ -15,11 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Items appended to (or inserted into) a multi-line inline array or inline
-  table now follow the value's own row indent even when several items share
-  a row.
-- Expanding a single-line inline array or inline table to multi-line now
-  puts its closing bracket at the indent of the row it starts on, instead
-  of at column zero.
+  table now follow the value's own row indent wherever the value breaks its
+  rows, even when several items share a row, and open the new row with the
+  break those rows already use rather than the document's.
+- Laying an inline array or inline table out multi-line -- with
+  `set_multiline`, or with `format()` called on the value itself -- now
+  puts its closing bracket at the indent of the row the value starts on,
+  instead of at column zero or wherever the bracket happened to sit.
 - A generated `[table]` / `[[array]]` header replacing a key/value line is
   no longer glued to the line above it; header spacing now follows the
   document's own convention for `promote_inline` too.

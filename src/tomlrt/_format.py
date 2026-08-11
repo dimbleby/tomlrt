@@ -617,7 +617,7 @@ def set_comma_value_multiline(
     multiline: bool,
     nl: str,
     indent: str,
-    root: Document | None,
+    doc: Document | None,
 ) -> None:
     """Switch a comma-value between flush single-line and multi-line form.
 
@@ -626,13 +626,11 @@ def set_comma_value_multiline(
     `_canon_single_line_inline`), so arrays collapse tight (``[1, 2]``)
     while inline tables keep their pad (``{ a = 1 }``).
 
-    ``root`` is the document ``value`` belongs to, or ``None`` when it is
+    ``doc`` is the document ``value`` belongs to, or ``None`` when it is
     detached; laying out multi-line uses it to place the closing bracket.
     """
     items = value.items
     if multiline:
-        # Read the value's position while it still has its old shape.
-        outer_indent = _closing_indent(value, root=root)
         for it in items:
             _canon_value(
                 it.value,
@@ -645,7 +643,7 @@ def set_comma_value_multiline(
             nl=nl,
             options=_DEFAULT_FORMAT_OPTIONS,
             item_indent=indent,
-            outer_indent=outer_indent,
+            outer_indent=_closing_indent(value, doc=doc),
         )
     else:
         for it in items:
@@ -667,66 +665,59 @@ def set_comma_value_multiline(
     value.reset_multiline_cache()
 
 
-def _last_line_indent(text: str) -> str:
-    """The leading whitespace of ``text``'s last line."""
-    return leading_ws(text.rsplit("\n", 1)[-1])
+def _extend_row(row: str, text: str) -> str:
+    """Append ``text`` to ``row``, keeping only the row it ends on."""
+    return (row + text).rsplit("\n", 1)[-1]
 
 
-def _row_indent(text: str, inherited: str) -> str:
-    """The indent of the row that ``text`` ends on.
+def _scan_rows(
+    v: Value, target: ArrayValue | InlineTableValue, row: str
+) -> tuple[str, str | None]:
+    """Advance ``row`` across ``v``'s rendering, spotting ``target`` on the way.
 
-    Text carrying a line break opens a fresh row, indented by whatever
-    follows its last break; text without one stays on the caller's row,
-    whose indent is ``inherited``.
-    """
-    return _last_line_indent(text) if "\n" in text else inherited
+    ``row`` is the text of the physical row rendered so far. Returns the
+    row ``v`` ends on, paired with the row ``target`` starts on once
+    seen; the first result is meaningless from then on, since every
+    caller stops on the second.
 
-
-def _find_row_indent(
-    v: Value, target: ArrayValue | InlineTableValue, indent: str
-) -> str | None:
-    """The indent of the row ``target`` starts on, or ``None`` if not in ``v``.
-
-    ``indent`` is the indent of the row ``v`` itself starts on; each item
-    inherits it unless what renders before the item breaks the line.
+    An inline-table entry's ``key =`` prefix is skipped: it carries no
+    row break, and a value always renders at least one non-blank
+    character, so the row's own indent is unaffected either way.
     """
     if v is target:
-        return indent
+        return row, row
     if not isinstance(v, (ArrayValue, InlineTableValue)):
-        return None
-    row = _row_indent(v.header_trivia, indent)
+        return _extend_row(row, v.render()), None
+    row = _extend_row(row, v._open + v.header_trivia)  # noqa: SLF001
     for it in v.items:
-        found = _find_row_indent(it.value, target, _row_indent(it.leading, row))
+        row, found = _scan_rows(it.value, target, _extend_row(row, it.leading))
         if found is not None:
-            return found
-        row = _row_indent(it.render(), row)
-    return None
+            return row, found
+        row = _extend_row(row, it.render_tail())
+    return _extend_row(row, v.final_trivia + v._close), None  # noqa: SLF001
 
 
 def _closing_indent(
-    value: ArrayValue | InlineTableValue, *, root: Document | None
+    value: ArrayValue | InlineTableValue, *, doc: Document | None
 ) -> str:
     """The indent to place ``value``'s closing bracket at.
 
-    A value that is already multi-line keeps the column it sits at. One
-    being laid out afresh takes the indent of the row it starts on, which
-    means locating it in ``root``: a value holds no back pointer to its
-    host. A detached value has no enclosing row, so it starts at column
-    zero.
+    The bracket lines up with the row ``value`` starts on, which means
+    locating it in ``doc``: a value holds no back pointer to its host. A
+    detached value has no enclosing row, so it starts at column zero.
     """
-    if value.is_multiline():
-        return _last_line_indent(value.final_trivia)
-    if root is None:
+    if doc is None:
         return ""
     found: str | None = None
-    slot: Slot | None = root._head  # noqa: SLF001
+    slot: Slot | None = doc._head  # noqa: SLF001
     while slot is not None and found is None:
-        # A KV slot always starts a row, so its own indent is that row's.
+        # A KV slot always starts a row, so its leading ends with one.
         if isinstance(slot, KVSlot):
-            found = _find_row_indent(slot.value, value, _last_line_indent(slot.leading))
+            head = slot.leading.rsplit("\n", 1)[-1]
+            _, found = _scan_rows(slot.value, value, head)
         slot = slot._next  # noqa: SLF001
     assert found is not None, "internal: attached value is not in its document"
-    return found
+    return leading_ws(found)
 
 
 def format_inline_root(
@@ -734,16 +725,17 @@ def format_inline_root(
     *,
     nl: str,
     options: FormatOptions,
-    root: Document | None,
+    doc: Document | None,
 ) -> None:
     """Canonicalise an inline array/table formatted on its own.
 
-    Bases the layout on the value's own position -- see
-    :func:`_closing_indent` -- so formatting it in isolation doesn't
-    reset that position relative to its enclosing document.
+    Indents from the row the value starts on -- see
+    :func:`_closing_indent` -- so formatting it in isolation keeps it in
+    step with its enclosing document rather than resetting it to column
+    zero.
     """
     _canon_inline_value(
-        value, nl=nl, options=options, parent_indent=_closing_indent(value, root=root)
+        value, nl=nl, options=options, parent_indent=_closing_indent(value, doc=doc)
     )
 
 
