@@ -1988,47 +1988,59 @@ def _validate_section_values(mapping: Mapping[str, object]) -> None:
         _validate_input(value, inline_only=False, key=key)
 
 
-def _link_array_element(elem: Array | Container, host: Array | None) -> None:
-    """Stamp ``elem``'s uplink to its containing array, or clear it.
+def _link_array_element(
+    elem: Array | Container, parent: Container | None, host: Array | None
+) -> None:
+    """Stamp where ``elem`` is bound, filing or clearing its array uplink.
 
     ``host`` is the array ``elem`` is an element of, or ``None`` when
-    ``elem`` is key-hosted. Called from the single tail of the
-    ``_synth_value`` / ``_decode_value`` funnels that every value view
-    flows through, so the uplink is filed in one place: an element gets its
-    array, and a (re-)key-hosted view is *cleared* of any stale uplink it
-    carried as a former element. The element then *derives* its host KV
-    slot from the array object at layout time (see `_host_kv_slot`), so a
-    later re-bind of the array is picked up for free -- nothing cascades.
+    ``elem`` is key-hosted under ``parent``. Called from the single tail of
+    the ``_synth_value`` / ``_decode_value`` funnels that every value view
+    flows through, so binding is filed in one place. An `Array` carries a
+    single ``_host`` (its containing array when an element, else its
+    hosting container), so the stamp both files the element uplink and, for
+    a re-key-hosted former element, replaces it with the parent -- there is
+    no separate field to leave stale. A `Container` keeps its own
+    ``_parent`` (wired elsewhere); only its array uplink is (un)set here.
+    The element then *derives* its host KV slot from the array object at
+    layout time (see `_host_kv_slot`), so a later re-bind of the array is
+    picked up for free -- nothing cascades.
     """
-    elem._array_host = host  # noqa: SLF001
+    if isinstance(elem, Array):
+        elem._host = host if host is not None else parent  # noqa: SLF001
+    else:
+        elem._array_host = host  # noqa: SLF001
 
 
 def _host_kv_slot(view: Array | Container) -> KVSlot | None:
     """The KV slot whose value subtree contains ``view``, or ``None``.
 
     Climbs to the outermost value view held directly by a
-    section/document container -- stepping out of each inline table via
-    ``_parent`` and out of each array element via ``_array_host`` (the
-    element's containing array object) -- and reads that container's
-    index in O(depth). Deriving the host through the array object means a
-    re-bind of the array needs no cascade to its elements. ``None`` only
-    when ``view`` is detached.
+    section/document container. Each step reads where the current node is
+    bound: an `Array` from its single ``_host`` (its containing array, or
+    its hosting container), a `Container` from its array uplink if it is an
+    element, else its ``_parent``. Hopping out of an array element to its
+    array object means a re-bind of the array needs no cascade to its
+    elements. Reads the reached container's index in O(depth). ``None``
+    only when ``view`` is detached.
     """
     if view._layout_root is None:  # noqa: SLF001
         return None
     cur: Array | Container = view
     while True:
-        host_arr = cur._array_host  # noqa: SLF001
-        if host_arr is not None:
-            cur = host_arr
+        if isinstance(cur, Array):
+            up = cur._host  # noqa: SLF001
+        else:
+            up = cur._array_host if cur._array_host is not None else cur._parent  # noqa: SLF001
+        if isinstance(up, Array):
+            cur = up
             continue
-        parent = cur._parent  # noqa: SLF001
-        assert parent is not None, "internal: attached value has no container parent"
-        if not parent._inline:  # noqa: SLF001
+        assert up is not None, "internal: attached value has no container parent"
+        if not up._inline:  # noqa: SLF001
             break
-        cur = parent
+        cur = up
     leaf = cur._name if isinstance(cur, Array) else cur._path[-1]  # noqa: SLF001
-    kv = _direct_kv_slot(parent, leaf)
+    kv = _direct_kv_slot(up, leaf)
     assert kv is not None, "internal: host key is absent from its container index"
     return kv
 
@@ -2051,10 +2063,10 @@ def _synth_value(
     ``TypeError``.
 
     ``parent``/``name`` are the container and key ``v`` is bound under,
-    driving a key-hosted view's parent and name. ``array_host`` is the
-    array ``v`` is an element of, if any; the resulting view is uplinked
-    to it (or, when key-hosted, cleared of any stale uplink) at the single
-    funnel tail via `_link_array_element`, so no site has to remember.
+    driving a key-hosted view's binding and name. ``array_host`` is the
+    array ``v`` is an element of, if any; the resulting view's binding is
+    filed at the single funnel tail via `_link_array_element`, so no site
+    has to remember.
     """
     if is_scalar(v):
         return coerce_scalar(v), v
@@ -2073,7 +2085,6 @@ def _synth_value(
         if isinstance(v, Array):
             _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
             _attach_inline_view(v, layout_root, owner)
-            v._parent = parent  # noqa: SLF001
             v._name = name or ""  # noqa: SLF001
             cst, view = v._value, v  # noqa: SLF001
         else:
@@ -2113,14 +2124,13 @@ def _synth_value(
     elif isinstance(v, list):
         val = ArrayValue()
         arr = Array._view(val, layout_root)  # noqa: SLF001
-        arr._parent = parent  # noqa: SLF001
         arr._name = name or ""  # noqa: SLF001
         _fill_inline_array(arr, v, layout_root=layout_root, owner=owner)
         cst, view = val, arr
     else:
         msg = f"cannot convert {type(v).__name__} to a TOML value"
         raise TypeError(msg)
-    _link_array_element(view, array_host)
+    _link_array_element(view, parent, array_host)
     return cst, view
 
 

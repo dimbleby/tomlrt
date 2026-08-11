@@ -1641,8 +1641,8 @@ def test_host_kv_slot_none_when_detached() -> None:
 
 def test_host_kv_slot_resolves_an_inline_array_element() -> None:
     # An array element and any value nested inside it climb out to the
-    # array's own hosting KV slot: an element is uplinked to its array
-    # (`_array_host`), so the climb hops to the array and resolves there.
+    # array's own hosting KV slot: an element is uplinked to its array,
+    # so the climb hops to the array and resolves there.
     doc = tomlrt.loads("outer = [ { nested = [1, 2] } ]\n")
     element = doc.array("outer").table(0)
     nested = element.array("nested")
@@ -1715,7 +1715,7 @@ def test_scoped_set_multiline_host_lookup_is_byte_exact() -> None:
 
 def test_inline_array_element_layout_is_byte_exact_under_a_section() -> None:
     # A value nested inside an inline array element resolves its host KV
-    # slot by climbing to the array via its `_array_host` uplink, and
+    # slot by climbing to the array via its element uplink, and
     # lays out at the indent of the row it starts on -- the `[s]` header
     # is never scanned.
     src = td("""
@@ -1742,7 +1742,7 @@ def test_inline_array_element_layout_is_byte_exact_under_a_section() -> None:
 
 
 # An ``Array.__imul__`` clone-append is an element-birth site too: the
-# cloned element view must be uplinked to its array (`_array_host`) or a
+# cloned element view must be uplinked to its array or a
 # scoped layout call on it walks off the top of the chain. These pin both
 # flavours.
 
@@ -1799,7 +1799,7 @@ def test_imul_cloned_inline_table_element_format() -> None:
 # Appending / inserting a Python value synthesises its element view through
 # `Array._synth_item`; assigning a plain nested list synthesises it through
 # `_fill_inline_array`. Both must uplink the element to its array
-# (`_array_host`) or a scoped layout call on it walks off the top of the
+# or a scoped layout call on it walks off the top of the
 # chain. These pin both clauses.
 
 
@@ -1922,8 +1922,8 @@ def test_assigned_plain_inline_table_element_format() -> None:
 
 # Assigning an already-built, still-detached `Array` view live-attaches it
 # to the document. Its element views were synthesised before the array knew
-# its binding; because an element derives its host from the array *object*
-# (`_array_host`), the attach is seen for free -- no per-element re-binding
+# its binding; because an element derives its host from the array *object*,
+# the attach is seen for free -- no per-element re-binding
 # has to be cascaded. These pin that: without the uplink filed at synth
 # time, a scoped layout call on the element walks off the top of the chain.
 
@@ -1974,13 +1974,15 @@ def test_live_attached_detached_array_of_arrays_format() -> None:
 
 
 # Pulling one element OUT of a detached array and live-attaching it under a
-# key is the reverse move: the element view still carries the `_array_host`
-# uplink it was born with, and key-hosting must CLEAR it or the derived host
-# climb hops to the now-irrelevant detached array and walks off the top. The
-# single `_link_array_element` funnel tail stamps the uplink UNCONDITIONALLY,
-# so a value synthesised with no array host (`array_host=None`) is cleared
-# here in one place, for both a Container element (inline table) and a bare
-# Array element. Weakening the stamp back to file-only fails these.
+# key is the reverse move: the element view still carries the uplink to the
+# array it was born in, and key-hosting must REPLACE it with the parent or
+# the derived host climb hops to the now-irrelevant detached array and walks
+# off the top. The single `_link_array_element` funnel tail files the binding
+# for a view synthesised with no array host (`array_host=None`): an Array's
+# one `_host` field is set to the parent (displacing the stale array), a
+# Container's separate `_array_host` uplink is cleared. Weakening either --
+# dropping the Array `else parent`, or making the Container clear file-only --
+# fails these.
 
 
 def test_detached_inline_table_element_rehosted_under_key_set_multiline() -> None:

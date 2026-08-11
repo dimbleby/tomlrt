@@ -249,11 +249,11 @@ def _decode_value(
     """Decode any TOML value to its Python representation.
 
     ``parent``/``name`` -- the container and key ``value`` is bound
-    under -- give a key-hosted ``Array`` / ``Table`` view a real parent
+    under -- give a key-hosted ``Array`` / ``Table`` view a real binding
     and name for its own navigation and host lookup. ``array_host`` is
-    the array ``value`` is an element of, if any; the decoded view is
-    uplinked to it here in one place (see `_link_array_element`) so a
-    decode site cannot forget, and derives its host from the array
+    the array ``value`` is an element of, if any; the decoded view's
+    binding is filed here in one place (see `_link_array_element`) so a
+    decode site cannot forget, and it derives its host from the array
     object. Pass ``parent=None`` (with ``name=None``) for a value with no
     key binding -- either an array element or a wholly detached value.
     """
@@ -261,7 +261,7 @@ def _decode_value(
         return value.value
     if isinstance(value, ArrayValue):
         decoded: Array | Table = _decode_array(
-            value, layout_root=layout_root, parent=parent, name=name, owner=owner
+            value, layout_root=layout_root, name=name, owner=owner
         )
     else:
         if parent is None:
@@ -272,7 +272,7 @@ def _decode_value(
         decoded = _decode_inline_table(
             value, layout_root=layout_root, parent=parent, path=path, owner=owner
         )
-    _link_array_element(decoded, array_host)
+    _link_array_element(decoded, parent, array_host)
     return decoded
 
 
@@ -280,12 +280,10 @@ def _decode_array(
     value: ArrayValue,
     *,
     layout_root: Document | None,
-    parent: Container | None,
     name: str | None,
     owner: AoTEntry | None,
 ) -> Array:
     arr = Array._view(value, layout_root)  # noqa: SLF001
-    arr._parent = parent  # noqa: SLF001
     arr._name = name or ""  # noqa: SLF001
     for item in value.items:
         list.append(
