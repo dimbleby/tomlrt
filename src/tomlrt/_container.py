@@ -1738,9 +1738,7 @@ def _install_dotted_direct_kvs(
         cst = copy.deepcopy(src_slot.value)
         _retarget_to_doc(cst, doc)
         leading = retarget_newlines(src_slot.leading, doc._newline)  # noqa: SLF001
-        decoded = _decode_value(
-            cst, layout_root=doc, parent=destination, name=k, owner=owner
-        )
+        decoded = _decode_value(cst, doc, destination, k, owner)
         _layout_ops.install_dotted_kv_slot(
             host,
             leaf_keypath,
@@ -2104,9 +2102,7 @@ def _synth_value(
         cloned = copy.deepcopy(v._value)  # noqa: SLF001
         _retarget_to_doc(cloned, layout_root)
         cst = cloned
-        decoded = _decode_value(
-            cloned, layout_root=layout_root, parent=parent, name=name, owner=owner
-        )
+        decoded = _decode_value(cloned, layout_root, parent, name, owner)
         assert isinstance(decoded, (Array, Container)), "inline CST decodes to a view"
         view = decoded
     # A dotted-key navigator Table (`_Kind.INLINE_DOTTED_INNER`) owns no
@@ -2123,8 +2119,7 @@ def _synth_value(
         )
     elif isinstance(v, list):
         val = ArrayValue()
-        arr = Array._view(val, layout_root)  # noqa: SLF001
-        arr._name = name or ""  # noqa: SLF001
+        arr = Array._view(val, layout_root, name)  # noqa: SLF001
         _fill_inline_array(arr, v, layout_root=layout_root, owner=owner)
         cst, view = val, arr
     else:

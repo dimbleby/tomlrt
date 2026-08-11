@@ -2165,13 +2165,7 @@ def populate_promoted_inline_entries(
         # cases without a separate ``len(key_path) == 1`` branch.
         leaf_parent = ensure_implicit_chain(target, key_path[:-1])
         leaf = key_path[-1]
-        decoded = _decode_value(
-            value,
-            layout_root=doc,
-            parent=leaf_parent,
-            name=leaf,
-            owner=owner,
-        )
+        decoded = _decode_value(value, doc, leaf_parent, leaf, owner)
         if len(key_path) == 1:
             append_direct_kv(
                 target,
