@@ -73,7 +73,7 @@ class Array(_View, list[Any]):
     it can be passed wherever a `list` or `Sequence` is expected.
     """
 
-    __slots__ = ("_array_host", "_layout_root", "_name", "_parent", "_value")
+    __slots__ = ("_host", "_layout_root", "_name", "_value")
 
     @classmethod
     def _view(cls, value: ArrayValue, layout_root: Document | None) -> Array:
@@ -81,15 +81,14 @@ class Array(_View, list[Any]):
 
         The public constructor goes the other way: it synthesises CST from
         Python items. This is for callers that already have CST and fill
-        the items in themselves. The caller sets ``_parent`` / ``_name``
-        once it knows where the array is bound.
+        the items in themselves. The caller sets ``_name`` and the decode
+        funnel stamps ``_host`` once it knows where the array is bound.
         """
         arr = cls.__new__(cls)
         arr._value = value  # noqa: SLF001
         arr._layout_root = layout_root  # noqa: SLF001
-        arr._parent = None  # noqa: SLF001
+        arr._host = None  # noqa: SLF001
         arr._name = ""  # noqa: SLF001
-        arr._array_host = None  # noqa: SLF001
         return arr
 
     def __init__(
@@ -109,9 +108,8 @@ class Array(_View, list[Any]):
         val = ArrayValue()
         self._value: ArrayValue = val
         self._layout_root: Document | None = None
-        self._parent: Container | None = None
+        self._host: Array | Container | None = None
         self._name: str = ""
-        self._array_host: Array | None = None
         items_list = list(items)
         if items_list:
             from tomlrt._container import _fill_inline_array  # noqa: PLC0415
