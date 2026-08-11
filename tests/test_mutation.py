@@ -6919,6 +6919,103 @@ def test_set_multiline_true_preserves_empty_nested_table_outer_indent() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+def test_set_multiline_true_closes_nested_value_at_its_row_indent() -> None:
+    src = td("""
+        outer = [
+          { nested = [1, 2] },
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("outer").table(0).array("nested").set_multiline(multiline=True, indent=4)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        outer = [
+          { nested = [
+            1,
+            2,
+          ] },
+        ]
+        """)
+    assert _reparses(out) == {"outer": [{"nested": [1, 2]}]}
+
+
+def test_set_multiline_true_closes_indented_kv_at_its_own_indent() -> None:
+    src = td("""
+        [s]
+          a = [1, 2]
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"]["a"].set_multiline(multiline=True, indent=4)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+          a = [
+            1,
+            2,
+          ]
+        """)
+    assert _reparses(out) == {"s": {"a": [1, 2]}}
+
+
+def test_set_multiline_true_closes_empty_indented_value_at_its_own_indent() -> None:
+    src = td("""
+        [s]
+          a = []
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"]["a"].set_multiline(multiline=True, indent=4)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+          a = [
+          ]
+        """)
+    assert _reparses(out) == {"s": {"a": []}}
+
+
+def test_set_multiline_true_closes_value_after_multiline_sibling() -> None:
+    src = td("""
+        outer = [ [
+            1,
+          ], { nested = { a = 1 } },
+             { other = { b = 2 } } ]
+        """)
+    doc = tomlrt.loads(src)
+    # The first target's row is opened by the preceding item's own line
+    # break, the second's by the break in its own leading trivia.
+    doc.array("outer").table(1).table("nested").set_multiline(multiline=True, indent=4)
+    doc.array("outer").table(2).table("other").set_multiline(multiline=True, indent=7)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        outer = [ [
+            1,
+          ], { nested = {
+            a = 1,
+          } },
+             { other = {
+               b = 2,
+             } } ]
+        """)
+    assert _reparses(out) == {"outer": [[1], {"nested": {"a": 1}}, {"other": {"b": 2}}]}
+
+
+def test_comment_write_promotes_indented_inline_table_at_its_own_indent() -> None:
+    src = td("""
+        [s]
+          t = { a = 1 }
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"]["t"].comments["a"] = "note"
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+          t = {
+            a = 1, # note
+          }
+        """)
+    assert _reparses(out) == {"s": {"t": {"a": 1}}}
+
+
 def test_collapse_multiline_with_nested_array_comment_raises() -> None:
     src = td(
         """

@@ -251,13 +251,16 @@ class Array(_View, list[Any]):
         arguments raises ``ValueError``.
         """
         resolved = _resolve_format_options(options=options, comments=comments)
-        format_inline_root(self._value, nl=self._doc_newline, options=resolved)
+        format_inline_root(
+            self._value, nl=self._doc_newline, options=resolved, root=self._layout_root
+        )
 
     def set_multiline(self, *, multiline: bool, indent: int = 4) -> Array:
         """Switch this array between flush single-line and multi-line form.
 
         When laying out multi-line, items are indented by ``indent``
-        spaces.
+        spaces and the closing bracket lines up with the row the array
+        starts on.
 
         Raises ``TOMLError`` when collapsing a multi-line array that
         carries comments anywhere in it, including inside nested values,
@@ -266,7 +269,11 @@ class Array(_View, list[Any]):
         Returns ``self`` for chaining.
         """
         set_comma_value_multiline(
-            self._value, multiline=multiline, nl=self._doc_newline, indent=" " * indent
+            self._value,
+            multiline=multiline,
+            nl=self._doc_newline,
+            indent=" " * indent,
+            root=self._layout_root,
         )
         return self
 
