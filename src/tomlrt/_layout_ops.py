@@ -1913,19 +1913,20 @@ def restore_captured_leading(slot: Slot, saved: str, *, from_kv: bool) -> None:
     """Reapply the leading trivia captured from the binding ``slot`` replaces.
 
     Applied verbatim, except that a header replacing a KV (``from_kv``)
-    directly below a body line also keeps the separator the install path
+    that has a line above it also keeps the separator the install path
     gave it: the captured leading is a body line's, and alone would glue
-    the header to the line above.
+    the header to that line — be it a body line or the enclosing
+    section's own header.
 
     ``slot`` must already sit at its final doc-stream position.
     """
-    separates_body = (
+    separates_above = (
         from_kv
         and isinstance(slot, StructuralHeaderSlot)
-        and isinstance(slot._prev, KVSlot)  # noqa: SLF001
+        and slot._prev is not None  # noqa: SLF001
         and not leading_has_blank_line(saved)
     )
-    slot.leading = (slot.leading if separates_body else "") + saved
+    slot.leading = (slot.leading if separates_above else "") + saved
 
 
 def _build_section_leading(doc: Document) -> str:
