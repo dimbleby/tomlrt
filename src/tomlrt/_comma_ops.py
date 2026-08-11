@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from tomlrt._trivia import (
-    indent_from_trivia,
     leading_break,
     leading_ws,
     restamp_bracket_pad_for_first,
@@ -545,9 +544,37 @@ def detect_style(value: ArrayValue | InlineTableValue, *, nl: str) -> CommaStyle
     )
 
 
-def _first_indent_after_newline(trivia: str) -> str:
-    """Indent of the first line after a newline that carries one."""
-    for line in trivia.split("\n")[1:]:
+def _row_runs(value: CommaValue[Any]) -> Iterator[str]:
+    """Yield ``value``'s interior trivia as physically contiguous runs.
+
+    One run per boundary, in document order: the bracket pad, then each
+    item's post-value section (trailing, comma, post-comma trivia) glued
+    to the next item's leading -- or, past the last item, to the closing
+    bracket pad. Gluing what a boundary owns keeps a row break and the
+    indent it opens in one string however ownership splits them.
+    """
+    items = value.items
+    run = value.header_trivia
+    for i, item in enumerate(items):
+        yield run
+        run = item.trailing + ("," if item.has_comma else "") + item.post_comma_trivia
+        if i + 1 < len(items):
+            run += items[i + 1].leading
+    yield run + value.final_trivia
+
+
+def _first_row_indent(run: str) -> str | None:
+    """Indent of the rows ``run`` opens, or None if it opens none.
+
+    A row at column zero says nothing about the value's indent while a
+    later row still might -- as with a comment sitting hard against the
+    bracket -- so the first non-empty indent wins, and only rows that
+    are all flush left mean column zero.
+    """
+    lines = run.split("\n")[1:]
+    if not lines:
+        return None
+    for line in lines:
         if ws := leading_ws(line):
             return ws
     return ""
@@ -569,12 +596,17 @@ def _value_newline(value: CommaValue[Any], nl: str) -> str:
 
 
 def _value_indent(value: CommaValue[Any]) -> str:
-    """Return the row indent sampled from ``value`` (4 spaces if none)."""
-    return (
-        _first_indent_after_newline(value.header_trivia)
-        or indent_from_trivia(value.final_trivia)
-        or "    "
-    )
+    """Return the row indent sampled from ``value`` (4 spaces if none).
+
+    The first row the value opens wins, wherever its break lives -- a
+    value that already breaks rows always lends its own indent, even
+    when its opening row packs several items.
+    """
+    for run in _row_runs(value):
+        indent = _first_row_indent(run)
+        if indent is not None:
+            return indent
+    return "    "
 
 
 def _canonical_separator(value: CommaValue[Any], nl: str) -> str:

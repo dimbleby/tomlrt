@@ -5840,13 +5840,16 @@ def test_inline_append_to_entry_with_eol_comment() -> None:
     # comment moving to after the comma (not orphaned on its own line as
     # ``a = 1 # eol-on-a\n,\n  b = 2\n  }``), and the comment must stay
     # attached to `a` rather than migrating to the appended entry.
+    # The new entry takes the two-space indent of the only row the value
+    # opens -- here the closing bracket's, parked in the entry's EOL
+    # section -- rather than the four-space no-signal fallback.
     src = "obj = { a = 1 # eol-on-a\n  }\n"
     doc = tomlrt.loads(src)
     doc.table("obj")["b"] = 2
     out = tomlrt.dumps(doc)
     assert out == td("""
         obj = { a = 1, # eol-on-a
-            b = 2
+          b = 2
           }
         """)
     assert tomlrt.loads(out).table("obj").to_dict() == {"a": 1, "b": 2}

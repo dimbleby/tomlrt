@@ -3699,11 +3699,13 @@ def test_sort_eol_replaces_destination_pre_comma_break() -> None:
 
 
 def test_sort_preserves_blank_after_pre_comma_eol() -> None:
+    # The item pushed onto a row of its own takes the two-space indent of
+    # the comma row -- the only row the value opens -- not a fallback.
     doc = tomlrt.loads("x = [2, 1 # one\n\n  ,3]\n")
     arr = doc.array("x")
     assert arr.leading_block[2] == (None,)
     arr.sort()
-    assert tomlrt.dumps(doc) == "x = [1, # one\n    2\n\n  ,3]\n"
+    assert tomlrt.dumps(doc) == "x = [1, # one\n  2\n\n  ,3]\n"
     assert arr.leading_block[2] == (None,)
 
 
@@ -3722,7 +3724,7 @@ def test_partial_sort_keeps_foreign_successor_leading_block() -> None:
     out = tomlrt.dumps(doc)
     assert out == td("""
         t = {a.p=1, # ep
-            x=0, a.q=3
+         x=0, a.q=3
          ,
          # ay
          y=2

@@ -5761,6 +5761,101 @@ def test_append_samples_indent_past_a_column_zero_comment() -> None:
         """)
 
 
+def test_append_samples_indent_from_a_row_that_packs_items() -> None:
+    """A value whose first row holds several items still lends its indent.
+
+    The separator is sampled from item 1, which here shares row zero and
+    so carries no break; the indent then has to come from the first item
+    that does open a row, not from the four-space fallback.
+    """
+    doc = tomlrt.loads(
+        td("""
+        abcdef = [1, 2,
+                  3, 4]
+        """)
+    )
+    doc.array("abcdef").append(9)
+    assert tomlrt.dumps(doc) == td("""
+        abcdef = [1, 2,
+                  3, 4,
+                  9]
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"abcdef": [1, 2, 3, 4, 9]}
+
+
+def test_inline_table_insert_samples_indent_from_a_packed_row() -> None:
+    """The packed-row indent sampling is shared with inline tables."""
+    doc = tomlrt.loads(
+        td("""
+        t = { x = 1, y = 2,
+              z = 3 }
+        """)
+    )
+    doc.table("t")["w"] = 4
+    assert tomlrt.dumps(doc) == td("""
+        t = { x = 1, y = 2,
+              z = 3,
+              w = 4 }
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"t": {"x": 1, "y": 2, "z": 3, "w": 4}}
+
+
+def test_insert_into_a_packed_row_uses_that_row_indent() -> None:
+    """An interior insert opens its row at the sampled indent too."""
+    doc = tomlrt.loads(
+        td("""
+        a = [1, 2,
+             3, 4]
+        """)
+    )
+    doc.array("a").insert(2, 9)
+    assert tomlrt.dumps(doc) == td("""
+        a = [1, 2,
+             9,
+             3, 4]
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"a": [1, 2, 9, 3, 4]}
+
+
+def test_append_samples_indent_past_a_first_row_eol_comment() -> None:
+    """A row break parked in an EOL section still lends its indent.
+
+    Item 1's leading holds only the indent -- the break sits in item 0's
+    post-comma EOL section -- so the separator falls back to the sampled
+    indent, which must be the authored one.
+    """
+    doc = tomlrt.loads(
+        td("""
+        a = [1, # c
+             2]
+        """)
+    )
+    doc.array("a").append(9)
+    assert tomlrt.dumps(doc) == td("""
+        a = [1, # c
+             2,
+             9]
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"a": [1, 2, 9]}
+
+
+def test_append_to_column_zero_rows_stays_at_column_zero() -> None:
+    """Rows authored at column zero are matched, not indented to four."""
+    doc = tomlrt.loads(
+        td("""
+        a = [1, 2,
+        3, 4]
+        """)
+    )
+    doc.array("a").append(9)
+    assert tomlrt.dumps(doc) == td("""
+        a = [1, 2,
+        3, 4,
+        9]
+        """)
+    assert _reparses(tomlrt.dumps(doc)) == {"a": [1, 2, 3, 4, 9]}
+
+
 def test_comma_first_insert_uses_the_comma_row_indent() -> None:
     """A comma-first insert indents the new comma row as the value authored it.
 
