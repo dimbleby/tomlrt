@@ -3213,6 +3213,46 @@ def test_promote_array_keeps_captured_blank_and_indent() -> None:
     assert _reparses(out) == {"t": {"a": [{"q": 1}]}, "z": {"k": 1}}
 
 
+def test_promote_sole_body_line_separates_from_parent_header() -> None:
+    """Promoting a section's only body line separates the two headers.
+
+    The predecessor left behind by the delete is the parent's own
+    header, so the captured KV leading alone would glue ``[q.x]`` /
+    ``[[q.x]]`` to ``[q]``.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [q]
+            x = {a = 1}
+            """)
+    )
+    doc["q"].promote_inline("x")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [q]
+
+        [q.x]
+        a = 1
+        """)
+    assert _reparses(out) == {"q": {"x": {"a": 1}}}
+
+    doc = tomlrt.loads(
+        td("""
+            [q]
+            x = [{a = 1}]
+            """)
+    )
+    doc["q"].promote_array("x")
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [q]
+
+        [[q.x]]
+        a = 1
+        """)
+    assert _reparses(out) == {"q": {"x": [{"a": 1}]}}
+
+
 def test_promote_array_rejects_empty_array() -> None:
     doc = tomlrt.loads("a = []\n")
     with pytest.raises(tomlrt.TOMLError, match="empty array"):
@@ -4939,6 +4979,39 @@ def test_structural_overwrite_of_scalar_separates_new_header() -> None:
     assert _reparses(out) == {"other": {"p": 1, "n1": [{"q": 1}]}}
 
 
+def test_structural_overwrite_of_sole_body_scalar_separates_new_header() -> None:
+    """Same when the replaced KV is the section's only body line.
+
+    The line above the new header is then the parent's own header, which
+    still wants the separator the install path chose.
+    """
+    src = td("""
+        [other]
+        n1 = 5
+        """)
+    doc = tomlrt.loads(src)
+    doc["other"]["n1"] = Table.section({"q": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [other]
+
+        [other.n1]
+        q = 1
+        """)
+    assert _reparses(out) == {"other": {"n1": {"q": 1}}}
+
+    doc = tomlrt.loads(src)
+    doc["other"]["n1"] = AoT([{"q": 1}])
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [other]
+
+        [[other.n1]]
+        q = 1
+        """)
+    assert _reparses(out) == {"other": {"n1": [{"q": 1}]}}
+
+
 def test_structural_overwrite_keeps_captured_blank_line() -> None:
     """Captured trivia that already separates is not doubled up."""
     src = td("""
@@ -4960,6 +5033,43 @@ def test_structural_overwrite_keeps_captured_blank_line() -> None:
         q = 1
         """)
     assert _reparses(out) == {"other": {"p": 1, "n1": {"q": 1}}}
+
+
+def test_structural_overwrite_of_first_line_keeps_document_flush() -> None:
+    """A header replacing the document's first line gains no separator.
+
+    There is no line above to separate from, so the captured (empty)
+    leading wins over the separator the install path chose.
+    """
+    src = td("""
+        x = 1
+
+        [s]
+        q = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["x"] = Table.section({"a": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [x]
+        a = 1
+
+        [s]
+        q = 2
+        """)
+    assert _reparses(out) == {"x": {"a": 1}, "s": {"q": 2}}
+
+    doc = tomlrt.loads(src)
+    doc["x"] = AoT([{"a": 1}])
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[x]]
+        a = 1
+
+        [s]
+        q = 2
+        """)
+    assert _reparses(out) == {"x": [{"a": 1}], "s": {"q": 2}}
 
 
 def test_structural_overwrite_of_section_restores_leading_verbatim() -> None:

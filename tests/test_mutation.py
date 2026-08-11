@@ -5444,6 +5444,7 @@ def test_overwrite_ancestor_into_own_descendant_snapshots_before_delete() -> Non
     out = tomlrt.dumps(doc)
     assert out == td("""
         [x.k16]
+
         [x.k16.w]
         [x.k16.w.w]
         """)
@@ -9432,6 +9433,7 @@ def test_adopt_private_implicit_transfers_aot_entry_ownership() -> None:
     out = tomlrt.dumps(doc)
     assert out == td("""
         [tbl]
+
         a.b.b.c = 3
         a.b.b.d = 4
         a.k = "str"
