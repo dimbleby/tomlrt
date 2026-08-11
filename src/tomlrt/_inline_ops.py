@@ -209,12 +209,14 @@ def set_inline_multiline(root: Container, *, multiline: bool, indent: str) -> No
     """
     iv = root._value  # noqa: SLF001
     assert iv is not None
+    from tomlrt._container import _host_kv_slot  # noqa: PLC0415
+
     set_comma_value_multiline(
         iv,
         multiline=multiline,
         nl=root._doc_newline,  # noqa: SLF001
         indent=indent,
-        doc=root._layout_root,  # noqa: SLF001
+        host=_host_kv_slot(root),
     )
 
 

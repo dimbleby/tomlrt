@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
 from tomlrt._comments import _split_preamble
-from tomlrt._container import Container, Document, Table
+from tomlrt._container import Container, Document, Table, _link_array_element
 from tomlrt._layout_ops import (
     file_own_header,
     maybe_advance_body_tail,
@@ -244,42 +244,59 @@ def _decode_value(
     parent: Container | None,
     name: str | None,
     owner: AoTEntry | None,
+    array_host: Array | None = None,
 ) -> object:
     """Decode any TOML value to its Python representation.
 
     ``parent``/``name`` -- the container and key ``value`` is bound
-    under -- are only consulted for an ``InlineTableValue``: its decoded
-    ``Table`` view needs a real path for its own navigation, computed
-    here rather than by every caller. Pass ``parent=None`` (with
-    ``name=None``) for a value with no such binding, e.g. an array
-    element.
+    under -- give a key-hosted ``Array`` / ``Table`` view a real parent
+    and name for its own navigation and host lookup. ``array_host`` is
+    the array ``value`` is an element of, if any; the decoded view is
+    uplinked to it here in one place (see `_link_array_element`) so a
+    decode site cannot forget, and derives its host from the array
+    object. Pass ``parent=None`` (with ``name=None``) for a value with no
+    key binding -- either an array element or a wholly detached value.
     """
+    if not isinstance(value, (ArrayValue, InlineTableValue)):
+        return value.value
     if isinstance(value, ArrayValue):
-        return _decode_array(value, layout_root=layout_root, owner=owner)
-    if isinstance(value, InlineTableValue):
+        decoded: Array | Table = _decode_array(
+            value, layout_root=layout_root, parent=parent, name=name, owner=owner
+        )
+    else:
         if parent is None:
             path: tuple[str, ...] = ()
         else:
             assert name is not None, "name is required whenever parent is given"
             path = (*parent._path, name)  # noqa: SLF001
-        return _decode_inline_table(
+        decoded = _decode_inline_table(
             value, layout_root=layout_root, parent=parent, path=path, owner=owner
         )
-    return value.value
+    _link_array_element(decoded, array_host)
+    return decoded
 
 
 def _decode_array(
     value: ArrayValue,
     *,
     layout_root: Document | None,
+    parent: Container | None,
+    name: str | None,
     owner: AoTEntry | None,
 ) -> Array:
     arr = Array._view(value, layout_root)  # noqa: SLF001
+    arr._parent = parent  # noqa: SLF001
+    arr._name = name or ""  # noqa: SLF001
     for item in value.items:
         list.append(
             arr,
             _decode_value(
-                item.value, layout_root=layout_root, parent=None, name=None, owner=owner
+                item.value,
+                layout_root=layout_root,
+                parent=None,
+                name=None,
+                owner=owner,
+                array_host=arr,
             ),
         )
     return arr

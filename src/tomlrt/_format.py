@@ -59,7 +59,6 @@ from tomlrt._values import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tomlrt._container import Document
     from tomlrt._slots import AoTEntry, Slot
     from tomlrt._trivia import EolTrivia
     from tomlrt._values import (
@@ -617,7 +616,7 @@ def set_comma_value_multiline(
     multiline: bool,
     nl: str,
     indent: str,
-    doc: Document | None,
+    host: KVSlot | None,
 ) -> None:
     """Switch a comma-value between flush single-line and multi-line form.
 
@@ -626,8 +625,7 @@ def set_comma_value_multiline(
     `_canon_single_line_inline`), so arrays collapse tight (``[1, 2]``)
     while inline tables keep their pad (``{ a = 1 }``).
 
-    ``doc`` is the document ``value`` belongs to, or ``None`` when it is
-    detached; laying out multi-line uses it to place the closing bracket.
+    ``host`` places the closing bracket -- see `_closing_indent`.
     """
     items = value.items
     if multiline:
@@ -643,7 +641,7 @@ def set_comma_value_multiline(
             nl=nl,
             options=_DEFAULT_FORMAT_OPTIONS,
             item_indent=indent,
-            outer_indent=_closing_indent(value, doc=doc),
+            outer_indent=_closing_indent(value, host=host),
         )
     else:
         for it in items:
@@ -697,26 +695,33 @@ def _scan_rows(
     return _extend_row(row, v.final_trivia + v._close), None  # noqa: SLF001
 
 
+def _value_row_in_slot(
+    slot: KVSlot, value: ArrayValue | InlineTableValue
+) -> str | None:
+    """The physical row ``value`` starts on within ``slot``, or ``None``.
+
+    ``None`` when ``value`` does not appear in ``slot``'s value subtree.
+    """
+    # A KV slot always starts a row, so its leading ends with one.
+    head = slot.leading.rsplit("\n", 1)[-1]
+    _, found = _scan_rows(slot.value, value, head)
+    return found
+
+
 def _closing_indent(
-    value: ArrayValue | InlineTableValue, *, doc: Document | None
+    value: ArrayValue | InlineTableValue, *, host: KVSlot | None
 ) -> str:
     """The indent to place ``value``'s closing bracket at.
 
-    The bracket lines up with the row ``value`` starts on, which means
-    locating it in ``doc``: a value holds no back pointer to its host. A
-    detached value has no enclosing row, so it starts at column zero.
+    The bracket lines up with the row ``value`` starts on. ``host`` is
+    the KV slot whose value subtree contains ``value``, resolved by the
+    caller in O(depth). A detached value has no host and no enclosing
+    row, so it starts at column zero.
     """
-    if doc is None:
+    if host is None:
         return ""
-    found: str | None = None
-    slot: Slot | None = doc._head  # noqa: SLF001
-    while slot is not None and found is None:
-        # A KV slot always starts a row, so its leading ends with one.
-        if isinstance(slot, KVSlot):
-            head = slot.leading.rsplit("\n", 1)[-1]
-            _, found = _scan_rows(slot.value, value, head)
-        slot = slot._next  # noqa: SLF001
-    assert found is not None, "internal: attached value is not in its document"
+    found = _value_row_in_slot(host, value)
+    assert found is not None, "internal: value is not under its host slot"
     return leading_ws(found)
 
 
@@ -725,7 +730,7 @@ def format_inline_root(
     *,
     nl: str,
     options: FormatOptions,
-    doc: Document | None,
+    host: KVSlot | None,
 ) -> None:
     """Canonicalise an inline array/table formatted on its own.
 
@@ -735,7 +740,10 @@ def format_inline_root(
     zero.
     """
     _canon_inline_value(
-        value, nl=nl, options=options, parent_indent=_closing_indent(value, doc=doc)
+        value,
+        nl=nl,
+        options=options,
+        parent_indent=_closing_indent(value, host=host),
     )
 
 

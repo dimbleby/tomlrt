@@ -73,7 +73,7 @@ class Array(_View, list[Any]):
     it can be passed wherever a `list` or `Sequence` is expected.
     """
 
-    __slots__ = ("_layout_root", "_value")
+    __slots__ = ("_array_host", "_layout_root", "_name", "_parent", "_value")
 
     @classmethod
     def _view(cls, value: ArrayValue, layout_root: Document | None) -> Array:
@@ -81,11 +81,15 @@ class Array(_View, list[Any]):
 
         The public constructor goes the other way: it synthesises CST from
         Python items. This is for callers that already have CST and fill
-        the items in themselves.
+        the items in themselves. The caller sets ``_parent`` / ``_name``
+        once it knows where the array is bound.
         """
         arr = cls.__new__(cls)
         arr._value = value  # noqa: SLF001
         arr._layout_root = layout_root  # noqa: SLF001
+        arr._parent = None  # noqa: SLF001
+        arr._name = ""  # noqa: SLF001
+        arr._array_host = None  # noqa: SLF001
         return arr
 
     def __init__(
@@ -105,6 +109,9 @@ class Array(_View, list[Any]):
         val = ArrayValue()
         self._value: ArrayValue = val
         self._layout_root: Document | None = None
+        self._parent: Container | None = None
+        self._name: str = ""
+        self._array_host: Array | None = None
         items_list = list(items)
         if items_list:
             from tomlrt._container import _fill_inline_array  # noqa: PLC0415
@@ -252,8 +259,13 @@ class Array(_View, list[Any]):
         arguments raises ``ValueError``.
         """
         resolved = _resolve_format_options(options=options, comments=comments)
+        from tomlrt._container import _host_kv_slot  # noqa: PLC0415
+
         format_inline_root(
-            self._value, nl=self._doc_newline, options=resolved, doc=self._layout_root
+            self._value,
+            nl=self._doc_newline,
+            options=resolved,
+            host=_host_kv_slot(self),
         )
 
     def set_multiline(self, *, multiline: bool, indent: int = 4) -> Array:
@@ -269,17 +281,25 @@ class Array(_View, list[Any]):
 
         Returns ``self`` for chaining.
         """
+        from tomlrt._container import _host_kv_slot  # noqa: PLC0415
+
         set_comma_value_multiline(
             self._value,
             multiline=multiline,
             nl=self._doc_newline,
             indent=" " * indent,
-            doc=self._layout_root,
+            host=_host_kv_slot(self),
         )
         return self
 
     def _synth_item(self, value: object) -> tuple[Value, object]:
-        """Synthesise one value accepted by an inline array."""
+        """Synthesise one value accepted by an inline array.
+
+        The synthesised element is uplinked to this array (``array_host``)
+        so it can later derive its hosting KV slot: an element has no key
+        of its own, so it derives it from the array object (see
+        `_host_kv_slot`).
+        """
         from tomlrt._container import _synth_value  # noqa: PLC0415
 
         if isinstance(value, AoT):
@@ -289,8 +309,9 @@ class Array(_View, list[Any]):
             value,
             layout_root=self._layout_root,
             parent=None,
-            path=(),
+            name=None,
             owner=None,
+            array_host=self,
         )
 
     def _prepare_values(self, values: list[Any]) -> list[tuple[Value, Any]]:
@@ -507,6 +528,7 @@ class Array(_View, list[Any]):
                     parent=None,
                     name=None,
                     owner=None,
+                    array_host=self,
                 )
                 self._append_with_style(cst, decoded, style)
         return self
