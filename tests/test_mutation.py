@@ -1519,6 +1519,19 @@ def test_array_imul_by_one_is_identity() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+def test_detached_array_imul_clones_inline_table_elements() -> None:
+    # A standalone (unattached) array of inline tables has no binding, so
+    # its `__imul__` clones decode with ``parent=None``. The cloned views
+    # round-trip once attached.
+    arr = Array([{"a": 1}])
+    arr *= 2
+    doc = tomlrt.loads("")
+    doc["k"] = arr
+    out = tomlrt.dumps(doc)
+    assert out == "k = [{ a = 1 }, { a = 1 }]\n"
+    assert _reparses(out) == {"k": [{"a": 1}, {"a": 1}]}
+
+
 def test_array_remove() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3, 2]\n")
     xs = doc.array("xs")

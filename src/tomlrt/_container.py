@@ -105,6 +105,7 @@ class Container(_View, dict[str, Any]):
     """
 
     __slots__ = (
+        "_array_host",
         "_body_tail",
         "_header_ref",
         "_index",
@@ -135,6 +136,7 @@ class Container(_View, dict[str, Any]):
         self._path: tuple[str, ...] = ()
         self._inline: bool = False
         self._parent: Container | None = None
+        self._array_host: Array | None = None
         self._owner_aot_entry: AoTEntry | None = None
         self._index: dict[str, list[SlotRef]] = {}
         self._refs: list[SlotRef] = []
@@ -317,7 +319,10 @@ class Container(_View, dict[str, Any]):
         if kind is _Kind.INLINE_ROOT:
             assert self._value is not None
             format_inline_root(
-                self._value, nl=nl, options=resolved, doc=self._layout_root
+                self._value,
+                nl=nl,
+                options=resolved,
+                host=_host_kv_slot(self),
             )
             return
 
@@ -528,7 +533,7 @@ class Container(_View, dict[str, Any]):
             value,
             layout_root=self._layout_root,
             parent=self,
-            path=(*self._path, key),
+            name=key,
             owner=self._owner_aot_entry,
         )
 
@@ -1983,13 +1988,59 @@ def _validate_section_values(mapping: Mapping[str, object]) -> None:
         _validate_input(value, inline_only=False, key=key)
 
 
+def _link_array_element(elem: Array | Container, host: Array | None) -> None:
+    """Stamp ``elem``'s uplink to its containing array, or clear it.
+
+    ``host`` is the array ``elem`` is an element of, or ``None`` when
+    ``elem`` is key-hosted. Called from the single tail of the
+    ``_synth_value`` / ``_decode_value`` funnels that every value view
+    flows through, so the uplink is filed in one place: an element gets its
+    array, and a (re-)key-hosted view is *cleared* of any stale uplink it
+    carried as a former element. The element then *derives* its host KV
+    slot from the array object at layout time (see `_host_kv_slot`), so a
+    later re-bind of the array is picked up for free -- nothing cascades.
+    """
+    elem._array_host = host  # noqa: SLF001
+
+
+def _host_kv_slot(view: Array | Container) -> KVSlot | None:
+    """The KV slot whose value subtree contains ``view``, or ``None``.
+
+    Climbs to the outermost value view held directly by a
+    section/document container -- stepping out of each inline table via
+    ``_parent`` and out of each array element via ``_array_host`` (the
+    element's containing array object) -- and reads that container's
+    index in O(depth). Deriving the host through the array object means a
+    re-bind of the array needs no cascade to its elements. ``None`` only
+    when ``view`` is detached.
+    """
+    if view._layout_root is None:  # noqa: SLF001
+        return None
+    cur: Array | Container = view
+    while True:
+        host_arr = cur._array_host  # noqa: SLF001
+        if host_arr is not None:
+            cur = host_arr
+            continue
+        parent = cur._parent  # noqa: SLF001
+        assert parent is not None, "internal: attached value has no container parent"
+        if not parent._inline:  # noqa: SLF001
+            break
+        cur = parent
+    leaf = cur._name if isinstance(cur, Array) else cur._path[-1]  # noqa: SLF001
+    kv = _direct_kv_slot(parent, leaf)
+    assert kv is not None, "internal: host key is absent from its container index"
+    return kv
+
+
 def _synth_value(
     v: object,
     *,
     layout_root: Document | None,
     parent: Container | None,
-    path: tuple[str, ...],
+    name: str | None,
     owner: AoTEntry | None,
+    array_host: Array | None = None,
 ) -> tuple[Value, object]:
     """Synthesise a (CST value, decoded view) pair from ``v``.
 
@@ -1998,6 +2049,12 @@ def _synth_value(
     Section ``Container`` / ``AoT`` raise ``TOMLError`` — those can't
     live as inline values. Anything else raises the canonical
     ``TypeError``.
+
+    ``parent``/``name`` are the container and key ``v`` is bound under,
+    driving a key-hosted view's parent and name. ``array_host`` is the
+    array ``v`` is an element of, if any; the resulting view is uplinked
+    to it (or, when key-hosted, cleared of any stale uplink) at the single
+    funnel tail via `_link_array_element`, so no site has to remember.
     """
     if is_scalar(v):
         return coerce_scalar(v), v
@@ -2010,59 +2067,61 @@ def _synth_value(
     # Live-attach unattached inline values so user identity is preserved.
     # For an inline Table, `_populate_inline_table` fully re-wires state
     # (including a fresh `_value`), so no separate reset is needed.
+    cst: Value
+    view: Array | Container
     if (_is_inline_table(v) or isinstance(v, Array)) and not v._attached:  # noqa: SLF001
         if isinstance(v, Array):
             _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
             _attach_inline_view(v, layout_root, owner)
-            return v._value, v  # noqa: SLF001
-        return _populate_inline_table(
-            v,
-            list(v.items()),
-            layout_root=layout_root,
-            parent=parent,
-            path=path,
-            owner=owner,
-        )
-    # Cross-document / same-doc live inline values clone CST so source
-    # formatting survives. Plain Mapping / list inputs have no CST.
-    if _is_inline_table(v) or isinstance(v, Array):
-        src_val = v._value  # noqa: SLF001
-        if src_val is not None:
-            from tomlrt._build import _decode_value  # noqa: PLC0415
-
-            cloned = copy.deepcopy(src_val)
-            _retarget_to_doc(cloned, layout_root)
-            new = _decode_value(
-                cloned,
+            v._parent = parent  # noqa: SLF001
+            v._name = name or ""  # noqa: SLF001
+            cst, view = v._value, v  # noqa: SLF001
+        else:
+            cst, view = _populate_inline_table(
+                v,
+                list(v.items()),
                 layout_root=layout_root,
                 parent=parent,
-                name=path[-1] if path else None,
+                name=name,
                 owner=owner,
             )
-            return cloned, new
-        # A dotted-key navigator view (`_Kind.INLINE_DOTTED_INNER`) owns
-        # no CST of its own — it's a live projection over an ancestor's
-        # inline value. Arrays always own `_value`, so only a Table
-        # falls through here, which the generic Mapping branch below
-        # handles by synthesising fresh from its logical items.
-    # Plain ``Mapping`` → inline table (synthesise from items).
-    if isinstance(v, Mapping):
-        return _populate_inline_table(
+    # Cross-document / same-doc live inline values clone CST so source
+    # formatting survives; plain Mapping / list inputs have none.
+    elif (_is_inline_table(v) or isinstance(v, Array)) and v._value is not None:  # noqa: SLF001
+        from tomlrt._build import _decode_value  # noqa: PLC0415
+
+        cloned = copy.deepcopy(v._value)  # noqa: SLF001
+        _retarget_to_doc(cloned, layout_root)
+        cst = cloned
+        decoded = _decode_value(
+            cloned, layout_root=layout_root, parent=parent, name=name, owner=owner
+        )
+        assert isinstance(decoded, (Array, Container)), "inline CST decodes to a view"
+        view = decoded
+    # A dotted-key navigator Table (`_Kind.INLINE_DOTTED_INNER`) owns no
+    # CST of its own; the Mapping branch synthesises it fresh from items.
+    # Arrays always own `_value`, so only such a Table reaches here.
+    elif isinstance(v, Mapping):
+        cst, view = _populate_inline_table(
             Table(),
             list(v.items()),
             layout_root=layout_root,
             parent=parent,
-            path=path,
+            name=name,
             owner=owner,
         )
-    # Plain ``list`` → inline array (synthesise from items).
-    if isinstance(v, list):
+    elif isinstance(v, list):
         val = ArrayValue()
         arr = Array._view(val, layout_root)  # noqa: SLF001
+        arr._parent = parent  # noqa: SLF001
+        arr._name = name or ""  # noqa: SLF001
         _fill_inline_array(arr, v, layout_root=layout_root, owner=owner)
-        return val, arr
-    msg = f"cannot convert {type(v).__name__} to a TOML value"
-    raise TypeError(msg)
+        cst, view = val, arr
+    else:
+        msg = f"cannot convert {type(v).__name__} to a TOML value"
+        raise TypeError(msg)
+    _link_array_element(view, array_host)
+    return cst, view
 
 
 def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
@@ -2110,7 +2169,7 @@ def _populate_inline_table(
     *,
     layout_root: Document | None,
     parent: Container | None,
-    path: tuple[str, ...],
+    name: str | None,
     owner: AoTEntry | None,
 ) -> tuple[InlineTableValue, Container]:
     """Wire ``table`` as an inline view and populate its entries.
@@ -2119,6 +2178,11 @@ def _populate_inline_table(
     identity is preserved; the plain-Mapping synth path passes a fresh
     ``Table()``. Entries use canonical single-line spacing.
     """
+    if parent is None:
+        path: tuple[str, ...] = ()
+    else:
+        assert name is not None, "name is required whenever parent is given"
+        path = (*parent._path, name)  # noqa: SLF001
     val = InlineTableValue()
     table._wire(  # noqa: SLF001
         layout_root=layout_root, parent=parent, path=path, owner=owner
@@ -2133,7 +2197,7 @@ def _populate_inline_table(
             sub,
             layout_root=layout_root,
             parent=table,
-            path=(*path, k),
+            name=k,
             owner=owner,
         )
         entry = InlineTableEntry(
@@ -2175,8 +2239,9 @@ def _fill_inline_array(
             sub,
             layout_root=layout_root,
             parent=None,
-            path=(),
+            name=None,
             owner=owner,
+            array_host=arr,
         )
         # Under the canonical model, inter-item separators live in the
         # NEXT item's leading; items[0].leading is always empty;

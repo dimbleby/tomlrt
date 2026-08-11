@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Scoped layout calls (`format()` / `set_multiline()`) on a single inline
+  array or table are now much faster on large documents: placing the closing
+  bracket no longer scans the whole document.
 - A key added to a table now takes its indent and blank-line spacing
   from the table's last entry even when that entry is a dotted key.
 

@@ -5,14 +5,19 @@ from __future__ import annotations
 import warnings
 from dataclasses import FrozenInstanceError
 from inspect import Parameter, signature
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import tomli
 
 import tomlrt
 from _helpers import reparses, td
-from tomlrt import TOMLError
+from tomlrt import TOMLError, _format
+from tomlrt._container import _host_kv_slot
+from tomlrt._slots import KVSlot
+
+if TYPE_CHECKING:
+    from tomlrt._values import ArrayValue, InlineTableValue
 
 
 def _roundtrip(src: str, *, comments: bool = True) -> str:
@@ -1586,3 +1591,438 @@ def test_format_implicit_section_detached_raises() -> None:
     del doc["a"]
     with pytest.raises(TOMLError, match="attached"):
         implicit.format()
+
+
+# ---------------------------------------------------------------------------
+# Host-slot resolution: a scoped layout call finds where its value starts
+# by walking up to the hosting KV slot in O(depth), not by scanning the
+# whole document.
+# ---------------------------------------------------------------------------
+
+
+def test_host_kv_slot_resolves_a_top_level_array() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [1]
+        b = [2, 3]
+    """)
+    )
+    slot = _host_kv_slot(doc.array("b"))
+    assert isinstance(slot, KVSlot)
+    assert slot.key == ("b",)
+
+
+def test_host_kv_slot_resolves_a_nested_inline_table() -> None:
+    doc = tomlrt.loads("a = { b = [1, 2], c = { d = 3 } }\n")
+    # The nested inline table `c` and the array `b` both hang off the
+    # single KV slot `a`, reached by climbing their parent chains.
+    for view in (doc.table("a").table("c"), doc.table("a").array("b")):
+        slot = _host_kv_slot(view)
+        assert isinstance(slot, KVSlot)
+        assert slot.key == ("a",)
+
+
+def test_host_kv_slot_resolves_a_dotted_key_array() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [s]
+          a = [1, 2]
+    """)
+    )
+    slot = _host_kv_slot(doc.table("s").array("a"))
+    assert isinstance(slot, KVSlot)
+    assert slot.key == ("a",)
+    assert slot.host_path == ("s",)
+
+
+def test_host_kv_slot_none_when_detached() -> None:
+    assert _host_kv_slot(tomlrt.Array([1, 2])) is None
+
+
+def test_host_kv_slot_resolves_an_inline_array_element() -> None:
+    # An array element and any value nested inside it climb out to the
+    # array's own hosting KV slot: an element is uplinked to its array
+    # (`_array_host`), so the climb hops to the array and resolves there.
+    doc = tomlrt.loads("outer = [ { nested = [1, 2] } ]\n")
+    element = doc.array("outer").table(0)
+    nested = element.array("nested")
+    for view in (element, nested):
+        slot = _host_kv_slot(view)
+        assert isinstance(slot, KVSlot)
+        assert slot.key == ("outer",)
+
+
+def test_scoped_set_multiline_visits_only_the_host_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    n = 400
+    doc = tomlrt.loads("".join(f"k{i} = [{i}]\n" for i in range(n)))
+
+    visited: list[KVSlot] = []
+    original = _format._value_row_in_slot  # noqa: SLF001
+
+    def spy(slot: KVSlot, value: ArrayValue | InlineTableValue) -> str | None:
+        visited.append(slot)
+        return original(slot, value)
+
+    monkeypatch.setattr(_format, "_value_row_in_slot", spy)
+
+    # Laying out the *last* array must not touch the other 399 KV slots.
+    doc.array(f"k{n - 1}").set_multiline(multiline=True, indent=2)
+    assert len(visited) == 1
+
+
+def test_scoped_set_multiline_of_array_element_visits_only_the_host_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A value reachable only through an inline array element must resolve
+    # its host in O(depth) too -- no document scan may return.
+    n = 400
+    doc = tomlrt.loads("".join(f"k{i} = [ {{ x = [1, 2] }} ]\n" for i in range(n)))
+
+    visited: list[KVSlot] = []
+    original = _format._value_row_in_slot  # noqa: SLF001
+
+    def spy(slot: KVSlot, value: ArrayValue | InlineTableValue) -> str | None:
+        visited.append(slot)
+        return original(slot, value)
+
+    monkeypatch.setattr(_format, "_value_row_in_slot", spy)
+
+    doc.array(f"k{n - 1}").table(0).array("x").set_multiline(multiline=True, indent=2)
+    assert len(visited) == 1
+
+
+def test_scoped_set_multiline_host_lookup_is_byte_exact() -> None:
+    src = td("""
+        one = [1]
+        two = [2]
+        three = [3, 4]
+    """)
+    doc = tomlrt.loads(src)
+    doc.array("three").set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        one = [1]
+        two = [2]
+        three = [
+          3,
+          4,
+        ]
+    """)
+    assert reparses(out) == {"one": [1], "two": [2], "three": [3, 4]}
+
+
+def test_inline_array_element_layout_is_byte_exact_under_a_section() -> None:
+    # A value nested inside an inline array element resolves its host KV
+    # slot by climbing to the array via its `_array_host` uplink, and
+    # lays out at the indent of the row it starts on -- the `[s]` header
+    # is never scanned.
+    src = td("""
+        [s]
+        outer = [
+          { nested = [1, 2] },
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    doc.table("s").array("outer").table(0).array("nested").set_multiline(
+        multiline=True, indent=4
+    )
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        outer = [
+          { nested = [
+            1,
+            2,
+          ] },
+        ]
+    """)
+    assert reparses(out) == {"s": {"outer": [{"nested": [1, 2]}]}}
+
+
+# An ``Array.__imul__`` clone-append is an element-birth site too: the
+# cloned element view must be uplinked to its array (`_array_host`) or a
+# scoped layout call on it walks off the top of the chain. These pin both
+# flavours.
+
+
+def test_imul_cloned_nested_array_element_set_multiline() -> None:
+    doc = tomlrt.loads("k = [[1, 2]]\n")
+    arr = doc.array("k")
+    arr *= 2
+    arr.array(1).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        k = [[1, 2], [
+          1,
+          2,
+        ]]
+    """)
+    assert reparses(out) == {"k": [[1, 2], [1, 2]]}
+
+
+def test_imul_cloned_nested_array_element_format() -> None:
+    doc = tomlrt.loads("k = [[1, 2]]\n")
+    arr = doc.array("k")
+    arr *= 2
+    arr.array(1).format()
+    out = tomlrt.dumps(doc)
+    assert out == "k = [[1, 2], [1, 2]]\n"
+    assert reparses(out) == {"k": [[1, 2], [1, 2]]}
+
+
+def test_imul_cloned_inline_table_element_set_multiline() -> None:
+    doc = tomlrt.loads("k = [{ x = 1 }]\n")
+    arr = doc.array("k")
+    arr *= 2
+    arr.table(1).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        k = [{ x = 1 }, {
+          x = 1,
+        }]
+    """)
+    assert reparses(out) == {"k": [{"x": 1}, {"x": 1}]}
+
+
+def test_imul_cloned_inline_table_element_format() -> None:
+    doc = tomlrt.loads("k = [{ x = 1 }]\n")
+    arr = doc.array("k")
+    arr *= 2
+    arr.table(1).format()
+    out = tomlrt.dumps(doc)
+    assert out == "k = [{ x = 1 }, { x = 1 }]\n"
+    assert reparses(out) == {"k": [{"x": 1}, {"x": 1}]}
+
+
+# Appending / inserting a Python value synthesises its element view through
+# `Array._synth_item`; assigning a plain nested list synthesises it through
+# `_fill_inline_array`. Both must uplink the element to its array
+# (`_array_host`) or a scoped layout call on it walks off the top of the
+# chain. These pin both clauses.
+
+
+def test_appended_nested_array_element_set_multiline() -> None:
+    doc = tomlrt.loads("a = [[1]]\n")
+    arr = doc.array("a")
+    arr.append([2, 3])
+    arr.array(1).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [[1], [
+          2,
+          3,
+        ]]
+    """)
+    assert reparses(out) == {"a": [[1], [2, 3]]}
+
+
+def test_appended_nested_array_element_format() -> None:
+    doc = tomlrt.loads("a = [[1]]\n")
+    arr = doc.array("a")
+    arr.append([2, 3])
+    arr.array(1).format()
+    out = tomlrt.dumps(doc)
+    assert out == "a = [[1], [2, 3]]\n"
+    assert reparses(out) == {"a": [[1], [2, 3]]}
+
+
+def test_appended_inline_table_element_set_multiline() -> None:
+    doc = tomlrt.loads("a = [{ x = 1 }]\n")
+    arr = doc.array("a")
+    arr.append({"y": 2})
+    arr.table(1).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [{ x = 1 }, {
+          y = 2,
+        }]
+    """)
+    assert reparses(out) == {"a": [{"x": 1}, {"y": 2}]}
+
+
+def test_appended_inline_table_element_format() -> None:
+    doc = tomlrt.loads("a = [{ x = 1 }]\n")
+    arr = doc.array("a")
+    arr.append({"y": 2})
+    arr.table(1).format()
+    out = tomlrt.dumps(doc)
+    assert out == "a = [{ x = 1 }, { y = 2 }]\n"
+    assert reparses(out) == {"a": [{"x": 1}, {"y": 2}]}
+
+
+def test_inserted_nested_array_element_set_multiline() -> None:
+    doc = tomlrt.loads("a = [[1]]\n")
+    arr = doc.array("a")
+    arr.insert(0, [2, 3])
+    arr.array(0).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [[
+          2,
+          3,
+        ], [1]]
+    """)
+    assert reparses(out) == {"a": [[2, 3], [1]]}
+
+
+def test_assigned_plain_nested_array_element_set_multiline() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    doc["k"] = [[1, 2]]
+    doc.array("k").array(0).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 1
+        k = [[
+          1,
+          2,
+        ]]
+    """)
+    assert reparses(out) == {"x": 1, "k": [[1, 2]]}
+
+
+def test_assigned_plain_nested_array_element_format() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    doc["k"] = [[1, 2]]
+    doc.array("k").array(0).format()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 1
+        k = [[1, 2]]
+    """)
+    assert reparses(out) == {"x": 1, "k": [[1, 2]]}
+
+
+def test_assigned_plain_inline_table_element_set_multiline() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    doc["k"] = [{"y": 2}]
+    doc.array("k").table(0).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 1
+        k = [{
+          y = 2,
+        }]
+    """)
+    assert reparses(out) == {"x": 1, "k": [{"y": 2}]}
+
+
+def test_assigned_plain_inline_table_element_format() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    doc["k"] = [{"y": 2}]
+    doc.array("k").table(0).format()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 1
+        k = [{ y = 2 }]
+    """)
+    assert reparses(out) == {"x": 1, "k": [{"y": 2}]}
+
+
+# Assigning an already-built, still-detached `Array` view live-attaches it
+# to the document. Its element views were synthesised before the array knew
+# its binding; because an element derives its host from the array *object*
+# (`_array_host`), the attach is seen for free -- no per-element re-binding
+# has to be cascaded. These pin that: without the uplink filed at synth
+# time, a scoped layout call on the element walks off the top of the chain.
+
+
+def test_live_attached_detached_array_of_inline_tables_set_multiline() -> None:
+    doc = tomlrt.loads("")
+    doc["b"] = tomlrt.Array([{"x": 1}])
+    doc.array("b").table(0).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        b = [{
+          x = 1,
+        }]
+    """)
+    assert reparses(out) == {"b": [{"x": 1}]}
+
+
+def test_live_attached_detached_array_of_inline_tables_format() -> None:
+    doc = tomlrt.loads("")
+    doc["b"] = tomlrt.Array([{"x": 1}])
+    doc.array("b").table(0).format()
+    out = tomlrt.dumps(doc)
+    assert out == "b = [{ x = 1 }]\n"
+    assert reparses(out) == {"b": [{"x": 1}]}
+
+
+def test_live_attached_detached_array_of_arrays_set_multiline() -> None:
+    doc = tomlrt.loads("")
+    doc["b"] = tomlrt.Array([[1, 2]])
+    doc.array("b").array(0).set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        b = [[
+          1,
+          2,
+        ]]
+    """)
+    assert reparses(out) == {"b": [[1, 2]]}
+
+
+def test_live_attached_detached_array_of_arrays_format() -> None:
+    doc = tomlrt.loads("")
+    doc["b"] = tomlrt.Array([[1, 2]])
+    doc.array("b").array(0).format()
+    out = tomlrt.dumps(doc)
+    assert out == "b = [[1, 2]]\n"
+    assert reparses(out) == {"b": [[1, 2]]}
+
+
+# Pulling one element OUT of a detached array and live-attaching it under a
+# key is the reverse move: the element view still carries the `_array_host`
+# uplink it was born with, and key-hosting must CLEAR it or the derived host
+# climb hops to the now-irrelevant detached array and walks off the top. The
+# single `_link_array_element` funnel tail stamps the uplink UNCONDITIONALLY,
+# so a value synthesised with no array host (`array_host=None`) is cleared
+# here in one place, for both a Container element (inline table) and a bare
+# Array element. Weakening the stamp back to file-only fails these.
+
+
+def test_detached_inline_table_element_rehosted_under_key_set_multiline() -> None:
+    doc = tomlrt.loads("")
+    doc["b"] = tomlrt.Array([{"x": 1}])[0]
+    doc.table("b").set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        b = {
+          x = 1,
+        }
+    """)
+    assert reparses(out) == {"b": {"x": 1}}
+
+
+def test_detached_inline_table_element_rehosted_under_key_format() -> None:
+    doc = tomlrt.loads("")
+    doc["b"] = tomlrt.Array([{"x": 1}])[0]
+    doc.table("b").format()
+    out = tomlrt.dumps(doc)
+    assert out == "b = { x = 1 }\n"
+    assert reparses(out) == {"b": {"x": 1}}
+
+
+def test_detached_array_element_rehosted_under_key_set_multiline() -> None:
+    doc = tomlrt.loads("")
+    doc["b"] = tomlrt.Array([[1, 2]])[0]
+    doc.array("b").set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        b = [
+          1,
+          2,
+        ]
+    """)
+    assert reparses(out) == {"b": [1, 2]}
+
+
+def test_detached_array_element_rehosted_under_key_format() -> None:
+    doc = tomlrt.loads("")
+    doc["b"] = tomlrt.Array([[1, 2]])[0]
+    doc.array("b").format()
+    out = tomlrt.dumps(doc)
+    assert out == "b = [1, 2]\n"
+    assert reparses(out) == {"b": [1, 2]}

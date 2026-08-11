@@ -2121,7 +2121,7 @@ def add_aot_entry(
             v,
             layout_root=doc,
             parent=entry_table,
-            path=(*path, k),
+            name=k,
             owner=entry,
         )
         append_direct_kv(entry_table, k, cst)
@@ -3076,12 +3076,17 @@ def _rebase_path(
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
 ) -> tuple[str, ...]:
-    """Replace a leading ``src_prefix`` in ``p`` with ``target_prefix``."""
-    if src_prefix == target_prefix:
+    """Replace a leading ``src_prefix`` in ``p`` with ``target_prefix``.
+
+    A slot host/header path or a key-hosted view ``_path`` at or below
+    the root starts with ``src_prefix`` and is rebased. An array
+    element's inline-table view carries an empty ``_path`` (it has no key
+    of its own) and derives its host from its array, so it does not match
+    and is returned unchanged.
+    """
+    if src_prefix == target_prefix or p[: len(src_prefix)] != src_prefix:
         return p
-    if p[: len(src_prefix)] == src_prefix:
-        return target_prefix + p[len(src_prefix) :]
-    return p
+    return target_prefix + p[len(src_prefix) :]
 
 
 def _populate_entry_views(
@@ -3190,7 +3195,7 @@ def attach_section_at(
             v,
             layout_root=doc,
             parent=section,
-            path=(*full_path, k),
+            name=k,
             owner=owner,
         )
         append_direct_kv(section, k, cst)
