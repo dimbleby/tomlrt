@@ -224,10 +224,10 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
         name,
         _decode_value(
             slot.value,
-            layout_root=target._layout_root,  # noqa: SLF001
-            parent=target,
-            name=name,
-            owner=target._owner_aot_entry,  # noqa: SLF001
+            target._layout_root,  # noqa: SLF001
+            target,
+            name,
+            target._owner_aot_entry,  # noqa: SLF001
         ),
     )
 
@@ -239,7 +239,6 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
 
 def _decode_value(
     value: Value,
-    *,
     layout_root: Document | None,
     parent: Container | None,
     name: str | None,
@@ -252,57 +251,57 @@ def _decode_value(
     under -- give a key-hosted ``Array`` / ``Table`` view a real binding
     and name for its own navigation and host lookup. ``array_host`` is
     the array ``value`` is an element of, if any; the decoded view's
-    binding is filed here in one place (see `_link_array_element`) so a
-    decode site cannot forget, and it derives its host from the array
-    object. Pass ``parent=None`` (with ``name=None``) for a value with no
-    key binding -- either an array element or a wholly detached value.
+    binding is filed here in one place so a decode site cannot forget,
+    and it derives its host from the array object. Pass ``parent=None``
+    (with ``name=None``) for a value with no key binding -- either an
+    array element or a wholly detached value.
+
+    An `Array` takes its binding at construction rather than by a stamp
+    afterwards: this runs once per element of every array in the
+    document, so the funnel hands `Array._view` the two fields it would
+    otherwise write twice. The decode helpers take their arguments
+    positionally for the same reason -- a keyword argument costs more
+    per call than a positional one, and this is the hottest path in the
+    build.
     """
-    if not isinstance(value, (ArrayValue, InlineTableValue)):
-        return value.value
     if isinstance(value, ArrayValue):
-        decoded: Array | Table = _decode_array(
-            value, layout_root=layout_root, name=name, owner=owner
+        return _decode_array(
+            value,
+            layout_root,
+            name,
+            owner,
+            array_host if array_host is not None else parent,
         )
-    else:
+    if isinstance(value, InlineTableValue):
         if parent is None:
             path: tuple[str, ...] = ()
         else:
             assert name is not None, "name is required whenever parent is given"
             path = (*parent._path, name)  # noqa: SLF001
-        decoded = _decode_inline_table(
-            value, layout_root=layout_root, parent=parent, path=path, owner=owner
-        )
-    _link_array_element(decoded, parent, array_host)
-    return decoded
+        table = _decode_inline_table(value, layout_root, parent, path, owner)
+        _link_array_element(table, parent, array_host)
+        return table
+    return value.value
 
 
 def _decode_array(
     value: ArrayValue,
-    *,
     layout_root: Document | None,
     name: str | None,
     owner: AoTEntry | None,
+    host: Array | Container | None,
 ) -> Array:
-    arr = Array._view(value, layout_root)  # noqa: SLF001
-    arr._name = name or ""  # noqa: SLF001
+    arr = Array._view(value, layout_root, name, host)  # noqa: SLF001
     for item in value.items:
         list.append(
             arr,
-            _decode_value(
-                item.value,
-                layout_root=layout_root,
-                parent=None,
-                name=None,
-                owner=owner,
-                array_host=arr,
-            ),
+            _decode_value(item.value, layout_root, None, None, owner, arr),
         )
     return arr
 
 
 def _decode_inline_table(
     value: InlineTableValue,
-    *,
     layout_root: Document | None,
     parent: Container | None,
     path: tuple[str, ...],
@@ -326,9 +325,7 @@ def _decode_inline_table(
         dict.__setitem__(
             cur,
             leaf,
-            _decode_value(
-                entry.value, layout_root=layout_root, parent=cur, name=leaf, owner=owner
-            ),
+            _decode_value(entry.value, layout_root, cur, leaf, owner),
         )
     return table
 

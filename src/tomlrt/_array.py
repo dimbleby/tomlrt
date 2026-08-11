@@ -76,19 +76,28 @@ class Array(_View, list[Any]):
     __slots__ = ("_host", "_layout_root", "_name", "_value")
 
     @classmethod
-    def _view(cls, value: ArrayValue, layout_root: Document | None) -> Array:
+    def _view(
+        cls,
+        value: ArrayValue,
+        layout_root: Document | None,
+        name: str | None = None,
+        host: Array | Container | None = None,
+    ) -> Array:
         """View over existing CST, holding no items yet.
 
         The public constructor goes the other way: it synthesises CST from
         Python items. This is for callers that already have CST and fill
-        the items in themselves. The caller sets ``_name`` and the decode
-        funnel stamps ``_host`` once it knows where the array is bound.
+        the items in themselves. ``name`` is the key the array is bound
+        under and ``host`` is where it is bound -- its containing array
+        when it is an element, else its hosting container. A caller that
+        does not yet know where the array lands leaves ``host`` unset for
+        the value funnel to stamp later (see `_link_array_element`).
         """
         arr = cls.__new__(cls)
         arr._value = value  # noqa: SLF001
         arr._layout_root = layout_root  # noqa: SLF001
-        arr._host = None  # noqa: SLF001
-        arr._name = ""  # noqa: SLF001
+        arr._host = host  # noqa: SLF001
+        arr._name = name or ""  # noqa: SLF001
         return arr
 
     def __init__(
@@ -520,14 +529,7 @@ class Array(_View, list[Any]):
         for _ in range(n - 1):
             for src in src_items:
                 cst = deepcopy(src.value)
-                decoded = _decode_value(
-                    cst,
-                    layout_root=self._layout_root,
-                    parent=None,
-                    name=None,
-                    owner=None,
-                    array_host=self,
-                )
+                decoded = _decode_value(cst, self._layout_root, None, None, None, self)
                 self._append_with_style(cst, decoded, style)
         return self
 
