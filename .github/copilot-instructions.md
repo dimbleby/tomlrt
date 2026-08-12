@@ -254,7 +254,7 @@ them. Read roughly in this order:
 
 - **`_container.py`** — `Container` (the abstract base, a `dict`
   subclass), `Document`, and `Table`. Holds `_refs`, `_index`,
-  `_path`, `_parent`, `_layout_root`, `_owner_aot_entry`,
+  `_path`, `_host`, `_layout_root`, `_owner_aot_entry`,
   `_body_tail`, `_value`, `_header_ref`, `_inline`. Exposes
   `_wire(layout_root=, parent=, path=, owner=)` — every container
   construction site goes through it for the four common attachment
@@ -314,6 +314,14 @@ wrong.
 
 ### Invariants worth knowing
 
+- **Every live view names its host with one field, `_host`.** For a
+  `Container` or an `Array` it is whichever view holds this one: the
+  containing `Array` when the view is an array element, else the
+  `Container` it is keyed in; an `AoT` is never an inline value, so its
+  host is always a `Container`. `Container._parent` is a read-only
+  narrowing of it — never assign it, assign `_host`. `_file_host` is the
+  single stamp of the array-vs-parent choice, at the tail of the
+  `_decode_value` / `_synth_value` funnels.
 - **Comma-value boundaries** may span predecessor `trailing`,
   predecessor `post_comma_trivia`, and successor `leading`. EOL
   payload belongs to the left item; comment-containing above blocks

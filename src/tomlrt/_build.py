@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
 from tomlrt._comments import _split_preamble
-from tomlrt._container import Container, Document, Table, _link_array_element
+from tomlrt._container import Container, Document, Table, _file_host
 from tomlrt._layout_ops import (
     file_own_header,
     maybe_advance_body_tail,
@@ -128,7 +128,7 @@ def _open_aot_entry(
         aot = AoT()
         aot._layout_root = root._layout_root  # noqa: SLF001
         aot._path = path  # noqa: SLF001
-        aot._parent = parent  # noqa: SLF001
+        aot._host = parent  # noqa: SLF001
         dict.__setitem__(parent, name, aot)
     assert isinstance(aot, AoT), (
         f"AoT header [[{'.'.join(path)}]] collides with non-AoT at "
@@ -279,7 +279,7 @@ def _decode_value(
             assert name is not None, "name is required whenever parent is given"
             path = (*parent._path, name)  # noqa: SLF001
         table = _decode_inline_table(value, layout_root, parent, path, owner)
-        _link_array_element(table, parent, array_host)
+        _file_host(table, parent, array_host)
         return table
     return value.value
 

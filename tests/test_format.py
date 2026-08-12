@@ -1977,12 +1977,10 @@ def test_live_attached_detached_array_of_arrays_format() -> None:
 # key is the reverse move: the element view still carries the uplink to the
 # array it was born in, and key-hosting must REPLACE it with the parent or
 # the derived host climb hops to the now-irrelevant detached array and walks
-# off the top. The single `_link_array_element` funnel tail files the binding
-# for a view synthesised with no array host (`array_host=None`): an Array's
-# one `_host` field is set to the parent (displacing the stale array), a
-# Container's separate `_array_host` uplink is cleared. Weakening either --
-# dropping the Array `else parent`, or making the Container clear file-only --
-# fails these.
+# off the top. The single `_file_host` funnel tail files the binding for a
+# view synthesised with no array host (`array_host=None`) by writing the
+# parent into the view's one `_host` field, displacing the stale array.
+# Weakening it -- dropping the `else parent` -- fails these.
 
 
 def test_detached_inline_table_element_rehosted_under_key_set_multiline() -> None:
