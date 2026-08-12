@@ -279,7 +279,7 @@ def _anchor_accepts_install(
     )
 
 
-def _ancestor_chain(c: Container | AoT) -> list[Container]:
+def _ancestor_chain(c: Container) -> list[Container]:
     """Ancestors from ``c._parent`` up to (and including) the document root."""
     out: list[Container] = []
     cur = c._parent  # noqa: SLF001
@@ -1021,13 +1021,13 @@ def _root_orphan_subtree(
         dict.__setitem__(chain[-1], part, step)
         chain.append(step)
     parent = chain[-1]
-    val._parent = parent  # noqa: SLF001
+    val._host = parent  # noqa: SLF001
     dict.__setitem__(parent, path[-1], val)
     if isinstance(val, AoTType):
-        # An entry's parent is the container holding the AoT, not the
-        # AoT itself, so entries need the same re-parenting.
+        # An entry's host is the container holding the AoT, not the
+        # AoT itself, so entries need the same re-hosting.
         for entry in val:
-            entry._parent = parent  # noqa: SLF001
+            entry._host = parent  # noqa: SLF001
 
     depth_of = {c._path: i for i, c in enumerate(chain)}  # noqa: SLF001
 
@@ -1953,7 +1953,7 @@ def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
     # Rehome the orphan AoT into this parent's logical scope.
     source_aot._layout_root = parent._layout_root  # noqa: SLF001
     source_aot._path = (*parent._path, key)  # noqa: SLF001
-    source_aot._parent = parent  # noqa: SLF001
+    source_aot._host = parent  # noqa: SLF001
     _materialise_empty_aot(source_aot)
     return source_aot
 
@@ -1967,7 +1967,7 @@ def _materialise_empty_aot(aot: AoT) -> None:
     storage at ``parent[key]`` is left as the AoT — only the physical
     slot is created.
     """
-    parent = aot._parent  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
     assert parent is not None
     assert len(aot) == 0
     key = aot._path[-1]  # noqa: SLF001
@@ -1985,7 +1985,7 @@ def _empty_aot_placeholder_ref(aot: AoT) -> SlotRef | None:
     """
     if len(aot) != 0:
         return None
-    parent = aot._parent  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
     assert parent is not None
     key = aot._path[-1]  # noqa: SLF001
     bucket = parent._index.get(key)  # noqa: SLF001
@@ -2015,7 +2015,7 @@ def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     ref = _empty_aot_placeholder_ref(aot)
     if ref is None:
         return
-    parent = aot._parent  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
     assert parent is not None
     doc = aot._attached_doc  # noqa: SLF001
     slot = ref.slot
@@ -2059,7 +2059,7 @@ def add_aot_entry(
         _synth_value,
     )
 
-    parent = aot._parent  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
     assert parent is not None
@@ -2277,7 +2277,7 @@ def _install_cloned_aot_entry(
     """
     from tomlrt._container import Table  # noqa: PLC0415
 
-    parent = aot._parent  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
     doc = aot._attached_doc  # noqa: SLF001
     assert parent is not None
     assert target_path
@@ -2630,13 +2630,14 @@ def _unfile_stale_same_orphan_ancestors(
     the same repair the delete path makes for the same reason.
     """
     from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
 
     # A private orphan is rooted at the path its slots spell, so every
     # value inside one has a parent within the same document.
-    old_parent = value._parent  # noqa: SLF001
-    assert old_parent is not None
+    old_parent = value._host  # noqa: SLF001
+    assert isinstance(old_parent, Container)
     assert old_parent._layout_root is value._layout_root  # noqa: SLF001
-    # `_parent` is always the immediate path parent, so the key to drop
+    # `_host` is always the immediate path parent, so the key to drop
     # is the last path component.
     assert len(value._path) == len(old_parent._path) + 1  # noqa: SLF001
     key = value._path[-1]  # noqa: SLF001
@@ -2770,7 +2771,7 @@ def _rehome_view_tree(
             ):
                 node._owner_aot_entry = new_owner  # noqa: SLF001
 
-    root._parent = dest_parent  # noqa: SLF001
+    root._host = dest_parent  # noqa: SLF001
     _walk_view_tree((root,), visit)
 
 
@@ -2975,7 +2976,7 @@ def clone_aot(
     new_aot = AoT()
     new_aot._layout_root = layout_root  # noqa: SLF001
     new_aot._path = target_path  # noqa: SLF001
-    new_aot._parent = parent  # noqa: SLF001
+    new_aot._host = parent  # noqa: SLF001
 
     dict.__setitem__(parent, key, new_aot)
     for src_entry_table in list(src_aot):
@@ -3210,7 +3211,7 @@ def _aot_append_anchor(aot: AoT) -> Slot | None:
         last = aot[-1]
         assert last._owner_aot_entry is not None  # noqa: SLF001
         return _parent_subtree_tail(last)
-    parent = aot._parent  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
     assert parent is not None, "attached AoT must have a parent"
     # A document-tail anchor could place the first entry under a later sibling.
     return _nearest_header_host_tail(parent)
@@ -3316,7 +3317,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     idx_list = list(indices)
     assert idx_list
     doc = aot._attached_doc  # noqa: SLF001
-    parent = aot._parent  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
     assert parent is not None
 
     # Collect each entry's whole subtree in doc-stream order and capture

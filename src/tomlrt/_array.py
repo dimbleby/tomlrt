@@ -91,7 +91,7 @@ class Array(_View, list[Any]):
         under and ``host`` is where it is bound -- its containing array
         when it is an element, else its hosting container. A caller that
         does not yet know where the array lands leaves ``host`` unset for
-        the value funnel to stamp later (see `_link_array_element`).
+        the value funnel to stamp later (see `_file_host`).
         """
         arr = cls.__new__(cls)
         arr._value = value  # noqa: SLF001
@@ -573,7 +573,7 @@ class AoT(_View, list["Table"]):
     and it can be passed wherever a `list` or `Sequence` is expected.
     """
 
-    __slots__ = ("_layout_root", "_parent", "_path")
+    __slots__ = ("_host", "_layout_root", "_path")
 
     @override
     def _view_children(self) -> Iterable[object]:
@@ -584,7 +584,7 @@ class AoT(_View, list["Table"]):
         super().__init__()
         self._layout_root: Document | None = None
         self._path: tuple[str, ...] = ()
-        self._parent: Container | None = None
+        self._host: Container | None = None
         for entry in entries:
             e = _validate_mapping(entry, label="AoT entry")
             list.append(self, _make_unattached_entry(e))
@@ -596,7 +596,7 @@ class AoT(_View, list["Table"]):
         holding the view can no longer write through it.
         """
         self._layout_root = None
-        self._parent = None
+        self._host = None
         self._path = ()
 
     @property
