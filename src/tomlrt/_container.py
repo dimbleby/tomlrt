@@ -70,7 +70,7 @@ from tomlrt._values import (
     make_keypart,
     retarget_value_newlines,
 )
-from tomlrt._view import _View
+from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, MutableMapping, Sequence
@@ -133,7 +133,7 @@ class Container(_View, dict[str, Any]):
         super().__init__()
         self._layout_root: Document | None = None
         self._path: tuple[str, ...] = ()
-        self._inline: bool = False
+        self._inline = False
         self._host: Array | Container | None = None
         self._owner_aot_entry: AoTEntry | None = None
         self._index: dict[str, list[SlotRef]] = {}
@@ -286,12 +286,6 @@ class Container(_View, dict[str, Any]):
     def header_leading_block(self) -> None:
         _header_leading_block_set(self, ())
 
-    @property
-    def _doc_newline(self) -> str:
-        r"""The active newline of the owning document, or ``"\n"`` if detached."""
-        lr = self._layout_root
-        return lr._newline if lr is not None else "\n"  # noqa: SLF001
-
     def format(
         self,
         *,
@@ -384,16 +378,6 @@ class Container(_View, dict[str, Any]):
             elif isinstance(value, AoT):
                 for entry in value:
                     entry.format(options=resolved)
-
-    @property
-    def _attached(self) -> bool:
-        """True iff this container is attached to a live document root.
-
-        Attached means the layout root is a user-visible document: not
-        ``None`` (factory mode) and not a private orphan root.
-        """
-        lr = self._layout_root
-        return lr is not None and not lr._is_private  # noqa: SLF001
 
     @property
     def _is_own_aot_entry(self) -> bool:
@@ -2022,7 +2006,7 @@ def _host_kv_slot(view: Array | Container) -> KVSlot | None:
         return None
     cur: Array | Container = view
     up = cur._host  # noqa: SLF001
-    while isinstance(up, Array) or (up is not None and up._inline):  # noqa: SLF001
+    while up is not None and up._inline:  # noqa: SLF001
         cur = up
         up = cur._host  # noqa: SLF001
     assert isinstance(up, Container), "internal: attached value has no host container"
@@ -2068,7 +2052,7 @@ def _synth_value(
     # (including a fresh `_value`), so no separate reset is needed.
     cst: Value
     view: Array | Container
-    if (_is_inline_table(v) or isinstance(v, Array)) and not v._attached:  # noqa: SLF001
+    if is_inline_value(v) and not v._attached:  # noqa: SLF001
         if isinstance(v, Array):
             _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
             _attach_inline_view(v, layout_root, owner)
@@ -2085,7 +2069,7 @@ def _synth_value(
             )
     # Cross-document / same-doc live inline values clone CST so source
     # formatting survives; plain Mapping / list inputs have none.
-    elif (_is_inline_table(v) or isinstance(v, Array)) and v._value is not None:  # noqa: SLF001
+    elif is_inline_value(v) and v._value is not None:  # noqa: SLF001
         from tomlrt._build import _decode_value  # noqa: PLC0415
 
         cloned = copy.deepcopy(v._value)  # noqa: SLF001

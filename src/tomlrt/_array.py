@@ -75,6 +75,8 @@ class Array(_View, list[Any]):
 
     __slots__ = ("_host", "_layout_root", "_name", "_value")
 
+    _inline = True
+
     @classmethod
     def _view(
         cls,
@@ -197,24 +199,6 @@ class Array(_View, list[Any]):
     def _reset_displaced(self) -> None:
         # ``_value`` stays: it's reused if this view is attached elsewhere.
         self._layout_root = None
-
-    @property
-    def _attached(self) -> bool:
-        """True iff wired to a user-visible document.
-
-        Mirrors :attr:`Container._attached`.
-        """
-        lr = self._layout_root
-        return lr is not None and not lr._is_private  # noqa: SLF001
-
-    @property
-    def _doc_newline(self) -> str:
-        r"""Active newline of the owning document, or ``"\n"`` if detached.
-
-        Mirrors :attr:`Container._doc_newline`.
-        """
-        lr = self._layout_root
-        return lr._newline if lr is not None else "\n"  # noqa: SLF001
 
     def _style(self) -> CommaStyle:
         return detect_style(self._value)
@@ -574,6 +558,8 @@ class AoT(_View, list["Table"]):
     """
 
     __slots__ = ("_host", "_layout_root", "_path")
+
+    _inline = False
 
     @override
     def _view_children(self) -> Iterable[object]:

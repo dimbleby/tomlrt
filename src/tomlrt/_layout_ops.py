@@ -51,7 +51,7 @@ from tomlrt._values import (
     InlineTableValue,
     make_keyparts,
 )
-from tomlrt._view import _View
+from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -1231,13 +1231,10 @@ def _displaced_inline_views(val: object) -> list[Container | Array]:
     ``_attached`` state that goes stale when their hosting KV is
     deleted.
     """
-    from tomlrt._array import Array  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
-
     found: list[Container | Array] = []
 
     def visit(node: _View) -> None:
-        if isinstance(node, Array) or (isinstance(node, Container) and node._inline):  # noqa: SLF001
+        if is_inline_value(node):
             found.append(node)
 
     _walk_view_tree((val,), visit)
