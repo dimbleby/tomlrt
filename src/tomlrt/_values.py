@@ -29,48 +29,46 @@ if TYPE_CHECKING:
 
 
 @dataclass(slots=True, eq=False)
-class StringValue:
-    lexeme: str  # including quotes
+class ScalarValue:
+    """Base of the five TOML scalar leaves.
+
+    Every scalar re-emits verbatim from the ``lexeme`` it was parsed
+    from -- quotes, radix prefix, digit separators, and case all
+    included -- so the rendering is shared here; each subclass adds
+    only its own decoded ``value`` field, keeping the
+    ``(lexeme, value)`` positional signature and the precise per-type
+    ``value`` annotation.
+    """
+
+    lexeme: str
+
+    def render(self) -> str:
+        return self.lexeme
+
+
+@dataclass(slots=True, eq=False)
+class StringValue(ScalarValue):
     value: str
 
-    def render(self) -> str:
-        return self.lexeme
-
 
 @dataclass(slots=True, eq=False)
-class IntegerValue:
-    lexeme: str
+class IntegerValue(ScalarValue):
     value: int
 
-    def render(self) -> str:
-        return self.lexeme
-
 
 @dataclass(slots=True, eq=False)
-class FloatValue:
-    lexeme: str
+class FloatValue(ScalarValue):
     value: float
 
-    def render(self) -> str:
-        return self.lexeme
-
 
 @dataclass(slots=True, eq=False)
-class BoolValue:
-    lexeme: str  # "true" or "false"
+class BoolValue(ScalarValue):
     value: bool
 
-    def render(self) -> str:
-        return self.lexeme
-
 
 @dataclass(slots=True, eq=False)
-class DateTimeValue:
-    lexeme: str
+class DateTimeValue(ScalarValue):
     value: datetime | date | time
-
-    def render(self) -> str:
-        return self.lexeme
 
 
 # ---------------------------------------------------------------------------
