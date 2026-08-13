@@ -16,9 +16,6 @@ else:  # pragma: no cover -- backport for Python < 3.12
 
 from tomlrt._comma_comments import (
     CommaCommentAdapter,
-    CommaEolView,
-    CommaLeadingBlockView,
-    CommaLeadingView,
 )
 
 if TYPE_CHECKING:
@@ -62,25 +59,4 @@ class _ArrayAdapter(CommaCommentAdapter[int]):
         return ((i, i) for i in range(len(self._arr._value.items)))  # noqa: SLF001
 
 
-class ArrayEolView(CommaEolView[int]):
-    __slots__ = ()
-
-    def __init__(self, arr: Array) -> None:
-        super().__init__(_ArrayAdapter(arr))
-
-
-class ArrayLeadingView(CommaLeadingView[int]):
-    __slots__ = ()
-
-    def __init__(self, arr: Array) -> None:
-        super().__init__(_ArrayAdapter(arr))
-
-
-class ArrayLeadingBlockView(CommaLeadingBlockView[int]):
-    __slots__ = ()
-
-    def __init__(self, arr: Array) -> None:
-        super().__init__(_ArrayAdapter(arr))
-
-
-__all__ = ["ArrayEolView", "ArrayLeadingBlockView", "ArrayLeadingView"]
+__all__ = ["_ArrayAdapter"]

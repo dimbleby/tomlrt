@@ -14,10 +14,11 @@ else:  # pragma: no cover -- backport for Python < 3.12
 from copy import deepcopy
 
 from tomlrt import _layout_ops
-from tomlrt._array_comments import (
-    ArrayEolView,
-    ArrayLeadingBlockView,
-    ArrayLeadingView,
+from tomlrt._array_comments import _ArrayAdapter
+from tomlrt._comma_comments import (
+    CommaEolView,
+    CommaLeadingBlockView,
+    CommaLeadingView,
 )
 from tomlrt._comma_ops import (
     detect_style,
@@ -217,12 +218,12 @@ class Array(_View, list[Any]):
     @property
     def comments(self) -> MutableMapping[int, str]:
         """EOL comment view, indexed by item position."""
-        return ArrayEolView(self)
+        return CommaEolView(_ArrayAdapter(self))
 
     @property
     def leading_comments(self) -> MutableMapping[int, tuple[str, ...]]:
         """Attached leading-comment view, indexed by item position."""
-        return ArrayLeadingView(self)
+        return CommaLeadingView(_ArrayAdapter(self))
 
     @property
     def leading_block(self) -> MutableMapping[int, tuple[str | None, ...]]:
@@ -230,7 +231,7 @@ class Array(_View, list[Any]):
 
         Comment lines are strings and blank lines are ``None``.
         """
-        return ArrayLeadingBlockView(self)
+        return CommaLeadingBlockView(_ArrayAdapter(self))
 
     def format(
         self,

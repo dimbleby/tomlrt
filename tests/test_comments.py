@@ -1694,10 +1694,11 @@ def test_array_comments_out_of_range_raises() -> None:
 def test_array_eol_setitem_out_of_range_does_not_promote_to_multiline() -> None:
     """A failed EOL assignment must not promote a single-line array.
 
-    Regression: ``ArrayEolView.__setitem__`` called ``_ensure_multiline``
-    before validating the index, so an out-of-range key raised
-    ``KeyError`` *but* still left the array reformatted into multi-line
-    form — a silent round-trip break behind a failed operation.
+    Regression: the array EOL view's ``__setitem__`` called
+    ``_ensure_multiline`` before validating the index, so an
+    out-of-range key raised ``KeyError`` *but* still left the array
+    reformatted into multi-line form — a silent round-trip break behind
+    a failed operation.
     """
     doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")

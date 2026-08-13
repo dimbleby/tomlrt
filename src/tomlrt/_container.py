@@ -20,6 +20,11 @@ else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
 from tomlrt import _inline_ops, _layout_ops
+from tomlrt._comma_comments import (
+    CommaEolView,
+    CommaLeadingBlockView,
+    CommaLeadingView,
+)
 from tomlrt._comments import (
     EolCommentView,
     LeadingBlockView,
@@ -44,11 +49,7 @@ from tomlrt._format import (
     format_inline_root,
     format_subtree,
 )
-from tomlrt._inline_comments import (
-    InlineEolView,
-    InlineLeadingBlockView,
-    InlineLeadingView,
-)
+from tomlrt._inline_comments import _InlineAdapter
 from tomlrt._kind import _Kind
 from tomlrt._paths import validate_path
 from tomlrt._render import render
@@ -177,7 +178,7 @@ class Container(_View, dict[str, Any]):
         multi-line (a single line has nowhere to hold a comment).
         """
         if self._inline:
-            return InlineEolView(self)
+            return CommaEolView(_InlineAdapter(self))
         return EolCommentView(self)
 
     @property
@@ -196,7 +197,7 @@ class Container(_View, dict[str, Any]):
         a single-line table to multi-line.
         """
         if self._inline:
-            return InlineLeadingView(self)
+            return CommaLeadingView(_InlineAdapter(self))
         return LeadingCommentView(self)
 
     @property
@@ -217,7 +218,7 @@ class Container(_View, dict[str, Any]):
         is framing and is not part of the first entry's block.
         """
         if self._inline:
-            return InlineLeadingBlockView(self)
+            return CommaLeadingBlockView(_InlineAdapter(self))
         return LeadingBlockView(self)
 
     @property
