@@ -7,51 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Scoped layout calls (`format()` / `set_multiline()`) on a single inline
-  array or table are now much faster on large documents: placing the closing
-  bracket no longer scans the whole document.
-- A key added to a table now takes its indent and blank-line spacing
-  from the table's last entry even when that entry is a dotted key.
-
 ### Fixed
 
-- A comment set on an inline array or inline table item now takes the value's
-  own row indent, and any item it breaks off a shared row follows it there.
-- Parse errors for duplicate or conflicting headers and keys now report the
-  position of the offending header or key, not the start of the next line.
-- Switching an inline array or inline table to multi-line form -- explicitly
-  with `set_multiline`, or automatically when a comment is set -- no longer
-  reformats the items themselves or rewrites their comment text.
-- Items appended to (or inserted into) a multi-line inline array or inline
-  table now follow the value's own row indent wherever the value breaks its
-  rows, even when several items share a row, and open the new row with the
-  break those rows already use rather than the document's.
-- Laying an inline array or inline table out multi-line -- with
-  `set_multiline`, or with `format()` called on the value itself -- now
-  puts its closing bracket at the indent of the row the value starts on,
-  instead of at column zero or wherever the bracket happened to sit.
-- A generated `[table]` / `[[array]]` header replacing a key/value line is
-  no longer glued to the line above it; header spacing now follows the
-  document's own convention for `promote_inline` too.
-- Setting `Document.epilogue` on a document whose last line has no newline
-  now starts the epilogue on its own line instead of appending to that line.
-- A value TOML cannot represent is now rejected before anything
-  changes, so a failed assignment or `install()` leaves the document
-  untouched.
-- A comment on its own row before an inline array's or inline table's
-  closing bracket now reliably stays above an appended item.
-- Removing items from an inline array or inline table now costs time
-  proportional to what is removed, not to the value's length, so
-  deleting in a loop is no longer quadratic.
-- Replacing a table or array of tables in place now costs time
-  proportional to the replacement rather than to the whole document.
-- Adding a key to a dotted or implicit table now costs time
-  proportional to that table rather than to the whole document, so
-  filling one is no longer quadratic.
-- Adding a key to a table now costs constant time however many dotted
-  keys precede it.
+- Parse errors for duplicate or conflicting keys and headers now point at the
+  offending key or header rather than at the line after it.
+- Comments added to an inline array or inline table are now indented to match
+  the value they belong to.
+- A comment sitting above an inline array's or inline table's closing bracket
+  now stays above an item appended after it.
+- Switching an inline array or inline table to multi-line form no longer
+  reformats its items or rewrites their comments.
+- Items added to a multi-line inline array or inline table now follow the
+  indentation and line breaks the value already uses.
+- A multi-line inline array or inline table now closes its bracket at the
+  indent of the line the value starts on.
+- A generated `[table]` / `[[array]]` header is no longer glued to the line
+  above it, and follows the document's own spacing convention.
+- A key added to a table now picks up the indentation and blank-line spacing
+  of the entry before it in more cases.
+- Setting `Document.epilogue` on a document that does not end in a newline now
+  starts the epilogue on its own line.
+- A value TOML cannot represent is now rejected before anything changes, so a
+  failed assignment or `install()` leaves the document untouched.
+- Editing large documents is much faster: adding and removing keys, items and
+  tables, and formatting a single inline value, no longer slow down as the
+  rest of the document grows.
 
 ## [2.2.1] - 2026-08-04
 
