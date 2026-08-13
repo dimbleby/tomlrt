@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-08-13
+
 ### Fixed
 
 - Parse errors for duplicate or conflicting keys and headers now point at the
