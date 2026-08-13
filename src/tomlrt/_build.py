@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
-from tomlrt._comments import _split_preamble
+from tomlrt._comment_text import _split_preamble
 from tomlrt._container import Container, Document, Table, _file_host
 from tomlrt._layout_ops import (
     file_own_header,
