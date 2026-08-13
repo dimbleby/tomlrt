@@ -272,14 +272,19 @@ them. Read roughly in this order:
   `AoT(list[Table])` (array-of-tables) views, plus the `AoTEntry`
   glue that connects an entry's slots to its Table view. Inline-
   array structural mutation is forwarded to `_comma_ops`.
+- **`_comment_text.py`** — the comment *text format*: encode / decode
+  (`_encode_comment`, `_decode_comment`), user-input validation
+  (`_validate_comment_str`, `_validate_comment_seq`), and the leading
+  trivia splitters (`_split_attached_block`, `_split_preamble`). Pure
+  string helpers over `_trivia` and nothing else, so both comment-view
+  flavours — and `_build` / `_layout_ops` — import it as a peer instead
+  of reaching into the section-flavour module.
 - **`_comments.py`** — the `MutableMapping`-shaped EOL / leading-
   comment side-channel views over **section** `Container` slot trivia
   (`Container.comments` / `leading_comments` / `leading_block` when the
   container is section-backed). These operate on the physical slot
-  stream (`KVSlot` / `StructuralHeaderSlot`). Also owns the shared
-  comment encode/decode + validation helpers (`_encode_comment`,
-  `_decode_comment`, `_validate_comment_str`, `_validate_comment_seq`)
-  reused by the comma-value views below.
+  stream (`KVSlot` / `StructuralHeaderSlot`), and take the text format
+  itself from `_comment_text`.
 - **`_comma_comments.py`** — the flavour-agnostic comment core shared
   by inline **arrays** and inline **tables**, both of which carry
   comments on a `CommaValue` / `CommaItem` (not the slot stream). Owns
@@ -290,13 +295,11 @@ them. Read roughly in this order:
   get / set / del / iterate logic once. A future change to comma-value
   comment behaviour lands here.
 - **`_array_comments.py`** — the int-keyed `Array` adapter
-  (`_ArrayAdapter`) plus one-line `ArrayEolView` / `ArrayLeadingView`
-  subclasses of the generic views (`Array.comments`,
-  `Array.leading_comments`).
+  (`_ArrayAdapter`); `Array.comments` / `leading_comments` construct
+  the generic views over it directly.
 - **`_inline_comments.py`** — the str-keyed inline-**table** adapter
-  (`_InlineAdapter`, leaf-key → entry resolution via `_inline_ops`)
-  plus `InlineEolView` / `InlineLeadingView`. Backs
-  `Table.comments` / `leading_comments` when the table is inline;
+  (`_InlineAdapter`, leaf-key → entry resolution via `_inline_ops`).
+  Backs `Table.comments` / `leading_comments` when the table is inline;
   setting a comment auto-promotes a single-line table to multi-line
   (TOML 1.1), and a detached `Table.inline()` factory raises until it
   is attached.

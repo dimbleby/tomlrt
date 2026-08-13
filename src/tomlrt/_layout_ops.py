@@ -29,7 +29,7 @@ import operator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from tomlrt._comments import _split_attached_block
+from tomlrt._comment_text import _split_attached_block
 from tomlrt._kind import _Kind
 from tomlrt._scalar import is_scalar
 from tomlrt._slots import (

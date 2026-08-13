@@ -26,10 +26,10 @@ from tomlrt._comma_ops import (
     set_boundary_break_holder,
     shift_breaks,
 )
-from tomlrt._comments import (
+from tomlrt._comment_text import (
     _encode_comment,
+    _extract_leading_comments,
     _line_to_comment,
-    _lines_to_comments,
     _render_comment_lines,
     _split_attached_block,
     _validate_comment_entries,
@@ -142,8 +142,7 @@ def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]
     block = Boundary.capture(value, idx).attached_above
     if block is None:
         return ()
-    _above, attached, _indent = _split_attached_block(block)
-    return _lines_to_comments(attached)
+    return _extract_leading_comments(block)
 
 
 def _set_above_block(
