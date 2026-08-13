@@ -185,6 +185,13 @@ class Boundary:
         )
 
     def _eol(self) -> tuple[int | None, str]:
+        """The lane owning the row-attached EOL, and its payload.
+
+        Lane 0 is the predecessor's ``trailing``, lane 1 its
+        ``post_comma_trivia``; ``None`` means no EOL is present at all.
+        The channel choice mirrors `tomlrt._values.item_eol_on_trailing`
+        -- see there for why the rule is spelled out in both places.
+        """
         before = self.before.join()
         if self.break_before_comma:
             eol, _rest = split_eol_section(before)
