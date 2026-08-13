@@ -505,32 +505,6 @@ def _file_synthetic_header_and_kv(
     return new_kv
 
 
-def _wire_section_container(
-    c: Container,
-    *,
-    doc: Document,
-    path: tuple[str, ...],
-    parent: Container,
-    owner: AoTEntry | None,
-) -> None:
-    """Initialise a freshly-built section container's attachment fields."""
-    c._wire(layout_root=doc, parent=parent, path=path, owner=owner)  # noqa: SLF001
-
-
-def _init_implicit_table(
-    doc: Document,
-    path: tuple[str, ...],
-    parent: Container,
-    owner: AoTEntry | None,
-) -> Table:
-    """Build an implicit (header-less) Table wired into ``doc`` at ``path``."""
-    from tomlrt._container import Table  # noqa: PLC0415
-
-    child = Table()
-    child._wire(layout_root=doc, parent=parent, path=path, owner=owner)  # noqa: SLF001
-    return child
-
-
 def ensure_implicit_chain(
     parent: Container,
     sub_path: tuple[str, ...],
@@ -541,7 +515,7 @@ def ensure_implicit_chain(
     implicit (header-less) tables wired into ``parent._attached_doc``;
     existing components are always ``Container`` instances.
     """
-    from tomlrt._container import Container  # noqa: PLC0415
+    from tomlrt._container import Container, Table  # noqa: PLC0415
 
     doc = parent._attached_doc  # noqa: SLF001
     owner = parent._owner_aot_entry  # noqa: SLF001
@@ -552,11 +526,12 @@ def ensure_implicit_chain(
             assert isinstance(nxt, Container)
             cur = nxt
             continue
-        implicit = _init_implicit_table(
-            doc,
-            (*parent._path, *sub_path[: j + 1]),  # noqa: SLF001
-            cur,
-            owner,
+        implicit = Table()
+        implicit._wire(  # noqa: SLF001
+            layout_root=doc,
+            parent=cur,
+            path=(*parent._path, *sub_path[: j + 1]),  # noqa: SLF001
+            owner=owner,
         )
         dict.__setitem__(cur, comp, implicit)
         cur = implicit
@@ -697,29 +672,25 @@ def _splice_body_slot(
     *,
     anchor_body_tail: Slot | None,
     doc: Document,
-) -> bool:
+) -> None:
     """Splice ``new_slot`` into the doc-stream at the canonical body anchor.
 
     Anchor preference: body tail (which for a header-bearing container
     with no body yet is that header) > head-of-doc seam > empty doc.
-    Returns ``True`` iff ``new_slot`` became the new doc head ahead of
-    an existing head (the seam case), where ancestor refs must go at
-    index 0.
     """
     if anchor_body_tail is not None:
         ensure_terminator(anchor_body_tail, doc._newline)  # noqa: SLF001
         insert_after(anchor_body_tail, new_slot, doc)
-        return False
+        return
     if doc._head is not None:  # noqa: SLF001
         # Section-only doc: splice before the first slot, separating it.
         old_head = doc._head  # noqa: SLF001
         insert_before_head(new_slot, doc)
         _ensure_leading_blank_line(old_head, doc)
-        return True
+        return
     # Empty doc: splice in as head, hoisting any preamble trivia.
     insert_before_head(new_slot, doc)
     _promote_trailing_to_preamble(doc)
-    return False
 
 
 def append_direct_kv(
@@ -2091,9 +2062,8 @@ def add_aot_entry(
     else:
         entry_table = Table()
         body_items = list(body.items()) if body is not None else []
-    _wire_section_container(
-        entry_table,
-        doc=doc,
+    entry_table._wire(  # noqa: SLF001
+        layout_root=doc,
         path=path,
         parent=parent,
         owner=entry,
@@ -2230,9 +2200,8 @@ def _install_cloned_structural_block(
     and files ``table``'s own header wherever it falls rather than
     reopening it as a child.
     """
-    _wire_section_container(
-        table,
-        doc=doc,
+    table._wire(  # noqa: SLF001
+        layout_root=doc,
         path=target_path,
         parent=parent,
         owner=owner,
@@ -3142,9 +3111,8 @@ def attach_section_at(
     pending: list[tuple[str, object]] = list(source.items())
     dict.clear(section)
 
-    _wire_section_container(
-        section,
-        doc=doc,
+    section._wire(  # noqa: SLF001
+        layout_root=doc,
         path=full_path,
         parent=deepest_parent,
         owner=owner,
