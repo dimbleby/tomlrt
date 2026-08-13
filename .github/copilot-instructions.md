@@ -242,7 +242,16 @@ them. Read roughly in this order:
   inline values (single-line stays single-line; multi-line stays
   multi-line) and idempotent. The structural counterpart is
   `_comma_ops`, which owns *changing* layout; this module owns
-  *canonicalising* the layout you already have. Re-uses
+  *canonicalising* the layout you already have. It captures and strips
+  above-blocks through `Boundary`, but **composes** its pads itself
+  (`_compose_pad` / `_format_above`): `Boundary.replace_lane` preserves
+  an existing tail where the canonicaliser must force the canonical
+  indent, and an empty value keeps all its trivia in `final_trivia`,
+  which `Boundary` does not model. The two share one ~2-line decision
+  ("break unless the row is already closed"); folding them together
+  would push a `force_indent` flag into the mutation core and needs
+  `Boundary` to model empty values first. Investigated and declined.
+  Re-uses
   `flip_to_*` / `_take_eol` / `_put_eol` from `_comma_ops` for
   the bits that touch the comma-value boundary. Also owns
   `set_comma_value_multiline` — the shared single ↔ multi-line
