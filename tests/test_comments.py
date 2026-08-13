@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 import tomlrt
-from _helpers import td
+from _helpers import reparses, td
 
 # ---------------------------------------------------------------------------
 # Reads
@@ -3812,9 +3812,25 @@ def test_sort_preserves_shared_row_boundaries() -> None:
 
 
 def test_leading_comment_write_breaks_shared_row() -> None:
-    doc = tomlrt.loads("x = [1, 2\n]\n")
+    """The comment and the item it broke off land at the value's indent.
+
+    The only row this value opens is the closing bracket's, flush at
+    column zero, so column zero is where both go -- the space that
+    separated the two items is intra-row padding, not an indent.
+    """
+    doc = tomlrt.loads(
+        td("""
+        x = [1, 2
+        ]
+        """)
+    )
     doc.array("x").leading_comments[1] = ("two",)
-    assert tomlrt.dumps(doc) == "x = [1,\n # two\n 2\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        x = [1,
+        # two
+        2
+        ]
+        """)
     assert doc.array("x").leading_comments[1] == ("two",)
 
 
@@ -5017,3 +5033,161 @@ def test_inline_table_delete_preserves_blank_at_seam() -> None:
           c = 3,
         }
         """)
+
+
+# ---------------------------------------------------------------------------
+# Comments on a value whose rows pack several items
+# ---------------------------------------------------------------------------
+
+
+def test_array_leading_comment_matches_a_packed_row_indent() -> None:
+    """The block aligns with the value's rows, not with a post-comma pad.
+
+    The indent is sampled the same way an append samples it: from the
+    first row the value opens, never from the space that separates two
+    items sharing a row.
+    """
+    doc = tomlrt.loads(
+        td("""
+        a = [1, 2,
+             3, 4]
+        """)
+    )
+    doc.array("a").leading_comments[2] = ("about three",)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [1, 2,
+             # about three
+             3, 4]
+        """)
+    assert reparses(out) == {"a": [1, 2, 3, 4]}
+
+
+def test_array_leading_comment_promotes_a_row_follower() -> None:
+    """An item that shared a row joins the block at the value indent."""
+    doc = tomlrt.loads(
+        td("""
+        a = [1, 2,
+             3, 4]
+        """)
+    )
+    doc.array("a").leading_comments[1] = ("about two",)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [1,
+             # about two
+             2,
+             3, 4]
+        """)
+    assert reparses(out) == {"a": [1, 2, 3, 4]}
+
+    doc = tomlrt.loads(
+        td("""
+        a = [1, 2,
+             3, 4]
+        """)
+    )
+    doc.array("a").leading_comments[3] = ("about four",)
+    assert tomlrt.dumps(doc) == td("""
+        a = [1, 2,
+             3,
+             # about four
+             4]
+        """)
+
+
+def test_array_leading_comment_on_first_item_of_a_packed_row() -> None:
+    """The head boundary opens its row at the sampled indent too."""
+    doc = tomlrt.loads(
+        td("""
+        a = [1, 2,
+             3, 4]
+        """)
+    )
+    doc.array("a").leading_comments[0] = ("about one",)
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+             # about one
+             1, 2,
+             3, 4]
+        """)
+
+
+def test_array_eol_comment_promotes_a_row_follower() -> None:
+    """The break an EOL comment forces leaves the next item a row leader."""
+    doc = tomlrt.loads(
+        td("""
+        a = [1, 2,
+             3, 4]
+        """)
+    )
+    doc.array("a").comments[0] = "one"
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [1, # one
+             2,
+             3, 4]
+        """)
+    assert reparses(out) == {"a": [1, 2, 3, 4]}
+
+
+def test_inline_table_leading_comment_matches_a_packed_row_indent() -> None:
+    """Inline tables sample the row indent the same way arrays do."""
+    doc = tomlrt.loads(
+        td("""
+        t = { x = 1, y = 2,
+              z = 3 }
+        """)
+    )
+    doc.table("t").leading_comments["y"] = ("about y",)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        t = { x = 1,
+              # about y
+              y = 2,
+              z = 3 }
+        """)
+    assert reparses(out) == {"t": {"x": 1, "y": 2, "z": 3}}
+
+
+def test_array_sort_carries_a_block_onto_a_packed_row() -> None:
+    """A block carried by a sort takes its item to the value indent with it."""
+    doc = tomlrt.loads(
+        td("""
+        a = [4, 3,
+             # about two
+             2, 1]
+        """)
+    )
+    doc.array("a").sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [1,
+             # about two
+             2,
+             3, 4]
+        """)
+    assert reparses(out) == {"a": [1, 2, 3, 4]}
+
+
+def test_array_comma_first_leading_comment_on_a_packed_row() -> None:
+    """Comma-first values promote a packed-row follower the same way."""
+    doc = tomlrt.loads(
+        td("""
+        x = [
+            1
+            ,2, 3
+            ]
+        """)
+    )
+    doc.array("x").leading_comments[2] = ("about three",)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = [
+            1
+            ,2,
+            # about three
+            3
+            ]
+        """)
+    assert reparses(out) == {"x": [1, 2, 3]}

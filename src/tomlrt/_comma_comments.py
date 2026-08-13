@@ -20,6 +20,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
 
 from tomlrt._comma_ops import (
     Boundary,
+    _value_indent,
     boundary_break_holder,
     reindent_as_leader,
     set_boundary_break_holder,
@@ -77,6 +78,9 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
       a trailing comma).
     """
     item = value.items[idx]
+    # Sampled before the write: the row the comment is about to open
+    # would otherwise be the first row this value appears to have.
+    indent = _value_indent(value)
     existing_eol, rest = split_eol_section(item_eol_channel(item))
     stripped = False
     if not existing_eol and rest.startswith(("\n", "\r\n")):
@@ -94,7 +98,7 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
     else:
         # The next item shared this row: the comment forces a break, so
         # promote it to a row leader at the value indent.
-        nxt = reindent_as_leader(nxt, _value_indent(value))
+        nxt = reindent_as_leader(nxt, indent)
     set_boundary_break_holder(value, idx + 1, nxt)
 
 
@@ -140,17 +144,6 @@ def _read_above_comments(value: CommaValue[_ItemT], idx: int) -> tuple[str, ...]
         return ()
     _above, attached, _indent = _split_attached_block(block)
     return _lines_to_comments(attached)
-
-
-def _value_indent(value: CommaValue[_ItemT]) -> str:
-    """Best-effort indent string for this value's items."""
-    for i in range(len(value.items)):
-        tail = Boundary.capture(value, i).target_tail
-        if tail:
-            return tail
-    # No item carries an indent: the items sit at column zero, so a comment
-    # block above them should too.
-    return ""
 
 
 def _set_above_block(
