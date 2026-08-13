@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Switching an inline array or inline table to multi-line form -- explicitly
+  with `set_multiline`, or automatically when a comment is set -- no longer
+  reformats the items themselves or rewrites their comment text.
 - Items appended to (or inserted into) a multi-line inline array or inline
   table now follow the value's own row indent wherever the value breaks its
   rows, even when several items share a row, and open the new row with the

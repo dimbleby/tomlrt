@@ -4223,6 +4223,34 @@ def test_inline_nested_inline_table_comment() -> None:
     )
 
 
+def test_inline_comment_promotion_keeps_nested_value_text() -> None:
+    # Setting a comment promotes the table to multi-line; that is a
+    # shape change, and must not reformat the entries themselves.
+    doc = tomlrt.loads("t = {a=1,  b={x=1,  y=2}}\n")
+    doc.table("t").comments["a"] = "note"
+    assert tomlrt.dumps(doc) == td(
+        """
+        t = {
+            a=1, # note
+            b={x=1,  y=2},
+        }
+        """,
+    )
+
+
+def test_array_comment_promotion_keeps_nested_value_text() -> None:
+    doc = tomlrt.loads("a = [1,  {x=1,  y=2}]\n")
+    doc.array("a").comments[0] = "note"
+    assert tomlrt.dumps(doc) == td(
+        """
+        a = [
+            1, # note
+            {x=1,  y=2},
+        ]
+        """,
+    )
+
+
 def test_inline_set_multiline_then_collapse() -> None:
     doc = tomlrt.loads("t = { a = 1, b = 2 }\n")
     t = doc.table("t")

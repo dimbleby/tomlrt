@@ -103,6 +103,11 @@ class FormatOptions:
 
 _DEFAULT_FORMAT_OPTIONS = FormatOptions()
 
+#: Options for a pure shape change (`set_comma_value_multiline`), which
+#: re-lays a value's own rows but is not a request to reformat its text,
+#: so comment lexemes are left as the author wrote them.
+_SHAPE_ONLY_OPTIONS = FormatOptions(normalize_comments=False)
+
 
 def _resolve_format_options(
     *,
@@ -620,6 +625,10 @@ def set_comma_value_multiline(
 ) -> None:
     """Switch a comma-value between flush single-line and multi-line form.
 
+    Only ``value``'s own rows are re-laid: the items' text, nested values
+    and comment lexemes are left verbatim, since this is a shape change
+    and not a `format` request.
+
     Collapsing raises `TOMLError` when a comment would be orphaned. The
     single-line bracket pad is driven by ``value._single_line_pad`` (via
     `_canon_single_line_inline`), so arrays collapse tight (``[1, 2]``)
@@ -627,24 +636,16 @@ def set_comma_value_multiline(
 
     ``host`` places the closing bracket -- see `_closing_indent`.
     """
-    items = value.items
     if multiline:
-        for it in items:
-            _canon_value(
-                it.value,
-                nl=nl,
-                options=_DEFAULT_FORMAT_OPTIONS,
-                parent_indent=indent,
-            )
         _canon_multiline_shape(
             value,
             nl=nl,
-            options=_DEFAULT_FORMAT_OPTIONS,
+            options=_SHAPE_ONLY_OPTIONS,
             item_indent=indent,
             outer_indent=_closing_indent(value, host=host),
         )
     else:
-        for it in items:
+        for it in value.items:
             if item_has_any_comment(it):
                 msg = (
                     "cannot collapse to single line: "
