@@ -2542,6 +2542,53 @@ def test_array_set_multiline_custom_indent() -> None:
         """)
 
 
+def test_array_set_multiline_keeps_nested_inline_value_text() -> None:
+    # Laying the array out multi-line is a shape change on the array
+    # itself; the items' own text is not the caller's business.
+    doc = tomlrt.loads("a = [{x=1,  y=2}, 3]\n")
+    doc.array("a").set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [
+          {x=1,  y=2},
+          3,
+        ]
+        """)
+    assert _reparses(out) == {"a": [{"x": 1, "y": 2}, 3]}
+
+
+def test_array_set_multiline_on_multiline_array_is_a_no_op() -> None:
+    src = td("""
+        a = [
+          {x=1,  y=2},
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("a").set_multiline(multiline=True, indent=2)
+    assert tomlrt.dumps(doc) == src
+
+
+def test_array_set_multiline_keeps_comment_lexemes() -> None:
+    doc = tomlrt.loads("a = [1,#one\n2,#two\n]\n")
+    doc.array("a").set_multiline(multiline=True, indent=2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [
+          1, #one
+          2, #two
+        ]
+        """)
+    assert _reparses(out) == {"a": [1, 2]}
+
+
+def test_array_format_still_canonicalises_nested_values() -> None:
+    # The opt-in canonicaliser keeps descending; only the shape-only
+    # `set_multiline` stops at the array it was called on.
+    doc = tomlrt.loads("a = [{x=1,  y=2}, 3]\n")
+    doc.array("a").format(options=tomlrt.FormatOptions(indent=2))
+    assert tomlrt.dumps(doc) == "a = [{ x = 1, y = 2 }, 3]\n"
+
+
 def test_array_set_multiline_preserves_crlf_newlines() -> None:
     doc = tomlrt.loads("a = [1, 2]\r\n")
     doc.array("a").set_multiline(multiline=True, indent=2)
