@@ -21,9 +21,6 @@ else:  # pragma: no cover -- backport for Python < 3.12
 
 from tomlrt._comma_comments import (
     CommaCommentAdapter,
-    CommaEolView,
-    CommaLeadingBlockView,
-    CommaLeadingView,
 )
 from tomlrt._errors import TOMLError
 from tomlrt._inline_ops import (
@@ -118,25 +115,4 @@ class _InlineAdapter(CommaCommentAdapter[str]):
             yield leaf, i
 
 
-class InlineEolView(CommaEolView[str]):
-    __slots__ = ()
-
-    def __init__(self, container: Container) -> None:
-        super().__init__(_InlineAdapter(container))
-
-
-class InlineLeadingView(CommaLeadingView[str]):
-    __slots__ = ()
-
-    def __init__(self, container: Container) -> None:
-        super().__init__(_InlineAdapter(container))
-
-
-class InlineLeadingBlockView(CommaLeadingBlockView[str]):
-    __slots__ = ()
-
-    def __init__(self, container: Container) -> None:
-        super().__init__(_InlineAdapter(container))
-
-
-__all__ = ["InlineEolView", "InlineLeadingBlockView", "InlineLeadingView"]
+__all__ = ["_InlineAdapter"]
