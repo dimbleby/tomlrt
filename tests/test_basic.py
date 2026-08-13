@@ -381,8 +381,15 @@ def test_parse_error_position_counts_crlf_as_one_line() -> None:
         ('a = "abc\n', (1, 9, 8)),
         # Error at the very end of the source, just after a final newline.
         ("a = 1\n[", (2, 2, 7)),
-        # Ditto, reported by the validator rather than the scanner.
-        ("[a]\n[a]\n", (3, 1, 8)),
+        # Reported by the validator rather than the scanner: the
+        # duplicate header itself, not wherever the cursor ended up.
+        ("[a]\n[a]\n", (2, 1, 4)),
+        # Ditto for a duplicate key.
+        ("a = 1\na = 2\n", (2, 1, 6)),
+        # An indented offender points at the key, not at the indent.
+        ("[t]\nb.c = 1\n  b = 2\n", (3, 3, 14)),
+        # No trailing newline: still the header, not the end of the line.
+        ("[a]\n[a]", (2, 1, 4)),
         # Leading blank lines still count.
         ("\n\n@\n", (3, 1, 2)),
         # Columns count code points, not UTF-8 bytes: each emoji is one column.

@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Parse errors for duplicate or conflicting headers and keys now report the
+  position of the offending header or key, not the start of the next line.
 - Switching an inline array or inline table to multi-line form -- explicitly
   with `set_multiline`, or automatically when a comment is set -- no longer
   reformats the items themselves or rewrites their comment text.
