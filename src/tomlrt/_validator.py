@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from tomlrt._slots import AoTEntry
-from tomlrt._values import ArrayValue, InlineTableValue
+from tomlrt._values import InlineTableValue
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -165,12 +165,6 @@ class _Validator:
         self._record_path(full, "value", owner)
         if isinstance(value, InlineTableValue):
             self._register_inline_table(value, abs_prefix=full, owner=owner)
-        elif isinstance(value, ArrayValue):
-            for item in value.items:
-                if isinstance(item.value, InlineTableValue):
-                    self._register_inline_table(
-                        item.value, abs_prefix=None, owner=owner
-                    )
 
     def check_inline_key_conflict(
         self,
@@ -200,29 +194,23 @@ class _Validator:
         self,
         table: InlineTableValue,
         *,
-        abs_prefix: tuple[str, ...] | None,
+        abs_prefix: tuple[str, ...],
         owner: tuple[str, ...] | None,
     ) -> None:
+        """Record the absolute paths an inline table's entries bind.
+
+        Only reachable for a table that is itself addressable: an inline
+        table nested in an *array* is an element, not a key, so nothing
+        below it has an absolute path and there is nothing to record.
+        """
         for entry in table.items:
             path = entry.key_path
-            if abs_prefix is not None:
-                full = abs_prefix + path
-                self._record_path(full, "value", owner)
-                for i in range(1, len(path)):
-                    sub = abs_prefix + path[:i]
-                    self._record_path(sub, "dotted", owner)
-            sub_abs: tuple[str, ...] | None
+            full = abs_prefix + path
+            self._record_path(full, "value", owner)
+            for i in range(1, len(path)):
+                self._record_path(abs_prefix + path[:i], "dotted", owner)
             if isinstance(entry.value, InlineTableValue):
-                sub_abs = (abs_prefix + path) if abs_prefix is not None else None
-                self._register_inline_table(
-                    entry.value, abs_prefix=sub_abs, owner=owner
-                )
-            elif isinstance(entry.value, ArrayValue):
-                for item in entry.value.items:
-                    if isinstance(item.value, InlineTableValue):
-                        self._register_inline_table(
-                            item.value, abs_prefix=None, owner=owner
-                        )
+                self._register_inline_table(entry.value, abs_prefix=full, owner=owner)
 
     def _record_path(
         self,
