@@ -237,11 +237,6 @@ class Boundary:
         return None if lane is None else self.above_parts[lane]
 
     @property
-    def target_tail(self) -> str:
-        tails = self.before.tail, self.following.tail
-        return tails[self.target_lane()]
-
-    @property
     def target_above(self) -> str:
         return self.above_parts[self.target_lane()]
 
@@ -256,9 +251,13 @@ class Boundary:
             else (False if self.is_head else self.row_closed)
         )
         if block:
-            if not upstream and "\n" not in head:
+            # A lane whose row is still open has to break for the block;
+            # whatever followed then leads a row of its own, so its old
+            # intra-row pad gives way to the value indent.
+            promotes = not upstream and "\n" not in head
+            if promotes:
                 head += nl
-            if not tail:
+            if promotes or not tail:
                 tail = indent
         target.head = head
         target.above = block

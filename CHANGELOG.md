@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A comment set on an inline array or inline table item now takes the value's
+  own row indent, and any item it breaks off a shared row follows it there.
 - Parse errors for duplicate or conflicting headers and keys now report the
   position of the offending header or key, not the start of the next line.
 - Switching an inline array or inline table to multi-line form -- explicitly
