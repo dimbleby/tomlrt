@@ -98,6 +98,7 @@ class _Parser:
         """
         sc = self._sc
         src = sc.src
+        header_at = sc.pos
         kind: _HeaderKind
         if src.startswith("[[", sc.pos):
             sc.pos += 2
@@ -117,7 +118,7 @@ class _Parser:
         sc.pos += len(closer)
 
         eol = sc.scan_eol()
-        new_entry = self._validator.enter_header(path, kind, at=sc.pos)
+        new_entry = self._validator.enter_header(path, kind, at=header_at)
         owner = self._validator.current_owner_aot_entry
 
         slot = StructuralHeaderSlot(
@@ -136,7 +137,12 @@ class _Parser:
         return slot
 
     def _parse_key_value(self, leading: str) -> KVSlot:
+        """Parse a ``key = value`` line.
+
+        Precondition: cursor is at the start of the key.
+        """
         sc = self._sc
+        key_at = sc.pos
         key_parts, key_seps, pre_eq, key_path = sc.scan_key()
         src = sc.src
         pos = sc.pos
@@ -149,7 +155,7 @@ class _Parser:
         value = self._parse_value()
         eol = sc.scan_eol()
 
-        self._validator.record_keyvalue(key_path, value, at=sc.pos)
+        self._validator.record_keyvalue(key_path, value, at=key_at)
         host_path = self._validator.current_section
         owner = self._validator.current_owner_aot_entry
         slot = KVSlot(
