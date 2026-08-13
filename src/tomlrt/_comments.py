@@ -77,10 +77,13 @@ _T = TypeVar("_T")
 
 
 class _SlotKeyedView(MutableMapping[str, _T]):
-    """Mapping over Container keys whose direct-KV slot satisfies a predicate.
+    """Mapping over Container keys whose direct-KV slot carries a value.
 
-    Subclasses provide ``_present(slot)`` and item methods; the base
-    supplies the shared mapping plumbing.
+    Subclasses answer `_get` -- this view's value for a slot, or ``None``
+    when the slot carries none -- and `_clear`, which removes it. Every
+    read path derives from `_get`, so presence and value are decided by
+    one piece of code rather than by a predicate that a getter then has
+    to agree with.
     """
 
     __slots__ = ("_c",)
@@ -98,19 +101,38 @@ class _SlotKeyedView(MutableMapping[str, _T]):
         return slot
 
     @abstractmethod
-    def _present(self, slot: KVSlot) -> bool:
-        """Return whether ``slot`` carries this view's value."""
+    def _get(self, slot: KVSlot) -> _T | None:
+        """This view's value for ``slot``, or ``None`` if it carries none."""
+
+    @abstractmethod
+    def _clear(self, slot: KVSlot) -> None:
+        """Remove this view's value from ``slot``."""
 
     @override
     def __repr__(self) -> str:
         return repr(dict(self))
 
     @override
+    def __getitem__(self, key: str) -> _T:
+        value = self._get(self._require_slot(key))
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    @override
+    def __delitem__(self, key: str) -> None:
+        _require_attached(self._c)
+        slot = self._require_slot(key)
+        if self._get(slot) is None:
+            raise KeyError(key)
+        self._clear(slot)
+
+    @override
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
         slot = self._slot(key)
-        return slot is not None and self._present(slot)
+        return slot is not None and self._get(slot) is not None
 
     @override
     def __iter__(self) -> Iterator[str]:
@@ -120,7 +142,7 @@ class _SlotKeyedView(MutableMapping[str, _T]):
             if k is None or k in seen:
                 continue
             slot = self._slot(k)
-            if slot is not None and self._present(slot):
+            if slot is not None and self._get(slot) is not None:
                 seen.add(k)
                 yield k
 
@@ -133,15 +155,16 @@ class EolCommentView(_SlotKeyedView[str]):
     __slots__ = ()
 
     @override
-    def _present(self, slot: KVSlot) -> bool:
-        return bool(slot.eol.comment)
+    def _get(self, slot: KVSlot) -> str | None:
+        raw = slot.eol.comment
+        return _decode_comment(raw) if raw else None
 
     @override
-    def __getitem__(self, key: str) -> str:
-        slot = self._require_slot(key)
-        if not slot.eol.comment:
-            raise KeyError(key)
-        return _decode_comment(slot.eol.comment)
+    def _clear(self, slot: KVSlot) -> None:
+        slot.eol.comment = ""
+        # Also drop the gap-whitespace that preceded the comment so we
+        # don't leave a dangling tail like `key = 1   \n`.
+        slot.eol.trailing_ws = ""
 
     @override
     def __setitem__(self, key: str, value: str) -> None:
@@ -150,25 +173,13 @@ class EolCommentView(_SlotKeyedView[str]):
         _validate_comment_str(value, "comment")
         _write_eol_comment(slot.eol, value, self._c._doc_newline)  # noqa: SLF001
 
-    @override
-    def __delitem__(self, key: str) -> None:
-        _require_attached(self._c)
-        slot = self._require_slot(key)
-        if not slot.eol.comment:
-            raise KeyError(key)
-        slot.eol.comment = ""
-        # Also drop the gap-whitespace that preceded the comment so we
-        # don't leave a dangling tail like `key = 1   \n`.
-        slot.eol.trailing_ws = ""
 
-
-def _read_leading_block(c: Container, slot: Slot) -> tuple[str | None, ...]:
+def _read_leading_block(slot: Slot) -> tuple[str | None, ...]:
     """Decoded leading block of ``slot``.
 
     Comment lines decode to text, blank/whitespace-only lines become
     ``None``, and the slot's own trailing indent is excluded.
     """
-    del c
     above, attached, _indent = _split_attached_block(slot.leading)
     lines = split_lines(above + attached)
     return tuple(_line_to_comment(line) for line in lines)
@@ -187,25 +198,18 @@ def _write_leading_block(
     slot.leading = _render_comment_lines(block, nl, indent) + indent
 
 
-def _slot_has_attached_comments(slot: Slot) -> bool:
-    leading = slot.leading
-    _above, attached, _indent = _split_attached_block(leading)
-    return "#" in attached
-
-
 class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
     __slots__ = ()
 
     @override
-    def _present(self, slot: KVSlot) -> bool:
-        return _slot_has_attached_comments(slot)
+    def _get(self, slot: KVSlot) -> tuple[str, ...] | None:
+        _above, attached, _indent = _split_attached_block(slot.leading)
+        return _lines_to_comments(attached) if "#" in attached else None
 
     @override
-    def __getitem__(self, key: str) -> tuple[str, ...]:
-        slot = self._require_slot(key)
-        if not _slot_has_attached_comments(slot):
-            raise KeyError(key)
-        return _extract_leading_comments(slot.leading)
+    def _clear(self, slot: KVSlot) -> None:
+        above, _attached, indent = _split_attached_block(slot.leading)
+        slot.leading = above + indent
 
     @override
     def __setitem__(self, key: str, value: tuple[str, ...]) -> None:
@@ -214,15 +218,6 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
         comments = _validate_comment_seq(value, "leading_comments")
         nl = self._c._doc_newline  # noqa: SLF001
         slot.leading = _set_attached_block(slot.leading, comments, nl)
-
-    @override
-    def __delitem__(self, key: str) -> None:
-        _require_attached(self._c)
-        slot = self._require_slot(key)
-        if not _slot_has_attached_comments(slot):
-            raise KeyError(key)
-        above, _attached, indent = _split_attached_block(slot.leading)
-        slot.leading = above + indent
 
 
 class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
@@ -238,16 +233,12 @@ class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
     __slots__ = ()
 
     @override
-    def _present(self, slot: KVSlot) -> bool:
-        return bool(_read_leading_block(self._c, slot))
+    def _get(self, slot: KVSlot) -> tuple[str | None, ...] | None:
+        return _read_leading_block(slot) or None
 
     @override
-    def __getitem__(self, key: str) -> tuple[str | None, ...]:
-        slot = self._require_slot(key)
-        block = _read_leading_block(self._c, slot)
-        if not block:
-            raise KeyError(key)
-        return block
+    def _clear(self, slot: KVSlot) -> None:
+        _write_leading_block(self._c, slot, ())
 
     @override
     def __setitem__(self, key: str, value: tuple[str | None, ...]) -> None:
@@ -255,14 +246,6 @@ class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
         slot = self._require_slot(key, missing_msg=f"key {key!r} not in container")
         block = _validate_comment_entries(value, "leading_block", allow_none=True)
         _write_leading_block(self._c, slot, block)
-
-    @override
-    def __delitem__(self, key: str) -> None:
-        _require_attached(self._c)
-        slot = self._require_slot(key)
-        if not _read_leading_block(self._c, slot):
-            raise KeyError(key)
-        _write_leading_block(self._c, slot, ())
 
 
 def _header_slot(c: Container) -> StructuralHeaderSlot | None:
@@ -332,7 +315,7 @@ def _header_leading_block_get(c: Container) -> tuple[str | None, ...]:
     if (h := _header_slot(c)) is None:
         # See _header_comment_get: no header line, no block above it.
         return ()
-    return _read_leading_block(c, h)
+    return _read_leading_block(h)
 
 
 def _header_leading_block_set(c: Container, value: tuple[str | None, ...]) -> None:
