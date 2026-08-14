@@ -67,6 +67,20 @@ Python 3.10–3.14. `ty` is a second, independent type-checker (run via
   `cast()` either; the typed accessors `Table.array(k)`,
   `Table.table(k)`, `Table.aot(k)`, `Array.array(i)`, `Array.table(i)`
   exist precisely to avoid this.
+- **Construct hot-path dataclasses positionally.** `Slot`, `CommaItem`
+  and the internal layout records (`CommaStyle`, `Boundary`,
+  `_ReorderUnit`, `EolTrivia`) are built once per line, item, sorted
+  block or inline edit. A constructor call carrying *any* keyword falls off CPython's
+  alloc-and-enter-init specialisation and costs roughly twice as much,
+  measurably: sorting 800 sections is ~7% faster for this alone, and
+  inserting into an inline array ~13%. Keywords are fine anywhere else —
+  an ordinary function call loses only a few ns to them, well below what
+  any benchmark here can resolve. The one thing that blocks a call is a
+  bare boolean *literal*, which ruff `FBT003` rejects (a name is fine);
+  take a targeted `# noqa` where the win is measured, as `_inline_ops`
+  and `Boundary.capture` do, and leave the keyword where it is not, as
+  the two `StructuralHeaderSlot(…, synthetic=…)` calls do — those are
+  worth less than the measurement's own noise floor.
 - **`from __future__ import annotations`** at the top of every module
   (enforced by ruff's isort `required-imports`).
 - Do not add comments that merely restate the code. Comment intent and

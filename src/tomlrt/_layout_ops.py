@@ -540,7 +540,7 @@ def ensure_implicit_chain(
 
 def _default_eol(doc: Document) -> EolTrivia:
     """A bare-newline `EolTrivia` for a freshly synthesised slot."""
-    return EolTrivia(trailing_ws="", comment="", newline=doc._newline)  # noqa: SLF001
+    return EolTrivia("", "", doc._newline)  # noqa: SLF001
 
 
 def _link_run_between(
@@ -3808,13 +3808,13 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             prefix, remainder = _split_leading_for_reorder(slots[0])
             units.append(
                 _ReorderUnit(
-                    slots=slots,
-                    key_rank=key_rank[key],
-                    structural=is_structural,
-                    mixed=mixed,
-                    prefix=prefix,
-                    remainder=remainder,
-                    physical_position=physical_position[slots[0]],
+                    slots,
+                    key_rank[key],
+                    is_structural,
+                    mixed,
+                    prefix,
+                    remainder,
+                    physical_position[slots[0]],
                 )
             )
 

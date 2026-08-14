@@ -162,6 +162,41 @@ def test_promote_large_inline_array(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(src), rounds=100)
 
 
+# --- inline arrays ---------------------------------------------------------
+
+
+def _inline_array(rows: int) -> str:
+    """A multi-line inline array carrying a comment on every row.
+
+    Editing one of these is what drives the boundary machinery in
+    `_comma_ops`: every insert or delete captures, composes and restores
+    the trivia seam spanning the items either side of it. The comments
+    matter -- a seam with a comment in it takes the whole `Boundary`
+    path rather than the blank-only shortcut.
+    """
+    return (
+        "items = [\n" + "".join(f"    {i},  # item {i}\n" for i in range(rows)) + "]\n"
+    )
+
+
+def test_insert_into_inline_array(benchmark: BenchmarkFixture) -> None:
+    def work(doc: Document) -> None:
+        arr = doc.array("items")
+        for i in range(100):
+            arr.insert(0, i)
+
+    benchmark.pedantic(work, setup=_parsed(_inline_array(500)), rounds=100)
+
+
+def test_delete_from_inline_array(benchmark: BenchmarkFixture) -> None:
+    def work(doc: Document) -> None:
+        arr = doc.array("items")
+        for _ in range(150):
+            del arr[0]
+
+    benchmark.pedantic(work, setup=_parsed(_inline_array(500)), rounds=100)
+
+
 # --- key-level edits -------------------------------------------------------
 
 

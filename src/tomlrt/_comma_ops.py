@@ -121,11 +121,14 @@ class Boundary:
         if i == 0:
             following = cv.header_trivia
             start = _first_newline_end(following) or len(following)
+            # Positional ``has_comma`` / ``is_head``: the busiest
+            # boundary in an inline-array edit.
             return cls(
                 _Lane(),
                 "",
                 _Lane.capture(following, start),
-                is_head=True,
+                False,  # noqa: FBT003
+                True,  # noqa: FBT003
             )
         pred = items[i - 1]
         following = cv.final_trivia if i == len(items) else items[i].leading
@@ -140,7 +143,7 @@ class Boundary:
             _Lane.capture(pred.trailing, before_start),
             pred.post_comma_trivia,
             _Lane.capture(following, following_start),
-            has_comma=pred.has_comma,
+            pred.has_comma,
         )
 
     def copy(self) -> Boundary:
@@ -148,8 +151,8 @@ class Boundary:
             self.before.copy(),
             self.after,
             self.following.copy(),
-            has_comma=self.has_comma,
-            is_head=self.is_head,
+            self.has_comma,
+            self.is_head,
         )
 
     def restore(self, cv: CommaValue[Any], i: int) -> None:
@@ -542,11 +545,11 @@ def detect_style(value: ArrayValue | InlineTableValue) -> CommaStyle:
     pad_ft, _above_ft = split_above_block(value.final_trivia)
     trailing_post = pad_ft or value.final_trivia
     return CommaStyle(
-        is_multiline=is_multiline,
-        inter_separator=inter_sep,
-        trailing_comma=trailing_comma,
-        trailing_post=trailing_post,
-        pre_comma_break=_pre_comma_break(leader) if leader else "",
+        is_multiline,
+        inter_sep,
+        trailing_comma,
+        trailing_post,
+        _pre_comma_break(leader) if leader else "",
     )
 
 

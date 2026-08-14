@@ -140,7 +140,8 @@ class CommaItem:
 
     Layout: ``leading value trailing [comma post_comma_trivia]``.
     Shared base of sibling leaves `ArrayItem` and `InlineTableEntry`;
-    use `CommaItem` only at polymorphic call sites.
+    use `CommaItem` only at polymorphic call sites. Fields are
+    positional, for the reason given on `Slot`.
     """
 
     leading: str
@@ -170,11 +171,6 @@ class InlineTableEntry(CommaItem):
 
     The shared trivia/comma machinery lives on `CommaItem`; this leaf
     adds only the key-prefix fields and keyed rendering.
-
-    Its fields are positional, like a `Slot`'s and for the same reason:
-    an entry is built once per parsed ``key = value``, and binding ten
-    fields by keyword costs several times as much as binding them
-    positionally.
     """
 
     key_parts: tuple[KeyPart, ...]

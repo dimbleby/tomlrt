@@ -1789,7 +1789,7 @@ def _snapshot_for_overlapping_install(parent: Container, key: str, value: Any) -
         return value
     if isinstance(value, AoT):
         return AoT(value.to_list())
-    return Document(data=value.to_dict())
+    return Document(value.to_dict())
 
 
 def _collect_private_roots(value: Any, found: dict[int, Document]) -> None:
@@ -2226,11 +2226,11 @@ def _fill_inline_array(
         # NEXT item's leading; items[0].leading is always empty;
         # post_comma_trivia carries only EOL sections (empty here).
         item = ArrayItem(
-            leading="" if i == 0 else " ",
-            value=sub_cst,
-            trailing="",
-            has_comma=i != last,
-            post_comma_trivia="",
+            "" if i == 0 else " ",
+            sub_cst,
+            "",
+            i != last,
+            "",
         )
         val.items.append(item)
         list.append(arr, sub_dec)
