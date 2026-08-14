@@ -3248,6 +3248,49 @@ def test_sort_container_sinks_interleaved_foreign_header() -> None:
     }
 
 
+def test_sort_container_keeps_every_mixed_keys_leaf_ahead_of_every_section() -> None:
+    """A reorder of two mixed keys must not sink a leaf under a header.
+
+    ``b`` and ``c`` each own a dotted leaf *and* a section, so each
+    contributes both a leaf block and a structural block to the reorder,
+    and the two blocks of one key straddle the other key's. Keeping
+    every leaf ahead of every section is the only thing stopping
+    ``c.x = 1`` from being emitted inside ``[t.b.z]``, where a re-parse
+    binds it to ``t.b.z`` rather than to ``t.c``. The logical view would
+    go on claiming otherwise, so the round-trip is what catches it.
+    """
+    doc = tomlrt.loads(
+        td("""
+            [t]
+            c.x = 1
+            b.x = 2
+
+            [t.c.z]
+            k = 3
+
+            [t.b.z]
+            k = 4
+            """)
+    )
+    doc["t"].sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [t]
+        b.x = 2
+        c.x = 1
+
+        [t.b.z]
+        k = 4
+
+        [t.c.z]
+        k = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert doc.to_dict() == {
+        "t": {"b": {"x": 2, "z": {"k": 4}}, "c": {"x": 1, "z": {"k": 3}}},
+    }
+
+
 def test_aot_reverse_moves_leading_comments_with_entries() -> None:
     src = td("""
         # A

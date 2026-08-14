@@ -542,13 +542,7 @@ def _norm_index(index: SupportsIndex, n: int, action: str) -> int:
 
 def _make_item(cst: Value, *, has_comma: bool) -> ArrayItem:
     """Build a fresh ``ArrayItem`` with empty trivia."""
-    return ArrayItem(
-        leading="",
-        value=cst,
-        trailing="",
-        has_comma=has_comma,
-        post_comma_trivia="",
-    )
+    return ArrayItem("", cst, "", has_comma, "")
 
 
 class AoT(_View, list["Table"]):
