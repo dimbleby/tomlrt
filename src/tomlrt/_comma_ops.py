@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from tomlrt._trivia import (
     leading_break,
     leading_ws,
+    newline_at,
     restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
@@ -522,7 +523,7 @@ def _pre_comma_break(item: CommaItem) -> str:
     """
     t = item.trailing
     i = t.find("\n")
-    return ("\r\n" if t[i - 1 : i] == "\r" else "\n") + trailing_ws(t)
+    return newline_at(t, i) + trailing_ws(t)
 
 
 def detect_style(value: ArrayValue | InlineTableValue) -> CommaStyle:
@@ -585,7 +586,7 @@ def _value_newline(value: CommaValue[Any]) -> str:
     """
     run = next(run for run in _row_runs(value) if "\n" in run)
     i = run.index("\n")
-    return "\r\n" if run[i - 1 : i] == "\r" else "\n"
+    return newline_at(run, i)
 
 
 def _value_indent(value: CommaValue[Any]) -> str:
