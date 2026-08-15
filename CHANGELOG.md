@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Mutations that break the first row of a multi-line inline array or table no
+  longer leave trailing whitespace after the opening bracket.
+
 ## [2.2.2] - 2026-08-13
 
 ### Fixed

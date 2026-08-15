@@ -21,6 +21,7 @@ from tomlrt._trivia import (
     split_eol_section,
     split_lines,
     strip_trailing_indent,
+    strip_trailing_ws,
     trailing_ws,
 )
 from tomlrt._values import (
@@ -263,10 +264,11 @@ class Boundary:
         if block:
             # A lane whose row is still open has to break for the block;
             # whatever followed then leads a row of its own, so its old
-            # intra-row pad gives way to the value indent.
+            # intra-row pad gives way to the value indent -- and the pad
+            # the break now terminates would be trailing whitespace.
             promotes = not upstream and "\n" not in head
             if promotes:
-                head += nl
+                head = strip_trailing_ws(head) + nl
             if promotes or not tail:
                 tail = indent
         target.head = head
