@@ -944,14 +944,12 @@ class Container(_View, dict[str, Any]):
         self.update(other)
         return self
 
+    @override
     def __copy__(self) -> Container:
         # Equivalent to deepcopy: returns an independent detached
         # container preserving nested typed views, so .table() etc.
         # continue to work on the copy.
         return _deep_clone(self)
-
-    def __deepcopy__(self, memo: dict[int, object]) -> Container:
-        return self.__copy__()
 
     # ------------------------------------------------------------------
     # Inline-table dispatch
@@ -1543,10 +1541,6 @@ class Document(Container):
 
         return loads(self.render())
 
-    @override
-    def __deepcopy__(self, memo: dict[int, object]) -> Document:
-        return self.__copy__()
-
 
 def _inline_value_has_inner_comments(v: object) -> bool:
     """Return True iff the inline-table value carries inner comments.
@@ -1597,7 +1591,7 @@ def _deep_clone(c: Container) -> Container:
     deepcopy of an inline table returns an inline view) and recurses
     into nested ``Container`` / ``AoT`` values. Render-level formatting
     is not preserved; for byte-exact preservation of an entire document,
-    use ``Document``'s ``__deepcopy__``.
+    use ``Document``'s ``__copy__``.
     """
     out = Table.inline() if c._inline else Table.section()  # noqa: SLF001
     for k, v in c.items():

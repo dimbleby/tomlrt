@@ -147,11 +147,9 @@ class Array(_View, list[Any]):
 
         return [_to_python(x) for x in self]
 
+    @override
     def __copy__(self) -> Array:
         return Array(self.to_list(), multiline=self.multiline)
-
-    def __deepcopy__(self, memo: dict[int, object]) -> Array:
-        return self.__copy__()
 
     def array(self, index: SupportsIndex) -> Array:
         """Return ``self[index]`` typed as a nested `Array`."""
@@ -589,11 +587,9 @@ class AoT(_View, list["Table"]):
         """Materialise a list of plain-Python ``dict``s (recursive)."""
         return [t.to_dict() for t in self]
 
+    @override
     def __copy__(self) -> AoT:
         return AoT(self.to_list())
-
-    def __deepcopy__(self, memo: dict[int, object]) -> AoT:
-        return self.__copy__()
 
     def add(self, entry: Mapping[str, TomlInput] | None = None) -> Table:
         """Append a fresh ``[[path]]`` entry and return its `Table` view.

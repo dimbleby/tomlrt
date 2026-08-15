@@ -12,7 +12,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypeGuard
 
 if TYPE_CHECKING:
+    import sys
     from collections.abc import Iterable
+
+    if sys.version_info >= (3, 11):
+        from typing import Self
+    else:
+        from typing_extensions import Self
 
     from tomlrt._array import Array
     from tomlrt._container import Container, Document
@@ -57,6 +63,14 @@ class _View:
         r"""The active newline of the owning document, or ``"\n"`` if detached."""
         lr = self._layout_root
         return lr._newline if lr is not None else "\n"  # noqa: SLF001
+
+    def __copy__(self) -> Self:
+        """Return an independent detached copy of this view."""
+        raise NotImplementedError
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        """Copying a view is already deep, so both protocols agree."""
+        return self.__copy__()
 
     def _view_children(self) -> Iterable[object]:
         """The values directly held by this view.
