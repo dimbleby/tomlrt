@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
 from tomlrt._comment_text import _split_preamble
-from tomlrt._container import Container, Document, Table, _file_host
+from tomlrt._container import Document, Table, _file_host
 from tomlrt._layout_ops import (
     file_own_header,
     maybe_advance_body_tail,
@@ -24,6 +24,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
+    from tomlrt._container import Container
     from tomlrt._parser import ParseResult
     from tomlrt._slots import AoTEntry, Slot
     from tomlrt._values import (
@@ -332,8 +333,7 @@ def _decode_inline_table(
 
 def build_from_parse(result: ParseResult) -> Document:
     """One-shot: parse-result → fully constructed `Document`."""
-    doc = Document.__new__(Document)
-    Container.__init__(doc)
+    doc = Document()
     doc._head = result.slots[0] if result.slots else None  # noqa: SLF001
     doc._tail = result.slots[-1] if result.slots else None  # noqa: SLF001
     doc._trailing = result.trailing  # noqa: SLF001

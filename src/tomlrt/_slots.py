@@ -38,18 +38,23 @@ from tomlrt._values import render_dotted, retarget_value_newlines
 class AoTEntry:
     """Identifies one entry of an array-of-tables.
 
-    Carried by every physical slot in that entry. ``entry_slots`` is a
-    membership list populated by the slot-builder, with the entry's
-    ``[[a]]`` header kept first; :attr:`path` is derived from it.
+    Carried by every physical slot in that entry. The linked slot stream
+    owns membership and order; this marker retains only the entry's own
+    ``[[a]]`` header so :attr:`path` has one canonical source.
     """
 
-    entry_slots: list[Slot] = field(default_factory=list)
+    _header: StructuralHeaderSlot | None = field(default=None, init=False, repr=False)
+
+    def bind_header(self, header: StructuralHeaderSlot) -> None:
+        """Record the unique ``[[a]]`` header that introduces this entry."""
+        assert self._header is None, "AoT entry already has a header"
+        self._header = header
 
     @property
     def header(self) -> StructuralHeaderSlot:
-        """The entry's ``[[a]]`` header, kept first in ``entry_slots``."""
-        header = self.entry_slots[0]
-        assert isinstance(header, StructuralHeaderSlot)
+        """The entry's ``[[a]]`` header."""
+        header = self._header
+        assert header is not None, "AoT entry header has not been bound"
         return header
 
     @property
@@ -120,8 +125,12 @@ class Slot:
         new = type(self).__new__(type(self))
         memo[id(self)] = new
         for f in fields(self):
-            if f.init:
-                value: object = copy.deepcopy(getattr(self, f.name), memo)
+            value: object
+            if f.name in {"owner_aot_entry", "entry"}:
+                # Clone installers rebuild physical/logical ownership.
+                value = None
+            elif f.init:
+                value = copy.deepcopy(getattr(self, f.name), memo)
             elif f.default_factory is not MISSING:
                 value = f.default_factory()
             else:

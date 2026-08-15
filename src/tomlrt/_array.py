@@ -704,8 +704,8 @@ class AoT(_View, list["Table"]):
             # then renormalise to the requested order.
             if index.step is None or index.step == 1:
                 start = index.indices(len(self))[0]
-                for i in sorted(indices, reverse=True):
-                    _layout_ops.remove_aot_entry(self, i)
+                if indices:
+                    _layout_ops.remove_aot_entries(self, indices)
                 new_entries = [self._add_entry_attached(v) for v in typed_values]
                 cur: list[Table] = list(self)
                 cur = cur[: -len(new_entries)] if new_entries else cur

@@ -132,8 +132,8 @@ class _Parser:
             new_entry,
             synthetic=False,
         )
-        if owner is not None:
-            owner.entry_slots.append(slot)
+        if new_entry is not None:
+            new_entry.bind_header(slot)
         return slot
 
     def _parse_key_value(self, leading: str) -> KVSlot:
@@ -158,7 +158,7 @@ class _Parser:
         self._validator.record_keyvalue(key_path, value, at=key_at)
         host_path = self._validator.current_section
         owner = self._validator.current_owner_aot_entry
-        slot = KVSlot(
+        return KVSlot(
             leading,
             owner,
             eol,
@@ -169,9 +169,6 @@ class _Parser:
             post_eq,
             value,
         )
-        if owner is not None:
-            owner.entry_slots.append(slot)
-        return slot
 
     def _parse_value(self) -> Value:
         sc = self._sc

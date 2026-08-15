@@ -653,7 +653,7 @@ class Container(_View, dict[str, Any]):
         if src_root is not None and not src_root._is_private:  # noqa: SLF001
             _layout_ops.clone_aot(self, key, value)
             return
-        # Private orphans may still own intact entry_slots from a
+        # Private orphans may still own intact slots from a
         # structural-overwrite detach; clone those to keep per-KV
         # trivia, nested sub-sections, and inter-entry separators.
         # The generic add_aot_entry(rehome=) path rebuilds from dict
@@ -666,7 +666,7 @@ class Container(_View, dict[str, Any]):
         dict.__setitem__(self, key, attached)
         for entry_table in existing_entries:
             owner = entry_table._owner_aot_entry  # noqa: SLF001
-            preserve_cst = owner is not None and bool(owner.entry_slots)
+            preserve_cst = owner is not None and entry_table._header_ref is not None  # noqa: SLF001
             if preserve_cst:
                 # Gathering includes nested AoTs and requires the live view.
                 _layout_ops.clone_aot_entry(
@@ -886,9 +886,19 @@ class Container(_View, dict[str, Any]):
             mixed: list[str] = []
             pure_sections: list[str] = []
             for k in current:
-                if not self._has_leaf(k):
+                has_leaf = False
+                has_header = False
+                for ref in self._index.get(k, ()):
+                    if isinstance(ref.slot, KVSlot):
+                        has_leaf = True
+                    else:
+                        assert isinstance(ref.slot, StructuralHeaderSlot)
+                        has_header = True
+                    if has_leaf and has_header:
+                        break
+                if not has_leaf:
                     pure_sections.append(k)
-                elif self.has_header(k):
+                elif has_header:
                     mixed.append(k)
                 else:
                     pure_leaves.append(k)
@@ -920,18 +930,6 @@ class Container(_View, dict[str, Any]):
         # calls this once per key, so it's hot for wide containers.
         for r in refs:  # noqa: SIM110
             if isinstance(r.slot, StructuralHeaderSlot):
-                return True
-        return False
-
-    def _has_leaf(self, key: str) -> bool:
-        """Whether ``key``'s block contains a leaf ``key = value`` slot.
-
-        A key can have both a leaf and a sub-section header, in which
-        case both this and `has_header` return True.
-        """
-        refs = self._index.get(key, ())
-        for r in refs:  # noqa: SIM110
-            if isinstance(r.slot, KVSlot):
                 return True
         return False
 
