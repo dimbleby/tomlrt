@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `promote_inline` and `promote_array` now raise `TOMLError`, as documented,
+  when the target is not an inline table or not an array.
 - Mutations that break the first row of a multi-line inline array or table no
   longer leave trailing whitespace after the opening bracket.
 

@@ -1086,13 +1086,13 @@ class Container(_View, dict[str, Any]):
         """Convert an inline-table entry at ``key`` into a section header.
 
         Returns the live view at ``key`` after promotion. Raises
-        ``KeyError`` if the key is missing, or ``TypeError`` if it
+        ``KeyError`` if the key is missing, or `TOMLError` if it
         doesn't refer to an inline-style table.
         """
         cur = self._require_promotable_entry(key, action="inline-table promotion")
         if not _is_inline_table(cur):
             msg = f"{key!r} is not an inline table"
-            raise TypeError(msg)
+            raise TOMLError(msg)
         _check_inline_promotable(cur, key)
         return self._promote_inline_entry(key, cur)
 
@@ -1120,14 +1120,13 @@ class Container(_View, dict[str, Any]):
         """Convert an array-of-inline-tables at ``key`` into an AoT.
 
         Returns the live AoT view at ``key``. Raises ``KeyError`` if the
-        key is missing, ``TypeError`` if it refers to a non-array, or
-        ``TOMLError`` for an empty array or an array with
-        non-inline-table elements.
+        key is missing, or `TOMLError` if it refers to a non-array, an
+        empty array, or an array with non-inline-table elements.
         """
         cur = self._require_promotable_entry(key, action="array-of-tables promotion")
         if not isinstance(cur, Array):
             msg = f"{key!r} is not an array"
-            raise TypeError(msg)
+            raise TOMLError(msg)
         if len(cur) == 0:
             msg = f"cannot promote empty array {key!r}"
             raise TOMLError(msg)
