@@ -4700,6 +4700,55 @@ def test_inline_insert_trailing_ws_after_comma_no_blank_line() -> None:
     ).replace("@", " ")
 
 
+def test_array_above_comment_on_first_item_no_trailing_ws_after_bracket() -> None:
+    # The opening bracket's pad is intra-row whitespace ("[ 1,"). Stamping an
+    # above-item comment on item 0 makes that pad the row terminator, so the
+    # whitespace it swallows must not linger as trailing whitespace after "[".
+    doc = tomlrt.loads(
+        td(
+            """
+            a = [ 1,
+                  2 ]
+            """,
+        ),
+    )
+    doc.array("a").leading_comments[0] = ("z",)
+    assert tomlrt.dumps(doc) == td(
+        """
+        a = [
+              # z
+              1,
+              2 ]
+        """,
+    )
+    assert reparses(tomlrt.dumps(doc)) == {"a": [1, 2]}
+
+
+def test_array_sort_carrying_comment_to_head_no_trailing_ws_after_bracket() -> None:
+    # Reordering carries an item's above-comment with it, so sorting can move
+    # one onto the head boundary and break the opening bracket's row. That
+    # break must not leave the bracket's old intra-row pad behind either.
+    doc = tomlrt.loads(
+        td(
+            """
+            a = [ 2,
+                  # c
+                  1 ]
+            """,
+        ),
+    )
+    doc.array("a").sort()
+    assert tomlrt.dumps(doc) == td(
+        """
+        a = [
+              # c
+              1,
+              2 ]
+        """,
+    )
+    assert reparses(tomlrt.dumps(doc)) == {"a": [1, 2]}
+
+
 def test_array_mutation_preserves_blank_before_bracket_with_trailing_ws() -> None:
     # The closing-bracket gap (final_trivia) carries a deliberate blank line
     # after a self-terminated item (it has an EOL comment), and that blank
