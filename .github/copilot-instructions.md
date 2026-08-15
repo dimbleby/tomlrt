@@ -109,9 +109,13 @@ them. Read roughly in this order:
   (whether the view is an inline value), plus two hooks:
   `_view_children` for descent and `_reset_displaced` for detaching a
   view whose backing CST has gone, and the `is_inline_value` predicate
-  over `_inline`. It imports nothing, so a traversal in `_layout_ops`
-  can recognise and walk a view without a deferred import of the three
-  concrete classes. `_unbind_from_document` is **not** here — only
+  over `_inline`. It also owns the copy protocol: `__deepcopy__`
+  delegates to `__copy__` — copying a view is always deep — and the
+  `__copy__` stub makes a subclass that forgets to implement it raise
+  rather than silently fall back to `dict` / `list` copying, which
+  would drag the whole source document along. It imports nothing, so a
+  traversal in `_layout_ops` can recognise and walk a view without a
+  deferred import of the three concrete classes. `_unbind_from_document` is **not** here — only
   `AoT` needs it.
 - **`_paths.py`** — key-path argument parsing and validation
   (the `t["a", "b"]` / `t[("a", "b")]` shapes used by the public

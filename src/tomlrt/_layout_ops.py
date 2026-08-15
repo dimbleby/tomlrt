@@ -29,6 +29,7 @@ import operator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from tomlrt import _array, _container
 from tomlrt._comment_text import _split_attached_block
 from tomlrt._kind import _Kind
 from tomlrt._scalar import is_scalar
@@ -515,18 +516,16 @@ def ensure_implicit_chain(
     implicit (header-less) tables wired into ``parent._attached_doc``;
     existing components are always ``Container`` instances.
     """
-    from tomlrt._container import Container, Table  # noqa: PLC0415
-
     doc = parent._attached_doc  # noqa: SLF001
     owner = parent._owner_aot_entry  # noqa: SLF001
     cur: Container = parent
     for j, comp in enumerate(sub_path):
         if comp in cur:
             nxt = dict.__getitem__(cur, comp)
-            assert isinstance(nxt, Container)
+            assert isinstance(nxt, _container.Container)
             cur = nxt
             continue
-        implicit = Table()
+        implicit = _container.Table()
         implicit._wire(  # noqa: SLF001
             layout_root=doc,
             parent=cur,
@@ -753,6 +752,19 @@ def append_direct_kv(
     _extend_entry_slots(c._owner_aot_entry, new_slot)  # noqa: SLF001
 
 
+def append_synth_kv(
+    c: Container,
+    key: str,
+    v: object,
+    *,
+    reinstall_as_dotted: bool = False,
+) -> None:
+    """Append ``key = v`` to ``c`` as a freshly synthesised KV line."""
+    cst, dec = c._synth_local_value(key, v)  # noqa: SLF001
+    append_direct_kv(c, key, cst, reinstall_as_dotted=reinstall_as_dotted)
+    dict.__setitem__(c, key, dec)
+
+
 def _invalidate_body_tail_chain(
     start: Container | None,
     owned_slots: set[Slot] | None,
@@ -829,10 +841,7 @@ def _replace_primary_in_place(
     """
     new_slot.leading = primary.leading
     new_slot.eol = primary.eol
-    if primary._prev is None:  # noqa: SLF001
-        insert_before_head(new_slot, doc)
-    else:
-        insert_after(primary._prev, new_slot, doc)  # noqa: SLF001
+    insert_before(primary, new_slot, doc)
 
 
 def _new_owned_section_header(
@@ -974,15 +983,12 @@ def _root_orphan_subtree(
     given them: headers bind at every path ancestor, while a KV binds
     at its host and then down its dotted key, never above it.
     """
-    from tomlrt._array import AoT as AoTType  # noqa: PLC0415
-    from tomlrt._container import Table  # noqa: PLC0415
-
     # ``chain`` is the run of new ancestors, outermost first; a KV hosted
     # at one of them binds from there down.
     path = val._path  # noqa: SLF001
     chain: list[Container] = [orphan]
     for depth, part in enumerate(path[:-1], start=1):
-        step = Table()
+        step = _container.Table()
         step._wire(  # noqa: SLF001
             layout_root=orphan,
             parent=chain[-1],
@@ -994,7 +1000,7 @@ def _root_orphan_subtree(
     parent = chain[-1]
     val._host = parent  # noqa: SLF001
     dict.__setitem__(parent, path[-1], val)
-    if isinstance(val, AoTType):
+    if isinstance(val, _array.AoT):
         # An entry's host is the container holding the AoT, not the
         # AoT itself, so entries need the same re-hosting.
         for entry in val:
@@ -1147,14 +1153,12 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         unlink_slot(slot, doc)
 
     if transplanting:
-        from tomlrt._container import Document  # noqa: PLC0415
-
         # Keep inline descendants live against the orphan: their backing
         # CST lives inside a transplanted KV, so re-pointing (rather than
         # resetting) lets edits through a held reference flow into the
         # orphaned slot value, which a later rehome moves intact.
         displaced = _displaced_inline_views(val)
-        orphan = Document()
+        orphan = _container.Document()
         orphan._newline = doc._newline  # noqa: SLF001
         orphan._is_private = True  # noqa: SLF001
         _splice_block_after(ordered_for_transplant, None, orphan)
@@ -1241,19 +1245,16 @@ def _collect_subtree(
     handled separately by ``_walk_view_tree``), so non-container leaves
     are skipped without recursing into them.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
-
-    if isinstance(val, Container):
+    if isinstance(val, _container.Container):
         if val._inline:  # noqa: SLF001
             return
         containers_out.append(val)
         for r in val._refs:  # noqa: SLF001
             add_slot(r.slot)
         for child in val.values():
-            if isinstance(child, (Container, AoT)):
+            if isinstance(child, (_container.Container, _array.AoT)):
                 _collect_subtree(child, containers_out, aots_out, add_slot)
-    elif isinstance(val, AoT):
+    elif isinstance(val, _array.AoT):
         aots_out.append(val)
         placeholder = _empty_aot_placeholder_ref(val)
         if placeholder is not None:
@@ -1307,14 +1308,11 @@ def _surviving_aot_entries(doc: Document, candidates: set[AoTEntry]) -> set[AoTE
 
     Bails out as soon as every candidate has been spotted.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
-
     surviving: set[AoTEntry] = set()
     remaining = set(candidates)
 
     def visit(v: object) -> None:
-        if isinstance(v, Container):
+        if isinstance(v, _container.Container):
             owner = v._owner_aot_entry  # noqa: SLF001
             if owner is not None and owner in remaining:
                 surviving.add(owner)
@@ -1324,7 +1322,7 @@ def _surviving_aot_entries(doc: Document, candidates: set[AoTEntry]) -> set[AoTE
                     if not remaining:
                         return
                     visit(child)
-        elif isinstance(v, AoT):
+        elif isinstance(v, _array.AoT):
             for entry in v:
                 if not remaining:
                     return
@@ -1365,13 +1363,11 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     assert parent is not None
     assert c._path  # noqa: SLF001
 
-    from tomlrt._array import AoT  # noqa: PLC0415
-
     # An unbound key answers this the same way a non-AoT one does: an
     # entry whose array has been emptied has no siblings to inherit
     # from either.
     aot = dict.get(parent, c._path[-1])  # noqa: SLF001
-    if not isinstance(aot, AoT):
+    if not isinstance(aot, _array.AoT):
         return None
     found_self = False
     for entry_table in reversed(aot):
@@ -1814,9 +1810,8 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     if successor is None or isinstance(successor, KVSlot):
         return
     layout_root = parent._layout_root  # noqa: SLF001
-    from tomlrt._container import Document  # noqa: PLC0415
 
-    assert isinstance(layout_root, Document)
+    assert isinstance(layout_root, _container.Document)
     doc = layout_root
     # Hand the demoted header's leading trivia (its separation-from-above,
     # plus any file preamble / comments it carries at doc head) off to
@@ -2024,7 +2019,6 @@ def add_aot_entry(
     from tomlrt._container import (  # noqa: PLC0415
         Table,
         _is_synth_inline,
-        _synth_value,
     )
 
     parent = aot._host  # noqa: SLF001
@@ -2084,15 +2078,7 @@ def add_aot_entry(
         if not (is_scalar(v) or _is_synth_inline(v)):
             entry_table._setitem_validated(k, v)  # noqa: SLF001
             continue
-        cst, dec = _synth_value(
-            v,
-            layout_root=doc,
-            parent=entry_table,
-            name=k,
-            owner=entry,
-        )
-        append_direct_kv(entry_table, k, cst)
-        dict.__setitem__(entry_table, k, dec)
+        append_synth_kv(entry_table, k, v)
     return entry_table
 
 
@@ -2241,8 +2227,6 @@ def _install_cloned_aot_entry(
     inter-entry separator (entry > 0). :func:`clone_aot` sets this False
     past entry 0 so source separators survive.
     """
-    from tomlrt._container import Table  # noqa: PLC0415
-
     parent = aot._host  # noqa: SLF001
     doc = aot._attached_doc  # noqa: SLF001
     assert parent is not None
@@ -2270,7 +2254,7 @@ def _install_cloned_aot_entry(
     # else: keep source leading verbatim (bulk-clone past entry 0).
 
     append_anchor = _aot_append_anchor(aot)
-    entry_table = Table()
+    entry_table = _container.Table()
     _install_cloned_structural_block(
         entry_table,
         parent=parent,
@@ -2346,12 +2330,10 @@ def _finish_cloned_section(
     cloned_slots: list[Slot],
 ) -> Table:
     """Wire a cloned section block under ``parent[key]`` and store it."""
-    from tomlrt._container import Table  # noqa: PLC0415
-
     # Fresh implicit parents have no extent, so fall back to their
     # nearest header-bearing host. A header must also clear any
     # immediately-following KVs it would otherwise capture.
-    section = Table.section()
+    section = _container.Table.section()
     _install_cloned_structural_block(
         section,
         parent=parent,
@@ -2595,13 +2577,10 @@ def _unfile_stale_same_orphan_ancestors(
     that is no longer filed there, so the chain is revalidated after —
     the same repair the delete path makes for the same reason.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
-
     # A private orphan is rooted at the path its slots spell, so every
     # value inside one has a parent within the same document.
     old_parent = value._host  # noqa: SLF001
-    assert isinstance(old_parent, Container)
+    assert isinstance(old_parent, _container.Container)
     assert old_parent._layout_root is value._layout_root  # noqa: SLF001
     # `_host` is always the immediate path parent, so the key to drop
     # is the last path component.
@@ -2611,7 +2590,7 @@ def _unfile_stale_same_orphan_ancestors(
     # `value` may be one entry of an AoT bound here — an entry's `_path`
     # names the *array*, not itself — in which case the key outlives its
     # departure and only the entry goes.
-    entries: list[Table] = bound if isinstance(bound, AoT) else []
+    entries: list[Table] = bound if isinstance(bound, _array.AoT) else []
     entry_index = next((i for i, entry in enumerate(entries) if entry is value), None)
     if entry_index is None:
         dict.pop(old_parent, key, None)
@@ -2623,7 +2602,7 @@ def _unfile_stale_same_orphan_ancestors(
             # still holding it would add entries to a document that no
             # longer names it, which would then render what it denies.
             dict.__delitem__(old_parent, key)
-            assert isinstance(bound, AoT)
+            assert isinstance(bound, _array.AoT)
             bound._unbind_from_document()  # noqa: SLF001
 
     stale_container_ids: set[int] = set()
@@ -2719,19 +2698,16 @@ def _rehome_view_tree(
     parallel. Views owned by ``stale_owner`` transfer to the destination
     entry; nested AoT entries retain their own owners.
     """
-    from tomlrt._array import AoT, Array  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
-
     new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
     def visit(node: _View) -> None:
         # Narrows for the assignments below; `_View` has no other subclass.
-        assert isinstance(node, (Container, AoT, Array))
+        assert isinstance(node, (_container.Container, _array.AoT, _array.Array))
         node._layout_root = doc  # noqa: SLF001
-        if isinstance(node, (Container, AoT)):
+        if isinstance(node, (_container.Container, _array.AoT)):
             node._path = _rebase_path(node._path, old_prefix, new_prefix)  # noqa: SLF001
             if (
-                isinstance(node, Container)
+                isinstance(node, _container.Container)
                 and stale_owner is not None
                 and node._owner_aot_entry is stale_owner  # noqa: SLF001
             ):
@@ -2934,12 +2910,10 @@ def clone_aot(
     Each entry is deep-cloned with path-rebasing so any nested
     sub-sections stay logically inside the new key.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-
     layout_root = parent._attached_doc  # noqa: SLF001
     target_path = (*parent._path, key)  # noqa: SLF001
 
-    new_aot = AoT()
+    new_aot = _array.AoT()
     new_aot._layout_root = layout_root  # noqa: SLF001
     new_aot._path = target_path  # noqa: SLF001
     new_aot._host = parent  # noqa: SLF001
@@ -3081,10 +3055,7 @@ def attach_section_at(
     the deepest component gets the explicit header. ``source`` (always an
     unattached `Table`) is rehomed in place.
     """
-    from tomlrt._container import (  # noqa: PLC0415
-        _is_synth_inline,
-        _synth_value,
-    )
+    from tomlrt._container import _is_synth_inline  # noqa: PLC0415
 
     sub = tuple(sub_path)
     assert sub, "attach_section_at requires a non-empty sub_path"
@@ -3151,15 +3122,7 @@ def attach_section_at(
         else:
             structurals.append((k, v))
     for k, v in scalars:
-        cst, dec = _synth_value(
-            v,
-            layout_root=doc,
-            parent=section,
-            name=k,
-            owner=owner,
-        )
-        append_direct_kv(section, k, cst)
-        dict.__setitem__(section, k, dec)
+        append_synth_kv(section, k, v)
     for k, v in structurals:
         section._setitem_validated(k, v)  # noqa: SLF001
     return section
@@ -3852,6 +3815,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 __all__ = [
     "add_aot_entry",
     "append_direct_kv",
+    "append_synth_kv",
     "attach_empty_aot",
     "attach_section_at",
     "delete_key",

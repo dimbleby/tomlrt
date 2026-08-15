@@ -13,7 +13,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
 
 from copy import deepcopy
 
-from tomlrt import _layout_ops
+from tomlrt import _container, _layout_ops
 from tomlrt._array_comments import _ArrayAdapter
 from tomlrt._comma_comments import (
     CommaEolView,
@@ -147,11 +147,9 @@ class Array(_View, list[Any]):
 
         return [_to_python(x) for x in self]
 
+    @override
     def __copy__(self) -> Array:
         return Array(self.to_list(), multiline=self.multiline)
-
-    def __deepcopy__(self, memo: dict[int, object]) -> Array:
-        return self.__copy__()
 
     def array(self, index: SupportsIndex) -> Array:
         """Return ``self[index]`` typed as a nested `Array`."""
@@ -159,9 +157,7 @@ class Array(_View, list[Any]):
 
     def table(self, index: SupportsIndex) -> Table:
         """Return ``self[index]`` typed as a `Table`."""
-        from tomlrt._container import Table  # noqa: PLC0415
-
-        return self._typed_item(index, Table, "a Table")
+        return self._typed_item(index, _container.Table, "a Table")
 
     @overload
     def get_array(self, index: SupportsIndex) -> Array | None: ...
@@ -591,11 +587,9 @@ class AoT(_View, list["Table"]):
         """Materialise a list of plain-Python ``dict``s (recursive)."""
         return [t.to_dict() for t in self]
 
+    @override
     def __copy__(self) -> AoT:
         return AoT(self.to_list())
-
-    def __deepcopy__(self, memo: dict[int, object]) -> AoT:
-        return self.__copy__()
 
     def add(self, entry: Mapping[str, TomlInput] | None = None) -> Table:
         """Append a fresh ``[[path]]`` entry and return its `Table` view.
@@ -616,9 +610,7 @@ class AoT(_View, list["Table"]):
         Precondition: attached AoT. Prefers the trivia-preserving clone
         path for an existing AoT entry or section.
         """
-        from tomlrt._container import Table as TableType  # noqa: PLC0415
-
-        if isinstance(value, TableType) and value._layout_root is not None:  # noqa: SLF001
+        if isinstance(value, _container.Table) and value._layout_root is not None:  # noqa: SLF001
             if value._is_own_aot_entry:  # noqa: SLF001
                 return _layout_ops.clone_aot_entry(self, value)
             if value._header_ref is not None and not value._inline:  # noqa: SLF001
@@ -627,10 +619,8 @@ class AoT(_View, list["Table"]):
 
     def _replace_entry_attached(self, index: int, value: Mapping[str, Any]) -> None:
         """Dispatch in-place replacement of an attached AoT entry."""
-        from tomlrt._container import Table as TableType  # noqa: PLC0415
-
         if (
-            isinstance(value, TableType)
+            isinstance(value, _container.Table)
             and value._layout_root is not None  # noqa: SLF001
             and value._is_own_aot_entry  # noqa: SLF001
         ):

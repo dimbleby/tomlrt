@@ -156,15 +156,11 @@ class EolCommentView(_SlotKeyedView[str]):
 
     @override
     def _get(self, slot: KVSlot) -> str | None:
-        raw = slot.eol.comment
-        return _decode_comment(raw) if raw else None
+        return _read_eol_comment(slot.eol)
 
     @override
     def _clear(self, slot: KVSlot) -> None:
-        slot.eol.comment = ""
-        # Also drop the gap-whitespace that preceded the comment so we
-        # don't leave a dangling tail like `key = 1   \n`.
-        slot.eol.trailing_ws = ""
+        _clear_eol_comment(slot.eol)
 
     @override
     def __setitem__(self, key: str, value: str) -> None:
@@ -280,19 +276,14 @@ def _header_comment_get(c: Container) -> str | None:
         # section. Setters still raise -- silently dropping a write
         # would be a footgun.
         return None
-    eol = h.eol
-    if not eol.comment:
-        return None
-    return _decode_comment(eol.comment)
+    return _read_eol_comment(h.eol)
 
 
 def _header_comment_set(c: Container, value: str | None) -> None:
     h = _require_header_slot(c, "container has no header to attach a comment to")
     eol = h.eol
     if value is None:
-        if eol.comment:
-            eol.comment = ""
-            eol.trailing_ws = ""
+        _clear_eol_comment(eol)
         return
     _validate_comment_str(value, "header_comment")
     _write_eol_comment(eol, value, c._doc_newline)  # noqa: SLF001
@@ -322,6 +313,25 @@ def _header_leading_block_set(c: Container, value: tuple[str | None, ...]) -> No
     h = _require_header_slot(c, "container has no header to attach a leading block to")
     block = _validate_comment_entries(value, "header_leading_block", allow_none=True)
     _write_leading_block(c, h, block)
+
+
+def _read_eol_comment(eol: EolTrivia) -> str | None:
+    """The decoded EOL comment on ``eol``, or ``None`` if it carries none."""
+    return _decode_comment(eol.comment) if eol.comment else None
+
+
+def _clear_eol_comment(eol: EolTrivia) -> None:
+    """Drop the EOL comment on ``eol``, and the gap that introduced it.
+
+    The gap goes too, or removing ``# c`` from ``key = 1  # c`` would
+    leave a dangling ``key = 1  `` behind. With no comment to remove
+    there is no such gap, and whatever whitespace is there was authored
+    deliberately, so leave it alone.
+    """
+    if not eol.comment:
+        return
+    eol.comment = ""
+    eol.trailing_ws = ""
 
 
 def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
