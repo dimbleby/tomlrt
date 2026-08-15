@@ -749,7 +749,6 @@ def append_direct_kv(
     )
     record_ref(c, new_slot)
     c._body_tail = new_slot  # noqa: SLF001
-    _extend_entry_slots(c._owner_aot_entry, new_slot)  # noqa: SLF001
 
 
 def append_synth_kv(
@@ -855,18 +854,12 @@ def _new_owned_section_header(
     )
 
 
-def _extend_entry_slots(owner: AoTEntry | None, *slots: Slot) -> None:
-    if owner is not None:
-        owner.entry_slots.extend(slots)
-
-
 def _transfer_stale_owner(
     slot: Slot, stale_owner: AoTEntry | None, new_owner: AoTEntry | None
 ) -> None:
     if stale_owner is None or slot.owner_aot_entry is not stale_owner:
         return
     slot.owner_aot_entry = new_owner
-    _extend_entry_slots(new_owner, slot)
     if isinstance(slot, StructuralHeaderSlot) and slot.entry is stale_owner:
         slot.entry = None
 
@@ -876,7 +869,6 @@ def _bind_own_section_header(c: Container, header: StructuralHeaderSlot) -> None
     parent = c._parent  # noqa: SLF001
     assert parent is not None
     file_own_header(c, header)
-    _extend_entry_slots(c._owner_aot_entry, header)  # noqa: SLF001
     _file_header_binding_chain(parent, header)
 
 
@@ -965,8 +957,6 @@ def _materialise_empty_inline_table(
     c._value = val  # noqa: SLF001
     c._body_tail = None  # noqa: SLF001
 
-    _extend_entry_slots(owner, kv)
-
 
 def _root_orphan_subtree(
     orphan: Document, val: Container | AoT, slots: Iterable[Slot]
@@ -1028,8 +1018,8 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     """Delete ``key`` from ``c`` — scalar, inline, section, AoT, or dotted-subtree.
 
     Owned slots are scrubbed from live refs/indexes via slot
-    back-pointers, body tails and ``AoTEntry.entry_slots`` are repaired,
-    then the slots are unlinked. Cascade-prune is intentionally *not*
+    back-pointers, body tails are repaired, then the slots are unlinked.
+    Cascade-prune is intentionally *not*
     performed: ``del c[k]`` removes exactly ``k`` and leaves any
     now-emptied implicit ancestor chain reachable as nested empty
     ``Table`` views.
@@ -1106,23 +1096,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     _invalidate_body_tail_chain(c, owned_ids, min_depth=min_owned_depth)
 
     # Unlink owned slots; transplant user-referenced subtrees to an
-    # orphan Document, keeping entry_slots so clone/re-install can still
-    # read the full CST.
-    moving_aot_entries: set[AoTEntry] = set()
-    for ao in subtree_aots:
-        for entry_table in list.__iter__(ao):
-            owner_e = entry_table._owner_aot_entry  # noqa: SLF001
-            assert owner_e is not None
-            moving_aot_entries.add(owner_e)
-
-    candidate_owners: set[AoTEntry] = set()
-    for slot in owned_slots:
-        owner = slot.owner_aot_entry
-        if owner is not None and owner not in moving_aot_entries:
-            candidate_owners.add(owner)
-    surviving_aot_entries = (
-        _surviving_aot_entries(doc, candidate_owners) if candidate_owners else set()
-    )
+    # orphan Document so clone/re-install can still read the full CST.
     # Capture doc-stream order *before* the unlink loop severs the linked
     # list. ``owned_slots`` is in collection order (key's own refs first,
     # then the subtree body), not doc-stream order; transplanting in that
@@ -1133,15 +1107,6 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         if transplanting and owned_slots
         else owned_slots
     )
-    for slot in reversed(owned_slots):
-        owner = slot.owner_aot_entry
-        if (
-            owner is not None
-            and owner in surviving_aot_entries
-            and owner not in moving_aot_entries
-        ):
-            with contextlib.suppress(ValueError):
-                _pop_or_remove(owner.entry_slots, slot)
     # Unlink in *reverse* doc-stream order (see remove_aot_entry for the
     # same idiom): unlinking a doc-stream-first owned slot promotes its
     # successor to the new doc head, stripping that successor's leading
@@ -1301,35 +1266,6 @@ def _owned_slots_ordered(start: Slot, owned: set[Slot]) -> list[Slot]:
     assert len(backward) == missing, "owned slot unreachable from start"
     backward.reverse()
     return backward + forward
-
-
-def _surviving_aot_entries(doc: Document, candidates: set[AoTEntry]) -> set[AoTEntry]:
-    """Return entries from ``candidates`` still reachable in ``doc``.
-
-    Bails out as soon as every candidate has been spotted.
-    """
-    surviving: set[AoTEntry] = set()
-    remaining = set(candidates)
-
-    def visit(v: object) -> None:
-        if isinstance(v, _container.Container):
-            owner = v._owner_aot_entry  # noqa: SLF001
-            if owner is not None and owner in remaining:
-                surviving.add(owner)
-                remaining.discard(owner)
-            if not v._inline:  # noqa: SLF001
-                for child in v.values():
-                    if not remaining:
-                        return
-                    visit(child)
-        elif isinstance(v, _array.AoT):
-            for entry in v:
-                if not remaining:
-                    return
-                visit(entry)
-
-    visit(doc)
-    return surviving
 
 
 # ---------------------------------------------------------------------------
@@ -1494,9 +1430,8 @@ def install_dotted_kv_slot(
     """Insert a single dotted-KV slot hosted by ``host``.
 
     Files refs on ``host`` and every implicit intermediate in
-    ``[host, ..., leaf_parent]``, updates ``_body_tail`` along the
-    chain, and maintains ``AoTEntry.entry_slots`` membership. The caller
-    owns dict storage at ``leaf_parent``.
+    ``[host, ..., leaf_parent]`` and updates ``_body_tail`` along the
+    chain. The caller owns dict storage at ``leaf_parent``.
 
     ``leading`` overrides the synthesised separator/indent — used by the
     trivia-preserving graft to carry a cloned source slot's leading
@@ -1545,8 +1480,6 @@ def install_dotted_kv_slot(
         if predecessor is anc._body_tail or anc._body_tail is None:  # noqa: SLF001
             anc._body_tail = new_slot  # noqa: SLF001
 
-    _extend_entry_slots(owner, new_slot)
-
 
 def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
     """Promote a purely-implicit container ``c`` to an explicit section.
@@ -1587,7 +1520,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     assert parent is not None
     _file_header_binding_chain(parent, header_slot)
 
-    new_kv = _file_synthetic_header_and_kv(
+    _file_synthetic_header_and_kv(
         c,
         header_slot=header_slot,
         key=key,
@@ -1595,8 +1528,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         doc=doc,
         owner=owner,
     )
-
-    _extend_entry_slots(owner, header_slot, new_kv)
 
 
 def _terminate_unless_tail(slot: Slot, doc: Document) -> None:
@@ -1662,7 +1593,7 @@ def _new_section_header(
     entry: AoTEntry | None = None,
     owner_aot_entry: AoTEntry | None = None,
 ) -> StructuralHeaderSlot:
-    return StructuralHeaderSlot(
+    header = StructuralHeaderSlot(
         leading,
         owner_aot_entry,
         _default_eol(doc),
@@ -1673,6 +1604,9 @@ def _new_section_header(
         entry,
         synthetic=True,
     )
+    if entry is not None:
+        entry.bind_header(header)
+    return header
 
 
 def _belongs_to_parent_extent(
@@ -1828,10 +1762,6 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     # effect), drops binding refs from every ancestor, and empties
     # ``header._refs`` so the orphaned slot leaves no stale back-pointers.
     _scrub_owned_slots_via_backptrs([header])
-    owner = header.owner_aot_entry
-    if owner is not None:
-        with contextlib.suppress(ValueError):
-            owner.entry_slots.remove(header)
 
 
 def _split_leading_structural(leading: str) -> tuple[str, str]:
@@ -1985,10 +1915,6 @@ def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     _scrub_owned_slots_via_backptrs([slot])
     min_depth = len(slot.host_path) if isinstance(slot, KVSlot) else 0
     _invalidate_body_tail_chain(parent, {slot}, min_depth=min_depth)
-    owner = slot.owner_aot_entry
-    if owner is not None:
-        with contextlib.suppress(ValueError):
-            owner.entry_slots.remove(slot)
     unlink_slot(slot, doc)
 
 
@@ -2043,8 +1969,6 @@ def add_aot_entry(
         entry=entry,
         owner_aot_entry=entry,
     )
-    entry.entry_slots.append(header)
-
     # Build entry-root container (or rehome an existing one).
     body_items: list[tuple[str, object]]
     if rehome is not None:
@@ -2361,9 +2285,8 @@ def clone_aot_entry_as_table(
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
     assert src_entry is not None, "source entry has no owning AoTEntry"
     assert src_entry_table._header_ref is not None  # noqa: SLF001
-    # _gather_subtree_slots, not entry.entry_slots, for true doc-stream
-    # order (entry_slots is membership order only) and to pull in
-    # nested ``[[a.x]]`` entries physically inside this entry's body.
+    # Gather the complete subtree, including nested ``[[a.x]]`` entries
+    # physically inside this entry's body.
     src_slots = _gather_subtree_slots(src_entry_table)
     return _install_cloned_section(
         parent,
@@ -2519,11 +2442,6 @@ def clone_document_as_section(
         doc=doc,
         owner_aot_entry=parent._owner_aot_entry,  # noqa: SLF001
     )
-    # Unlike a cloned header, this one is synthesised here rather than
-    # produced by `_clone_entry_slots` (which registers `entry_slots`
-    # membership for every slot it clones) — file it explicitly, or an
-    # AoT-entry owner never learns this header is part of it.
-    _extend_entry_slots(parent._owner_aot_entry, header)  # noqa: SLF001
     cloned_body, _ = _clone_entry_slots(
         src_slots,
         new_entry=None,
@@ -2992,16 +2910,12 @@ def _clone_entry_slots(
                 c.entry = new_entry
             elif s.entry is not None:
                 c.entry = nested_entry_map.get(s.entry)
+            if c.entry is not None:
+                c.entry.bind_header(c)
         cloned.append(c)
         if s is head:
             assert isinstance(c, StructuralHeaderSlot)
             cloned_head = c
-        # Whichever AoT entry ends up owning this slot (``owner_for_slot``)
-        # must also list it in its own ``entry_slots``: callers like
-        # ``remove_aot_entries`` enumerate an entry's owned slots that
-        # way, not by scanning for ``owner_aot_entry``.
-        if owner_for_slot is not None:
-            owner_for_slot.entry_slots.append(c)
 
     return cloned, cloned_head
 
@@ -3096,10 +3010,6 @@ def attach_section_at(
     # the slot has to be in the doc-stream first.
     _splice_block_after([header], _nearest_header_host_tail(parent), doc)
     file_own_header(section, header)
-    # Own the new header on the AoT entry so a later delete of the
-    # entry takes the promoted section with it.
-    _extend_entry_slots(owner, header)
-
     # File the binding ref under the deepest implicit parent and
     # propagate ancestor-prefix bindings up to the doc root.
     _file_header_binding_chain(deepest_parent, header)
@@ -3349,7 +3259,6 @@ def replace_aot_entry_with_clone(
     # Pre-clone source body before any destructive cleanup, so a clone
     # failure can't leave the destination half-emptied. Also covers
     # the source-inside-destination case (e.g. self-nested clone).
-    prev_count = len(dst_entry.entry_slots)
     cloned_body = (
         _clone_entry_slots(
             src_slots[1:],
@@ -3362,11 +3271,6 @@ def replace_aot_entry_with_clone(
         if len(src_slots) > 1
         else []
     )
-    # ``_clone_entry_slots`` files dst-owned slots onto
-    # ``dst_entry.entry_slots`` straight away. Defer them until after
-    # ``clear()`` so it sees the pre-clone state of the entry.
-    new_dst_slots = dst_entry.entry_slots[prev_count:]
-    del dst_entry.entry_slots[prev_count:]
 
     # Reuse the structural-delete path to tear down the destination's
     # body: orphans held sub-sections / AoTs into a PrivateRoot,
@@ -3374,11 +3278,7 @@ def replace_aot_entry_with_clone(
     # cleans up nested AoTEntry membership. The destination header
     # stays in place because it is not a dict-storage entry.
     dst_entry_table.clear()
-    # After clear(), dst_entry.entry_slots should be [dst_header].
-    assert dst_entry.entry_slots == [dst_header]
-
     _splice_block_after(cloned_body, dst_header, doc)
-    dst_entry.entry_slots.extend(new_dst_slots)
 
     # Rebuild views / dict storage from the cloned body.
     _populate_entry_views(
@@ -3431,16 +3331,15 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     # attached entries, each of which retains its ``[[path]]`` header.
     #
     # A block spans the entry's whole subtree, not just its own
-    # header + KV slots: a nested ``[[a.x]]`` lives in its own
-    # AoTEntry (outside the parent's ``entry_slots``) and must travel
-    # with its parent entry, so that reordering doesn't strand it and
-    # re-parent it onto whichever entry lands at its old position.
+    # header + KV slots: a nested ``[[a.x]]`` has its own AoTEntry and
+    # must travel with its parent entry, so that reordering doesn't
+    # strand it and re-parent it onto whichever entry lands at its old
+    # position.
     physical_blocks: list[list[Slot]] = []
     phys_idx_by_id: dict[int, int] = {}
     for entry_table in aot:
         e = entry_table._owner_aot_entry  # noqa: SLF001
         assert e is not None
-        assert e.entry_slots
         phys_idx_by_id[id(entry_table)] = len(physical_blocks)
         physical_blocks.append(_gather_subtree_slots(entry_table))
 

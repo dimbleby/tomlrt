@@ -169,8 +169,8 @@ them. Read roughly in this order:
   - `StructuralHeaderSlot` — one `[a.b]` / `[[a.b]]` header
     (`key_parts`, `key_seps`, `entry`, `synthetic`); `path` and
     `kind` are derived, from `key_parts` and `entry` respectively.
-  - `AoTEntry` — bookkeeping for an `[[a]]` entry (its
-    `entry_slots`, the table view it backs).
+  - `AoTEntry` — ownership marker for an `[[a]]` entry, retaining only
+    its own header; slot membership and ordering come from the linked stream.
   - `SlotRef` — a per-container *occurrence* of a slot.
     `local_key` is a derived `@property` of `(slot, container)`
     geometry — never store it. Registers itself on the target
@@ -401,15 +401,10 @@ wrong.
   (unregisters). AoT removal uses it to scrub refs in O(depth) per
   slot instead of O(siblings) per container — don't bypass it
   with ad-hoc walks of ancestor `_index` buckets.
-- **`AoTEntry.entry_slots`** is a **membership** list, not a
-  doc-ordered one: it records which slots belong to the entry (with
-  its `[[a]]` header kept first because it is appended first), but
-  its order is *not* the doc-stream order. Anything that needs the
-  entry's doc-stream order or subtree tail must **derive** it from
-  the linked stream (`_owned_slots_ordered`, `_parent_subtree_tail`,
-  `_aot_append_anchor`), never read `entry_slots[-1]`. Clone
-  bookkeeping, in turn, relies on append-order slices and
-  `entry_slots[0]` being the header.
+- **AoT entry membership and order live only in the linked stream.**
+  `AoTEntry` retains its own `[[a]]` header for path derivation, while
+  subtree membership/order comes from slot ownership plus
+  `_owned_slots_ordered`, `_parent_subtree_tail`, and `_aot_append_anchor`.
 - **Container shape** is named explicitly by the `_Kind` enum in
   `_kind.py` and surfaced as `Container._kind`. The six kinds —
   `DOCUMENT`, `SECTION`, `IMPLICIT_SECTION`, `INLINE_ROOT`,

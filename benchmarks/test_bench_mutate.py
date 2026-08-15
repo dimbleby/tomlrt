@@ -125,6 +125,23 @@ def test_append_after_large_aot_entry(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_large_aot_entry(10_000)), rounds=50)
 
 
+def test_clone_large_aot_entry(benchmark: BenchmarkFixture) -> None:
+    def work(doc: Document) -> None:
+        aot = doc.aot("a")
+        aot.append(aot[0])
+
+    benchmark.pedantic(work, setup=_parsed(_large_aot_entry(500)), rounds=50)
+
+
+def test_replace_aot_slice(benchmark: BenchmarkFixture) -> None:
+    def work(doc: Document) -> None:
+        doc.aot("items")[150:350] = (
+            {"name": f"new-{i}", "value": 1000 + i} for i in range(200)
+        )
+
+    benchmark.pedantic(work, setup=_parsed(_aot_doc(500)), rounds=100)
+
+
 def test_overwrite_section_inside_aot_entry(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         doc.aot("a")[0].table("b")["c"] = 5

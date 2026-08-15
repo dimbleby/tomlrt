@@ -3482,6 +3482,29 @@ def test_aot_slice_replace_before_surviving_entries() -> None:
         """)
 
 
+def test_aot_slice_insert_before_surviving_entries() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[items]]
+            name = "a"
+
+            [[items]]
+            name = "c"
+            """)
+    )
+    doc.aot("items")[1:1] = [{"name": "b"}]
+    assert tomlrt.dumps(doc) == td("""
+        [[items]]
+        name = "a"
+
+        [[items]]
+        name = "b"
+
+        [[items]]
+        name = "c"
+        """)
+
+
 def test_aot_slice_replace_extended_matching_length() -> None:
     doc = tomlrt.loads(
         td("""
