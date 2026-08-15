@@ -752,6 +752,19 @@ def append_direct_kv(
     _extend_entry_slots(c._owner_aot_entry, new_slot)  # noqa: SLF001
 
 
+def append_synth_kv(
+    c: Container,
+    key: str,
+    v: object,
+    *,
+    reinstall_as_dotted: bool = False,
+) -> None:
+    """Append ``key = v`` to ``c`` as a freshly synthesised KV line."""
+    cst, dec = c._synth_local_value(key, v)  # noqa: SLF001
+    append_direct_kv(c, key, cst, reinstall_as_dotted=reinstall_as_dotted)
+    dict.__setitem__(c, key, dec)
+
+
 def _invalidate_body_tail_chain(
     start: Container | None,
     owned_slots: set[Slot] | None,
@@ -2006,7 +2019,6 @@ def add_aot_entry(
     from tomlrt._container import (  # noqa: PLC0415
         Table,
         _is_synth_inline,
-        _synth_value,
     )
 
     parent = aot._host  # noqa: SLF001
@@ -2066,15 +2078,7 @@ def add_aot_entry(
         if not (is_scalar(v) or _is_synth_inline(v)):
             entry_table._setitem_validated(k, v)  # noqa: SLF001
             continue
-        cst, dec = _synth_value(
-            v,
-            layout_root=doc,
-            parent=entry_table,
-            name=k,
-            owner=entry,
-        )
-        append_direct_kv(entry_table, k, cst)
-        dict.__setitem__(entry_table, k, dec)
+        append_synth_kv(entry_table, k, v)
     return entry_table
 
 
@@ -3051,10 +3055,7 @@ def attach_section_at(
     the deepest component gets the explicit header. ``source`` (always an
     unattached `Table`) is rehomed in place.
     """
-    from tomlrt._container import (  # noqa: PLC0415
-        _is_synth_inline,
-        _synth_value,
-    )
+    from tomlrt._container import _is_synth_inline  # noqa: PLC0415
 
     sub = tuple(sub_path)
     assert sub, "attach_section_at requires a non-empty sub_path"
@@ -3121,15 +3122,7 @@ def attach_section_at(
         else:
             structurals.append((k, v))
     for k, v in scalars:
-        cst, dec = _synth_value(
-            v,
-            layout_root=doc,
-            parent=section,
-            name=k,
-            owner=owner,
-        )
-        append_direct_kv(section, k, cst)
-        dict.__setitem__(section, k, dec)
+        append_synth_kv(section, k, v)
     for k, v in structurals:
         section._setitem_validated(k, v)  # noqa: SLF001
     return section
@@ -3822,6 +3815,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 __all__ = [
     "add_aot_entry",
     "append_direct_kv",
+    "append_synth_kv",
     "attach_empty_aot",
     "attach_section_at",
     "delete_key",
