@@ -828,10 +828,7 @@ def _replace_primary_in_place(
     """
     new_slot.leading = primary.leading
     new_slot.eol = primary.eol
-    if primary._prev is None:  # noqa: SLF001
-        insert_before_head(new_slot, doc)
-    else:
-        insert_after(primary._prev, new_slot, doc)  # noqa: SLF001
+    insert_before(primary, new_slot, doc)
 
 
 def _new_owned_section_header(
