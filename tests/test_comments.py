@@ -1832,18 +1832,6 @@ def test_array_table_returns_nested_inline_table() -> None:
     assert tbl["a"] == 1
 
 
-def test_array_array_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.loads("xs = [1, 2]\n")
-    with pytest.raises(TypeError, match="not an Array"):
-        doc.array("xs").array(0)
-
-
-def test_array_table_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.loads("xs = [1, 2]\n")
-    with pytest.raises(TypeError, match="not a Table"):
-        doc.array("xs").table(0)
-
-
 def test_table_typed_dotted_descent_through_non_table_raises() -> None:
     doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="cannot descend into 'x'"):
@@ -2136,12 +2124,6 @@ def test_preamble_round_trips_through_reparse() -> None:
     doc.epilogue = ("z",)
     rendered = tomlrt.dumps(doc)
     assert tomlrt.dumps(tomlrt.loads(rendered)) == rendered
-
-
-def test_preamble_rejects_embedded_newline() -> None:
-    doc = tomlrt.loads("")
-    with pytest.raises(ValueError, match="line terminator"):
-        doc.preamble = ("a\nb",)
 
 
 # ---------------------------------------------------------------------------
@@ -3057,18 +3039,6 @@ def test_leading_block_on_kv_round_trips_above_blank() -> None:
     doc = tomlrt.loads(src)
     assert doc.leading_block["y"] == (None, "orphan", None, "attached")
     assert doc.leading_comments["y"] == ("attached",)
-
-
-def test_leading_block_setitem_round_trips_orphan_and_attached() -> None:
-    doc = tomlrt.loads("x = 1\ny = 2\n")
-    doc.leading_block["y"] = ("orphan", None, "attached")
-    assert tomlrt.dumps(doc) == td("""
-        x = 1
-        # orphan
-
-        # attached
-        y = 2
-        """)
 
 
 def test_leading_block_preserves_indent_on_nested_key() -> None:

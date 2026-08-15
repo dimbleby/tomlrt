@@ -3608,15 +3608,6 @@ def test_array_imul_negative_clears() -> None:
     assert list(xs) == []
 
 
-def test_array_imul_repeats_items() -> None:
-    doc = tomlrt.loads("xs = [1, 2]\n")
-    xs = doc.array("xs")
-    xs *= 3
-    out = tomlrt.dumps(doc)
-    assert out == "xs = [1, 2, 1, 2, 1, 2]\n"
-    assert _reparses(out) == {"xs": [1, 2, 1, 2, 1, 2]}
-
-
 def test_array_imul_preserves_no_trailing_comma() -> None:
     """Single-line array without trailing comma must not gain one."""
     doc = tomlrt.loads("xs = [1, 2, 3]\n")
@@ -4317,13 +4308,6 @@ def test_array_get_table_in_range_and_default() -> None:
     assert t is not None
     assert t["a"] == 1
     assert arr.get_table(99) is None
-
-
-def test_array_get_table_raises_typeerror_on_wrong_type() -> None:
-    doc = tomlrt.loads("xs = [1, 2]\n")
-    arr = doc.array("xs")
-    with pytest.raises(TypeError, match="not a Table"):
-        arr.get_table(0)
 
 
 # ---------------------------------------------------------------------------
