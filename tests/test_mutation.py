@@ -8689,7 +8689,7 @@ def test_promote_array_missing_key_raises() -> None:
 
 def test_promote_array_not_an_array_raises() -> None:
     doc = tomlrt.loads("a = 1\n")
-    with pytest.raises(TypeError, match="not an array"):
+    with pytest.raises(tomlrt.TOMLError, match="not an array"):
         doc.promote_array("a")
 
 
@@ -8733,6 +8733,34 @@ def test_promote_array_with_entry_inner_comments_raises() -> None:
     doc = tomlrt.loads(src)
     with pytest.raises(tomlrt.TOMLError, match="inner comments"):
         doc.promote_array("a")
+
+
+def test_promote_refusals_are_all_toml_errors() -> None:
+    """Every wrong-shape refusal from `promote_inline` / `promote_array` is a
+    `TOMLError`, so the handler the errors documentation shows actually
+    catches them. A missing key still raises `KeyError`, mirroring `dict`.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [project]
+        [project.authors]
+        name = "me"
+    """)
+    )
+    with pytest.raises(tomlrt.TOMLError, match="not an inline table"):
+        doc.table("project").promote_inline("authors")
+
+    doc = tomlrt.loads("a = 1\nb = [1, 2]\n")
+    for call in (
+        lambda: doc.promote_inline("a"),
+        lambda: doc.promote_array("a"),
+        lambda: doc.promote_array("b"),
+    ):
+        with pytest.raises(tomlrt.TOMLError):
+            call()
+
+    with pytest.raises(KeyError, match="not in table"):
+        doc.promote_inline("missing")
 
 
 # ---------------------------------------------------------------------------
