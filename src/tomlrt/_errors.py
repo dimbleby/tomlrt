@@ -17,7 +17,7 @@ class TOMLParseError(TOMLError, ValueError):
     Attributes:
         line: 1-based line number where the error was detected.
         col:  1-based column number where the error was detected.
-        offset: 0-based byte offset into the source.
+        offset: 0-based character offset into the source string.
     """
 
     __slots__ = ("col", "line", "offset")
