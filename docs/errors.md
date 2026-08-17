@@ -26,11 +26,11 @@ except tomlrt.TOMLParseError as exc:
     print(exc.line, exc.col, exc.offset)
 ```
 
-| Attribute | Meaning                             |
-| --------- | ----------------------------------- |
-| `line`    | 1-based line number                 |
-| `col`     | 1-based column number               |
-| `offset`  | 0-based byte offset into the source |
+| Attribute | Meaning                                         |
+| --------- | ----------------------------------------------- |
+| `line`    | 1-based line number                             |
+| `col`     | 1-based column number                           |
+| `offset`  | 0-based character offset into the source string |
 
 The human-readable description of the problem is the exception's
 string form — `str(exc)` (equivalently `exc.args[0]`) — which has

@@ -392,7 +392,8 @@ def test_parse_error_position_counts_crlf_as_one_line() -> None:
         ("[a]\n[a]", (2, 1, 4)),
         # Leading blank lines still count.
         ("\n\n@\n", (3, 1, 2)),
-        # Columns count code points, not UTF-8 bytes: each emoji is one column.
+        # Columns and offsets count code points, not UTF-8 bytes: each emoji
+        # is one column, and offset 9 indexes the source string (bytes: 15).
         ('a = "\U0001f600\U0001f600" @\n', (1, 10, 9)),
         # A lone CR inside a basic string is not a line break.
         ('a=1\r\nb="x\ry"\r\n', (2, 5, 9)),
