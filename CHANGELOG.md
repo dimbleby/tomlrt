@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.3] - 2026-08-17
+
 ### Fixed
 
 - `promote_inline` and `promote_array` now raise `TOMLError`, as documented,
