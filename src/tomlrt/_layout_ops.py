@@ -45,6 +45,7 @@ from tomlrt._slots import (
 from tomlrt._trivia import (
     EolTrivia,
     leading_has_blank_line,
+    strip_trailing_ws,
     trailing_ws,
 )
 from tomlrt._values import (
@@ -2375,6 +2376,91 @@ def _hoist_own_slots_first(slots: list[Slot], root_path: tuple[str, ...]) -> lis
     return own + nested
 
 
+def _hoist_root_level_kvs(run: list[Slot], doc: Document) -> list[Slot]:
+    """Move the document root's own keys ahead of any header in ``run``.
+
+    A re-rooted key is only in scope before the first header, and a
+    forward-declared descendant (``[a.b]`` written above its own ``[a]``)
+    leaves one after one. The seam that opens was never a boundary in
+    the source, so it takes the document's section spacing.
+    """
+
+    def is_root_level(s: Slot) -> bool:
+        return isinstance(s, KVSlot) and not s.host_path
+
+    own = [s for s in run if is_root_level(s)]
+    if own == run[: len(own)]:
+        return run
+    hoisted = own + [s for s in run if not is_root_level(s)]
+    seam = hoisted[len(own)]
+    seam.leading = _build_section_leading(doc) + _split_leading_for_reorder(seam)[1]
+    return hoisted
+
+
+def _promoted_header_comments(head: StructuralHeaderSlot, nl: str) -> str:
+    """Render a dropped header's own comments as free-standing lines.
+
+    Extraction discards the table's header, so the comments that would
+    travel with it under reorder — its above-block and its EOL comment —
+    become the extracted document's opening block instead. The trailing
+    blank keeps that block from attaching itself to the first construct.
+    """
+    _positional, above = _split_leading_for_reorder(head)
+    # Any trailing indent belonged to the header's own line, which is gone.
+    above = strip_trailing_ws(above)
+    if head.eol.comment:
+        above += f"{head.eol.comment}{nl}"
+    if not above:
+        return ""
+    return above if above.endswith(nl * 2) else above + nl
+
+
+def extract_subtree_slots(src_table: Container) -> tuple[list[Slot], str]:
+    """Clone ``src_table``'s subtree as a stand-alone document's slot run.
+
+    Returns the cloned run — linked, rebased to a document root, and
+    ordered so a re-parse sees the same shape — plus the comment text
+    promoted off the table's own header, which re-rooting drops. The
+    source document is left untouched.
+    """
+    doc = src_table._layout_root  # noqa: SLF001
+    assert doc is not None, "subtree extraction requires an attached container"
+    nl = doc._newline  # noqa: SLF001
+    header_ref = src_table._header_ref  # noqa: SLF001
+    if header_ref is not None:
+        head, src_slots = _gather_headered_subtree_slots(src_table)
+    else:
+        # A header-less section is bound by its descendants' slots, and
+        # an attached one always has at least one.
+        assert src_table._refs, "implicit section has no slots"  # noqa: SLF001
+        head = None
+        src_slots = _owned_slots_from(src_table, src_table._refs[0].slot)  # noqa: SLF001
+
+    cloned, cloned_head = _clone_entry_slots(
+        src_slots,
+        new_entry=None,
+        body_owner=None,
+        src_prefix=src_table._path,  # noqa: SLF001
+        target_prefix=(),
+        dst_newline=nl,
+        head=head,
+    )
+    promoted = ""
+    if cloned_head is not None:
+        promoted = _promoted_header_comments(cloned_head, nl)
+        cloned = [s for s in cloned if s is not cloned_head]
+    cloned = _hoist_root_level_kvs(cloned, doc)
+    if cloned:
+        # The run starts a document of its own: it keeps the comment
+        # block it owns but not the separator that positioned it, and
+        # the source document's final line may lack a terminator.
+        cloned[0].leading = _split_leading_for_reorder(cloned[0])[1]
+        for s in cloned[:-1]:
+            ensure_terminator(s, nl)
+    stitch_run(None, cloned, None)
+    return cloned, promoted
+
+
 def clone_table_as_aot_entry(
     aot: AoT,
     src_table: Container,
@@ -2878,6 +2964,10 @@ def _clone_entry_slots(
     slots repointed to it, so ``_populate_entry_views`` can rebuild the
     AoT view. Without this, cross-doc whole-section copy would downgrade
     a nested ``[[a.x]]`` to a duplicated ``[a.x]`` (issue #108).
+
+    A KV hosted *above* ``src_prefix`` — a header-less section's own
+    dotted key — cannot be rebased by path, and is re-hosted at
+    ``target_prefix`` instead.
     """
     nested_entry_map: dict[AoTEntry, AoTEntry] = {}
     if head is not None and new_entry is not None:
@@ -2897,7 +2987,9 @@ def _clone_entry_slots(
         c: Slot = copy.deepcopy(s)
         c._prev = None  # noqa: SLF001
         c._next = None  # noqa: SLF001
-        _retarget_slot_paths(c, src_prefix, target_prefix, dst_newline)
+        _rebase_implicit_slot_in_place(
+            c, src_prefix, target_prefix, target_prefix, dst_newline
+        )
         src_owner = s.owner_aot_entry
         mapped = nested_entry_map.get(src_owner) if src_owner else None
         owner_for_slot = mapped if mapped is not None else body_owner
