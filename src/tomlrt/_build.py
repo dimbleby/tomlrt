@@ -13,6 +13,7 @@ from tomlrt._array import AoT, Array
 from tomlrt._comment_text import _split_preamble
 from tomlrt._container import Document, Table, _file_host
 from tomlrt._layout_ops import (
+    extract_subtree_slots,
     file_own_header,
     maybe_advance_body_tail,
     record_ref,
@@ -333,21 +334,57 @@ def _decode_inline_table(
 
 def build_from_parse(result: ParseResult) -> Document:
     """One-shot: parse-result → fully constructed `Document`."""
-    doc = Document()
-    doc._head = result.slots[0] if result.slots else None  # noqa: SLF001
-    doc._tail = result.slots[-1] if result.slots else None  # noqa: SLF001
-    doc._trailing = result.trailing  # noqa: SLF001
-    doc._preamble = ""  # noqa: SLF001
-    doc._newline = result.newline  # noqa: SLF001
-    doc._prelude = result.prelude  # noqa: SLF001
-    doc._is_private = False  # noqa: SLF001
-    doc._install_recorders = None  # noqa: SLF001
-    doc._section_blank_separated = result.section_blank_separated  # noqa: SLF001
-    doc._layout_root = doc  # noqa: SLF001
-    if result.slots:
+    return _assemble_document(
+        Document(),
+        result.slots,
+        trailing=result.trailing,
+        newline=result.newline,
+        prelude=result.prelude,
+        section_blank_separated=result.section_blank_separated,
+    )
+
+
+def populate_extracted_document(doc: Document, src_table: Container) -> None:
+    """Wire ``doc`` around a clone of ``src_table``'s subtree, re-rooted.
+
+    Line ending and section-spacing convention are inherited from the
+    source document; its file-level preamble and epilogue are not.
+    """
+    slots, promoted = extract_subtree_slots(src_table)
+    root = src_table._layout_root  # noqa: SLF001
+    assert root is not None
+    if slots:
+        slots[0].leading = promoted + slots[0].leading
+    _assemble_document(
+        doc,
+        slots,
+        trailing="" if slots else promoted,
+        newline=root._newline,  # noqa: SLF001
+        prelude="",
+        section_blank_separated=root._section_blank_separated,  # noqa: SLF001
+    )
+
+
+def _assemble_document(
+    doc: Document,
+    slots: list[Slot],
+    *,
+    trailing: str,
+    newline: str,
+    prelude: str,
+    section_blank_separated: bool,
+) -> Document:
+    """Wire ``doc`` around a linked slot run and build its views."""
+    doc._head = slots[0] if slots else None  # noqa: SLF001
+    doc._tail = slots[-1] if slots else None  # noqa: SLF001
+    doc._trailing = trailing  # noqa: SLF001
+    doc._newline = newline  # noqa: SLF001
+    doc._prelude = prelude  # noqa: SLF001
+    doc._section_blank_separated = section_blank_separated  # noqa: SLF001
+    if slots:
         # The opening comment paragraph is the document preamble; the rest of
         # the head slot's leading stays as the first construct's block.
-        head = result.slots[0]
+        head = slots[0]
         preamble, rest = _split_preamble(head.leading)
         if preamble:
             doc._preamble = preamble  # noqa: SLF001
@@ -355,10 +392,10 @@ def build_from_parse(result: ParseResult) -> Document:
     else:
         # Comment-only source: the parser put everything onto
         # ``trailing``; that's the preamble, not the epilogue.
-        doc._preamble = result.trailing  # noqa: SLF001
+        doc._preamble = trailing  # noqa: SLF001
         doc._trailing = ""  # noqa: SLF001
-    _build_containers(doc, result.slots)
+    _build_containers(doc, slots)
     return doc
 
 
-__all__ = ["build_from_parse"]
+__all__ = ["build_from_parse", "populate_extracted_document"]
