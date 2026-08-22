@@ -656,7 +656,7 @@ class AoT(_View, list["Table"]):
     @override
     def clear(self) -> None:
         if self._layout_root is None:
-            list.clear(self)
+            list.clear(self)  # ty: ignore[invalid-argument-type]
             return
         n = len(self)
         if n:
@@ -773,7 +773,7 @@ class AoT(_View, list["Table"]):
     @override
     def reverse(self) -> None:
         if self._layout_root is None:
-            list.reverse(self)
+            list.reverse(self)  # ty: ignore[invalid-argument-type]
             return
         new_order = list(reversed(self))
         _layout_ops.renormalise_aot_order(self, new_order)

@@ -1976,7 +1976,7 @@ def add_aot_entry(
         assert rehome._layout_root is None  # noqa: SLF001
         entry_table = rehome
         body_items = list(rehome.items())
-        dict.clear(entry_table)
+        dict.clear(entry_table)  # ty: ignore[invalid-argument-type]
     else:
         entry_table = Table()
         body_items = list(body.items()) if body is not None else []
@@ -2994,7 +2994,7 @@ def attach_section_at(
 
     section = source
     pending: list[tuple[str, object]] = list(source.items())
-    dict.clear(section)
+    dict.clear(section)  # ty: ignore[invalid-argument-type]
 
     section._wire(  # noqa: SLF001
         layout_root=doc,
@@ -3318,7 +3318,7 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     """
     if len(aot) <= 1:
         # Reverse / sort on 0 or 1 elements is a no-op.
-        list.clear(aot)
+        list.clear(aot)  # ty: ignore[invalid-argument-type]
         for t in new_logical_order:
             list.append(aot, t)
         return
@@ -3356,7 +3356,7 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         _splice_blocks_in_order(doc, movable_slots, placements)
 
     # Reflect the new order in the AoT's own list view.
-    list.clear(aot)
+    list.clear(aot)  # ty: ignore[invalid-argument-type]
     for t in new_logical_order:
         list.append(aot, t)
 
