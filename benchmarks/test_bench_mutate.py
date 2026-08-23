@@ -249,6 +249,22 @@ def test_delete_100_kvs(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_section_doc(50, 20)), rounds=200)
 
 
+def test_delete_root_kvs_tail_first(benchmark: BenchmarkFixture) -> None:
+    """Delete the root body backwards, under a pile of section headers.
+
+    Only a delete of the *current* body tail invalidates the cache, so
+    going backwards invalidates on every key. The document root also
+    holds a ref per section header, and those sit past the body.
+    """
+
+    def work(doc: Document) -> None:
+        for i in reversed(range(1_000)):
+            del doc[f"r{i}"]
+
+    src = "".join(f"r{i} = {i}\n" for i in range(1_000)) + _section_doc(1_000, 1)
+    benchmark.pedantic(work, setup=_parsed(src), rounds=20)
+
+
 # --- sorting ---------------------------------------------------------------
 
 
