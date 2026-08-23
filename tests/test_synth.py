@@ -282,6 +282,12 @@ def test_first_bad_value_is_reported_whichever_kind_it_is() -> None:
         tomlrt.Document(data)
 
 
+def test_mapping_keys_are_validated_before_values() -> None:
+    data = {"a": [0, {"ok": object(), 1: 2}]}
+    with pytest.raises(TypeError, match="TOML keys must be str"):
+        tomlrt.Document(data)
+
+
 # ---------------------------------------------------------------------------
 # A synthesised document is an ordinary one
 # ---------------------------------------------------------------------------

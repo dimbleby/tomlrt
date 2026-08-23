@@ -34,8 +34,10 @@ from tomlrt._container import (
     _is_section,
     _reorder_dict_storage,
     _sources_kept_intact,
+    _unrepresentable_message,
     _validate_input,
 )
+from tomlrt._errors import TOMLError
 from tomlrt._layout_ops import (
     first_block_slot,
     leading_comment_block,
@@ -113,13 +115,22 @@ def _aot_entries(v: object) -> list[Mapping[str, object]] | None:
 class _Node:
     """One planned key: its spelling, and what to make of its value."""
 
-    __slots__ = ("carries_comments", "entries", "graft", "key", "raw", "table")
+    __slots__ = (
+        "carries_comments",
+        "entries",
+        "graft",
+        "key",
+        "raw",
+        "table",
+        "value",
+    )
 
     def __init__(self, key: str, raw: object) -> None:
         self.key = key
         self.raw = raw
         self.table: _Plan | None = None
         self.entries: list[_Plan] | None = None
+        self.value: Value | None = None
         self.graft = False
         # Whether the comments above the source's first slot have to be
         # carried across; only a block that replaces a placeholder does.
@@ -181,7 +192,7 @@ class _Plan:
         return bool(self.values) or not self.structural
 
 
-def _plan(mapping: Mapping[str, object]) -> _Plan:
+def _plan(mapping: Mapping[str, object], nl: str) -> _Plan:
     """Check and classify ``mapping``, keeping its own order.
 
     Anything TOML cannot hold raises the error the caller should see;
@@ -207,24 +218,25 @@ def _plan(mapping: Mapping[str, object]) -> _Plan:
             if not entries:
                 # No entries, so no headers: the key is held by an empty
                 # array, which is what a mutation parks there too.
+                node.value = ArrayValue()
                 plan.add_value(node)
                 continue
-            node.entries = [_plan(entry) for entry in entries]
+            node.entries = [_plan(entry, nl) for entry in entries]
             plan.any_grafts |= any(e.any_grafts for e in node.entries)
             plan.structural.append(node)
         elif _wants_section(raw):
             assert isinstance(raw, Mapping)
-            node.table = _plan(raw)
+            node.table = _plan(raw, nl)
             plan.any_grafts |= node.table.any_grafts
             plan.structural.append(node)
         else:
-            _validate_input(raw, inline_only=True, key=key)
+            node.value = _inline_value(raw, nl, key=key)
             plan.add_value(node)
     return plan
 
 
-def _inline_value(v: object, nl: str) -> Value:
-    """The TOML value for ``v``, laid out on one line.
+def _inline_value(v: object, nl: str, *, key: str | None = None) -> Value:
+    """Validate and build the TOML value for ``v``, laid out on one line.
 
     Mirrors the spacing `_fill_inline_array` and `_populate_inline_table`
     give a synthesised value: items separated by ``", "``, brackets
@@ -232,11 +244,18 @@ def _inline_value(v: object, nl: str) -> Value:
     """
     if is_scalar(v):
         return coerce_scalar(v)
+    if isinstance(v, AoT):
+        msg = "cannot store an array-of-tables inside an inline table"
+        raise TOMLError(msg)
+    if _is_section(v):
+        msg = "cannot store a section-style table inside an inline-style table"
+        raise TOMLError(msg)
     own = v._value if isinstance(v, (Array, Table)) else None  # noqa: SLF001
     if own is not None:
         # An `Array` or inline `Table` already holds the value it wants
         # written, including any shape it was given or parsed with; copy
         # that rather than rebuild it from the items alone.
+        _validate_input(v, inline_only=True, key=key)
         cloned = copy.deepcopy(own)
         retarget_value_newlines(cloned, nl)
         return cloned
@@ -250,34 +269,35 @@ def _inline_value(v: object, nl: str) -> Value:
                 )
             )
         return array
-    assert isinstance(v, Mapping), "the plan pass accepted only inline values"
-    if not isinstance(v, dict):
+    if isinstance(v, Mapping):
         # One reading of it, as `_plan` takes: a `Mapping` is free to
         # repeat a key or to disagree with its own ``__len__``, and the
         # separators are counted from what we take.
-        v = dict(v.items())
-    table = InlineTableValue()
-    last = len(v) - 1
-    for i, (raw_key, sub) in enumerate(v.items()):
-        key = _validate_key(raw_key)
-        table.items.append(
-            InlineTableEntry(
-                "" if i == 0 else " ",
-                _inline_value(sub, nl),
-                "",
-                i != last,
-                "",
-                (make_keypart(key),),
-                (),
-                " ",
-                " ",
-                (key,),
+        if not isinstance(v, dict):
+            v = dict(v.items())
+        items = [(_validate_key(raw_key), sub) for raw_key, sub in v.items()]
+        table = InlineTableValue()
+        last = len(items) - 1
+        for i, (child_key, sub) in enumerate(items):
+            table.items.append(
+                InlineTableEntry(
+                    "" if i == 0 else " ",
+                    _inline_value(sub, nl, key=child_key),
+                    "",
+                    i != last,
+                    "",
+                    (make_keypart(child_key),),
+                    (),
+                    " ",
+                    " ",
+                    (child_key,),
+                )
             )
-        )
-    if last >= 0:
-        table.header_trivia = table._single_line_pad  # noqa: SLF001
-        table.final_trivia = table._single_line_pad  # noqa: SLF001
-    return table
+        if items:
+            table.header_trivia = table._single_line_pad  # noqa: SLF001
+            table.final_trivia = table._single_line_pad  # noqa: SLF001
+        return table
+    raise TypeError(_unrepresentable_message(v, key))
 
 
 # ---------------------------------------------------------------------------
@@ -310,21 +330,24 @@ def _emit(
             )
         )
 
-    out.extend(
-        KVSlot(
-            "",
-            owner,
-            nl,
-            path,
-            (make_keypart(node.key),),
-            (),
-            " ",
-            " ",
-            _inline_value(node.raw, nl),
+    for node in plan.values:
+        if node.graft:
+            continue
+        value = node.value
+        assert value is not None, "a value node has no synthesised value"
+        out.append(
+            KVSlot(
+                "",
+                owner,
+                nl,
+                path,
+                (make_keypart(node.key),),
+                (),
+                " ",
+                " ",
+                value,
+            )
         )
-        for node in plan.values
-        if not node.graft
-    )
 
     for node in plan.structural:
         sub = (*path, node.key)
@@ -424,7 +447,7 @@ def _settle(container: Container, plan: _Plan) -> None:
 def populate(doc: Document, data: Mapping[str, object]) -> None:
     """Populate ``doc`` from ``data``."""
     _require_mapping(data, label="Document data argument")
-    plan = _plan(data)
+    plan = _plan(data, doc._newline)  # noqa: SLF001
     slots: list[Slot] = []
     _emit(plan, (), None, slots, doc._newline, header=False)  # noqa: SLF001
     stitch_run(None, slots, None)
