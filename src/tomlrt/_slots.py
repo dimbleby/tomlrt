@@ -171,15 +171,13 @@ class KVSlot(Slot):
         # result up front, and these are read on the build hot path.
         return tuple([p.value for p in self.key_parts])
 
-    def render_key(self) -> str:
-        return render_dotted(self.key_parts, self.key_seps)
-
     @override
     def render(self) -> str:
+        eol = self.eol
         return (
-            f"{self.leading}{self.render_key()}"
-            f"{self.pre_eq}={self.post_eq}"
-            f"{self.value.render()}{self.eol.render()}"
+            f"{self.leading}{render_dotted(self.key_parts, self.key_seps)}"
+            f"{self.pre_eq}={self.post_eq}{self.value.render()}"
+            f"{eol.trailing_ws}{eol.comment}{eol.newline}"
         )
 
 
@@ -213,18 +211,15 @@ class StructuralHeaderSlot(Slot):
         """See ``entry`` for the derivation."""
         return "aot-entry" if self.entry is not None else "table"
 
-    def render_key(self) -> str:
-        return render_dotted(self.key_parts, self.key_seps)
-
     @override
     def render(self) -> str:
-        if self.entry is not None:
-            open_br, close_br = "[[", "]]"
-        else:
-            open_br, close_br = "[", "]"
+        open_br, close_br = ("[[", "]]") if self.entry is not None else ("[", "]")
+        eol = self.eol
         return (
             f"{self.leading}{open_br}{self.inner_pre}"
-            f"{self.render_key()}{self.inner_post}{close_br}{self.eol.render()}"
+            f"{render_dotted(self.key_parts, self.key_seps)}"
+            f"{self.inner_post}{close_br}"
+            f"{eol.trailing_ws}{eol.comment}{eol.newline}"
         )
 
 
