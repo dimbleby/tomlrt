@@ -40,12 +40,18 @@ def split_line(line: str) -> tuple[str, str, str]:
 
 
 def leading_has_blank_line(leading: str) -> bool:
-    r"""Whether ``leading`` contains at least one blank physical line.
+    r"""Whether ``leading`` contains at least one blank complete line.
 
     A comment line does not count as blank: its terminating newline
-    belongs to the comment.
+    belongs to the comment. A trailing run with no terminator is not a
+    line at all.
     """
-    return any("#" not in line for line in leading.split("\n")[:-1])
+    start = 0
+    while (nl := leading.find("\n", start)) != -1:
+        if leading.find("#", start, nl) == -1:
+            return True
+        start = nl + 1
+    return False
 
 
 def leading_break(t: str) -> int:

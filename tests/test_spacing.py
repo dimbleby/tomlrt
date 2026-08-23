@@ -629,3 +629,40 @@ def test_aot_append_after_sub_section_blank_separates() -> None:
         "\n"
         '[[package]]\nname = "baz"\nversion = "2.0"\n'
     )
+
+
+# ---------------------------------------------------------------------------
+# Blank-line detection across a comment block
+# ---------------------------------------------------------------------------
+
+
+def test_new_section_mirrors_a_gap_of_comments_plus_a_blank() -> None:
+    """A gap counts as blank-separated even with comments in it.
+
+    The blank line is what the new ``[c]`` mirrors; the comment lines
+    above it neither hide it nor supply one of their own.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+        # note one
+        # note two
+
+        [b]
+        y = 2
+        """)
+    )
+    doc["c"] = Table.section({"z": 3})
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+        # note one
+        # note two
+
+        [b]
+        y = 2
+
+        [c]
+        z = 3
+        """)
