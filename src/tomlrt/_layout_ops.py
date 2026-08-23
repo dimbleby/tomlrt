@@ -28,7 +28,7 @@ import copy
 import itertools
 import operator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from tomlrt import _array, _container
 from tomlrt._comment_text import _split_attached_block
@@ -3164,42 +3164,45 @@ def _aot_append_anchor(aot: AoT) -> Slot | None:
     return _nearest_header_host_tail(parent)
 
 
-_PopT = TypeVar("_PopT")
+def _unfile_ordered(refs: list[SlotRef], ref: SlotRef) -> None:
+    """Drop ``ref`` from a doc-ordered projection.
 
+    A bulk scrub eats a projection from one end or the other, so both
+    ends are tried before bisecting for the ref's order key. Bisecting
+    is what keeps a delete from the middle off a scan of ``c._refs``,
+    which runs to the size of the container's subtree.
 
-def _pop_or_remove(lst: list[_PopT], item: _PopT) -> None:
-    """O(1) pop if ``item`` is at the tail; else C-level ``list.remove``.
-
-    Both branches are C-implemented; the tail check avoids an
-    O(N) scan when the caller is consuming a list in reverse
-    (the common case for batched scrubs).
+    ``pop`` rather than ``del refs[i]``: both shift the same tail, but
+    the subscript form is measurably slower, four-fold on CPython 3.14.
     """
-    if lst[-1] is item:
-        lst.pop()
-    else:
-        lst.remove(item)
+    if refs[-1] is ref:
+        refs.pop()
+        return
+    i = 0 if refs[0] is ref else _ordered_index(refs, ref.slot._order)  # noqa: SLF001
+    assert refs[i] is ref, "ref must be filed in its slot's order"
+    refs.pop(i)
 
 
 def unfile_ref(ref: SlotRef) -> None:
     """Remove ``ref`` from its container's ``_refs``/``_index`` and from ``slot._refs``.
 
-    Each affected list uses the tail-fast-path via
-    `_pop_or_remove`. Also clears ``container._header_ref`` if the
-    ref was the container's own-header ref.
+    Also clears ``container._header_ref`` if the ref was the
+    container's own-header ref.
     """
     c = ref.container
     assert not c._inline, "inline containers do not file refs"  # noqa: SLF001
-    _pop_or_remove(c._refs, ref)  # noqa: SLF001
+    _unfile_ordered(c._refs, ref)  # noqa: SLF001
     local_key = ref.local_key
     if local_key is None:
         assert c._header_ref is ref  # noqa: SLF001
         c._header_ref = None  # noqa: SLF001
     else:
         bucket = c._index[local_key]  # noqa: SLF001
-        _pop_or_remove(bucket, ref)
+        _unfile_ordered(bucket, ref)
         if not bucket:
             del c._index[local_key]  # noqa: SLF001
-    _pop_or_remove(ref.slot._refs, ref)  # noqa: SLF001
+    # Back-pointers are unordered, and bounded by path depth.
+    ref.slot._refs.remove(ref)  # noqa: SLF001
 
 
 def _scrub_owned_slots_via_backptrs(
@@ -3283,7 +3286,8 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     union_owned: set[Slot] = set(union_owned_ordered)
     assert len(union_owned) == len(union_owned_ordered)
 
-    # Reverse order lets unfile_ref use the tail fast path in each cache.
+    # Reverse order unfiles as late in each cache as it can, so every
+    # deletion shifts as little as possible.
     _scrub_owned_slots_via_backptrs(reversed(union_owned_ordered))
 
     # Body-tail invalidation on the parent chain, walking all the way to

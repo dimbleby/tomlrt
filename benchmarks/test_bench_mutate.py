@@ -133,6 +133,19 @@ def test_clone_large_aot_entry(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_large_aot_entry(500)), rounds=50)
 
 
+def test_clear_aot_with_trailing(benchmark: BenchmarkFixture) -> None:
+    """Clear an AoT that is not the last thing in the document.
+
+    Every entry's ref sits ahead of the trailing section's in the root's
+    caches, so none of the unfiling lands at a tail.
+    """
+
+    def work(doc: Document) -> None:
+        doc.aot("items").clear()
+
+    benchmark.pedantic(work, setup=_parsed(_aot_with_trailing(2_000, 5)), rounds=50)
+
+
 def test_replace_aot_slice(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         doc.aot("items")[150:350] = (
