@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Document(mapping)` and deleting a container's keys back-to-front are no
+  longer quadratic in document size.
+
 ## [2.2.4] - 2026-08-23
 
 ### Fixed
