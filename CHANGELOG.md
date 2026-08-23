@@ -9,9 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `Document(mapping)` and deleting a container's keys back-to-front are no
-  longer quadratic in document size. Removing keys or array-of-tables entries
-  that other content follows is much faster too.
+- If `Document(...)` or `dumps(...)` rejects your data, any `Table`, `Array`
+  or `AoT` you passed in is left untouched.
 
 ## [2.2.4] - 2026-08-23
 

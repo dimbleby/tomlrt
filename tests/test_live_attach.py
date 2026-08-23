@@ -11,12 +11,23 @@ and are unchanged.
 
 from __future__ import annotations
 
+import sys
+from typing import TYPE_CHECKING, Any
+
 import pytest
 
 import tomlrt
 from _helpers import reparses as _reparses
 from _helpers import td
 from tomlrt import AoT, Array, Table
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:  # pragma: no cover -- backport for Python < 3.12
+    from typing_extensions import override
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # ---------------------------------------------------------------------------
 # Table.inline factory
@@ -1582,3 +1593,123 @@ def test_array_item_assigned_to_itself_stays_attached() -> None:
         arr = [ { c = 1, d = 3 }, 2 ]
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# A rejected ``Document(...)`` leaves the caller's views alone
+# ---------------------------------------------------------------------------
+
+
+def test_failed_document_init_leaves_section_detached() -> None:
+    """A view is still the caller's to attach after the call raised.
+
+    Everything is checked before anything is installed, so a later bad
+    value cannot leave an earlier one wired into the document that the
+    raise stopped us returning. The proof is black-box: an attach that
+    really is the first one is *live*, so the later ``y`` shows up.
+    """
+    section = Table.section({"x": 1})
+    with pytest.raises(TypeError):
+        tomlrt.Document({"good": section, "bad": object()})
+
+    doc = tomlrt.Document({"s": section})
+    section["y"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        x = 1
+        y = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_failed_document_init_leaves_inline_and_array_detached() -> None:
+    inline = Table.inline({"a": 1})
+    array = Array([1, 2])
+    with pytest.raises(TypeError):
+        tomlrt.Document({"i": inline, "arr": array, "bad": object()})
+
+    doc = tomlrt.Document({"i": inline, "arr": array})
+    inline["b"] = 2
+    array.append(3)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        i = { a = 1, b = 2 }
+        arr = [1, 2, 3]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_failed_document_init_leaves_aot_detached() -> None:
+    aot = AoT([{"k": 1}])
+    with pytest.raises(TypeError):
+        tomlrt.Document({"entries": aot, "bad": object()})
+
+    doc = tomlrt.Document({"entries": aot})
+    aot.append({"k": 2})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[entries]]
+        k = 1
+
+        [[entries]]
+        k = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_failed_document_init_leaves_popped_subtree_intact() -> None:
+    """A popped subtree is the caller's, and a failed build must not take it."""
+    source = tomlrt.loads(
+        td("""
+        [keep]
+        k = 1
+
+        [mine]
+        x = 1
+        """)
+    )
+    mine = source.table("mine")
+    del source["mine"]
+
+    with pytest.raises(TypeError):
+        tomlrt.Document({"good": mine, "bad": object()})
+
+    out = tomlrt.dumps(tomlrt.Document({"t": mine}))
+    assert out == td("""
+        [t]
+        x = 1
+        """)
+    assert tomlrt.dumps(source) == td("""
+        [keep]
+        k = 1
+        """)
+
+
+def test_failed_document_init_checks_the_keys_it_installs() -> None:
+    """A mapping may disagree with itself about which keys it holds.
+
+    The keys checked on the way in are the ones ``__iter__`` yields; the
+    ones installed come from ``items()``. Only the latter matter.
+    """
+
+    class Inconsistent(dict[Any, Any]):
+        @override
+        def __iter__(self) -> Iterator[Any]:
+            return iter([k for k in dict.keys(self) if isinstance(k, str)])
+
+    section = Table.section({"x": 1})
+    data = Inconsistent()
+    dict.__setitem__(data, "good", section)
+    dict.__setitem__(data, 2, "two")
+
+    with pytest.raises(TypeError, match="TOML keys must be str"):
+        tomlrt.Document(data)
+
+    doc = tomlrt.Document({"s": section})
+    section["y"] = 2
+    assert tomlrt.dumps(doc) == td("""
+        [s]
+        x = 1
+        y = 2
+        """)
