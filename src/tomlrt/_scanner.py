@@ -17,7 +17,6 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Final
 
 from tomlrt._errors import TOMLParseError
-from tomlrt._trivia import EolTrivia
 from tomlrt._values import (
     BoolValue,
     DateTimeValue,
@@ -173,28 +172,26 @@ class _Scanner:
         self.pos = pos
         return src[start:pos]
 
-    def scan_inline_ws_text(self) -> str:
-        """Consume a run of spaces/tabs; return raw text (or "").
+    def skip_inline_ws(self) -> int:
+        """Consume a run of spaces/tabs; return the position it started at.
 
         Unlike `scan_array_trivia`, newlines and comments don't count here.
         """
         src = self.src
         end = self.end
-        pos = self.pos
-        if pos >= end:
-            return ""
-        ch = src[pos]
-        if ch != " " and ch != "\t":
-            return ""
-        start = pos
-        pos += 1
+        pos = start = self.pos
         while pos < end:
             c = src[pos]
             if c != " " and c != "\t":
                 break
             pos += 1
         self.pos = pos
-        return src[start:pos]
+        return start
+
+    def scan_inline_ws_text(self) -> str:
+        """Consume a run of spaces/tabs; return raw text (or "")."""
+        start = self.skip_inline_ws()
+        return self.src[start : self.pos]
 
     def scan_array_trivia(self) -> str:
         """Consume trivia inside an array (or TOML 1.1 inline table).
@@ -224,35 +221,34 @@ class _Scanner:
         self.pos = pos
         return src[start:pos]
 
-    def scan_eol(self) -> EolTrivia:
+    def scan_eol(self) -> str:
         """Consume optional trailing-ws + comment + newline (or EOF).
+
+        Returns the whole run as one slice of the source, so a line's
+        tail costs no object the cycle collector has to account for.
 
         Raises if a non-newline, non-comment, non-EOF character is
         found after the optional whitespace.
         """
-        trailing = self.scan_inline_ws_text()
-        comment = ""
         src = self.src
         end = self.end
+        start = self.skip_inline_ws()
         pos = self.pos
         ch = src[pos] if pos < end else ""
         if ch == "#":
-            comment = self.scan_comment()
+            self.scan_comment()
             pos = self.pos
             ch = src[pos] if pos < end else ""
-        newline = ""
         if ch == "\n":
             self.pos = pos + 1
-            newline = "\n"
             self._seen_lf = True
         elif ch == "\r" and pos + 1 < end and src[pos + 1] == "\n":
             self.pos = pos + 2
-            newline = "\r\n"
             self._seen_crlf = True
         elif pos < end:
             msg = f"expected newline or end of file, got {ch!r}"
             raise self.error(msg)
-        return EolTrivia(trailing, comment, newline)
+        return src[start : self.pos]
 
     def scan_string(self, *, allow_multiline: bool = True) -> StringValue:
         """Scan a string starting at the cursor and return its `StringValue`.

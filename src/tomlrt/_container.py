@@ -61,7 +61,7 @@ from tomlrt._scalar import (
     validate_scalar,
 )
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import retarget_newlines
+from tomlrt._trivia import retarget_newlines, split_line
 from tomlrt._typecheck import _validate_key, _validate_mapping
 from tomlrt._values import (
     ArrayItem,
@@ -82,7 +82,6 @@ if TYPE_CHECKING:
     from tomlrt._format import FormatOptions
     from tomlrt._scalar import Scalar
     from tomlrt._slots import AoTEntry, Slot, SlotRef
-    from tomlrt._trivia import EolTrivia
     from tomlrt._values import (
         CommaItem,
         CommaValue,
@@ -1171,9 +1170,9 @@ class Container(_View, dict[str, Any]):
         )
         last_slot = result[-1]._body_tail  # noqa: SLF001
         assert last_slot is not None
-        if saved_eol.comment and not last_slot.eol.comment:
-            last_slot.eol.comment = saved_eol.comment
-            last_slot.eol.trailing_ws = saved_eol.trailing_ws
+        if "#" in saved_eol and "#" not in last_slot.eol:
+            pre, comment, _term = split_line(saved_eol)
+            last_slot.eol = f"{pre}{comment}{split_line(last_slot.eol)[2]}"
         return result
 
 
@@ -1190,7 +1189,7 @@ def _reorder_dict_storage(c: Container, new_key_order: list[str]) -> None:
         dict.__setitem__(c, k, v)
 
 
-def _direct_kv_trivia(c: Container, key: str) -> tuple[str, EolTrivia]:
+def _direct_kv_trivia(c: Container, key: str) -> tuple[str, str]:
     """Return the direct-KV slot's leading/EOL trivia for ``key``.
 
     Both fields are non-Optional on `KVSlot`, so the result is never
