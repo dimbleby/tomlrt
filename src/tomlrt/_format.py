@@ -39,7 +39,6 @@ from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
     leading_break,
     leading_ws,
-    retarget_eol_newline,
     retarget_newlines,
     split_above_block,
     split_eol_section,
@@ -60,7 +59,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomlrt._slots import AoTEntry, Slot
-    from tomlrt._trivia import EolTrivia
     from tomlrt._values import (
         CommaItem,
         Value,
@@ -240,15 +238,15 @@ def _canon_leading(
 # ---------------------------------------------------------------------------
 
 
-def _canon_eol(eol: EolTrivia, *, nl: str, options: FormatOptions) -> None:
-    """Normalise an :class:`EolTrivia`: retarget, canonicalise, respace."""
-    retarget_eol_newline(eol, nl)
-    if not eol.comment:
-        eol.trailing_ws = ""
-        return
+def _canon_eol(eol: str, *, nl: str, options: FormatOptions) -> str:
+    """Normalise an EOL run: retarget, canonicalise, respace."""
+    eol = retarget_newlines(eol, nl)
+    if "#" not in eol:
+        return eol.lstrip(" \t")
+    _pre, comment, term = split_line(eol)
     if options.normalize_comments:
-        eol.comment = _canon_comment_text(eol.comment)
-    eol.trailing_ws = " " * options.eol_comment_spaces
+        comment = _canon_comment_text(comment)
+    return f"{' ' * options.eol_comment_spaces}{comment}{term}"
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +287,7 @@ def _canon_slot(
         slot.inner_pre = ""
         slot.inner_post = ""
         slot.key_seps = (".",) * (len(slot.key_parts) - 1)
-    _canon_eol(slot.eol, nl=nl, options=options)
+    slot.eol = _canon_eol(slot.eol, nl=nl, options=options)
     _canon_leading(
         slot,
         nl=nl,

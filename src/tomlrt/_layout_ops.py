@@ -43,8 +43,8 @@ from tomlrt._slots import (
     stitch_run,
 )
 from tomlrt._trivia import (
-    EolTrivia,
     leading_has_blank_line,
+    split_line,
     strip_trailing_ws,
     trailing_ws,
 )
@@ -538,9 +538,9 @@ def ensure_implicit_chain(
     return cur
 
 
-def _default_eol(doc: Document) -> EolTrivia:
-    """A bare-newline `EolTrivia` for a freshly synthesised slot."""
-    return EolTrivia("", "", doc._newline)  # noqa: SLF001
+def _default_eol(doc: Document) -> str:
+    """A bare-newline EOL run for a freshly synthesised slot."""
+    return doc._newline  # noqa: SLF001
 
 
 def _link_run_between(
@@ -2408,8 +2408,8 @@ def _promoted_header_comments(head: StructuralHeaderSlot, nl: str) -> str:
     _positional, above = _split_leading_for_reorder(head)
     # Any trailing indent belonged to the header's own line, which is gone.
     above = strip_trailing_ws(above)
-    if head.eol.comment:
-        above += f"{head.eol.comment}{nl}"
+    if "#" in head.eol:
+        above += f"{split_line(head.eol)[1]}{nl}"
     if not above:
         return ""
     return above if above.endswith(nl * 2) else above + nl

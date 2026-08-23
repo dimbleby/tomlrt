@@ -35,14 +35,13 @@ from tomlrt._comment_text import (
 from tomlrt._errors import TOMLError
 from tomlrt._kind import _Kind
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
-from tomlrt._trivia import split_lines
+from tomlrt._trivia import split_line, split_lines
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from tomlrt._container import Container, Document
     from tomlrt._slots import Slot
-    from tomlrt._trivia import EolTrivia
 
 
 def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
@@ -160,14 +159,14 @@ class EolCommentView(_SlotKeyedView[str]):
 
     @override
     def _clear(self, slot: KVSlot) -> None:
-        _clear_eol_comment(slot.eol)
+        slot.eol = _clear_eol_comment(slot.eol)
 
     @override
     def __setitem__(self, key: str, value: str) -> None:
         _require_attached(self._c)
         slot = self._require_slot(key, missing_msg=f"key {key!r} not in container")
         _validate_comment_str(value, "comment")
-        _write_eol_comment(slot.eol, value, self._c._doc_newline)  # noqa: SLF001
+        slot.eol = _write_eol_comment(slot.eol, value, self._c._doc_newline)  # noqa: SLF001
 
 
 def _read_leading_block(slot: Slot) -> tuple[str | None, ...]:
@@ -281,12 +280,11 @@ def _header_comment_get(c: Container) -> str | None:
 
 def _header_comment_set(c: Container, value: str | None) -> None:
     h = _require_header_slot(c, "container has no header to attach a comment to")
-    eol = h.eol
     if value is None:
-        _clear_eol_comment(eol)
+        h.eol = _clear_eol_comment(h.eol)
         return
     _validate_comment_str(value, "header_comment")
-    _write_eol_comment(eol, value, c._doc_newline)  # noqa: SLF001
+    h.eol = _write_eol_comment(h.eol, value, c._doc_newline)  # noqa: SLF001
 
 
 def _header_leading_get(c: Container) -> tuple[str, ...]:
@@ -315,32 +313,30 @@ def _header_leading_block_set(c: Container, value: tuple[str | None, ...]) -> No
     _write_leading_block(c, h, block)
 
 
-def _read_eol_comment(eol: EolTrivia) -> str | None:
-    """The decoded EOL comment on ``eol``, or ``None`` if it carries none."""
-    return _decode_comment(eol.comment) if eol.comment else None
+def _read_eol_comment(eol: str) -> str | None:
+    """The decoded EOL comment in ``eol``, or ``None`` if it carries none."""
+    if "#" not in eol:
+        return None
+    return _decode_comment(split_line(eol)[1])
 
 
-def _clear_eol_comment(eol: EolTrivia) -> None:
-    """Drop the EOL comment on ``eol``, and the gap that introduced it.
+def _clear_eol_comment(eol: str) -> str:
+    """``eol`` without its comment, and without the gap that introduced it.
 
     The gap goes too, or removing ``# c`` from ``key = 1  # c`` would
     leave a dangling ``key = 1  `` behind. With no comment to remove
     there is no such gap, and whatever whitespace is there was authored
     deliberately, so leave it alone.
     """
-    if not eol.comment:
-        return
-    eol.comment = ""
-    eol.trailing_ws = ""
+    if "#" not in eol:
+        return eol
+    return split_line(eol)[2]
 
 
-def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
-    """Set the EOL comment on ``eol``, ensuring a separator and newline."""
-    if not eol.trailing_ws:
-        eol.trailing_ws = " "
-    eol.comment = _encode_comment(text)
-    if not eol.newline:
-        eol.newline = nl
+def _write_eol_comment(eol: str, text: str, nl: str) -> str:
+    """``eol`` with ``text`` as its comment, separator and newline assured."""
+    pre, _comment, term = split_line(eol)
+    return f"{pre or ' '}{_encode_comment(text)}{term or nl}"
 
 
 def _doc_preamble_get(doc: Document) -> tuple[str, ...]:

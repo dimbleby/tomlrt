@@ -69,7 +69,7 @@ Python 3.10–3.14. `ty` is a second, independent type-checker (run via
   exist precisely to avoid this.
 - **Construct hot-path dataclasses positionally.** `Slot`, `CommaItem`
   and the internal layout records (`CommaStyle`, `Boundary`,
-  `_ReorderUnit`, `EolTrivia`) are built once per line, item, sorted
+  `_ReorderUnit`) are built once per line, item, sorted
   block or inline edit. A constructor call carrying *any* keyword falls off CPython's
   alloc-and-enter-init specialisation and costs roughly twice as much,
   measurably: sorting 800 sections is ~7% faster for this alone, and
@@ -130,7 +130,7 @@ them. Read roughly in this order:
   semantic validator) — this module is API-boundary plumbing.
 - **`_trivia.py`** — trivia is verbatim source text (whitespace,
   newlines, comments) held in a plain `str`; this module is the pure
-  string helpers over it, plus `EolTrivia`. No dependencies.
+  string helpers over it. No dependencies.
 - **`_scanner.py`** — the `(src, end, pos)` cursor and the `scan_*`
   primitives the parser drives. String scanning is *semantic*:
   escapes are decoded, surrogate code points rejected, and the
@@ -158,7 +158,9 @@ them. Read roughly in this order:
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:
   - `Slot` — base; carries the whole-line trivia (`leading: str`,
-    `eol: EolTrivia`) that every slot kind has, `_prev` / `_next`
+    `eol: str` — the line's whole end-of-line run, gap + comment +
+    terminator, verbatim, so that a line's tail costs the cycle
+    collector nothing) that every slot kind has, `_prev` / `_next`
     intrusive linked-list pointers, the `_order` doc-stream order
     key, `owner_aot_entry`, and a
     `_refs` back-pointer list (every `SlotRef` that targets the

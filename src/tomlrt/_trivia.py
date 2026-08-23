@@ -10,7 +10,6 @@ operations.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from typing import Final
 
 # The row-attached end-of-line section: inline whitespace, a comment,
@@ -224,36 +223,13 @@ def split_eol_section(t: str) -> tuple[str, str]:
     return t[: m.end()], t[m.end() :]
 
 
-@dataclass(slots=True, eq=False)
-class EolTrivia:
-    """End-of-line tail of a single physical line.
-
-    Carried by every `Slot` to capture the optional inline comment plus
-    the line terminator. Each part is verbatim source text, empty when
-    absent; ``newline`` is empty only for the last line of a file with no
-    final newline.
-    """
-
-    trailing_ws: str  # whitespace before any comment / newline
-    comment: str  # includes the leading '#'
-    newline: str
-
-
-def retarget_eol_newline(eol: EolTrivia, target: str) -> None:
-    """Rewrite ``eol.newline`` to ``target`` (if present)."""
-    if eol.newline:
-        eol.newline = target
-
-
 __all__ = [
-    "EolTrivia",
     "indent_from_trivia",
     "leading_break",
     "leading_has_blank_line",
     "leading_ws",
     "newline_at",
     "restamp_bracket_pad_for_first",
-    "retarget_eol_newline",
     "retarget_newlines",
     "split_above_block",
     "split_eol_section",

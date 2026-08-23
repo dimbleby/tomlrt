@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomlrt._container import Container
-    from tomlrt._trivia import EolTrivia
     from tomlrt._values import KeyPart, Value
 
 import sys
@@ -26,7 +25,7 @@ if sys.version_info >= (3, 12):
 else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
-from tomlrt._trivia import retarget_eol_newline, retarget_newlines
+from tomlrt._trivia import retarget_newlines
 from tomlrt._values import render_dotted, retarget_value_newlines
 
 # ---------------------------------------------------------------------------
@@ -93,8 +92,12 @@ class Slot:
     owner_aot_entry: AoTEntry | None
     """The AoT entry that physically contains this slot, if any."""
 
-    eol: EolTrivia
-    """Trivia after the slot's own text: comment + line terminator."""
+    eol: str
+    """Trivia after the slot's own text: gap, comment, line terminator.
+
+    Verbatim source text, like ``leading``. Empty of a terminator only
+    for the last line of a file that ends without one.
+    """
 
     _prev: Slot | None = field(default=None, init=False, repr=False, compare=False)
     _next: Slot | None = field(default=None, init=False, repr=False, compare=False)
@@ -173,11 +176,9 @@ class KVSlot(Slot):
 
     @override
     def render(self) -> str:
-        eol = self.eol
         return (
             f"{self.leading}{render_dotted(self.key_parts, self.key_seps)}"
-            f"{self.pre_eq}={self.post_eq}{self.value.render()}"
-            f"{eol.trailing_ws}{eol.comment}{eol.newline}"
+            f"{self.pre_eq}={self.post_eq}{self.value.render()}{self.eol}"
         )
 
 
@@ -214,12 +215,10 @@ class StructuralHeaderSlot(Slot):
     @override
     def render(self) -> str:
         open_br, close_br = ("[[", "]]") if self.entry is not None else ("[", "]")
-        eol = self.eol
         return (
             f"{self.leading}{open_br}{self.inner_pre}"
             f"{render_dotted(self.key_parts, self.key_seps)}"
-            f"{self.inner_post}{close_br}"
-            f"{eol.trailing_ws}{eol.comment}{eol.newline}"
+            f"{self.inner_post}{close_br}{self.eol}"
         )
 
 
@@ -400,8 +399,8 @@ def ensure_terminator(slot: Slot, nl: str) -> None:
     mutation moves it off the tail it needs one, or it would run into
     whatever now follows it.
     """
-    if not slot.eol.newline:
-        slot.eol.newline = nl
+    if not slot.eol.endswith("\n"):
+        slot.eol += nl
 
 
 def retarget_slot_newlines(slot: Slot, target: str) -> None:
@@ -411,7 +410,7 @@ def retarget_slot_newlines(slot: Slot, target: str) -> None:
     destination's line ending, including in nested inline values.
     """
     slot.leading = retarget_newlines(slot.leading, target)
-    retarget_eol_newline(slot.eol, target)
+    slot.eol = retarget_newlines(slot.eol, target)
     if isinstance(slot, KVSlot):
         retarget_value_newlines(slot.value, target)
 
