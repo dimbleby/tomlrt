@@ -83,9 +83,6 @@ class KeyPart:
     raw: str  # source representation including any surrounding quotes
     value: str  # the decoded key string
 
-    def render(self) -> str:
-        return self.raw
-
 
 _KEY_ESCAPES: dict[int, str] = {0x22: '\\"', 0x5C: "\\\\"}
 for _c in (*range(0x20), 0x7F):
@@ -120,12 +117,12 @@ def render_dotted(parts: tuple[KeyPart, ...], seps: tuple[str, ...]) -> str:
     whitespace + ``.`` between the surrounding parts (e.g. ``" . "``).
     """
     if len(parts) == 1:
-        return parts[0].render()
+        return parts[0].raw
     out: list[str] = []
     for i, p in enumerate(parts):
         if i:
             out.append(seps[i - 1])
-        out.append(p.render())
+        out.append(p.raw)
     return "".join(out)
 
 
@@ -184,13 +181,10 @@ class InlineTableEntry(CommaItem):
     decoding, and cross-document cloning.
     """
 
-    def render_key(self) -> str:
-        return render_dotted(self.key_parts, self.key_seps)
-
     @override
     def render(self) -> str:
         return (
-            f"{self.leading}{self.render_key()}"
+            f"{self.leading}{render_dotted(self.key_parts, self.key_seps)}"
             f"{self.pre_eq}={self.post_eq}"
             f"{self.value.render()}{self.render_tail()}"
         )

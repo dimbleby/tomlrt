@@ -238,9 +238,6 @@ class EolTrivia:
     comment: str  # includes the leading '#'
     newline: str
 
-    def render(self) -> str:
-        return f"{self.trailing_ws}{self.comment}{self.newline}"
-
 
 def retarget_eol_newline(eol: EolTrivia, target: str) -> None:
     """Rewrite ``eol.newline`` to ``target`` (if present)."""
