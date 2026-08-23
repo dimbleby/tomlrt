@@ -618,60 +618,55 @@ def test_document_factory_with_data_passes_container_through() -> None:
         """)
 
 
-# A detached (factory-created) view is *not* deep-cloned by ``Document(...)``:
-# it attaches live, so it stays identity-equal to the caller's reference and
-# later mutations through either side are visible on the other. Only a view
-# already attached to *another* document is deep-cloned. These pin that down.
+# ``Document(...)`` copies: a view handed to it contributes its contents and
+# its shape, and the document does not adopt the object. Assigning one still
+# attaches it live. These pin that down.
 
 
-def test_document_factory_detached_array_attaches_live() -> None:
+def test_document_factory_detached_array_is_copied() -> None:
     arr = Array([1, 2, 3])
     doc = Document({"xs": arr})
-    assert doc["xs"] is arr
-    arr.append(4)  # mutate through the caller's reference after construction
+    assert doc["xs"] is not arr
+    arr.append(4)  # constructing copied it, so this is invisible
     out = tomlrt.dumps(doc)
-    assert out == "xs = [1, 2, 3, 4]\n"
-    assert reparses(out) == {"xs": [1, 2, 3, 4]}
+    assert out == "xs = [1, 2, 3]\n"
+    assert reparses(out) == {"xs": [1, 2, 3]}
 
 
-def test_document_factory_detached_inline_table_attaches_live() -> None:
+def test_document_factory_detached_inline_table_is_copied() -> None:
     obj = Table.inline({"x": 1})
     doc = Document({"obj": obj})
-    assert doc["obj"] is obj
+    assert doc["obj"] is not obj
     obj["y"] = 2
     out = tomlrt.dumps(doc)
-    assert out == "obj = { x = 1, y = 2 }\n"
-    assert reparses(out) == {"obj": {"x": 1, "y": 2}}
+    assert out == "obj = { x = 1 }\n"
+    assert reparses(out) == {"obj": {"x": 1}}
 
 
-def test_document_factory_detached_section_attaches_live() -> None:
+def test_document_factory_detached_section_is_copied() -> None:
     sec = Table.section({"x": 1})
     doc = Document({"sec": sec})
-    assert doc["sec"] is sec
+    assert doc["sec"] is not sec
     sec["y"] = 2
     out = tomlrt.dumps(doc)
     assert out == td("""
         [sec]
         x = 1
-        y = 2
         """)
-    assert reparses(out) == {"sec": {"x": 1, "y": 2}}
+    assert reparses(out) == {"sec": {"x": 1}}
 
 
-def test_document_factory_detached_aot_attaches_live() -> None:
+def test_document_factory_detached_aot_is_copied() -> None:
     aot = AoT([{"x": 1}])
     doc = Document({"srv": aot})
-    assert doc["srv"] is aot
+    assert doc["srv"] is not aot
     aot.append({"y": 2})
     out = tomlrt.dumps(doc)
     assert out == td("""
         [[srv]]
         x = 1
-
-        [[srv]]
-        y = 2
         """)
-    assert reparses(out) == {"srv": [{"x": 1}, {"y": 2}]}
+    assert reparses(out) == {"srv": [{"x": 1}]}
 
 
 def test_document_factory_view_from_another_document_is_deep_cloned() -> None:

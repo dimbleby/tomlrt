@@ -1433,17 +1433,18 @@ class Document(Container):
         * lists of mappings become ``[[array.of.tables]]`` blocks;
         * everything else is set with ordinary key-value assignment.
 
-        A [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
-        [`Array`][tomlrt.Array] view that is not already attached to a
-        document *attaches live*: the returned document keeps your
-        object, so later mutations through either reference are visible
-        on the other. A view already attached to another document is
-        deep-cloned instead, so the two never share state. Plain
-        ``dict`` / ``list`` values are always snapshot-copied.
+        Constructing copies. Every value in ``data`` is copied into the
+        new document, so later mutations through your own references
+        are not visible in it -- and a rejected ``data`` leaves them all
+        alone. A [`Table`][tomlrt.Table] / [`Array`][tomlrt.Array] /
+        [`AoT`][tomlrt.AoT] contributes its contents and its shape
+        (section or inline, array or array-of-tables). One bound to a
+        key keeps the comments and spacing it holds; one that is an
+        entry of a list or an `AoT` is rebuilt from its data.
 
-        Rejected input leaves every value alone: nothing is installed
-        until all of ``data`` has been checked, so a raise cannot have
-        attached a view the caller still holds.
+        To have the document keep your object, assign it instead:
+        ``doc[k] = table`` *attaches live*. See
+        [Editing documents](editing.md#live-vs-snapshot).
         """
         super().__init__()
         self._head: Slot | None = None
@@ -1469,29 +1470,9 @@ class Document(Container):
 
             populate_extracted_document(self, data)
             return
-        validated = _validate_mapping(data, label="Document data argument")
-        # Coerce and check every item before installing any of it: an
-        # unattached view attaches live, so installing as we went would
-        # leave the caller's own object wired into a document that a
-        # later item then stopped us from returning. Per item rather
-        # than pass by pass, so the first thing wrong with ``data`` is
-        # still the first thing reported.
-        items: list[tuple[str, Any]] = []
-        for k, v in validated.items():
-            # ``_validate_mapping`` checked the keys ``__iter__`` yields;
-            # these are the ones actually installed, and a Mapping is
-            # free to disagree with itself about what it holds.
-            key = _validate_key(k)
-            coerced = _coerce_for_document_init(v)
-            _validate_input(coerced, inline_only=False, key=key)
-            items.append((key, coerced))
-        # Installing must not disturb the source: its documents are
-        # presented as someone else's, so an install copies from a live
-        # source but moves out of a private one, and a caller's popped
-        # subtree is theirs to keep.
-        with _sources_kept_intact(v for _, v in items):
-            for k, v in items:
-                self._setitem_validated(k, v)
+        from tomlrt._synth import populate  # noqa: PLC0415
+
+        populate(self, data)
 
     @property
     @override
@@ -1863,31 +1844,6 @@ def _has_extractable_layout(data: Mapping[str, Any]) -> TypeGuard[Table]:
     )
 
 
-def _coerce_for_document_init(v: Any) -> Any:
-    """Pick a sensible structural shape for ``Document(data=...)`` values.
-
-    * ``Mapping`` → section ``Table.section``, recursively coerced.
-    * Non-empty ``list`` of mappings → ``AoT`` of section tables.
-    * Anything else unchanged, including a user-supplied ``Array``,
-      whose caller has explicitly chosen inline-array shape.
-    """
-    if isinstance(v, AoT):
-        return v
-    if isinstance(v, Container):
-        return v
-    if isinstance(v, Array):
-        return v
-    if isinstance(v, Mapping):
-        return Table.section(
-            {k: _coerce_for_document_init(sub) for k, sub in v.items()}
-        )
-    if isinstance(v, list) and v and all(isinstance(x, Mapping) for x in v):
-        return AoT(
-            [{k: _coerce_for_document_init(sub) for k, sub in m.items()} for m in v]
-        )
-    return v
-
-
 # `_array` depends on `Container` for `Table`, so the import is at the
 # bottom to avoid a circular import. The `Array` / `AoT` symbols are
 # re-exported for convenience.
@@ -1976,6 +1932,12 @@ def _validate_input(v: object, *, inline_only: bool, key: str | None = None) -> 
         for entry in v:
             _validate_section_values(_validate_mapping(entry, label="AoT entry"))
         return
+    # Before the mapping arms: a list is never a mapping, and asking a
+    # concrete type is far cheaper than asking the `Mapping` ABC.
+    if isinstance(v, list):
+        for child in v:
+            _validate_input(child, inline_only=True)
+        return
     if _is_section(v):
         if inline_only:
             msg = "cannot store a section-style table inside an inline-style table"
@@ -1986,10 +1948,6 @@ def _validate_input(v: object, *, inline_only: bool, key: str | None = None) -> 
         mapping = _validate_mapping(v, label="inline table")
         for child_key, child in mapping.items():
             _validate_input(child, inline_only=True, key=child_key)
-        return
-    if isinstance(v, list):
-        for child in v:
-            _validate_input(child, inline_only=True)
         return
     raise TypeError(_unrepresentable_message(v, key))
 
