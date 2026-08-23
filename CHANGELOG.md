@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - If `Document(...)` or `dumps(...)` rejects your data, any `Table`, `Array`
   or `AoT` you passed in is left untouched.
 
+### Changed
+
+- `Document(mapping)` and `dumps(mapping)` now build faster than parsing the
+  equivalent text.
+- `Document(mapping)` now copies a `Table`, `Array` or `AoT` you pass in rather
+  than keeping your object. Assign it (`doc[k] = table`) if you want the
+  document to share it.
+- Nested mappings inside a `Table` passed to `Document(mapping)` now become
+  `[section]` blocks, like nested mappings anywhere else in the argument.
+- A list holding a `Table.inline` stays an inline array in `Document(mapping)`,
+  rather than becoming `[[array.of.tables]]`.
+
 ## [2.2.4] - 2026-08-23
 
 ### Fixed

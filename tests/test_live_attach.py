@@ -1612,7 +1612,9 @@ def test_failed_document_init_leaves_section_detached() -> None:
     with pytest.raises(TypeError):
         tomlrt.Document({"good": section, "bad": object()})
 
-    doc = tomlrt.Document({"s": section})
+    # Still the caller's: assigning it is still a live attach.
+    doc = tomlrt.Document()
+    doc["s"] = section
     section["y"] = 2
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -1629,7 +1631,9 @@ def test_failed_document_init_leaves_inline_and_array_detached() -> None:
     with pytest.raises(TypeError):
         tomlrt.Document({"i": inline, "arr": array, "bad": object()})
 
-    doc = tomlrt.Document({"i": inline, "arr": array})
+    doc = tomlrt.Document()
+    doc["i"] = inline
+    doc["arr"] = array
     inline["b"] = 2
     array.append(3)
     out = tomlrt.dumps(doc)
@@ -1645,7 +1649,8 @@ def test_failed_document_init_leaves_aot_detached() -> None:
     with pytest.raises(TypeError):
         tomlrt.Document({"entries": aot, "bad": object()})
 
-    doc = tomlrt.Document({"entries": aot})
+    doc = tomlrt.Document()
+    doc["entries"] = aot
     aot.append({"k": 2})
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -1706,7 +1711,8 @@ def test_failed_document_init_checks_the_keys_it_installs() -> None:
     with pytest.raises(TypeError, match="TOML keys must be str"):
         tomlrt.Document(data)
 
-    doc = tomlrt.Document({"s": section})
+    doc = tomlrt.Document()
+    doc["s"] = section
     section["y"] = 2
     assert tomlrt.dumps(doc) == td("""
         [s]

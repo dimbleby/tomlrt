@@ -2349,6 +2349,41 @@ def _gather_subtree_slots(src_table: Container) -> list[Slot]:
     return _owned_slots_from(src_table, src_table._header_ref.slot)  # noqa: SLF001
 
 
+def first_block_slot(view: Container | AoT) -> Slot:
+    """The first slot of ``view``'s block, in doc-stream order.
+
+    Not the same as the container's own header: a forward-declared
+    descendant (``[a.b]`` before ``[a]``) comes earlier in the stream,
+    and a header-less container has no header at all. An install
+    replaces this slot's leading trivia, so it is the one whose
+    comments a caller has to carry across.
+    """
+    if isinstance(view, _array.AoT):
+        assert view, "an entry-less AoT spans no slots"
+        view = view[0]
+    assert not isinstance(view, _container.Document), (
+        "a document installs under a header synthesised for it, not its own"
+    )
+    if view._header_ref is not None:  # noqa: SLF001
+        _own, slots = _gather_headered_subtree_slots(view)
+    else:
+        assert view._refs, "a header-less container is bound by its own slots"  # noqa: SLF001
+        slots = _owned_slots_from(view, view._refs[0].slot)  # noqa: SLF001
+    assert slots, "an attached view spans at least one slot"
+    return slots[0]
+
+
+def leading_comment_block(slot: Slot) -> str:
+    """``slot``'s attached comment block, without its positional prefix."""
+    return _split_leading_structural(slot.leading)[1]
+
+
+def set_leading_comment_block(slot: Slot, block: str) -> None:
+    """Give ``slot`` ``block``, keeping the prefix that positions it here."""
+    prefix, _own = _split_leading_structural(slot.leading)
+    slot.leading = prefix + block
+
+
 def _gather_headered_subtree_slots(
     src_table: Container,
 ) -> tuple[StructuralHeaderSlot, list[Slot]]:
