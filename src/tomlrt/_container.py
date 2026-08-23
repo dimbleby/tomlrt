@@ -1440,6 +1440,10 @@ class Document(Container):
         on the other. A view already attached to another document is
         deep-cloned instead, so the two never share state. Plain
         ``dict`` / ``list`` values are always snapshot-copied.
+
+        Rejected input leaves every value alone: nothing is installed
+        until all of ``data`` has been checked, so a raise cannot have
+        attached a view the caller still holds.
         """
         super().__init__()
         self._head: Slot | None = None
@@ -1466,15 +1470,28 @@ class Document(Container):
             populate_extracted_document(self, data)
             return
         validated = _validate_mapping(data, label="Document data argument")
-        # Building from data must not disturb it, so the values are
-        # read out in one go and their documents are presented as
-        # someone else's: an install copies from a live source but
-        # moves out of a private one, and a caller's popped subtree
-        # is theirs to keep.
-        items = list(validated.items())
+        # Coerce and check every item before installing any of it: an
+        # unattached view attaches live, so installing as we went would
+        # leave the caller's own object wired into a document that a
+        # later item then stopped us from returning. Per item rather
+        # than pass by pass, so the first thing wrong with ``data`` is
+        # still the first thing reported.
+        items: list[tuple[str, Any]] = []
+        for k, v in validated.items():
+            # ``_validate_mapping`` checked the keys ``__iter__`` yields;
+            # these are the ones actually installed, and a Mapping is
+            # free to disagree with itself about what it holds.
+            key = _validate_key(k)
+            coerced = _coerce_for_document_init(v)
+            _validate_input(coerced, inline_only=False, key=key)
+            items.append((key, coerced))
+        # Installing must not disturb the source: its documents are
+        # presented as someone else's, so an install copies from a live
+        # source but moves out of a private one, and a caller's popped
+        # subtree is theirs to keep.
         with _sources_kept_intact(v for _, v in items):
             for k, v in items:
-                self[k] = _coerce_for_document_init(v)
+                self._setitem_validated(k, v)
 
     @property
     @override
