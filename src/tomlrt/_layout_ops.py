@@ -2364,7 +2364,7 @@ def clone_graft_slots(
     header in it gets a fresh `AoTEntry`, so an array-of-tables keeps
     one entry per header and a section that was itself an entry becomes
     a plain ``[table]``. ``host_path`` hosts the dotted keys of a
-    header-less section -- see :func:`_clone_entry_slots`.
+    header-less section — see :func:`_clone_entry_slots`.
     """
     own_header = (
         view._header_ref.slot  # noqa: SLF001
@@ -2387,16 +2387,13 @@ def clone_graft_slots(
 def owned_slots(view: Container | AoT) -> list[Slot]:
     """Every slot ``view``'s block spans, in doc-stream order.
 
-    Whatever shape the view has: a section with its own header, a
-    header-less one spelled by its descendants' dotted keys, an
-    array-of-tables (each entry in turn), or a whole document.
+    Any shape: headered or not, an array-of-tables, a whole document.
 
     A container's block need not begin at its own header — a
     forward-declared descendant (``[a.b]`` before ``[a]``) comes
-    earlier — but every slot in the block records a ref on the
-    container, either as its own header or as an ancestor step of a
-    descendant's, so ``_refs`` in doc-stream order starts where the
-    block does.
+    earlier — but every slot in it records a ref on the container,
+    either as its own header or as an ancestor step of a descendant's,
+    so ``_refs`` in doc-stream order starts where the block does.
     """
     if isinstance(view, _array.AoT):
         return [s for entry in view for s in _gather_subtree_slots(entry)]

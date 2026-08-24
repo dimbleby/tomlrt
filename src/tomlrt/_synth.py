@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tomlrt._array import AoT, Array
 from tomlrt._build import _assemble_document
@@ -64,37 +64,38 @@ if TYPE_CHECKING:
     from tomlrt._values import Value
 
 
-def _needs_cloning(v: object) -> bool:
-    """Whether ``v`` is a block of source layout only a clone can carry.
+def _spells_own_key(slot: Slot, depth: int) -> bool:
+    """Whether ``slot`` is a dotted key of the section at ``depth``.
 
-    A section or array-of-tables still in a document, or popped out of
-    one, spans slots whose comments and spacing live in the document it
-    came from; rebuilding it from its data would drop them. Asked only
-    of a value already known to want a block of its own, so belonging
-    to a document is the whole of it: an inline value keeps its layout
-    in the one `Value` it owns, which `_inline_value` copies, and an
-    entry-less array-of-tables has no block to speak of.
+    A header-less section has no line of its own: its keys are written
+    as ``a.b = 1`` in the body of whichever section hosts them, one
+    step above. Everything else in its block is hosted at its depth or
+    below. True of a clone as well as a source, since cloning re-hosts
+    exactly these keys and rebases every other path onto the target.
     """
-    return isinstance(v, (Container, AoT)) and v._layout_root is not None  # noqa: SLF001
+    return isinstance(slot, KVSlot) and len(slot.host_path) < depth
 
 
-def _graft_regions(view: Container | AoT) -> tuple[bool, bool]:
-    """Which regions ``view``'s block occupies: ``(body, blocks)``.
+def _graft_regions(v: object) -> tuple[bool, bool] | None:
+    """Which regions ``v``'s block occupies, or ``None`` if it has none.
 
-    A header-less section is spelled entirely by its descendants: its
-    own keys as dotted ``a.b = 1`` lines, which belong to the body of
-    whichever section hosts them, and any sub-section as a header block
-    of its own. It can have either or both. Everything else -- a
-    section with its own header, an array-of-tables, a whole document
-    under a header synthesised for its key -- is all block.
+    A value has a block when it is still in a document, or popped out
+    of one: its comments and spacing live in slots there, so only a
+    clone can carry them. An inline value keeps all of that in the one
+    `Value` it owns, which `_inline_value` copies.
+
+    A header-less section is spelled by its descendants -- its own keys
+    in the body above, each sub-section as a block -- so it can occupy
+    either region or both. Anything else is all block.
     """
-    if not isinstance(view, Container) or view._kind is not _Kind.IMPLICIT_SECTION:  # noqa: SLF001
+    if not isinstance(v, (Container, AoT)) or v._layout_root is None:  # noqa: SLF001
+        return None
+    if not isinstance(v, Container) or v._kind is not _Kind.IMPLICIT_SECTION:  # noqa: SLF001
         return False, True
-    depth = len(view._path)  # noqa: SLF001
+    depth = len(v._path)  # noqa: SLF001
     body = blocks = False
-    for ref in view._refs:  # noqa: SLF001
-        slot = ref.slot
-        if isinstance(slot, KVSlot) and len(slot.host_path) < depth:
+    for ref in v._refs:  # noqa: SLF001
+        if _spells_own_key(ref.slot, depth):
             body = True
         else:
             blocks = True
@@ -114,7 +115,7 @@ def _wants_section(v: object) -> bool:
     return not _is_inline_table(v)
 
 
-def _aot_entries(v: object) -> list[Mapping[str, object]] | None:
+def _aot_entries(v: list[Any]) -> list[Mapping[str, object]] | None:
     """``v`` as the tables of an ``[[aot]]``, when that is what it is.
 
     An `AoT` says so itself, even an empty one -- which keeps its key
@@ -123,8 +124,6 @@ def _aot_entries(v: object) -> list[Mapping[str, object]] | None:
     an `Array` never does, having been asked for explicitly, and nor
     does the empty list, which is just an empty array value.
     """
-    if not isinstance(v, list):
-        return None
     if isinstance(v, AoT):
         return list(v)
     if isinstance(v, Array) or not v:
@@ -237,9 +236,9 @@ def _plan(mapping: Mapping[str, object], nl: str) -> _Plan:
         key = _validate_key(raw_key)
         node = _Node(key, raw)
         plan.keys.append(key)
-        # Dispatch on the value's Python shape, so each arm is asked
-        # only what it alone can answer. A list is taken as a list,
-        # whatever else it may also claim to be.
+        # Dispatch on the value's shape, so each arm is asked only
+        # what it alone can answer. A list is a list, whatever else it
+        # may also claim to be.
         if isinstance(raw, list):
             _plan_list(plan, node, nl)
         elif _wants_section(raw):
@@ -253,6 +252,7 @@ def _plan(mapping: Mapping[str, object], nl: str) -> _Plan:
 def _plan_list(plan: _Plan, node: _Node, nl: str) -> None:
     """Plan a list: an array-of-tables if that is what it holds."""
     raw = node.raw
+    assert isinstance(raw, list)
     entries = _aot_entries(raw)
     if entries is None:
         node.value = _inline_value(raw, nl, key=node.key)
@@ -262,9 +262,8 @@ def _plan_list(plan: _Plan, node: _Node, nl: str) -> None:
         # which is what a mutation parks there too.
         node.value = ArrayValue()
         plan.add_value(node)
-    elif _needs_cloning(raw):
-        assert isinstance(raw, AoT)
-        plan.add_graft(node, _graft_regions(raw))
+    elif (regions := _graft_regions(raw)) is not None:
+        plan.add_graft(node, regions)
     else:
         node.entries = [_plan(entry, nl) for entry in entries]
         plan.any_grafts |= any(e.any_grafts for e in node.entries)
@@ -274,9 +273,8 @@ def _plan_list(plan: _Plan, node: _Node, nl: str) -> None:
 def _plan_section(plan: _Plan, node: _Node, nl: str) -> None:
     """Plan a mapping that becomes a ``[section]``."""
     raw = node.raw
-    if _needs_cloning(raw):
-        assert isinstance(raw, Container)
-        plan.add_graft(node, _graft_regions(raw))
+    if (regions := _graft_regions(raw)) is not None:
+        plan.add_graft(node, regions)
         return
     assert isinstance(raw, Mapping)
     node.table = _plan(raw, nl)
@@ -438,10 +436,8 @@ def _graft_segments(
 ) -> tuple[list[Slot], list[Slot]]:
     """``node``'s block, cloned under its key and split into its regions.
 
-    A header-less section's own keys come across as ``key.sub = ...``
-    lines hosted by the enclosing section, so they join its body;
-    everything else is a block. A whole document has no header of its
-    own and takes one synthesised for the key it is bound to.
+    A whole document has no header of its own, and takes one
+    synthesised for the key it is bound to.
     """
     view = node.raw
     assert isinstance(view, (Container, AoT)), "only a view is grafted"
@@ -449,13 +445,11 @@ def _graft_segments(
     cloned = clone_graft_slots(
         view, target_path=target, host_path=path, owner=owner, nl=nl
     )
+    depth = len(target)
     body: list[Slot] = []
     blocks: list[Slot] = []
     for slot in cloned:
-        if isinstance(slot, KVSlot) and slot.host_path == path:
-            body.append(slot)
-        else:
-            blocks.append(slot)
+        (body if _spells_own_key(slot, depth) else blocks).append(slot)
     if isinstance(view, Document):
         blocks.insert(0, _header_slot(target, "", owner, None, nl))
     assert (bool(body), bool(blocks)) == _graft_regions(view), (

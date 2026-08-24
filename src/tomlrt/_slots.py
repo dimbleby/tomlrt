@@ -126,12 +126,10 @@ class Slot:
         ``_prev``/``_next`` would drag the whole source document in.
 
         Only the `Value` of a KV is deep-copied. Everything else a slot
-        holds is written but never mutated in place -- trivia and key
+        holds is written but never mutated in place — trivia and
         separators are `str`, a path is a tuple of them, and a
-        `KeyPart` is always replaced rather than edited, which is why
-        a rebase can already hand one slot's parts to another. Copying
-        those by reference is what makes cloning a block cost about
-        what parsing it does.
+        `KeyPart` is replaced rather than edited, which is why a rebase
+        can already hand one slot's parts to another.
         """
         cls = type(self)
         new = cls.__new__(cls)
@@ -416,9 +414,8 @@ _SHARED_FIELDS: Final[Mapping[type[Slot], tuple[str, ...]]] = {
 }
 """Per slot class, the fields a clone can take by reference.
 
-`KVSlot` and `StructuralHeaderSlot` are the only concrete slots, so a
-third would raise here rather than be copied by a rule nobody chose
-for it.
+`KVSlot` and `StructuralHeaderSlot` are the only concrete slots; a
+third would raise here rather than be copied by an unconsidered rule.
 """
 
 
