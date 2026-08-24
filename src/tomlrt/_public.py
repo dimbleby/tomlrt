@@ -7,6 +7,7 @@ from typing import IO, TYPE_CHECKING, Any
 from tomlrt._build import build_from_parse
 from tomlrt._container import Document
 from tomlrt._parser import _Parser
+from tomlrt._synth import render_mapping
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -38,10 +39,11 @@ def dumps(data: Mapping[str, Any]) -> str:
     """Serialize a [`Document`][tomlrt.Document] back to a TOML string.
 
     A mapping that is not already a [`Document`][tomlrt.Document] is
-    wrapped in one first, so ``tomlrt.dumps({"a": 1})`` works.
+    synthesised as one, so ``tomlrt.dumps({"a": 1})`` works.
     """
-    doc = data if isinstance(data, Document) else Document(data)
-    return doc.render()
+    if isinstance(data, Document):
+        return data.render()
+    return render_mapping(data)
 
 
 def dump(data: Mapping[str, Any], fp: IO[bytes]) -> None:

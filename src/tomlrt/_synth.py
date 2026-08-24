@@ -28,9 +28,11 @@ from typing import TYPE_CHECKING, Any
 from tomlrt._array import AoT, Array
 from tomlrt._build import _assemble_document
 from tomlrt._container import (
+    DEFAULT_NEWLINE,
     Container,
     Document,
     Table,
+    _has_extractable_layout,
     _is_inline_table,
     _is_section,
     _reorder_dict_storage,
@@ -40,6 +42,7 @@ from tomlrt._container import (
 from tomlrt._errors import TOMLError
 from tomlrt._kind import _Kind
 from tomlrt._layout_ops import _retarget_separator, clone_graft_slots
+from tomlrt._render import render_run
 from tomlrt._scalar import coerce_scalar, is_scalar
 from tomlrt._slots import (
     AoTEntry,
@@ -490,9 +493,12 @@ def _reorder(container: Container, plan: _Plan) -> None:
 # ---------------------------------------------------------------------------
 
 
-def populate(doc: Document, data: Mapping[str, object]) -> None:
-    """Populate ``doc`` from ``data``."""
-    nl = doc._newline  # noqa: SLF001
+def _slot_run(data: Mapping[str, object], nl: str) -> tuple[_Plan, list[Slot]]:
+    """Check ``data`` and write it out as a linked run of slots.
+
+    Everything a document built from a mapping physically is. What is
+    made of it afterwards -- views, or just text -- is the caller's.
+    """
     _require_mapping(data, label="Document data argument")
     plan = _plan(data, nl)
     slots: list[Slot] = []
@@ -504,6 +510,13 @@ def populate(doc: Document, data: Mapping[str, object]) -> None:
         for slot in slots[:-1]:
             ensure_terminator(slot, nl)
     stitch_run(None, slots, None)
+    return plan, slots
+
+
+def populate(doc: Document, data: Mapping[str, object]) -> None:
+    """Populate ``doc`` from ``data``."""
+    nl = doc._newline  # noqa: SLF001
+    plan, slots = _slot_run(data, nl)
     _assemble_document(
         doc,
         slots,
@@ -515,4 +528,26 @@ def populate(doc: Document, data: Mapping[str, object]) -> None:
     _reorder(doc, plan)
 
 
-__all__ = ["populate"]
+def render_mapping(data: Mapping[str, object]) -> str:
+    """The text `Document` would render ``data`` as, without its views.
+
+    Asked for text, `dumps` needs the slots and nothing built on top of
+    them: no `Table` / `Array` / `AoT`, no refs, no dict storage. The
+    run comes from the same `_slot_run` a `Document` is built from, so
+    there is one synthesiser and one rendering walk, not two of either.
+
+    A `Table` that owns section layout is the exception. `Document`
+    clones and re-roots its slots rather than rebuilding them from its
+    data, which keeps the comments and spacing they carry, so that one
+    is built and rendered.
+    """
+    if _has_extractable_layout(data):
+        return Document(data).render()
+    _unused, slots = _slot_run(data, DEFAULT_NEWLINE)
+    # The preamble split `_assemble_document` performs is byte-neutral:
+    # it only decides which side of the join the opening comments are
+    # rendered from.
+    return render_run("", "", slots[0] if slots else None, "")
+
+
+__all__ = ["populate", "render_mapping"]

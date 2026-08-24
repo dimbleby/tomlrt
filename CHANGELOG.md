@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Document(mapping)` and `dumps(mapping)` now build faster than parsing the
   equivalent text.
+- `dumps(mapping)` is about 1.7x faster: it renders the document's lines
+  without building the `Table` / `Array` / `AoT` views over them.
+- `dumps(None)` now raises `TypeError` rather than returning `""`.
 - `Document(mapping)` now copies a `Table`, `Array` or `AoT` you pass in rather
   than keeping your object. Assign it (`doc[k] = table`) if you want the
   document to share it.

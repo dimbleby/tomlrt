@@ -337,6 +337,90 @@ def test_dumps_of_a_plain_mapping_round_trips() -> None:
 
 
 # ---------------------------------------------------------------------------
+# `dumps` renders the run without building the views over it
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("shape", list(SHAPES))
+def test_dumps_matches_the_document_it_would_have_built(shape: str) -> None:
+    """Asked for text, `dumps` skips the views -- and must not show it."""
+    data = SHAPES[shape]
+    assert tomlrt.dumps(data) == tomlrt.Document(data).render()
+
+
+def test_dumps_of_a_graft_matches_the_document_it_would_have_built() -> None:
+    """Including the one value whose slots are cloned rather than made."""
+
+    def data() -> dict[str, Any]:
+        src = tomlrt.loads(
+            td("""
+            # above a
+            [a]
+            x = 1  # eol
+
+            [a.sub]
+            y = 2
+            """)
+        )
+        return {"first": 1, "g": src.table("a"), "last": 2}
+
+    assert tomlrt.dumps(data()) == tomlrt.Document(data()).render()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [object(), b"x", (1, 2), {1: "int key"}, {"a": object()}, [object()]],
+    ids=["object", "bytes", "tuple", "int key", "nested object", "in a list"],
+)
+def test_dumps_rejects_what_document_rejects(value: Any) -> None:
+    """The same complaint, whichever of the two the caller reached for."""
+    with pytest.raises((TypeError, TOMLError)) as from_document:
+        tomlrt.Document({"k": value})
+    with pytest.raises((TypeError, TOMLError)) as from_dumps:
+        tomlrt.dumps({"k": value})
+    assert str(from_dumps.value) == str(from_document.value)
+    assert type(from_dumps.value) is type(from_document.value)
+
+
+def test_dumps_rejects_a_non_mapping() -> None:
+    """``None`` used to render as an empty document, silently.
+
+    `dumps` reached it through ``Document(None)``, whose argument is
+    optional because a document can be built empty. Nothing else it is
+    handed gets that reading, and its own signature does not offer it.
+    """
+    not_a_mapping: Any = None
+    with pytest.raises(TypeError, match="must be a Mapping"):
+        tomlrt.dumps(not_a_mapping)
+
+
+def test_dumps_of_an_attached_table_keeps_its_layout() -> None:
+    """A table that owns section layout is cloned, not rebuilt.
+
+    It has comments and spacing a mapping cannot describe, so `dumps`
+    builds the document that knows how to carry them across.
+    """
+    src = tomlrt.loads(
+        td("""
+        # above a
+        [a]
+        x = 1  # eol
+
+        [a.sub]
+        y = 2
+        """)
+    )
+    assert tomlrt.dumps(src.table("a")) == td("""
+        # above a
+
+        x = 1  # eol
+
+        [sub]
+        y = 2
+        """)
+
+
+# ---------------------------------------------------------------------------
 # Property differential
 # ---------------------------------------------------------------------------
 
