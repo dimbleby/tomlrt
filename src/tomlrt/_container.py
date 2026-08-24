@@ -12,7 +12,7 @@ import copy
 import sys
 from collections.abc import Mapping
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeGuard, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeGuard, TypeVar, overload
 
 if sys.version_info >= (3, 12):
     from typing import Self, override
@@ -1403,6 +1403,10 @@ class Table(Container):
         return cls._factory(mapping, inline=True, label="Table.inline argument")
 
 
+DEFAULT_NEWLINE: Final = "\n"
+"""Line ending a document uses until a parse tells it otherwise."""
+
+
 class Document(Container):
     """Top-level TOML document.
 
@@ -1451,7 +1455,7 @@ class Document(Container):
         self._tail: Slot | None = None
         self._trailing: str = ""
         self._preamble: str = ""
-        self._newline: str = "\n"
+        self._newline: str = DEFAULT_NEWLINE
         self._prelude: str = ""
         self._is_private: bool = False
         self._install_recorders: (
