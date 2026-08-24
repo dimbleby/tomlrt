@@ -9,8 +9,9 @@ builder.
 Constructing copies: a `Table` / `Array` / `AoT` contributes its
 contents and its shape, not itself. One holding a block of source
 layout -- a section or array-of-tables still in a document, or popped
-out of one -- keeps its place here with an empty header, and
-`_settle` has the mutation layer clone it in afterwards.
+out of one -- cannot be rebuilt from its data without losing the
+comments and spacing that live in its slots, so its block is cloned
+and written out with the rest.
 
 Two passes over the mapping, because the two orders differ. `_plan`
 walks it in its own order, so the first thing wrong with it is the
@@ -33,18 +34,20 @@ from tomlrt._container import (
     _is_inline_table,
     _is_section,
     _reorder_dict_storage,
-    _sources_kept_intact,
     _unrepresentable_message,
     _validate_input,
 )
 from tomlrt._errors import TOMLError
-from tomlrt._layout_ops import (
-    first_block_slot,
-    leading_comment_block,
-    set_leading_comment_block,
-)
+from tomlrt._kind import _Kind
+from tomlrt._layout_ops import _retarget_separator, clone_graft_slots
 from tomlrt._scalar import coerce_scalar, is_scalar
-from tomlrt._slots import AoTEntry, KVSlot, StructuralHeaderSlot, stitch_run
+from tomlrt._slots import (
+    AoTEntry,
+    KVSlot,
+    StructuralHeaderSlot,
+    ensure_terminator,
+    stitch_run,
+)
 from tomlrt._typecheck import _require_mapping, _validate_key
 from tomlrt._values import (
     ArrayItem,
@@ -57,8 +60,6 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from tomlrt._slots import Slot
     from tomlrt._values import Value
 
@@ -76,6 +77,30 @@ def _needs_cloning(v: object) -> bool:
     if not isinstance(v, (Container, AoT)) or v._layout_root is None:  # noqa: SLF001
         return False
     return (isinstance(v, AoT) and bool(v)) or _is_section(v)
+
+
+def _graft_regions(view: Container | AoT) -> tuple[bool, bool]:
+    """Which regions ``view``'s block occupies: ``(body, blocks)``.
+
+    A header-less section is spelled entirely by its descendants: its
+    own keys as dotted ``a.b = 1`` lines, which belong to the body of
+    whichever section hosts them, and any sub-section as a header block
+    of its own. It can have either or both. Everything else -- a
+    section with its own header, an array-of-tables, a whole document
+    under a header synthesised for its key -- is all block.
+    """
+    if not isinstance(view, Container) or view._kind is not _Kind.IMPLICIT_SECTION:  # noqa: SLF001
+        return False, True
+    depth = len(view._path)  # noqa: SLF001
+    body = blocks = False
+    for ref in view._refs:  # noqa: SLF001
+        slot = ref.slot
+        if isinstance(slot, KVSlot) and len(slot.host_path) < depth:
+            body = True
+        else:
+            blocks = True
+    assert body or blocks, "an implicit section is spelled by its own slots"
+    return body, blocks
 
 
 def _wants_section(v: object) -> bool:
@@ -116,7 +141,8 @@ class _Node:
     """One planned key: its spelling, and what to make of its value."""
 
     __slots__ = (
-        "carries_comments",
+        "blocks",
+        "body",
         "entries",
         "graft",
         "key",
@@ -132,9 +158,10 @@ class _Node:
         self.entries: list[_Plan] | None = None
         self.value: Value | None = None
         self.graft = False
-        # Whether the comments above the source's first slot have to be
-        # carried across; only a block that replaces a placeholder does.
-        self.carries_comments = False
+        # A graft's cloned slots, split into the two regions they are
+        # written to; `_emit` fills both in.
+        self.body: list[Slot] = []
+        self.blocks: list[Slot] = []
 
 
 class _Plan:
@@ -162,24 +189,21 @@ class _Plan:
             self.in_order = False
         self.values.append(node)
 
-    def add_graft(self, node: _Node) -> None:
-        """Record a key whose block `_settle` has to clone in.
+    def add_graft(self, node: _Node, regions: tuple[bool, bool]) -> None:
+        """Record a key whose block is cloned in from another document.
 
-        One that arrives as dotted keys is body content and needs no
-        placeholder; anything else keeps its place with an empty header
-        that the install replaces, and so has to carry its comments.
+        Its slots are written where the mapping asks for them, so it
+        occupies the same two regions any other key does -- and a
+        header-less section occupies both.
         """
-        node.table = _Plan()
         node.graft = True
         self.grafts.append(node)
         self.any_grafts = True
-        # Installing the clone re-files the key.
-        self.in_order = False
-        if _installs_as_body(node.raw):
-            self.values.append(node)
-            return
-        node.carries_comments = not isinstance(node.raw, Document)
-        self.structural.append(node)
+        body, blocks = regions
+        if body:
+            self.add_value(node)
+        if blocks:
+            self.structural.append(node)
 
     @property
     def needs_header(self) -> bool:
@@ -209,10 +233,10 @@ def _plan(mapping: Mapping[str, object], nl: str) -> _Plan:
         node = _Node(key, raw)
         plan.keys.append(key)
         if _needs_cloning(raw):
-            # Only a clone can carry this one's layout, so it keeps its
-            # place with an empty header and the mutation layer fills it
-            # in once the rest of the document is standing.
-            plan.add_graft(node)
+            # Only a clone can carry this one's layout; `_emit` writes
+            # it out with everything else.
+            assert isinstance(raw, (Container, AoT))
+            plan.add_graft(node, _graft_regions(raw))
             continue
         if (entries := _aot_entries(raw)) is not None:
             if not entries:
@@ -316,22 +340,14 @@ def _emit(
 ) -> None:
     """Write ``plan``'s slots, in document order, onto ``out``."""
     if header and plan.needs_header:
-        out.append(
-            StructuralHeaderSlot(
-                "" if not out else nl,
-                owner,
-                nl,
-                make_keyparts(path),
-                (".",) * (len(path) - 1),
-                "",
-                "",
-                None,
-                synthetic=True,
-            )
-        )
+        out.append(_header_slot(path, "" if not out else nl, owner, None, nl))
+
+    for node in plan.grafts:
+        node.body, node.blocks = _graft_segments(node, path, owner, nl)
 
     for node in plan.values:
         if node.graft:
+            out.extend(node.body)
             continue
         value = node.value
         assert value is not None, "a value node has no synthesised value"
@@ -350,79 +366,90 @@ def _emit(
         )
 
     for node in plan.structural:
-        sub = (*path, node.key)
         if node.graft:
-            assert node.table is not None, "a graft is planned with an empty table"
-            _emit(node.table, sub, owner, out, nl, header=True)
+            # The clone brings its own comments; only the blank line
+            # that positions it here is the destination's to say.
+            _retarget_separator(node.blocks[0], "" if not out else nl)
+            out.extend(node.blocks)
             continue
+        sub = (*path, node.key)
         if node.table is not None:
             _emit(node.table, sub, owner, out, nl, header=True)
             continue
         assert node.entries, "a structural node is a table or a non-empty AoT"
         for entry in node.entries:
             entry_owner = AoTEntry()
-            entry_header = StructuralHeaderSlot(
-                "" if not out else nl,
-                entry_owner,
-                nl,
-                make_keyparts(sub),
-                (".",) * (len(sub) - 1),
-                "",
-                "",
-                entry_owner,
-                synthetic=True,
+            entry_header = _header_slot(
+                sub, "" if not out else nl, entry_owner, entry_owner, nl
             )
             entry_owner.bind_header(entry_header)
             out.append(entry_header)
             _emit(entry, sub, entry_owner, out, nl, header=False)
 
 
-def _installs_as_body(v: object) -> bool:
-    """Whether a graft arrives as dotted KVs rather than as a header block.
-
-    A section spelled only by its descendants' dotted keys is body
-    content, and takes none of the blank line a header would. A whole
-    `Document` is never that: it installs under a header synthesised
-    for the key it is bound to, whatever its own first slot is.
-    """
-    return not isinstance(v, Document) and isinstance(
-        first_block_slot(_as_view(v)), KVSlot
+def _header_slot(
+    path: tuple[str, ...],
+    leading: str,
+    owner: AoTEntry | None,
+    entry: AoTEntry | None,
+    nl: str,
+) -> StructuralHeaderSlot:
+    """A synthesised ``[path]`` / ``[[path]]`` header line."""
+    return StructuralHeaderSlot(
+        leading,
+        owner,
+        nl,
+        make_keyparts(path),
+        (".",) * (len(path) - 1),
+        "",
+        "",
+        entry,
+        synthetic=True,
     )
 
 
-def _as_view(v: object) -> Container | AoT:
-    """``v`` narrowed to the view a graft always is."""
-    assert isinstance(v, (Container, AoT)), "only a view is grafted"
-    return v
+def _graft_segments(
+    node: _Node, path: tuple[str, ...], owner: AoTEntry | None, nl: str
+) -> tuple[list[Slot], list[Slot]]:
+    """``node``'s block, cloned under its key and split into its regions.
 
-
-def _settle(container: Container, plan: _Plan) -> None:
-    """Finish ``container``: clone in its grafts, then order its keys.
-
-    A graft replaces the empty header `_emit` left in its place, so the
-    block lands where the mapping asked for it. Ordering comes after,
-    because that install re-files the key; slots are written body-first
-    too, so dict storage is in neither case the mapping's order, which
-    is the one `Document(mapping)` keeps -- as ``dict(mapping)`` does.
-
-    A graft's own children came from the clone, not from a plan, and
-    its node holds an empty one; descending into it would reorder its
-    container to nothing.
+    A header-less section's own keys come across as ``key.sub = ...``
+    lines hosted by the enclosing section, so they join its body;
+    everything else is a block. A whole document has no header of its
+    own and takes one synthesised for the key it is bound to.
     """
-    for node in plan.grafts:
-        # A block that keeps its place replaces the header `_emit` left
-        # there, and the install takes that slot's leading trivia -- so
-        # the comments above it have to be carried across. One that
-        # installs as dotted keys has no placeholder and keeps its own.
-        block = (
-            leading_comment_block(first_block_slot(_as_view(node.raw)))
-            if node.carries_comments
-            else ""
-        )
-        container._setitem_validated(node.key, node.raw)  # noqa: SLF001
-        if node.carries_comments:
-            installed = _as_view(dict.__getitem__(container, node.key))
-            set_leading_comment_block(first_block_slot(installed), block)
+    view = node.raw
+    assert isinstance(view, (Container, AoT)), "only a view is grafted"
+    target = (*path, node.key)
+    cloned = clone_graft_slots(
+        view, target_path=target, host_path=path, owner=owner, nl=nl
+    )
+    body: list[Slot] = []
+    blocks: list[Slot] = []
+    for slot in cloned:
+        if isinstance(slot, KVSlot) and slot.host_path == path:
+            body.append(slot)
+        else:
+            blocks.append(slot)
+    if isinstance(view, Document):
+        blocks.insert(0, _header_slot(target, "", owner, None, nl))
+    assert (bool(body), bool(blocks)) == _graft_regions(view), (
+        "cloned regions disagree with the ones the plan filed the key under"
+    )
+    return body, blocks
+
+
+def _reorder(container: Container, plan: _Plan) -> None:
+    """Put ``container``'s keys, and its descendants', in mapping order.
+
+    Slots are written body-first, so a key that follows a subsection in
+    the mapping is built after it and dict storage comes out in neither
+    the mapping's order nor the document's. `Document(mapping)` keeps
+    the mapping's, as ``dict(mapping)`` does.
+
+    A graft's own children came from a clone rather than from a plan,
+    so there is nothing below it to reorder.
+    """
     if not plan.in_order:
         _reorder_dict_storage(container, plan.keys)
     for node in plan.structural:
@@ -431,12 +458,12 @@ def _settle(container: Container, plan: _Plan) -> None:
         child = dict.__getitem__(container, node.key)
         if node.table is not None:
             assert isinstance(child, Container)
-            _settle(child, node.table)
+            _reorder(child, node.table)
             continue
         assert node.entries, "a structural node is a table or a non-empty AoT"
         assert isinstance(child, AoT)
         for entry_plan, entry_table in zip(node.entries, child, strict=True):
-            _settle(entry_table, entry_plan)
+            _reorder(entry_table, entry_plan)
 
 
 # ---------------------------------------------------------------------------
@@ -446,36 +473,27 @@ def _settle(container: Container, plan: _Plan) -> None:
 
 def populate(doc: Document, data: Mapping[str, object]) -> None:
     """Populate ``doc`` from ``data``."""
+    nl = doc._newline  # noqa: SLF001
     _require_mapping(data, label="Document data argument")
-    plan = _plan(data, doc._newline)  # noqa: SLF001
+    plan = _plan(data, nl)
     slots: list[Slot] = []
-    _emit(plan, (), None, slots, doc._newline, header=False)  # noqa: SLF001
+    _emit(plan, (), None, slots, nl, header=False)
+    if plan.any_grafts:
+        # A synthesised slot always ends its line, but a cloned one
+        # taken from the end of its source file need not, and anything
+        # written after it would run into it.
+        for slot in slots[:-1]:
+            ensure_terminator(slot, nl)
     stitch_run(None, slots, None)
     _assemble_document(
         doc,
         slots,
         trailing="",
-        newline=doc._newline,  # noqa: SLF001
+        newline=nl,
         prelude="",
         section_blank_separated=doc._section_blank_separated,  # noqa: SLF001
     )
-    grafts = (node.raw for node in _all_grafts(plan)) if plan.any_grafts else ()
-    with _sources_kept_intact(grafts):
-        _settle(doc, plan)
-
-
-def _all_grafts(plan: _Plan) -> Iterator[_Node]:
-    """Every graft in ``plan``, at any depth."""
-    yield from plan.grafts
-    for node in plan.structural:
-        if node.graft:
-            continue
-        if node.table is not None:
-            yield from _all_grafts(node.table)
-            continue
-        assert node.entries, "a structural node is a table or a non-empty AoT"
-        for entry in node.entries:
-            yield from _all_grafts(entry)
+    _reorder(doc, plan)
 
 
 __all__ = ["populate"]
