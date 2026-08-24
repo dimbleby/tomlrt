@@ -69,14 +69,13 @@ def _needs_cloning(v: object) -> bool:
 
     A section or array-of-tables still in a document, or popped out of
     one, spans slots whose comments and spacing live in the document it
-    came from; rebuilding it from its data would drop them. An inline
-    value keeps all of that in the one `Value` it owns, which
-    `_inline_value` copies, and an entry-less array-of-tables spans no
-    slots at all -- both rebuild exactly.
+    came from; rebuilding it from its data would drop them. Asked only
+    of a value already known to want a block of its own, so belonging
+    to a document is the whole of it: an inline value keeps its layout
+    in the one `Value` it owns, which `_inline_value` copies, and an
+    entry-less array-of-tables has no block to speak of.
     """
-    if not isinstance(v, (Container, AoT)) or v._layout_root is None:  # noqa: SLF001
-        return False
-    return (isinstance(v, AoT) and bool(v)) or _is_section(v)
+    return isinstance(v, (Container, AoT)) and v._layout_root is not None  # noqa: SLF001
 
 
 def _graft_regions(view: Container | AoT) -> tuple[bool, bool]:
@@ -108,7 +107,11 @@ def _wants_section(v: object) -> bool:
 
     Any mapping does, except a `Table` that says it is inline.
     """
-    return isinstance(v, Mapping) and not _is_inline_table(v)
+    # `dict` covers every `Table` and nearly every plain mapping; the
+    # ABC is three times dearer to ask, and only an exotic one needs it.
+    if not isinstance(v, dict):
+        return isinstance(v, Mapping)
+    return not _is_inline_table(v)
 
 
 def _aot_entries(v: object) -> list[Mapping[str, object]] | None:
@@ -120,9 +123,11 @@ def _aot_entries(v: object) -> list[Mapping[str, object]] | None:
     an `Array` never does, having been asked for explicitly, and nor
     does the empty list, which is just an empty array value.
     """
+    if not isinstance(v, list):
+        return None
     if isinstance(v, AoT):
         return list(v)
-    if isinstance(v, Array) or not isinstance(v, list) or not v:
+    if isinstance(v, Array) or not v:
         return None
     entries: list[Mapping[str, object]] = []
     for item in v:
@@ -232,31 +237,51 @@ def _plan(mapping: Mapping[str, object], nl: str) -> _Plan:
         key = _validate_key(raw_key)
         node = _Node(key, raw)
         plan.keys.append(key)
-        if _needs_cloning(raw):
-            # Only a clone can carry this one's layout; `_emit` writes
-            # it out with everything else.
-            assert isinstance(raw, (Container, AoT))
-            plan.add_graft(node, _graft_regions(raw))
-            continue
-        if (entries := _aot_entries(raw)) is not None:
-            if not entries:
-                # No entries, so no headers: the key is held by an empty
-                # array, which is what a mutation parks there too.
-                node.value = ArrayValue()
-                plan.add_value(node)
-                continue
-            node.entries = [_plan(entry, nl) for entry in entries]
-            plan.any_grafts |= any(e.any_grafts for e in node.entries)
-            plan.structural.append(node)
+        # Dispatch on the value's Python shape, so each arm is asked
+        # only what it alone can answer. A list is taken as a list,
+        # whatever else it may also claim to be.
+        if isinstance(raw, list):
+            _plan_list(plan, node, nl)
         elif _wants_section(raw):
-            assert isinstance(raw, Mapping)
-            node.table = _plan(raw, nl)
-            plan.any_grafts |= node.table.any_grafts
-            plan.structural.append(node)
+            _plan_section(plan, node, nl)
         else:
             node.value = _inline_value(raw, nl, key=key)
             plan.add_value(node)
     return plan
+
+
+def _plan_list(plan: _Plan, node: _Node, nl: str) -> None:
+    """Plan a list: an array-of-tables if that is what it holds."""
+    raw = node.raw
+    entries = _aot_entries(raw)
+    if entries is None:
+        node.value = _inline_value(raw, nl, key=node.key)
+        plan.add_value(node)
+    elif not entries:
+        # No entries, so no headers: the key is held by an empty array,
+        # which is what a mutation parks there too.
+        node.value = ArrayValue()
+        plan.add_value(node)
+    elif _needs_cloning(raw):
+        assert isinstance(raw, AoT)
+        plan.add_graft(node, _graft_regions(raw))
+    else:
+        node.entries = [_plan(entry, nl) for entry in entries]
+        plan.any_grafts |= any(e.any_grafts for e in node.entries)
+        plan.structural.append(node)
+
+
+def _plan_section(plan: _Plan, node: _Node, nl: str) -> None:
+    """Plan a mapping that becomes a ``[section]``."""
+    raw = node.raw
+    if _needs_cloning(raw):
+        assert isinstance(raw, Container)
+        plan.add_graft(node, _graft_regions(raw))
+        return
+    assert isinstance(raw, Mapping)
+    node.table = _plan(raw, nl)
+    plan.any_grafts |= node.table.any_grafts
+    plan.structural.append(node)
 
 
 def _inline_value(v: object, nl: str, *, key: str | None = None) -> Value:
