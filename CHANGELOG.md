@@ -7,15 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.5] - 2026-08-24
+
 ### Fixed
 
 - If `Document(...)` or `dumps(...)` rejects your data, any `Table`, `Array`
   or `AoT` you passed in is left untouched.
 - A `Table` or `AoT` passed to `Document(mapping)` is written where the mapping
   puts it, instead of after the rest of the section's keys.
-
-### Changed
-
 - `Document(mapping)` and `dumps(mapping)` now build faster than parsing the
   equivalent text.
 - `dumps(mapping)` is about 1.7x faster: it renders the document's lines
