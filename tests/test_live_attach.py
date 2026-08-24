@@ -1719,3 +1719,72 @@ def test_failed_document_init_checks_the_keys_it_installs() -> None:
         x = 1
         y = 2
         """)
+
+
+def _popped_with_inline_children() -> tuple[Table, Array, Table]:
+    """A popped subtree, plus the inline views it still owns.
+
+    Popping re-roots the whole subtree onto a private document of its
+    own, inline descendants included -- so those are privately rooted
+    too, and reachable without being the popped table itself.
+    """
+    src = tomlrt.loads(
+        td("""
+        [root]
+        arr = [1, 2]
+        it = { x = 1 }
+
+        [root.sub]
+        y = 2
+        """)
+    )
+    orphan = src.pop("root")
+    assert isinstance(orphan, Table)
+    return orphan, orphan.array("arr"), orphan.table("it")
+
+
+def test_update_through_a_plain_list_copies_a_popped_subtrees_array() -> None:
+    """A popped subtree stays the caller's, however deeply it is wrapped.
+
+    ``update`` reads its items first and installs them one at a time,
+    and an install moves out of a private orphan rather than copying
+    from it. A wrapper is rebuilt on the way in but the views inside it
+    are installed as they are, so a source reachable only through one
+    still has to be spared.
+    """
+    orphan, arr, _it = _popped_with_inline_children()
+    dst = tomlrt.Document()
+    dst.update({"wrapped": [arr]})
+    arr.append(3)
+
+    assert tomlrt.dumps(dst) == "wrapped = [[1, 2]]\n"
+    assert tomlrt.dumps(tomlrt.Document(orphan)) == td("""
+        arr = [1, 2, 3]
+        it = { x = 1 }
+
+        [sub]
+        y = 2
+        """)
+
+
+def test_update_through_a_plain_mapping_copies_a_popped_subtrees_table() -> None:
+    """The mapping half of the same rule.
+
+    Left unspared, the install rehomes the inline table into ``dst``
+    and the orphan is left saying one thing in its data and another in
+    the source it renders.
+    """
+    orphan, _arr, it = _popped_with_inline_children()
+    dst = tomlrt.Document()
+    dst.update({"wrapped": {"it": it}})
+    it["x"] = 9
+
+    assert tomlrt.dumps(dst) == "wrapped = { it = { x = 1 } }\n"
+    assert tomlrt.dumps(tomlrt.Document(orphan)) == td("""
+        arr = [1, 2]
+        it = { x = 9 }
+
+        [sub]
+        y = 2
+        """)
+    assert orphan.to_dict() == {"arr": [1, 2], "it": {"x": 9}, "sub": {"y": 2}}

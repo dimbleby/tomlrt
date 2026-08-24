@@ -1795,6 +1795,11 @@ def _collect_private_roots(value: Any, found: dict[int, Document]) -> None:
     only wrappers, so the whole shape is walked rather than its top
     level: those wrappers are rebuilt on the way in, but the views
     inside them are installed as they are.
+
+    Not only the popped subtree, which the top level finds anyway:
+    popping re-roots its inline descendants onto the orphan too, so an
+    `Array` or inline `Table` taken out of one is privately rooted and
+    can sit inside an ordinary list or dict.
     """
     if isinstance(value, _View):
         root = value._layout_root  # noqa: SLF001
