@@ -749,3 +749,52 @@ def test_document_graft_keeps_its_place_and_its_comments_once() -> None:
         [o.a]
         x = 1
         """)
+
+
+def test_dotted_graft_keeps_its_place_among_plain_keys() -> None:
+    """A graft is written where the mapping puts it, like any other key."""
+    src = tomlrt.loads("[h]\n# above\na.c = 1\na.d = 2\n")
+    doc = tomlrt.Document({"first": 1, "g": src.table("h").table("a"), "last": 2})
+    assert list(doc) == ["first", "g", "last"]
+    assert tomlrt.dumps(doc) == td("""
+        first = 1
+        # above
+        g.c = 1
+        g.d = 2
+        last = 2
+        """)
+
+
+def test_implicit_graft_splits_its_body_from_its_subsections() -> None:
+    """A header-less section spells itself in both regions of its host.
+
+    Its own keys are dotted lines of the body; its sub-sections are
+    blocks below it, after whatever else the body holds.
+    """
+    src = tomlrt.loads("# top\na.x = 1\n\n# sub\n[a.sub]\ny = 2\n")
+    doc = tomlrt.Document({"g": src.table("a"), "last": 2})
+    assert tomlrt.dumps(doc) == td("""
+        # top
+        g.x = 1
+        last = 2
+
+        # sub
+        [g.sub]
+        y = 2
+        """)
+
+
+def test_graft_at_the_tail_keeps_a_source_that_ends_without_a_newline() -> None:
+    """Only a slot written after it needs a terminator adding."""
+
+    def source() -> Table:
+        return tomlrt.loads("[a]\nx = 1").table("a")
+
+    assert tomlrt.dumps(tomlrt.Document({"g": source()})) == "[g]\nx = 1"
+    assert tomlrt.dumps(tomlrt.Document({"g": source(), "z": {"q": 2}})) == td("""
+        [g]
+        x = 1
+
+        [z]
+        q = 2
+        """)

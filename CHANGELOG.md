@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - If `Document(...)` or `dumps(...)` rejects your data, any `Table`, `Array`
   or `AoT` you passed in is left untouched.
+- A `Table` or `AoT` passed to `Document(mapping)` is written where the mapping
+  puts it, instead of after the rest of the section's keys.
 
 ### Changed
 

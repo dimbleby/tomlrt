@@ -2349,39 +2349,66 @@ def _gather_subtree_slots(src_table: Container) -> list[Slot]:
     return _owned_slots_from(src_table, src_table._header_ref.slot)  # noqa: SLF001
 
 
-def first_block_slot(view: Container | AoT) -> Slot:
-    """The first slot of ``view``'s block, in doc-stream order.
+def clone_graft_slots(
+    view: Container | AoT,
+    *,
+    target_path: tuple[str, ...],
+    host_path: tuple[str, ...],
+    owner: AoTEntry | None,
+    nl: str,
+) -> list[Slot]:
+    """Deep-clone ``view``'s block, rebased to ``target_path``.
 
-    Not the same as the container's own header: a forward-declared
-    descendant (``[a.b]`` before ``[a]``) comes earlier in the stream,
-    and a header-less container has no header at all. An install
-    replaces this slot's leading trivia, so it is the one whose
-    comments a caller has to carry across.
+    The clone comes back unlinked, for a caller writing a slot run of
+    its own; the source is left exactly as it was. Every ``[[..]]``
+    header in it gets a fresh `AoTEntry`, so an array-of-tables keeps
+    one entry per header and a section that was itself an entry becomes
+    a plain ``[table]``. ``host_path`` hosts the dotted keys of a
+    header-less section -- see :func:`_clone_entry_slots`.
+    """
+    own_header = (
+        view._header_ref.slot  # noqa: SLF001
+        if isinstance(view, _container.Container) and view._header_ref is not None  # noqa: SLF001
+        else None
+    )
+    cloned, _head = _clone_entry_slots(
+        owned_slots(view),
+        new_entry=None,
+        body_owner=owner,
+        src_prefix=view._path,  # noqa: SLF001
+        target_prefix=target_path,
+        dst_newline=nl,
+        head=own_header,
+        host_path=host_path,
+    )
+    return cloned
+
+
+def owned_slots(view: Container | AoT) -> list[Slot]:
+    """Every slot ``view``'s block spans, in doc-stream order.
+
+    Whatever shape the view has: a section with its own header, a
+    header-less one spelled by its descendants' dotted keys, an
+    array-of-tables (each entry in turn), or a whole document.
+
+    A container's block need not begin at its own header — a
+    forward-declared descendant (``[a.b]`` before ``[a]``) comes
+    earlier — but every slot in the block records a ref on the
+    container, either as its own header or as an ancestor step of a
+    descendant's, so ``_refs`` in doc-stream order starts where the
+    block does.
     """
     if isinstance(view, _array.AoT):
-        assert view, "an entry-less AoT spans no slots"
-        view = view[0]
-    assert not isinstance(view, _container.Document), (
-        "a document installs under a header synthesised for it, not its own"
-    )
-    if view._header_ref is not None:  # noqa: SLF001
-        _own, slots = _gather_headered_subtree_slots(view)
-    else:
-        assert view._refs, "a header-less container is bound by its own slots"  # noqa: SLF001
-        slots = _owned_slots_from(view, view._refs[0].slot)  # noqa: SLF001
-    assert slots, "an attached view spans at least one slot"
-    return slots[0]
-
-
-def leading_comment_block(slot: Slot) -> str:
-    """``slot``'s attached comment block, without its positional prefix."""
-    return _split_leading_structural(slot.leading)[1]
-
-
-def set_leading_comment_block(slot: Slot, block: str) -> None:
-    """Give ``slot`` ``block``, keeping the prefix that positions it here."""
-    prefix, _own = _split_leading_structural(slot.leading)
-    slot.leading = prefix + block
+        return [s for entry in view for s in _gather_subtree_slots(entry)]
+    if isinstance(view, _container.Document):
+        slots: list[Slot] = []
+        cur = view._head  # noqa: SLF001
+        while cur is not None:
+            slots.append(cur)
+            cur = cur._next  # noqa: SLF001
+        return slots
+    assert view._refs, "an attached view spans at least one slot"  # noqa: SLF001
+    return _owned_slots_from(view, view._refs[0].slot)  # noqa: SLF001
 
 
 def _gather_headered_subtree_slots(
@@ -2996,6 +3023,7 @@ def _clone_entry_slots(
     target_prefix: tuple[str, ...],
     dst_newline: str,
     head: Slot | None = None,
+    host_path: tuple[str, ...] | None = None,
 ) -> tuple[list[Slot], StructuralHeaderSlot | None]:
     r"""Deep-clone an entry's slot list with path/owner rebasing.
 
@@ -3019,8 +3047,13 @@ def _clone_entry_slots(
 
     A KV hosted *above* ``src_prefix`` — a header-less section's own
     dotted key — cannot be rebased by path, and is re-hosted at
-    ``target_prefix`` instead.
+    ``host_path`` instead, which defaults to ``target_prefix``. A clone
+    that lands under a header of its own wants that default; one that
+    stays header-less, spelled by dotted keys, wants the enclosing
+    section that will host them.
     """
+    if host_path is None:
+        host_path = target_prefix
     nested_entry_map: dict[AoTEntry, AoTEntry] = {}
     if head is not None and new_entry is not None:
         assert isinstance(head, StructuralHeaderSlot)
@@ -3040,7 +3073,7 @@ def _clone_entry_slots(
         c._prev = None  # noqa: SLF001
         c._next = None  # noqa: SLF001
         _rebase_implicit_slot_in_place(
-            c, src_prefix, target_prefix, target_prefix, dst_newline
+            c, src_prefix, target_prefix, host_path, dst_newline
         )
         src_owner = s.owner_aot_entry
         mapped = nested_entry_map.get(src_owner) if src_owner else None
