@@ -78,7 +78,12 @@ class DateTimeValue(ScalarValue):
 
 @dataclass(slots=True, eq=False)
 class KeyPart:
-    """A single dotted-key component."""
+    """A single dotted-key component.
+
+    Written but never edited: a slot's ``key_parts`` tuple is replaced
+    wholesale, so one slot's parts can be shared with another -- which
+    a rebase and `Slot.__deepcopy__` both rely on.
+    """
 
     raw: str  # source representation including any surrounding quotes
     value: str  # the decoded key string

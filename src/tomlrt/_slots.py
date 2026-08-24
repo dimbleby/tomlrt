@@ -9,11 +9,11 @@ in one container.
 from __future__ import annotations
 
 import copy
-from dataclasses import MISSING, dataclass, field, fields
-from typing import TYPE_CHECKING, Literal
+from dataclasses import dataclass, field, fields
+from typing import TYPE_CHECKING, Final, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from tomlrt._container import Container
     from tomlrt._values import KeyPart, Value
@@ -119,26 +119,39 @@ class Slot:
     """
 
     def __deepcopy__(self, memo: dict[int, object]) -> Slot:
-        """Deep-copy without following ``_refs``/``_prev``/``_next``.
+        """Copy the slot's own state, sharing everything immutable.
 
         Clones start with empty refs and no doc-stream links; callers
         file new refs and splice them in themselves. Following
         ``_prev``/``_next`` would drag the whole source document in.
+
+        Only the `Value` of a KV is deep-copied. Everything else a slot
+        holds is written but never mutated in place -- trivia and key
+        separators are `str`, a path is a tuple of them, and a
+        `KeyPart` is always replaced rather than edited, which is why
+        a rebase can already hand one slot's parts to another. Copying
+        those by reference is what makes cloning a block cost about
+        what parsing it does.
         """
-        new = type(self).__new__(type(self))
+        cls = type(self)
+        new = cls.__new__(cls)
         memo[id(self)] = new
-        for f in fields(self):
-            value: object
-            if f.name in {"owner_aot_entry", "entry"}:
-                # Clone installers rebuild physical/logical ownership.
-                value = None
-            elif f.init:
-                value = copy.deepcopy(getattr(self, f.name), memo)
-            elif f.default_factory is not MISSING:
-                value = f.default_factory()
-            else:
-                value = f.default
-            setattr(new, f.name, value)
+        for name in _SHARED_FIELDS[cls]:
+            setattr(new, name, getattr(self, name))
+        # Clone installers rebuild physical and logical ownership.
+        new.owner_aot_entry = None
+        new._prev = None  # noqa: SLF001
+        new._next = None  # noqa: SLF001
+        new._order = 0  # noqa: SLF001
+        new._refs = []  # noqa: SLF001
+        # `KVSlot` and `StructuralHeaderSlot` are the only concrete slots.
+        if isinstance(self, KVSlot):
+            assert isinstance(new, KVSlot)
+            new.value = copy.deepcopy(self.value, memo)
+        else:
+            assert isinstance(self, StructuralHeaderSlot)
+            assert isinstance(new, StructuralHeaderSlot)
+            new.entry = None
         return new
 
     def render(self) -> str:
@@ -390,6 +403,23 @@ class SlotRef:
         parts = slot.key_parts
         depth = len(c_path)
         return parts[depth].value if len(parts) > depth else None
+
+
+_UNSHARED: Final = frozenset(
+    {"_prev", "_next", "_order", "_refs", "owner_aot_entry", "entry", "value"}
+)
+"""Fields `Slot.__deepcopy__` writes itself rather than sharing."""
+
+_SHARED_FIELDS: Final[Mapping[type[Slot], tuple[str, ...]]] = {
+    cls: tuple(f.name for f in fields(cls) if f.name not in _UNSHARED)
+    for cls in (KVSlot, StructuralHeaderSlot)
+}
+"""Per slot class, the fields a clone can take by reference.
+
+`KVSlot` and `StructuralHeaderSlot` are the only concrete slots, so a
+third would raise here rather than be copied by a rule nobody chose
+for it.
+"""
 
 
 def ensure_terminator(slot: Slot, nl: str) -> None:
