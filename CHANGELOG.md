@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[section]` blocks, like nested mappings anywhere else in the argument.
 - A list holding a `Table.inline` stays an inline array in `Document(mapping)`,
   rather than becoming `[[array.of.tables]]`.
+- Copying a `[section]` or `[[array of tables]]` block into another document is
+  about twice as fast.
 
 ## [2.2.4] - 2026-08-23
 
