@@ -660,7 +660,7 @@ class Container(_View, dict[str, Any]):
         emptied = value._host  # noqa: SLF001
         existing_entries: list[Table] = list(value)
         _layout_ops.detach_aot_from_orphan(value)
-        list.clear(value)  # ty: ignore[invalid-argument-type]
+        list.clear(value)
         attached = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, attached)
         for entry_table in existing_entries:
@@ -1184,7 +1184,7 @@ def _reorder_dict_storage(c: Container, new_key_order: list[str]) -> None:
     permutation of ``dict.keys(c)``.
     """
     values = [(k, dict.__getitem__(c, k)) for k in new_key_order]
-    dict.clear(c)  # ty: ignore[invalid-argument-type]
+    dict.clear(c)
     for k, v in values:
         dict.__setitem__(c, k, v)
 
