@@ -306,7 +306,7 @@ class Array(_View, list[Any]):
         self._validate_item(value)
         return self._synth_item(value)
 
-    def _prepare_values(self, values: list[Any]) -> list[tuple[Value, Any]]:
+    def _prepare_values(self, values: list[object]) -> list[tuple[Value, object]]:
         """Validate a batch before synthesis can attach any nested views."""
         for value in values:
             self._validate_item(value)
@@ -317,7 +317,9 @@ class Array(_View, list[Any]):
         cst, decoded = self._prepare_item(value)
         self._append_with_style(cst, decoded, self._style())
 
-    def _append_with_style(self, cst: Value, decoded: Any, style: CommaStyle) -> None:
+    def _append_with_style(
+        self, cst: Value, decoded: object, style: CommaStyle
+    ) -> None:
         """Append ``cst`` / ``decoded`` using a precomputed ``style``.
 
         Precomputing avoids re-deriving style from array state that
@@ -373,7 +375,7 @@ class Array(_View, list[Any]):
         cst, decoded = self._prepare_item(value)
         self._insert_synthesised(i, cst, decoded)
 
-    def _insert_synthesised(self, index: int, cst: Value, decoded: Any) -> None:
+    def _insert_synthesised(self, index: int, cst: Value, decoded: object) -> None:
         """Insert an already-synthesised value."""
         if index == len(self):
             self._append_with_style(cst, decoded, self._style())
@@ -383,7 +385,7 @@ class Array(_View, list[Any]):
         splice_insert(self._value, new_item, index, style, self._doc_newline)
         list.insert(self, index, decoded)
 
-    def _replace_synthesised(self, index: int, cst: Value, decoded: Any) -> None:
+    def _replace_synthesised(self, index: int, cst: Value, decoded: object) -> None:
         """Replace an item with an already-synthesised value."""
         old = self[index]
         # Assigning an item to itself re-uses the very view being
@@ -405,12 +407,11 @@ class Array(_View, list[Any]):
         reverse: bool = False,
     ) -> None:
         n = len(self)
-        if key is None:
-            sort_key: Callable[[int], Any] = lambda i: self[i]  # noqa: E731
-        else:
-            key_fn = key
-            sort_key = lambda i: key_fn(self[i])  # noqa: E731
-        order = sorted(range(n), key=sort_key, reverse=reverse)
+        order = sorted(
+            range(n),
+            key=lambda i: self[i] if key is None else key(self[i]),
+            reverse=reverse,
+        )
         self._reorder(order)
 
     def _reorder(self, order: list[int]) -> None:
@@ -599,14 +600,13 @@ class AoT(_View, list["Table"]):
         ``entry`` may be initial body content or ``None``. Attached AoTs
         append to the owning document.
         """
-        if entry is not None:
-            entry = _prepare_aot_entries((entry,))[0]
+        body = _prepare_aot_entries((entry,))[0] if entry is not None else None
         if self._layout_root is None:
-            list.append(self, _make_unattached_entry(entry))
+            list.append(self, _make_unattached_entry(body))
             return self[-1]
-        return _layout_ops.add_aot_entry(self, entry)
+        return _layout_ops.add_aot_entry(self, body)
 
-    def _add_entry_attached(self, value: Mapping[str, Any]) -> Table:
+    def _add_entry_attached(self, value: Mapping[str, object]) -> Table:
         """Dispatch a new attached AoT entry from ``value``.
 
         Precondition: attached AoT. Prefers the trivia-preserving clone
@@ -619,7 +619,7 @@ class AoT(_View, list["Table"]):
                 return _layout_ops.clone_table_as_aot_entry(self, value)
         return _layout_ops.add_aot_entry(self, value)
 
-    def _replace_entry_attached(self, index: int, value: Mapping[str, Any]) -> None:
+    def _replace_entry_attached(self, index: int, value: Mapping[str, object]) -> None:
         """Dispatch in-place replacement of an attached AoT entry."""
         if (
             isinstance(value, _container.Table)
@@ -732,7 +732,7 @@ class AoT(_View, list["Table"]):
         entry = _prepare_aot_entries((value,))[0]
         self._append_validated(entry)
 
-    def _append_validated(self, entry: Mapping[str, TomlInput]) -> None:
+    def _append_validated(self, entry: Mapping[str, object]) -> None:
         """Append an entry that has passed bulk-mutation preflight."""
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(entry))
@@ -780,6 +780,8 @@ class AoT(_View, list["Table"]):
         new_order = list(reversed(self))
         _layout_ops.renormalise_aot_order(self, new_order)
 
+    # Tables have no natural ordering, so unlike list.sort this API
+    # deliberately requires a key.
     @override
     def sort(  # type: ignore[override]
         self,
@@ -793,8 +795,12 @@ class AoT(_View, list["Table"]):
             return
         _layout_ops.renormalise_aot_order(self, new_order)
 
+    # Accept mappings as entries, matching append/extend rather than
+    # exposing the narrower list[Table] storage type.
     @override
-    def __iadd__(self, values: Iterable[Mapping[str, TomlInput]]) -> Self:  # type: ignore[override]
+    def __iadd__(  # type: ignore[override]
+        self, values: Iterable[Mapping[str, TomlInput]]
+    ) -> Self:
         self.extend(values)
         return self
 
@@ -821,9 +827,9 @@ class AoT(_View, list["Table"]):
 
 
 def _prepare_aot_entries(
-    values: Iterable[Any],
-) -> list[Mapping[str, TomlInput]]:
-    """Snapshot the iterable and recursively validate every AoT entry."""
+    values: Iterable[object],
+) -> list[Mapping[Any, object]]:
+    """Snapshot and validate complete AoT entries."""
     from tomlrt._container import _validate_mapping_items  # noqa: PLC0415
 
     entries = [_require_mapping(value, label="AoT entry") for value in list(values)]
@@ -832,7 +838,7 @@ def _prepare_aot_entries(
     return entries
 
 
-def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
+def _make_unattached_entry(body: Mapping[str, object] | None) -> Table:
     """Build a fresh unattached `Table` view as an AoT-entry placeholder."""
     from tomlrt._container import Table, _populate_unattached  # noqa: PLC0415
 

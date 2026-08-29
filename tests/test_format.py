@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import FrozenInstanceError
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypedDict
 
 import pytest
 import tomli
@@ -18,6 +18,11 @@ from tomlrt._slots import KVSlot
 
 if TYPE_CHECKING:
     from tomlrt._values import ArrayValue, InlineTableValue
+
+
+class _InvalidFormatOptions(TypedDict, total=False):
+    indent: int
+    eol_comment_spaces: int
 
 
 def _roundtrip(src: str, *, comments: bool = True) -> str:
@@ -1029,7 +1034,7 @@ def test_eol_comment_spacing_preserves_crlf() -> None:
     ],
 )
 def test_format_options_rejects_negative_values(
-    kwargs: Any,
+    kwargs: _InvalidFormatOptions,
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):

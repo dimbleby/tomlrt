@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from tomlrt._array import AoT, Array
 from tomlrt._build import _assemble_document
@@ -65,6 +65,8 @@ from tomlrt._values import (
 if TYPE_CHECKING:
     from tomlrt._slots import Slot
     from tomlrt._values import Value
+
+_KeyT = TypeVar("_KeyT")
 
 
 def _spells_own_key(slot: Slot, depth: int) -> bool:
@@ -118,7 +120,7 @@ def _wants_section(v: object) -> bool:
     return not _is_inline_table(v)
 
 
-def _aot_entries(v: list[Any]) -> list[Mapping[str, object]] | None:
+def _aot_entries(v: list[object]) -> list[Mapping[Any, object]] | None:
     """``v`` as the tables of an ``[[aot]]``, when that is what it is.
 
     An `AoT` says so itself, even an empty one -- which keeps its key
@@ -131,10 +133,11 @@ def _aot_entries(v: list[Any]) -> list[Mapping[str, object]] | None:
         return list(v)
     if isinstance(v, Array) or not v:
         return None
-    entries: list[Mapping[str, object]] = []
+    entries: list[Mapping[Any, object]] = []
     for item in v:
         if not _wants_section(item):
             return None
+        assert isinstance(item, Mapping)
         entries.append(item)
     return entries
 
@@ -223,7 +226,7 @@ class _Plan:
         return bool(self.values) or not self.structural
 
 
-def _plan(mapping: Mapping[str, object], nl: str) -> _Plan:
+def _plan(mapping: Mapping[_KeyT, object], nl: str) -> _Plan:
     """Check and classify ``mapping``, keeping its own order.
 
     Anything TOML cannot hold raises the error the caller should see;

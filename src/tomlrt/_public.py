@@ -25,9 +25,9 @@ def load(fp: IO[bytes]) -> Document:
 
     The file must be opened in binary mode (``open(path, "rb")``).
     """
-    data = fp.read()
+    data: object = fp.read()
     if not isinstance(data, (bytes, bytearray)):
-        msg = (  # type: ignore[unreachable]
+        msg = (
             "tomlrt.load expects a binary file (open with mode='rb'); "
             f"got a text stream returning {type(data).__name__}"
         )

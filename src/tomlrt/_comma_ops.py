@@ -11,7 +11,7 @@ structure.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from tomlrt._trivia import (
     leading_break,
@@ -36,10 +36,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
     from tomlrt._values import (
-        ArrayValue,
         CommaItem,
         CommaValue,
-        InlineTableValue,
     )
 
 
@@ -118,7 +116,7 @@ class Boundary:
     is_head: bool = False
 
     @classmethod
-    def capture(cls, cv: CommaValue[Any], i: int) -> Boundary:
+    def capture(cls, cv: CommaValue[_CV_ItemT], i: int) -> Boundary:
         items = cv.items
         if i == 0:
             following = cv.header_trivia
@@ -157,7 +155,7 @@ class Boundary:
             self.is_head,
         )
 
-    def restore(self, cv: CommaValue[Any], i: int) -> None:
+    def restore(self, cv: CommaValue[_CV_ItemT], i: int) -> None:
         following = self.following.join()
         if self.is_head:
             cv.header_trivia = following
@@ -526,7 +524,7 @@ def _pre_comma_break(item: CommaItem) -> str:
     return newline_at(t, i) + trailing_ws(t)
 
 
-def detect_style(value: ArrayValue | InlineTableValue) -> CommaStyle:
+def detect_style(value: CommaValue[_CV_ItemT]) -> CommaStyle:
     """Infer a :class:`CommaStyle` for ``value``.
 
     Multi-line shape comes from the value's own trivia
@@ -556,7 +554,7 @@ def detect_style(value: ArrayValue | InlineTableValue) -> CommaStyle:
     )
 
 
-def _row_runs(value: CommaValue[Any]) -> Iterator[str]:
+def _row_runs(value: CommaValue[_CV_ItemT]) -> Iterator[str]:
     """Yield ``value``'s interior trivia as physically contiguous runs.
 
     One run per boundary, in document order: the bracket pad, then each
@@ -575,7 +573,7 @@ def _row_runs(value: CommaValue[Any]) -> Iterator[str]:
     yield run + value.final_trivia
 
 
-def _value_newline(value: CommaValue[Any]) -> str:
+def _value_newline(value: CommaValue[_CV_ItemT]) -> str:
     """Return the newline text ``value`` already breaks its rows with.
 
     The first break wins, wherever it lives -- an item's EOL section
@@ -589,7 +587,7 @@ def _value_newline(value: CommaValue[Any]) -> str:
     return newline_at(run, i)
 
 
-def _value_indent(value: CommaValue[Any]) -> str:
+def _value_indent(value: CommaValue[_CV_ItemT]) -> str:
     """Return the row indent sampled from ``value`` (4 spaces if none).
 
     The first indented row the value opens wins, wherever its break
@@ -609,13 +607,13 @@ def _value_indent(value: CommaValue[Any]) -> str:
     return "" if opens_row else "    "
 
 
-def _canonical_separator(value: CommaValue[Any]) -> str:
+def _canonical_separator(value: CommaValue[_CV_ItemT]) -> str:
     """Return the fallback inter-item newline plus value indent."""
     return _value_newline(value) + _value_indent(value)
 
 
 def _carry_above(
-    cv: CommaValue[Any],
+    cv: CommaValue[_CV_ItemT],
     i: int,
     source: Boundary,
     nl: str,
@@ -632,7 +630,7 @@ def _carry_above(
 
 
 def _replace_above(
-    cv: CommaValue[Any], i: int, source: Boundary, nl: str, indent: str = ""
+    cv: CommaValue[_CV_ItemT], i: int, source: Boundary, nl: str, indent: str = ""
 ) -> None:
     _carry_above(
         cv,
@@ -644,7 +642,7 @@ def _replace_above(
     )
 
 
-def _detach_above(cv: CommaValue[Any], b: int) -> Boundary:
+def _detach_above(cv: CommaValue[_CV_ItemT], b: int) -> Boundary:
     """Snapshot boundary ``b``, stripping any comment block it owns.
 
     An above-block belongs to the item below it, so an insertion here
@@ -661,7 +659,7 @@ def _detach_above(cv: CommaValue[Any], b: int) -> Boundary:
 
 
 def _rehome_above(
-    cv: CommaValue[Any], i: int, source: Boundary, style: CommaStyle, nl: str
+    cv: CommaValue[_CV_ItemT], i: int, source: Boundary, style: CommaStyle, nl: str
 ) -> None:
     """Put the block ``source`` was detached from above the item at ``i``.
 

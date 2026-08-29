@@ -45,7 +45,6 @@ from tomlrt._values import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from typing import Any
 
     from tomlrt._values import CommaItem, CommaValue
 
@@ -192,7 +191,7 @@ def _clear_above_block(value: CommaValue[_ItemT], i: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-class CommaCommentAdapter(ABC, Generic[_KeyT]):
+class CommaCommentAdapter(ABC, Generic[_KeyT, _ItemT]):
     """Flavour hooks that bind a comma-value comment view to its owner.
 
     `Array` keys comments by item index; an inline table keys them by
@@ -203,7 +202,7 @@ class CommaCommentAdapter(ABC, Generic[_KeyT]):
     __slots__ = ()
 
     @abstractmethod
-    def value(self) -> CommaValue[Any]:
+    def value(self) -> CommaValue[_ItemT]:
         """The backing comma-value whose items carry the comments."""
 
     @abstractmethod
@@ -227,7 +226,10 @@ class CommaCommentAdapter(ABC, Generic[_KeyT]):
         """The candidate keys and item indices, in item order."""
 
 
-class _CommaView(MutableMapping[_KeyT, _ValueT]):
+class _CommaView(
+    MutableMapping[_KeyT, _ValueT],
+    Generic[_KeyT, _ValueT, _ItemT],
+):
     """Shared mapping plumbing over a `CommaCommentAdapter`.
 
     Subclasses supply ``_get(idx)`` — the current stored value or None
@@ -237,7 +239,7 @@ class _CommaView(MutableMapping[_KeyT, _ValueT]):
 
     __slots__ = ("_a",)
 
-    def __init__(self, adapter: CommaCommentAdapter[_KeyT]) -> None:
+    def __init__(self, adapter: CommaCommentAdapter[_KeyT, _ItemT]) -> None:
         self._a = adapter
 
     @abstractmethod
@@ -280,7 +282,7 @@ class _CommaView(MutableMapping[_KeyT, _ValueT]):
         return repr(dict(self))
 
 
-class CommaEolView(_CommaView[_KeyT, str]):
+class CommaEolView(_CommaView[_KeyT, str, _ItemT]):
     """EOL-comment mapping over a comma-value, keyed by ``_KeyT``."""
 
     __slots__ = ()
@@ -306,7 +308,7 @@ class CommaEolView(_CommaView[_KeyT, str]):
             raise KeyError(key)
 
 
-class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
+class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]", _ItemT]):
     """Above-item comment-block mapping over a comma-value, keyed by ``_KeyT``."""
 
     __slots__ = ()
@@ -340,7 +342,7 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]"]):
         _clear_attached_comments(self._a.value(), idx)
 
 
-class CommaLeadingBlockView(_CommaView[_KeyT, "tuple[str | None, ...]"]):
+class CommaLeadingBlockView(_CommaView[_KeyT, "tuple[str | None, ...]", _ItemT]):
     """Full above-item block mapping over a comma-value, keyed by ``_KeyT``."""
 
     __slots__ = ()
