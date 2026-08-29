@@ -101,7 +101,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T")
 _ItemT = TypeVar("_ItemT", bound="CommaItem")
 
-_MISSING: Any = object()
+_MISSING = object()
 
 
 class Container(_View, dict[str, Any]):
@@ -563,7 +563,7 @@ class Container(_View, dict[str, Any]):
         _validate_input(value, inline_only=self._inline, key=key)
         self._setitem_validated(key, value)
 
-    def _setitem_validated(self, key: str, value: Any) -> None:
+    def _setitem_validated(self, key: str, value: object) -> None:
         """Bind ``key`` to a ``value`` already checked for this container.
 
         The body of `__setitem__` below the validation boundary.
@@ -586,7 +586,7 @@ class Container(_View, dict[str, Any]):
             return
         self._insert_new(key, value)
 
-    def _overwrite_existing(self, key: str, value: Any) -> None:
+    def _overwrite_existing(self, key: str, value: object) -> None:
         """Replace the value at an already-bound key.
 
         Uses in-place swaps when the existing binding is a single KV.
@@ -617,7 +617,7 @@ class Container(_View, dict[str, Any]):
     def _insert_new(
         self,
         key: str,
-        value: Any,
+        value: object,
         *,
         reinstall_as_dotted: bool = False,
     ) -> None:
@@ -647,6 +647,7 @@ class Container(_View, dict[str, Any]):
             self._attach_aot(key, value)
             return
         # `_validate_input` leaves only a section table for this branch.
+        assert isinstance(value, Container)
         self._attach_section(key, value)
 
     def _attach_aot(self, key: str, value: AoT) -> None:
@@ -710,8 +711,9 @@ class Container(_View, dict[str, Any]):
             elif isinstance(value, Document):
                 _layout_ops.clone_document_as_section(self, key, value)
             else:
-                value = _snapshot_for_overlapping_install(self, key, value)
-                _install_attached_subtree(self, (key,), value)
+                snapshot = _snapshot_for_overlapping_install(self, key, value)
+                assert isinstance(snapshot, Container)
+                _install_attached_subtree(self, (key,), snapshot)
             return
         # An overlapping install can never be a move — the source would
         # have to end up inside itself — so it is copied instead, as it
@@ -727,8 +729,8 @@ class Container(_View, dict[str, Any]):
             # document so identity and trivia both survive. A header-bearing
             # section (an AoT entry is normalised to a plain section) moves
             # its block; a header-less implicit section moves its dotted KVs.
-            emptied = value._parent  # noqa: SLF001
-            if value._header_ref is not None:  # noqa: SLF001
+            emptied = value._parent
+            if value._header_ref is not None:
                 _layout_ops.adopt_private_section(self, key, value)
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
@@ -744,7 +746,7 @@ class Container(_View, dict[str, Any]):
         assert isinstance(value, Table), (
             "internal: detached section source expected to be a Table"
         )
-        assert value._layout_root is None, (  # noqa: SLF001
+        assert value._layout_root is None, (
             "internal: a private-orphan section owns slots"
         )
         _layout_ops.attach_section_at(self, (key,), value)
@@ -758,7 +760,7 @@ class Container(_View, dict[str, Any]):
         slot.value = coerce_scalar(value)
         dict.__setitem__(self, key, value)
 
-    def _inline_typed_replace(self, key: str, value: Any) -> None:
+    def _inline_typed_replace(self, key: str, value: object) -> None:
         """Swap an existing direct-KV slot's value to a synthesised inline value.
 
         Works for any existing scalar / inline-table / inline-array
@@ -832,7 +834,7 @@ class Container(_View, dict[str, Any]):
         if len(args) > 1:
             msg = f"update expected at most 1 argument, got {len(args)}"
             raise TypeError(msg)
-        items: list[tuple[str, Any]] = []
+        items: list[tuple[str, object]] = []
         if args:
             other = args[0]
             if hasattr(other, "keys"):
@@ -940,6 +942,8 @@ class Container(_View, dict[str, Any]):
                 return True
         return False
 
+    # Broader than dict's union signature by design: mutation accepts the same
+    # keys/getitem objects and key-value iterables as dict.update().
     @override
     def __ior__(  # type: ignore[override]
         self,
@@ -960,7 +964,7 @@ class Container(_View, dict[str, Any]):
     # Inline-table dispatch
     # ------------------------------------------------------------------
 
-    def _inline_setitem(self, key: str, value: Any) -> None:
+    def _inline_setitem(self, key: str, value: object) -> None:
         # ``__setitem__`` has already rejected values an inline host
         # cannot store (``AoT``, sections, non-coerceable types).
         cst, decoded = self._synth_local_value(key, value)
@@ -1291,7 +1295,7 @@ def _preflight_section_walk(
     return i, to_promote
 
 
-def _populate_unattached(t: Container, mapping: Mapping[str, Any]) -> None:
+def _populate_unattached(t: Container, mapping: Mapping[str, object]) -> None:
     """Populate an unattached ``Container`` whose keys are already validated."""
     for k, v in mapping.items():
         dict.__setitem__(t, k, v)
@@ -1746,7 +1750,7 @@ def _install_dotted_direct_kvs(
         dict.__setitem__(destination, k, decoded)
 
 
-def _to_python(v: Any) -> Any:
+def _to_python(v: object) -> object:
     """Recursively materialise a tomlrt view into plain Python values."""
     if isinstance(v, Container):
         return v.to_dict()
@@ -1767,7 +1771,9 @@ def _is_inline_table(v: object) -> TypeGuard[Container]:
     return isinstance(v, Container) and v._inline  # noqa: SLF001
 
 
-def _snapshot_for_overlapping_install(parent: Container, key: str, value: Any) -> Any:
+def _snapshot_for_overlapping_install(
+    parent: Container, key: str, value: object
+) -> object:
     """Snapshot ``value`` if an overlapping install cannot safely read it.
 
     An ancestor source would grow while it is read. During overwrite, a
@@ -1795,7 +1801,7 @@ def _snapshot_for_overlapping_install(parent: Container, key: str, value: Any) -
     return Document(value.to_dict())
 
 
-def _collect_private_roots(value: Any, found: dict[int, Document]) -> None:
+def _collect_private_roots(value: object, found: dict[int, Document]) -> None:
     """Record the private documents any view within ``value`` belongs to.
 
     A source can be reached through plain mappings and lists that are
@@ -1821,7 +1827,7 @@ def _collect_private_roots(value: Any, found: dict[int, Document]) -> None:
 
 
 @contextlib.contextmanager
-def _sources_kept_intact(values: Iterable[Any]) -> Iterator[None]:
+def _sources_kept_intact(values: Iterable[object]) -> Iterator[None]:
     """Present any private source document as one that must be copied.
 
     An install moves out of a private orphan and clones from anything
@@ -1841,7 +1847,7 @@ def _sources_kept_intact(values: Iterable[Any]) -> Iterator[None]:
             root._is_private = True  # noqa: SLF001
 
 
-def _has_extractable_layout(data: Mapping[str, Any]) -> TypeGuard[Table]:
+def _has_extractable_layout(data: Mapping[str, object]) -> TypeGuard[Table]:
     """True when ``data`` is a `Table` that owns section layout.
 
     A section-backed table — implicit ones and ``[[aot]]`` entries
@@ -1979,7 +1985,9 @@ def _unrepresentable_message(v: object, key: str | None) -> str:
     return f"cannot convert {type(v).__name__} to a TOML value"
 
 
-def _validate_mapping_items(mapping: Mapping[Any, Any], *, inline_only: bool) -> None:
+def _validate_mapping_items(
+    mapping: Mapping[Any, object], *, inline_only: bool
+) -> None:
     """Validate each mapping key and its value in one pass."""
     for raw_key, value in mapping.items():
         key = _validate_key(raw_key)

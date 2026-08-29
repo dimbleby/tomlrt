@@ -17,6 +17,7 @@ else:  # pragma: no cover -- backport for Python < 3.12
 from tomlrt._comma_comments import (
     CommaCommentAdapter,
 )
+from tomlrt._values import ArrayItem
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from tomlrt._values import ArrayValue
 
 
-class _ArrayAdapter(CommaCommentAdapter[int]):
+class _ArrayAdapter(CommaCommentAdapter[int, ArrayItem]):
     __slots__ = ("_arr",)
 
     def __init__(self, arr: Array) -> None:

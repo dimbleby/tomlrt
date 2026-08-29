@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
-_MappingT = TypeVar("_MappingT", bound=Mapping[Any, Any])
+_MappingT = TypeVar("_MappingT", bound=Mapping[str, object])
 
 
 def _validate_key(key: object) -> str:
@@ -36,7 +36,7 @@ def _validate_mapping(value: _MappingT, *, label: str) -> _MappingT:
     return value
 
 
-def _require_mapping(value: object, *, label: str) -> Mapping[Any, Any]:
+def _require_mapping(value: object, *, label: str) -> Mapping[Any, object]:
     """Return ``value`` as a mapping, or raise a consistent ``TypeError``."""
     if not isinstance(value, Mapping):
         msg = f"{label} must be a Mapping, got {type(value).__name__}"

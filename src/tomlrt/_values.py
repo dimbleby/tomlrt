@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -339,7 +339,7 @@ def inter_item_separator(items: Sequence[CommaItem]) -> str:
     return " "
 
 
-def _scan_multiline(v: CommaValue[Any]) -> bool:
+def _scan_multiline(v: CommaValue[_ItemT]) -> bool:
     """Uncached scan: inspect every trivia region that can carry a row break."""
     if "\n" in v.header_trivia or "\n" in v.final_trivia:
         return True

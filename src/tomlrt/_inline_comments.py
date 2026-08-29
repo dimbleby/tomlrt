@@ -30,6 +30,7 @@ from tomlrt._inline_ops import (
     ensure_inline_multiline,
 )
 from tomlrt._kind import _Kind
+from tomlrt._values import InlineTableEntry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -53,7 +54,7 @@ def _require_value(c: Container) -> None:
         raise TOMLError(msg)
 
 
-class _InlineAdapter(CommaCommentAdapter[str]):
+class _InlineAdapter(CommaCommentAdapter[str, InlineTableEntry]):
     __slots__ = ("_c", "_indices")
 
     def __init__(self, container: Container) -> None:

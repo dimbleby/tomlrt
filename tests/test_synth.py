@@ -27,6 +27,8 @@ from tomlrt import AoT, Array, Table, TOMLError
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from tomlrt._container import TomlInput
+
 if sys.version_info >= (3, 12):
     from typing import override
 else:  # pragma: no cover -- backport for Python < 3.12
@@ -47,7 +49,7 @@ def _assigned(data: dict[str, Any]) -> str:
     return tomlrt.dumps(doc)
 
 
-def _shaped(value: Any) -> Any:
+def _shaped(value: object) -> TomlInput:
     """``value`` with its structural shape spelled out explicitly."""
     if isinstance(value, (Table, Array, AoT)):
         return value
@@ -55,7 +57,10 @@ def _shaped(value: Any) -> Any:
         return Table.section({k: _shaped(v) for k, v in value.items()})
     if isinstance(value, list) and value and all(isinstance(x, dict) for x in value):
         return AoT([{k: _shaped(v) for k, v in entry.items()} for entry in value])
-    return value
+    if isinstance(value, (str, int, float, date, time, list)):
+        return value
+    msg = f"unexpected test value: {value!r}"
+    raise AssertionError(msg)
 
 
 SHAPES: dict[str, dict[str, Any]] = {
@@ -372,7 +377,7 @@ def test_dumps_of_a_graft_matches_the_document_it_would_have_built() -> None:
     [object(), b"x", (1, 2), {1: "int key"}, {"a": object()}, [object()]],
     ids=["object", "bytes", "tuple", "int key", "nested object", "in a list"],
 )
-def test_dumps_rejects_what_document_rejects(value: Any) -> None:
+def test_dumps_rejects_what_document_rejects(value: object) -> None:
     """The same complaint, whichever of the two the caller reached for."""
     with pytest.raises((TypeError, TOMLError)) as from_document:
         tomlrt.Document({"k": value})
@@ -511,7 +516,7 @@ def test_attached_view_inside_an_aot_entry_keeps_its_layout() -> None:
         (Table.section({}), "[a]\n"),
     ],
 )
-def test_empty_containers_keep_their_key(value: Any, rendered: str) -> None:
+def test_empty_containers_keep_their_key(value: object, rendered: str) -> None:
     assert tomlrt.dumps(tomlrt.Document({"a": value})) == rendered
 
 

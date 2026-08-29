@@ -28,7 +28,7 @@ import copy
 import itertools
 import operator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from tomlrt import _array, _container
 from tomlrt._comment_text import _split_attached_block
@@ -146,7 +146,7 @@ def _effective_header_path_before(anchor: Slot | None) -> tuple[str, ...] | None
     return None
 
 
-def reposition_install(parent: Container, key: str, value: Any) -> None:
+def reposition_install(parent: Container, key: str, value: object) -> None:
     """Replace ``parent[key]`` while preserving its physical position.
 
     The binding is deleted, reinstalled via ``parent[key] = value``,
@@ -1950,7 +1950,7 @@ def _aot_separator(aot: AoT, doc: Document) -> str:
 
 
 def add_aot_entry(
-    aot: AoT, body: Mapping[str, Any] | None, *, rehome: Table | None = None
+    aot: AoT, body: Mapping[str, object] | None, *, rehome: Table | None = None
 ) -> Table:
     """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view.
 
@@ -3467,7 +3467,7 @@ def replace_aot_entry_with_clone(
     )
 
 
-def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, Any]) -> None:
+def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, object]) -> None:
     """Replace ``aot[index]`` in place.
 
     Keeps the entry's header slot and live `Table` view; just clears
