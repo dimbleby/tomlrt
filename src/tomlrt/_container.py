@@ -12,7 +12,16 @@ import copy
 import sys
 from collections.abc import Mapping
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeGuard, TypeVar, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Final,
+    Literal,
+    TypeAlias,
+    TypeGuard,
+    TypeVar,
+    overload,
+)
 
 if sys.version_info >= (3, 12):
     from typing import Self, override
@@ -1911,7 +1920,13 @@ def _is_synth_inline(v: object) -> bool:
     return isinstance(v, list)
 
 
-def _validate_input(v: object, *, inline_only: bool, key: str | None = None) -> None:
+def _validate_input(
+    v: object,
+    *,
+    inline_only: bool,
+    key: str | None = None,
+    inline_kind: Literal["array", "table"] = "table",
+) -> None:
     """Validate a value recursively for an inline or section context.
 
     ``key`` names the entry ``v`` is bound to, if it has one. The
@@ -1931,7 +1946,7 @@ def _validate_input(v: object, *, inline_only: bool, key: str | None = None) -> 
         return
     if isinstance(v, AoT):
         if inline_only:
-            msg = "cannot store an array-of-tables inside an inline table"
+            msg = f"cannot store an array-of-tables inside an inline {inline_kind}"
             raise TOMLError(msg)
         for entry in v:
             mapping = _require_mapping(entry, label="AoT entry")
@@ -1941,7 +1956,7 @@ def _validate_input(v: object, *, inline_only: bool, key: str | None = None) -> 
     # concrete type is far cheaper than asking the `Mapping` ABC.
     if isinstance(v, list):
         for child in v:
-            _validate_input(child, inline_only=True)
+            _validate_input(child, inline_only=True, inline_kind="array")
         return
     if _is_section(v):
         if inline_only:
@@ -2018,13 +2033,10 @@ def _synth_value(
     owner: AoTEntry | None,
     array_host: Array | None = None,
 ) -> tuple[Value, object]:
-    """Synthesise a (CST value, decoded view) pair from ``v``.
+    """Synthesise a validated (CST value, decoded view) pair from ``v``.
 
     Plain ``dict`` / ``Mapping`` → ``InlineTableValue`` + inline ``Table``.
     ``list`` / ``Array`` view → ``ArrayValue`` + ``Array``.
-    Section ``Container`` / ``AoT`` raise ``TOMLError`` — those can't
-    live as inline values. Anything else raises the canonical
-    ``TypeError``.
 
     ``parent``/``name`` are the container and key ``v`` is bound under,
     driving a key-hosted view's binding and name. ``array_host`` is the
@@ -2034,12 +2046,6 @@ def _synth_value(
     """
     if is_scalar(v):
         return coerce_scalar(v), v
-    if isinstance(v, AoT):
-        msg = "cannot store an array-of-tables inside an inline table"
-        raise TOMLError(msg)
-    if _is_section(v):
-        msg = "cannot store a section-style table inside an inline-style table"
-        raise TOMLError(msg)
     # Live-attach unattached inline values so user identity is preserved.
     # For an inline Table, `_populate_inline_table` fully re-wires state
     # (including a fresh `_value`), so no separate reset is needed.
@@ -2083,14 +2089,17 @@ def _synth_value(
             name=name,
             owner=owner,
         )
-    elif isinstance(v, list):
+    else:
+        assert isinstance(v, list), "validated inline value expected"
         val = ArrayValue()
         arr = Array._view(val, layout_root, name)  # noqa: SLF001
-        _fill_inline_array(arr, v, layout_root=layout_root, owner=owner)
+        _fill_inline_array(
+            arr,
+            v,
+            layout_root=layout_root,
+            owner=owner,
+        )
         cst, view = val, arr
-    else:
-        msg = f"cannot convert {type(v).__name__} to a TOML value"
-        raise TypeError(msg)
     _file_host(view, parent, array_host)
     return cst, view
 

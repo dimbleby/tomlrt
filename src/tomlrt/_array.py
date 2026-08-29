@@ -27,7 +27,6 @@ from tomlrt._comma_ops import (
     splice_insert,
     splice_out,
 )
-from tomlrt._errors import TOMLError
 from tomlrt._format import (
     _resolve_format_options,
     format_inline_root,
@@ -126,6 +125,8 @@ class Array(_View, list[Any]):
         if items_list:
             from tomlrt._container import _fill_inline_array  # noqa: PLC0415
 
+            for item in items_list:
+                self._validate_item(item)
             _fill_inline_array(self, items_list, layout_root=None, owner=None)
         if not multiline:
             return
@@ -280,19 +281,17 @@ class Array(_View, list[Any]):
         )
         return self
 
-    def _synth_item(self, value: object) -> tuple[Value, object]:
-        """Synthesise one value accepted by an inline array.
+    @staticmethod
+    def _validate_item(value: object) -> None:
+        """Validate one value before synthesis can attach nested views."""
+        from tomlrt._container import _validate_input  # noqa: PLC0415
 
-        The synthesised element is uplinked to this array (``array_host``)
-        so it can later derive its hosting KV slot: an element has no key
-        of its own, so it derives it from the array object (see
-        `_host_kv_slot`).
-        """
+        _validate_input(value, inline_only=True, inline_kind="array")
+
+    def _synth_item(self, value: object) -> tuple[Value, object]:
+        """Synthesise one validated value for this inline array."""
         from tomlrt._container import _synth_value  # noqa: PLC0415
 
-        if isinstance(value, AoT):
-            msg = "cannot store an array-of-tables inside an inline array"
-            raise TOMLError(msg)
         return _synth_value(
             value,
             layout_root=self._layout_root,
@@ -302,17 +301,20 @@ class Array(_View, list[Any]):
             array_host=self,
         )
 
-    def _prepare_values(self, values: list[Any]) -> list[tuple[Value, Any]]:
-        """Validate every value before synthesising: synthesis live-attaches."""
-        from tomlrt._container import _validate_input  # noqa: PLC0415
+    def _prepare_item(self, value: object) -> tuple[Value, object]:
+        """Validate and synthesise one value."""
+        self._validate_item(value)
+        return self._synth_item(value)
 
+    def _prepare_values(self, values: list[Any]) -> list[tuple[Value, Any]]:
+        """Validate a batch before synthesis can attach any nested views."""
         for value in values:
-            _validate_input(value, inline_only=True)
+            self._validate_item(value)
         return [self._synth_item(value) for value in values]
 
     @override
     def append(self, value: Any) -> None:
-        cst, decoded = self._synth_item(value)
+        cst, decoded = self._prepare_item(value)
         self._append_with_style(cst, decoded, self._style())
 
     def _append_with_style(self, cst: Value, decoded: Any, style: CommaStyle) -> None:
@@ -368,7 +370,7 @@ class Array(_View, list[Any]):
     @override
     def insert(self, index: SupportsIndex, value: Any) -> None:
         i = _norm_insert_index(index, len(self))
-        cst, decoded = self._synth_item(value)
+        cst, decoded = self._prepare_item(value)
         self._insert_synthesised(i, cst, decoded)
 
     def _insert_synthesised(self, index: int, cst: Value, decoded: Any) -> None:
@@ -466,7 +468,7 @@ class Array(_View, list[Any]):
         # int index: reject before synthesising or mutating any CST, to
         # match the IndexError ``list.__setitem__`` raises for a bad index.
         i = _norm_index(index, len(self._value.items), "list assignment")
-        cst, dec = self._synth_item(value)
+        cst, dec = self._prepare_item(value)
         self._replace_synthesised(i, cst, dec)
 
     @override

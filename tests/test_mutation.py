@@ -1419,15 +1419,34 @@ def test_array_extend_invalid_value_is_atomic() -> None:
 
 
 @pytest.mark.parametrize(
-    ("value", "error"),
+    ("value", "error", "message"),
     [
-        pytest.param(_OPAQUE, TypeError, id="opaque"),
-        pytest.param(Table.section({"a": 1}), tomlrt.TOMLError, id="section"),
-        pytest.param({"nested": AoT([{"a": 1}])}, tomlrt.TOMLError, id="nested-aot"),
+        pytest.param((1, 2), TypeError, "cannot assign tuple; use a list", id="tuple"),
+        pytest.param(
+            b"value", TypeError, "cannot assign bytes; use a string", id="bytes"
+        ),
+        pytest.param(
+            AoT([{"a": 1}]),
+            tomlrt.TOMLError,
+            "cannot store an array-of-tables inside an inline array",
+            id="aot",
+        ),
+        pytest.param(
+            Table.section({"a": 1}),
+            tomlrt.TOMLError,
+            "cannot store a section-style table inside an inline-style table",
+            id="section",
+        ),
+        pytest.param(
+            {"nested": AoT([{"a": 1}])},
+            tomlrt.TOMLError,
+            "cannot store an array-of-tables inside an inline table",
+            id="nested-aot",
+        ),
     ],
 )
 def test_array_append_rejects_unstorable_value_atomically(
-    value: Any, error: type[Exception]
+    value: Any, error: type[Exception], message: str
 ) -> None:
     """`append` synthesises before splicing, so a value an inline array
     cannot hold is rejected with the array left untouched."""
@@ -1435,11 +1454,26 @@ def test_array_append_rejects_unstorable_value_atomically(
     doc = tomlrt.loads(src)
     xs = doc.array("xs")
 
-    with pytest.raises(error):
+    with pytest.raises(error, match=message):
         xs.append(value)
 
     assert list(xs) == [1]
     assert tomlrt.dumps(doc) == src
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        pytest.param(_OPAQUE, TypeError, id="opaque"),
+        pytest.param(AoT([{"a": 1}]), tomlrt.TOMLError, id="aot"),
+        pytest.param(Table.section({"a": 1}), tomlrt.TOMLError, id="section"),
+    ],
+)
+def test_array_constructor_rejects_unstorable_value(
+    value: Any, error: type[Exception]
+) -> None:
+    with pytest.raises(error):
+        Array([value])
 
 
 @pytest.mark.parametrize("value", [Array([2]), Table.inline({"x": 2})])
@@ -1457,6 +1491,121 @@ def test_array_failed_bulk_mutation_does_not_attach_input(value: Any) -> None:
         else "xs = []\nkept = { x = 2 }\n"
     )
     assert tomlrt.dumps(doc) == expected
+
+
+def _apply_array_single_mutation(arr: Array, operation: str, value: Any) -> None:
+    if operation == "append":
+        arr.append(value)
+    elif operation == "insert":
+        arr.insert(0, value)
+    else:
+        arr[0] = value
+
+
+def _reject_array_synthesis(failure_site: str, destination: Array, value: Any) -> None:
+    invalid: list[Any] = [value, object()]
+    if failure_site == "constructor":
+        Array(invalid)
+    else:
+        destination.append(invalid)
+
+
+@pytest.mark.parametrize("operation", ["append", "insert", "replace"])
+@pytest.mark.parametrize("value_kind", ["array", "table"])
+def test_array_failed_single_mutation_does_not_attach_nested_input(
+    operation: str, value_kind: str
+) -> None:
+    src = "xs = [1]\n"
+    doc = tomlrt.loads(src)
+    xs = doc.array("xs")
+    value = Array([2]) if value_kind == "array" else Table.inline({"x": 2})
+    invalid = [value, object()]
+
+    with pytest.raises(TypeError):
+        _apply_array_single_mutation(xs, operation, invalid)
+
+    assert tomlrt.dumps(doc) == src
+    doc["kept"] = value
+    assert doc["kept"] is value
+    expected = (
+        td("""
+            xs = [1]
+            kept = [2]
+            """)
+        if isinstance(value, Array)
+        else td("""
+            xs = [1]
+            kept = { x = 2 }
+            """)
+    )
+    rendered = tomlrt.dumps(doc)
+    assert rendered == expected
+    assert _reparses(rendered) == doc.to_dict()
+
+
+@pytest.mark.parametrize("failure_site", ["constructor", "append"])
+def test_failed_array_synthesis_preserves_detached_inline_table(
+    failure_site: str,
+) -> None:
+    value = Table.inline({"x": 1})
+    doc = tomlrt.loads("xs = []\n")
+
+    with pytest.raises(TypeError, match="cannot convert object to a TOML value"):
+        _reject_array_synthesis(failure_site, doc.array("xs"), value)
+
+    with pytest.raises(
+        tomlrt.TOMLError, match="unavailable on a detached inline table"
+    ):
+        value.set_multiline(multiline=True)
+    value["y"] = 2
+    del value["x"]
+    doc["kept"] = value
+    assert doc["kept"] is value
+    value["z"] = 3
+    rendered = tomlrt.dumps(doc)
+    assert rendered == td("""
+        xs = []
+        kept = { y = 2, z = 3 }
+        """)
+    assert _reparses(rendered) == doc.to_dict()
+
+
+@pytest.mark.parametrize("failure_site", ["constructor", "append"])
+def test_failed_array_synthesis_preserves_detached_array_layout(
+    failure_site: str,
+) -> None:
+    value = Array([1], multiline=True, indent=2)
+    value.comments[0] = "kept"
+    doc = tomlrt.loads("xs = []\r\n")
+
+    with pytest.raises(TypeError, match="cannot convert object to a TOML value"):
+        _reject_array_synthesis(failure_site, doc.array("xs"), value)
+
+    assert value.multiline
+    assert value.comments[0] == "kept"
+    value.append(2)
+    doc["kept"] = value
+    assert doc["kept"] is value
+    rendered = tomlrt.dumps(doc)
+    assert rendered == "xs = []\r\nkept = [\r\n  1, # kept\r\n  2,\r\n]\r\n"
+    assert _reparses(rendered) == doc.to_dict()
+
+
+def test_array_single_mutation_live_attaches_array_input() -> None:
+    doc = tomlrt.loads("xs = [1]\n")
+    xs = doc.array("xs")
+    value = Array([2], multiline=True, indent=2)
+
+    xs.append(value)
+
+    assert xs[1] is value
+    rendered = tomlrt.dumps(doc)
+    assert rendered == td("""
+        xs = [1, [
+          2,
+        ]]
+    """)
+    assert _reparses(rendered) == doc.to_dict()
 
 
 def test_array_extend_self_duplicates_once() -> None:

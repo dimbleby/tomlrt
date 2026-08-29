@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New entries use line endings detected from document structure and trivia,
   without multiline-string content overriding them. String content remains
   the fallback when the document has no structural line ending.
+- Rejected inline-array construction and edits no longer alter detached typed
+  containers nested inside the invalid value.
 
 ## [2.2.5] - 2026-08-24
 
