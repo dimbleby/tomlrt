@@ -29,21 +29,16 @@ def _validate_key(key: object) -> str:
 
 
 def _validate_mapping(value: _MappingT, *, label: str) -> _MappingT:
-    """Reject a non-Mapping ``value`` or any Mapping with non-string keys.
-
-    Returns the same mapping so downstream paths that branch on
-    concrete type (e.g. ``Table`` vs ``dict``) keep working. Centralise
-    this so every factory / mutator boundary reports the same errors
-    instead of leaking layout-pipeline ``AttributeError``s.
-    """
+    """Require a mapping and shallowly validate its item keys."""
     _require_mapping(value, label=label)
-    for k in value:
-        _validate_key(k)
+    for item in value.items():
+        _validate_key(item[0])
     return value
 
 
-def _require_mapping(value: object, *, label: str) -> None:
-    """Reject a non-mapping passed despite the public type signature."""
+def _require_mapping(value: object, *, label: str) -> Mapping[Any, Any]:
+    """Return ``value`` as a mapping, or raise a consistent ``TypeError``."""
     if not isinstance(value, Mapping):
         msg = f"{label} must be a Mapping, got {type(value).__name__}"
         raise TypeError(msg)
+    return value

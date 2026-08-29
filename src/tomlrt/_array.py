@@ -36,7 +36,7 @@ from tomlrt._format import (
 from tomlrt._trivia import (
     strip_trailing_indent,
 )
-from tomlrt._typecheck import _validate_mapping
+from tomlrt._typecheck import _require_mapping, _validate_mapping
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -821,12 +821,12 @@ class AoT(_View, list["Table"]):
 def _prepare_aot_entries(
     values: Iterable[Any],
 ) -> list[Mapping[str, TomlInput]]:
-    """Snapshot and validate complete AoT entries."""
-    from tomlrt._container import _validate_section_values  # noqa: PLC0415
+    """Snapshot the iterable and recursively validate every AoT entry."""
+    from tomlrt._container import _validate_mapping_items  # noqa: PLC0415
 
-    entries = [_validate_mapping(value, label="AoT entry") for value in list(values)]
+    entries = [_require_mapping(value, label="AoT entry") for value in list(values)]
     for entry in entries:
-        _validate_section_values(entry)
+        _validate_mapping_items(entry, inline_only=False)
     return entries
 
 

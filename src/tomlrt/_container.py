@@ -62,7 +62,7 @@ from tomlrt._scalar import (
 )
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import retarget_newlines, split_line
-from tomlrt._typecheck import _validate_key, _validate_mapping
+from tomlrt._typecheck import _require_mapping, _validate_key, _validate_mapping
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -1284,12 +1284,7 @@ def _preflight_section_walk(
 
 
 def _populate_unattached(t: Container, mapping: Mapping[str, Any]) -> None:
-    """Bulk-populate an unattached ``Container`` from a validated mapping.
-
-    Bypasses ``Container.__setitem__`` (and its key typecheck) so the
-    layout pipeline never re-pays validation work that the caller has
-    already done.
-    """
+    """Populate an unattached ``Container`` whose keys are already validated."""
     for k, v in mapping.items():
         dict.__setitem__(t, k, v)
 
@@ -1939,7 +1934,8 @@ def _validate_input(v: object, *, inline_only: bool, key: str | None = None) -> 
             msg = "cannot store an array-of-tables inside an inline table"
             raise TOMLError(msg)
         for entry in v:
-            _validate_section_values(_validate_mapping(entry, label="AoT entry"))
+            mapping = _require_mapping(entry, label="AoT entry")
+            _validate_mapping_items(mapping, inline_only=False)
         return
     # Before the mapping arms: a list is never a mapping, and asking a
     # concrete type is far cheaper than asking the `Mapping` ABC.
@@ -1951,12 +1947,10 @@ def _validate_input(v: object, *, inline_only: bool, key: str | None = None) -> 
         if inline_only:
             msg = "cannot store a section-style table inside an inline-style table"
             raise TOMLError(msg)
-        _validate_section_values(_validate_mapping(v, label="section table"))
+        _validate_mapping_items(v, inline_only=False)
         return
     if isinstance(v, Mapping):
-        mapping = _validate_mapping(v, label="inline table")
-        for child_key, child in mapping.items():
-            _validate_input(child, inline_only=True, key=child_key)
+        _validate_mapping_items(v, inline_only=True)
         return
     raise TypeError(_unrepresentable_message(v, key))
 
@@ -1971,10 +1965,11 @@ def _unrepresentable_message(v: object, key: str | None) -> str:
     return f"cannot convert {type(v).__name__} to a TOML value"
 
 
-def _validate_section_values(mapping: Mapping[str, object]) -> None:
-    """Validate values in a mapping whose keys were already checked."""
-    for key, value in mapping.items():
-        _validate_input(value, inline_only=False, key=key)
+def _validate_mapping_items(mapping: Mapping[Any, Any], *, inline_only: bool) -> None:
+    """Validate each mapping key and its value in one pass."""
+    for raw_key, value in mapping.items():
+        key = _validate_key(raw_key)
+        _validate_input(value, inline_only=inline_only, key=key)
 
 
 def _file_host(
