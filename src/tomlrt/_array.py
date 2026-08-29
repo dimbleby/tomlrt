@@ -43,7 +43,7 @@ from tomlrt._values import (
 from tomlrt._view import _View
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, MutableMapping
+    from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 
     from _typeshed import SupportsRichComparison
 
@@ -288,7 +288,7 @@ class Array(_View, list[Any]):
 
         _validate_input(value, inline_only=True, inline_kind="array")
 
-    def _synth_item(self, value: object) -> tuple[Value, object]:
+    def _synth_item(self, value: TomlInput) -> tuple[Value, object]:
         """Synthesise one validated value for this inline array."""
         from tomlrt._container import _synth_value  # noqa: PLC0415
 
@@ -301,12 +301,14 @@ class Array(_View, list[Any]):
             array_host=self,
         )
 
-    def _prepare_item(self, value: object) -> tuple[Value, object]:
+    def _prepare_item(self, value: TomlInput) -> tuple[Value, object]:
         """Validate and synthesise one value."""
         self._validate_item(value)
         return self._synth_item(value)
 
-    def _prepare_values(self, values: list[object]) -> list[tuple[Value, object]]:
+    def _prepare_values(
+        self, values: Sequence[TomlInput]
+    ) -> list[tuple[Value, object]]:
         """Validate a batch before synthesis can attach any nested views."""
         for value in values:
             self._validate_item(value)
@@ -606,7 +608,7 @@ class AoT(_View, list["Table"]):
             return self[-1]
         return _layout_ops.add_aot_entry(self, body)
 
-    def _add_entry_attached(self, value: Mapping[str, object]) -> Table:
+    def _add_entry_attached(self, value: Mapping[str, TomlInput]) -> Table:
         """Dispatch a new attached AoT entry from ``value``.
 
         Precondition: attached AoT. Prefers the trivia-preserving clone
@@ -619,7 +621,9 @@ class AoT(_View, list["Table"]):
                 return _layout_ops.clone_table_as_aot_entry(self, value)
         return _layout_ops.add_aot_entry(self, value)
 
-    def _replace_entry_attached(self, index: int, value: Mapping[str, object]) -> None:
+    def _replace_entry_attached(
+        self, index: int, value: Mapping[str, TomlInput]
+    ) -> None:
         """Dispatch in-place replacement of an attached AoT entry."""
         if (
             isinstance(value, _container.Table)
@@ -732,7 +736,7 @@ class AoT(_View, list["Table"]):
         entry = _prepare_aot_entries((value,))[0]
         self._append_validated(entry)
 
-    def _append_validated(self, entry: Mapping[str, object]) -> None:
+    def _append_validated(self, entry: Mapping[str, TomlInput]) -> None:
         """Append an entry that has passed bulk-mutation preflight."""
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(entry))
@@ -827,18 +831,20 @@ class AoT(_View, list["Table"]):
 
 
 def _prepare_aot_entries(
-    values: Iterable[object],
-) -> list[Mapping[Any, object]]:
+    values: Iterable[Any],
+) -> list[Mapping[str, TomlInput]]:
     """Snapshot and validate complete AoT entries."""
     from tomlrt._container import _validate_mapping_items  # noqa: PLC0415
 
-    entries = [_require_mapping(value, label="AoT entry") for value in list(values)]
+    entries: list[Any] = [
+        _require_mapping(value, label="AoT entry") for value in list(values)
+    ]
     for entry in entries:
         _validate_mapping_items(entry, inline_only=False)
     return entries
 
 
-def _make_unattached_entry(body: Mapping[str, object] | None) -> Table:
+def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
     """Build a fresh unattached `Table` view as an AoT-entry placeholder."""
     from tomlrt._container import Table, _populate_unattached  # noqa: PLC0415
 
