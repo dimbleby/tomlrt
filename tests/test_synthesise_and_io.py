@@ -72,6 +72,84 @@ def test_crlf_document_keeps_crlf_after_mutation() -> None:
     assert tomlrt.dumps(doc) == "a = 1\r\nb = 2\r\nc = 3\r\n"
 
 
+@pytest.mark.parametrize(
+    "src",
+    [
+        td(
+            '''
+            value = """
+            text"""''',
+        ).replace("\n", "\r\n"),
+        td(
+            """
+            value = '''text
+            more'''""",
+        ).replace("\n", "\r\n"),
+        td(
+            '''
+            value = """text\\
+              more"""''',
+        ).replace("\n", "\r\n"),
+    ],
+    ids=["trimmed-opening", "literal-body", "line-continuation"],
+)
+def test_crlf_multiline_string_is_document_newline_fallback(src: str) -> None:
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc["added"] = 1
+    out = tomlrt.dumps(doc)
+    assert out == src + "\r\nadded = 1\r\n"
+    assert tomlrt.loads(out).to_dict() == doc.to_dict()
+
+
+def test_crlf_structure_overrides_lf_multiline_string() -> None:
+    src = (
+        td(
+            '''
+            value = """foo
+            bar"""''',
+        )
+        + "\r\nother = 1\r\n"
+    )
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc["added"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == src + "added = 2\r\n"
+    assert tomlrt.loads(out).to_dict() == doc.to_dict()
+
+
+def test_lf_structure_overrides_crlf_multiline_string() -> None:
+    src = td(
+        '''
+        value = """foo
+        bar"""
+        other = 1
+        ''',
+    ).replace("foo\nbar", "foo\r\nbar")
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc["added"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == src + "added = 2\n"
+    assert tomlrt.loads(out).to_dict() == doc.to_dict()
+
+
+def test_escaped_newline_does_not_affect_document_newline() -> None:
+    src = td(
+        '''
+        value = """foo\\nbar"""
+        other = 1
+        ''',
+    ).replace("\n", "\r\n")
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc["added"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == src + "added = 2\r\n"
+    assert tomlrt.loads(out).to_dict() == doc.to_dict()
+
+
 def test_dump_writes_to_binary_stream() -> None:
     doc = tomlrt.loads("x = 1\n")
     out = io.BytesIO()

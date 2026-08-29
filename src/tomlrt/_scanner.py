@@ -85,25 +85,28 @@ _SIMPLE_ESCAPES: Final[dict[str, str]] = {
 
 
 class _Scanner:
-    __slots__ = ("_seen_crlf", "_seen_lf", "end", "pos", "src")
+    __slots__ = ("_seen_crlf", "_seen_lf", "_string_newline", "end", "pos", "src")
 
     def __init__(self, src: str) -> None:
         self.src = src
         self.end = len(src)
         self.pos = 0
-        # Track newline kinds during scanning so Document needn't walk the CST.
+        # Structural/trivia newlines determine the document's mutation policy.
         self._seen_lf = False
         self._seen_crlf = False
+        self._string_newline: str | None = None
 
     def detected_newline(self) -> str:
         r"""Return the document-wide newline kind seen during scanning.
 
-        ``"\r\n"`` if every emitted newline was CRLF; ``"\n"``
-        otherwise (LF-only, mixed, or no newlines at all).
+        Structural and trivia newlines take precedence over multiline-string
+        content. If there are none, string content is the fallback.
         """
-        if self._seen_crlf and not self._seen_lf:
+        if self._seen_lf:
+            return "\n"
+        if self._seen_crlf:
             return "\r\n"
-        return "\n"
+        return self._string_newline or "\n"
 
     def line_col(self, pos: int) -> tuple[int, int]:
         r"""Return the 1-based (line, column) for source offset `pos`.
@@ -328,8 +331,10 @@ class _Scanner:
         # A newline immediately after the opening delimiter is trimmed.
         if src.startswith("\n", pos):
             pos += 1
+            self._string_newline = "\n"
         elif src.startswith("\r\n", pos):
             pos += 2
+            self._string_newline = self._string_newline or "\r\n"
         out: list[str] = []
         while True:
             m = body.match(src, pos)
@@ -359,12 +364,14 @@ class _Scanner:
             elif ch == "\n":
                 out.append("\n")
                 pos += 1
+                self._string_newline = "\n"
             elif ch == "\r":
                 if not src.startswith("\r\n", pos):
                     msg = "stray carriage return in string"
                     raise self.error(msg)
                 out.append("\r\n")
                 pos += 2
+                self._string_newline = self._string_newline or "\r\n"
             else:
                 msg = f"invalid control character U+{ord(ch):04X} in string"
                 raise self.error(msg)
@@ -386,8 +393,10 @@ class _Scanner:
                 while True:
                     if src.startswith("\n", scan):
                         scan += 1
+                        self._string_newline = "\n"
                     elif src.startswith("\r\n", scan):
                         scan += 2
+                        self._string_newline = self._string_newline or "\r\n"
                     else:
                         return scan
                     while scan < end and src[scan] in " \t":
