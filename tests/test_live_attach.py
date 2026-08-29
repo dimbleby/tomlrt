@@ -358,6 +358,23 @@ def test_factories_reject_non_mapping_input() -> None:
         AoT(["not a mapping"])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
 
 
+def test_factories_validate_the_keys_they_copy() -> None:
+    class Inconsistent(dict[Any, Any]):
+        @override
+        def __iter__(self) -> Iterator[Any]:
+            return iter(k for k in dict.keys(self) if isinstance(k, str))
+
+    data = Inconsistent()
+    dict.__setitem__(data, 1, "bad")
+
+    with pytest.raises(TypeError, match="TOML keys must be str"):
+        Table.section(data)
+    with pytest.raises(TypeError, match="TOML keys must be str"):
+        Table.inline(data)
+    with pytest.raises(TypeError, match="TOML keys must be str"):
+        AoT([data])
+
+
 # ---------------------------------------------------------------------------
 # Array live attach
 # ---------------------------------------------------------------------------
