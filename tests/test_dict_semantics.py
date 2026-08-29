@@ -10,6 +10,7 @@ identity stability for repeated lookups.
 from __future__ import annotations
 
 import json
+from collections import UserString
 
 import pytest
 
@@ -227,6 +228,17 @@ def test_pop_non_str_key_is_treated_as_missing() -> None:
         doc.pop([], sentinel)
     with pytest.raises(TypeError):
         doc.pop([])
+    assert tomlrt.dumps(doc) == "a = 1\n"
+
+
+def test_pop_string_equivalent_non_str_key_is_treated_as_missing() -> None:
+    key = UserString("a")
+    doc = tomlrt.loads("a = 1\n")
+    sentinel = object()
+
+    assert doc.pop(key, sentinel) is sentinel
+    with pytest.raises(KeyError):
+        doc.pop(key)
     assert tomlrt.dumps(doc) == "a = 1\n"
 
 
