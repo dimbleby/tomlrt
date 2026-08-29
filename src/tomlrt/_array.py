@@ -781,8 +781,7 @@ class AoT(_View, list["Table"]):
         if self._layout_root is None:
             list.reverse(self)
             return
-        new_order = list(reversed(self))
-        _layout_ops.renormalise_aot_order(self, new_order)
+        _layout_ops.renormalise_aot_order(self, list(reversed(self)))
 
     # Tables have no natural ordering, so unlike list.sort this API
     # deliberately requires a key.
@@ -793,11 +792,10 @@ class AoT(_View, list["Table"]):
         key: Callable[[Table], SupportsRichComparison],
         reverse: bool = False,
     ) -> None:
-        new_order = sorted(self, key=key, reverse=reverse)
         if self._layout_root is None:
-            list.__init__(self, new_order)
+            list.sort(self, key=key, reverse=reverse)
             return
-        _layout_ops.renormalise_aot_order(self, new_order)
+        _layout_ops.renormalise_aot_order(self, sorted(self, key=key, reverse=reverse))
 
     # Accept mappings as entries, matching append/extend rather than
     # exposing the narrower list[Table] storage type.
