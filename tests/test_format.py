@@ -1796,11 +1796,9 @@ def test_imul_cloned_inline_table_element_format() -> None:
     assert reparses(out) == {"k": [{"x": 1}, {"x": 1}]}
 
 
-# Appending / inserting a Python value synthesises its element view through
-# `Array._synth_item`; assigning a plain nested list synthesises it through
-# `_fill_inline_array`. Both must uplink the element to its array
-# or a scoped layout call on it walks off the top of the
-# chain. These pin both clauses.
+# Appending / inserting and assigning a plain nested list both synthesise
+# element views. Each must uplink the element to its array or a scoped layout
+# call on it walks off the top of the chain. These pin both paths.
 
 
 def test_appended_nested_array_element_set_multiline() -> None:

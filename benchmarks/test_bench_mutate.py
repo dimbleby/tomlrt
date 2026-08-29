@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 import tomlrt
 
 if TYPE_CHECKING:
@@ -216,6 +218,18 @@ def test_insert_into_inline_array(benchmark: BenchmarkFixture) -> None:
             arr.insert(0, i)
 
     benchmark.pedantic(work, setup=_parsed(_inline_array(500)), rounds=100)
+
+
+@pytest.mark.parametrize("size", [100, 1_000])
+def test_append_nested_list_to_inline_array(
+    benchmark: BenchmarkFixture, size: int
+) -> None:
+    value = list(range(size))
+
+    def work(doc: Document) -> None:
+        doc.array("items").append(value)
+
+    benchmark.pedantic(work, setup=_parsed("items = []\n"), rounds=2_000)
 
 
 def test_delete_from_inline_array(benchmark: BenchmarkFixture) -> None:
