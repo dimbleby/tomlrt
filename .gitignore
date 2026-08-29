@@ -1,5 +1,6 @@
 *.py[oc]
 .benchmarks/
+.bug-loop/
 .coverage
 __pycache__/
 dist/
