@@ -529,7 +529,7 @@ class Container(_View, dict[str, Any]):
             out[k] = _to_python(v)
         return out
 
-    def _synth_local_value(self, key: str, value: object) -> tuple[Value, object]:
+    def _synth_local_value(self, key: str, value: TomlInput) -> tuple[Value, object]:
         """Synthesise ``value`` for direct storage under ``key`` on ``self``."""
         return _synth_value(
             value,
@@ -563,7 +563,7 @@ class Container(_View, dict[str, Any]):
         _validate_input(value, inline_only=self._inline, key=key)
         self._setitem_validated(key, value)
 
-    def _setitem_validated(self, key: str, value: object) -> None:
+    def _setitem_validated(self, key: str, value: TomlInput) -> None:
         """Bind ``key`` to a ``value`` already checked for this container.
 
         The body of `__setitem__` below the validation boundary.
@@ -586,7 +586,7 @@ class Container(_View, dict[str, Any]):
             return
         self._insert_new(key, value)
 
-    def _overwrite_existing(self, key: str, value: object) -> None:
+    def _overwrite_existing(self, key: str, value: TomlInput) -> None:
         """Replace the value at an already-bound key.
 
         Uses in-place swaps when the existing binding is a single KV.
@@ -617,7 +617,7 @@ class Container(_View, dict[str, Any]):
     def _insert_new(
         self,
         key: str,
-        value: object,
+        value: TomlInput,
         *,
         reinstall_as_dotted: bool = False,
     ) -> None:
@@ -760,7 +760,7 @@ class Container(_View, dict[str, Any]):
         slot.value = coerce_scalar(value)
         dict.__setitem__(self, key, value)
 
-    def _inline_typed_replace(self, key: str, value: object) -> None:
+    def _inline_typed_replace(self, key: str, value: TomlInput) -> None:
         """Swap an existing direct-KV slot's value to a synthesised inline value.
 
         Works for any existing scalar / inline-table / inline-array
@@ -964,7 +964,7 @@ class Container(_View, dict[str, Any]):
     # Inline-table dispatch
     # ------------------------------------------------------------------
 
-    def _inline_setitem(self, key: str, value: object) -> None:
+    def _inline_setitem(self, key: str, value: TomlInput) -> None:
         # ``__setitem__`` has already rejected values an inline host
         # cannot store (``AoT``, sections, non-coerceable types).
         cst, decoded = self._synth_local_value(key, value)
@@ -1295,7 +1295,7 @@ def _preflight_section_walk(
     return i, to_promote
 
 
-def _populate_unattached(t: Container, mapping: Mapping[str, object]) -> None:
+def _populate_unattached(t: Container, mapping: Mapping[str, TomlInput]) -> None:
     """Populate an unattached ``Container`` whose keys are already validated."""
     for k, v in mapping.items():
         dict.__setitem__(t, k, v)
@@ -1772,8 +1772,8 @@ def _is_inline_table(v: object) -> TypeGuard[Container]:
 
 
 def _snapshot_for_overlapping_install(
-    parent: Container, key: str, value: object
-) -> object:
+    parent: Container, key: str, value: TomlInput
+) -> TomlInput:
     """Snapshot ``value`` if an overlapping install cannot safely read it.
 
     An ancestor source would grow while it is read. During overwrite, a
@@ -2032,7 +2032,7 @@ def _host_kv_slot(view: Array | Container) -> KVSlot | None:
 
 
 def _synth_value(
-    v: object,
+    v: TomlInput,
     *,
     layout_root: Document | None,
     parent: Container | None,
@@ -2152,7 +2152,7 @@ def _attach_inline_view(
 
 def _populate_inline_table(
     table: Container,
-    items: list[tuple[object, object]],
+    items: Sequence[tuple[object, TomlInput]],
     *,
     layout_root: Document | None,
     parent: Container | None,
@@ -2209,7 +2209,7 @@ def _populate_inline_table(
 
 def _fill_inline_array(
     arr: Array,
-    items: Sequence[object],
+    items: Sequence[TomlInput],
     *,
     layout_root: Document | None,
     owner: AoTEntry | None,

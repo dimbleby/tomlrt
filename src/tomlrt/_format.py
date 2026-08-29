@@ -349,14 +349,9 @@ def _canon_multiline_shape(
     items = v.items
     above_blocks: list[str] = []
     for i in range(len(items)):
-        if isinstance(v, ArrayValue):
-            boundary = Boundary.capture(v, i)
-            above_blocks.append(boundary.above)
-            boundary.remove_above().restore(v, i)
-        else:
-            boundary = Boundary.capture(v, i)
-            above_blocks.append(boundary.above)
-            boundary.remove_above().restore(v, i)
+        boundary = Boundary.capture(v, i)
+        above_blocks.append(boundary.above)
+        boundary.remove_above().restore(v, i)
     last_row_closed = _canon_multi_line_items(
         items,
         above_blocks=above_blocks,

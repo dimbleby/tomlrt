@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from tomlrt._array import AoT, Array
-    from tomlrt._container import Container, Document, Table
+    from tomlrt._container import Container, Document, Table, TomlInput
     from tomlrt._slots import Slot
     from tomlrt._values import InlineTableEntry, KeyPart, Value
 
@@ -146,7 +146,7 @@ def _effective_header_path_before(anchor: Slot | None) -> tuple[str, ...] | None
     return None
 
 
-def reposition_install(parent: Container, key: str, value: object) -> None:
+def reposition_install(parent: Container, key: str, value: TomlInput) -> None:
     """Replace ``parent[key]`` while preserving its physical position.
 
     The binding is deleted, reinstalled via ``parent[key] = value``,
@@ -756,7 +756,7 @@ def append_direct_kv(
 def append_synth_kv(
     c: Container,
     key: str,
-    v: object,
+    v: TomlInput,
     *,
     reinstall_as_dotted: bool = False,
 ) -> None:
@@ -1950,7 +1950,7 @@ def _aot_separator(aot: AoT, doc: Document) -> str:
 
 
 def add_aot_entry(
-    aot: AoT, body: Mapping[str, object] | None, *, rehome: Table | None = None
+    aot: AoT, body: Mapping[str, TomlInput] | None, *, rehome: Table | None = None
 ) -> Table:
     """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view.
 
@@ -1988,7 +1988,7 @@ def add_aot_entry(
         owner_aot_entry=entry,
     )
     # Build entry-root container (or rehome an existing one).
-    body_items: list[tuple[str, object]]
+    body_items: list[tuple[str, TomlInput]]
     if rehome is not None:
         assert isinstance(rehome, Table)
         assert rehome._layout_root is None  # noqa: SLF001
@@ -3167,7 +3167,7 @@ def attach_section_at(
     deepest_parent = ensure_implicit_chain(parent, sub[:-1])
 
     section = source
-    pending: list[tuple[str, object]] = list(source.items())
+    pending: list[tuple[str, TomlInput]] = list(source.items())
     dict.clear(section)
 
     section._wire(  # noqa: SLF001
@@ -3198,8 +3198,8 @@ def attach_section_at(
     # ``section``'s synthetic empty header on its first sub-section
     # attach, so scalars must populate the body (making the header
     # non-empty) first.
-    scalars: list[tuple[str, object]] = []
-    structurals: list[tuple[str, object]] = []
+    scalars: list[tuple[str, TomlInput]] = []
+    structurals: list[tuple[str, TomlInput]] = []
     for k, v in pending:
         if is_scalar(v) or _is_synth_inline(v):
             scalars.append((k, v))
@@ -3467,7 +3467,7 @@ def replace_aot_entry_with_clone(
     )
 
 
-def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, object]) -> None:
+def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, TomlInput]) -> None:
     """Replace ``aot[index]`` in place.
 
     Keeps the entry's header slot and live `Table` view; just clears

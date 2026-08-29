@@ -34,11 +34,19 @@ from tomlrt._values import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+    from typing import Protocol
 
     from tomlrt._values import (
         CommaItem,
         CommaValue,
     )
+
+    class _BoundaryValue(Protocol):
+        @property
+        def items(self) -> Sequence[CommaItem]: ...
+
+        header_trivia: str
+        final_trivia: str
 
 
 _CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
@@ -116,7 +124,7 @@ class Boundary:
     is_head: bool = False
 
     @classmethod
-    def capture(cls, cv: CommaValue[_CV_ItemT], i: int) -> Boundary:
+    def capture(cls, cv: _BoundaryValue, i: int) -> Boundary:
         items = cv.items
         if i == 0:
             following = cv.header_trivia
@@ -155,7 +163,7 @@ class Boundary:
             self.is_head,
         )
 
-    def restore(self, cv: CommaValue[_CV_ItemT], i: int) -> None:
+    def restore(self, cv: _BoundaryValue, i: int) -> None:
         following = self.following.join()
         if self.is_head:
             cv.header_trivia = following
