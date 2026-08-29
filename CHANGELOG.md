@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- New entries use line endings detected from document structure and trivia,
+  without multiline-string content overriding them. String content remains
+  the fallback when the document has no structural line ending.
+
 ## [2.2.5] - 2026-08-24
 
 ### Fixed
