@@ -712,12 +712,17 @@ class AoT(_View, list["Table"]):
                 start = index.indices(len(self))[0]
                 if indices:
                     _layout_ops.remove_aot_entries(self, indices)
+                # New entries are appended at the tail, so they only need
+                # moving if that is not where they belong. Comparing orders
+                # instead would compare entries by value, and value-equal
+                # entries are not interchangeable: the reorder is keyed on
+                # identity.
+                needs_reorder = bool(typed_values) and start != len(self)
                 new_entries = [self._add_entry_attached(v) for v in typed_values]
-                cur: list[Table] = list(self)
-                cur = cur[: -len(new_entries)] if new_entries else cur
-                for off, e in enumerate(new_entries):
-                    cur.insert(start + off, e)
-                if cur != list(self):
+                if needs_reorder:
+                    cur: list[Table] = list(self)[: -len(new_entries)]
+                    for off, e in enumerate(new_entries):
+                        cur.insert(start + off, e)
                     _layout_ops.renormalise_aot_order(self, cur)
                 return
             # Extended slice: length already matched, so replace in place.
@@ -760,11 +765,12 @@ class AoT(_View, list["Table"]):
             return
         # Normalise against the pre-append length to match list.insert.
         idx = _norm_insert_index(index, len(self))
+        needs_reorder = idx != len(self)
         new_entry = self._add_entry_attached(entry)
-        new_order: list[Table] = list(self)
-        new_order.pop()
-        new_order.insert(idx, new_entry)
-        if new_order != list(self):
+        if needs_reorder:
+            new_order: list[Table] = list(self)
+            new_order.pop()
+            new_order.insert(idx, new_entry)
             _layout_ops.renormalise_aot_order(self, new_order)
 
     @override

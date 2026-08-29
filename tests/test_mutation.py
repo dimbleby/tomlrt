@@ -4823,6 +4823,192 @@ def test_aot_insert_negative_two_matches_list_semantics() -> None:
         """)
 
 
+def test_aot_insert_before_value_equal_entry() -> None:
+    """``insert`` places by index even when entries compare equal.
+
+    Regression: the reorder was guarded by ``new_order != list(self)``,
+    a value comparison, while the reorder itself is keyed on identity.
+    Value-equal entries made the guard report "already in order" and the
+    new entry stayed where it had been appended, at the end.
+    """
+    src = td("""
+        [[a]] # first
+        x = 1
+
+        [[a]] # second
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("a").insert(0, {"x": 1})
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [[a]] # first
+        x = 1
+
+        [[a]] # second
+        x = 1
+        """)
+
+
+def test_aot_slice_assign_before_value_equal_entry() -> None:
+    """Slice assignment places by index even when entries compare equal."""
+    src = td("""
+        [[a]] # first
+        x = 1
+
+        [[a]] # second
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    aot = doc.aot("a")
+    aot[0:1] = [{"x": 1}]
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [[a]] # second
+        x = 1
+        """)
+
+
+def test_aot_tail_insert_leaves_interleaved_section_alone() -> None:
+    """An insert at the tail must not renormalise the AoT's layout.
+
+    Entries need not be physically contiguous; reordering gathers them
+    together and pushes intervening sections after them. An insert that
+    needs no reordering must not trigger that.
+    """
+    src = td("""
+        [[a]]
+        x = 1
+
+        [b]
+        y = 9
+
+        [[a]]
+        x = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("a").insert(2, {"x": 3})
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [b]
+        y = 9
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 3
+        """)
+
+
+def test_aot_slice_assign_at_tail_leaves_interleaved_section_alone() -> None:
+    """A slice assignment already at the tail must not renormalise layout.
+
+    The "does this need reordering?" flag has to be captured after the
+    deletion and before the append, when ``len(self)`` is the survivor
+    count; taking it at any other moment gathers the entries together
+    and pushes the intervening section past them.
+    """
+    src = td("""
+        [[a]]
+        x = 1
+
+        [b]
+        y = 9
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("a")[2:3] = [{"x": 9}]
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [b]
+        y = 9
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 9
+        """)
+
+
+def test_aot_slice_assign_multiple_at_negative_bounds() -> None:
+    """A multi-entry replacement at negative bounds matches list order.
+
+    ``start`` is relative to the pre-deletion length, and the new
+    entries go in at consecutive offsets from it.
+    """
+    src = td("""
+        [[a]]
+        x = 0
+
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("a")[-2:-1] = [{"x": 8}, {"x": 9}]
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 0
+
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 8
+
+        [[a]]
+        x = 9
+
+        [[a]]
+        x = 3
+        """)
+
+
+def test_aot_slice_delete_leaves_interleaved_section_alone() -> None:
+    """Assigning an empty slice deletes without renormalising layout."""
+    src = td("""
+        [[a]]
+        x = 1
+
+        [b]
+        y = 9
+
+        [[a]]
+        x = 2
+        """)
+    doc = tomlrt.loads(src)
+    aot = doc.aot("a")
+    aot[0:1] = []
+    assert tomlrt.dumps(doc) == td("""
+        [b]
+        y = 9
+
+        [[a]]
+        x = 2
+        """)
+    assert [t["x"] for t in aot] == [2]
+
+
 def test_aot_extend_self_duplicates_once() -> None:
     """``aot.extend(aot)`` matches list semantics: duplicate once, no hang.
 
