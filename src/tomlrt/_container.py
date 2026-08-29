@@ -808,8 +808,7 @@ class Container(_View, dict[str, Any]):
 
     @override
     def pop(self, key: object, default: Any = _MISSING) -> Any:
-        if key in self:
-            assert isinstance(key, str)
+        if key in self and isinstance(key, str):
             value = dict.__getitem__(self, key)
             del self[key]
             return value
