@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the fallback when the document has no structural line ending.
 - Rejected inline-array construction and edits no longer alter detached typed
   containers nested inside the invalid value.
+- Edits to tables inside standalone `Array` values are preserved when the
+  array is attached to a document.
 
 ## [2.2.5] - 2026-08-24
 
