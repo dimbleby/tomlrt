@@ -132,11 +132,10 @@ class Container(_View, dict[str, Any]):
 
     @override
     def _reset_displaced(self) -> None:
-        # Only inline values are reachable from a displacement walk: a
-        # section container can only be displaced by the layout layer,
-        # which repairs its attachment itself.
+        # The displacement root decides which internal bindings survive.
+        # Per-node reset only forgets document-level attachment.
         assert self._inline
-        _reset_inline_for_rehome(self)
+        _clear_inline_document_binding(self)
 
     def __init__(self) -> None:
         super().__init__()
@@ -168,7 +167,7 @@ class Container(_View, dict[str, Any]):
         if self._inline:
             if self._value is not None:
                 return _Kind.INLINE_ROOT
-            if self._layout_root is None:
+            if self._host is None:
                 return _Kind.INLINE_FACTORY
             return _Kind.INLINE_DOTTED_INNER
         if self._header_ref is not None:
@@ -574,8 +573,10 @@ class Container(_View, dict[str, Any]):
         """
         if key in self and self[key] is value:
             return
-        # Unattached factory mode: dict-only storage until attach.
-        if self._layout_root is None:
+        # Unmaterialised factory mode: dict-only storage until attach.
+        if self._layout_root is None and (
+            not self._inline or self._kind is _Kind.INLINE_FACTORY
+        ):
             dict.__setitem__(self, key, value)
             return
         if self._inline:
@@ -780,17 +781,17 @@ class Container(_View, dict[str, Any]):
         cst, decoded = self._synth_local_value(key, value)
         slot.value = cst
         dict.__setitem__(self, key, decoded)
-        # Detach the displaced view *and every view nested beneath it* so
-        # each can be reattached live; a descendant left pointing at the
-        # replaced CST would keep resolving against a dead inline value.
-        # Safe because `_setitem_validated` has already returned if the
-        # new value *is* the old one.
+        # Free the displaced root while preserving any CST-owning subtree
+        # beneath it. Safe because `_setitem_validated` has already
+        # returned if the new value *is* the old one.
         _layout_ops.reset_displaced_views(old)
 
     @override
     def __delitem__(self, key: str) -> None:
-        # Unattached factory mode: dict-only storage until attach.
-        if self._layout_root is None:
+        # Unmaterialised factory mode: dict-only storage until attach.
+        if self._layout_root is None and (
+            not self._inline or self._kind is _Kind.INLINE_FACTORY
+        ):
             dict.__delitem__(self, key)
             return
         if self._inline:
@@ -1650,18 +1651,10 @@ def _reset_table_for_rehome(t: Container) -> None:
             child._unbind_from_document()  # noqa: SLF001
 
 
-def _reset_inline_for_rehome(t: Container) -> None:
-    """Clear an inline Table's slot infrastructure so it can be reattached.
-
-    Inline tables are slot-less from the doc-stream perspective but
-    keep an ``InlineTableValue`` in their ``_value`` field once
-    attached. Drop that and the layout-root pointer so the standard
-    inline-attach path treats ``t`` as if freshly constructed.
-    """
+def _clear_inline_document_binding(t: Container) -> None:
+    """Forget document metadata while preserving inline CST ownership."""
     t._layout_root = None  # noqa: SLF001
-    t._host = None  # noqa: SLF001
     t._owner_aot_entry = None  # noqa: SLF001
-    t._value = None  # noqa: SLF001
 
 
 def _install_attached_subtree(
@@ -2002,11 +1995,16 @@ def _file_host(
     ``array_host`` is the array ``view`` is an element of, or ``None``
     when ``view`` is key-hosted under ``parent``. Called from the single
     tail of the ``_synth_value`` / ``_decode_value`` funnels, so no
-    construction site has to remember the choice. Writing the one
-    ``_host`` field also displaces whatever binding ``view`` carried
-    before, so a re-hosted former element cannot keep a stale array.
+    construction site has to remember the choice. Synthesis reaches
+    this point with either a free view or a clone, so an existing
+    materialised binding is never overwritten.
     """
     view._host = array_host if array_host is not None else parent  # noqa: SLF001
+
+
+def _is_adoptable_inline(view: Array | Container) -> bool:
+    """Whether ``view`` has no current document or materialised owner."""
+    return view._layout_root is None and view._host is None  # noqa: SLF001
 
 
 def _host_kv_slot(view: Array | Container) -> KVSlot | None:
@@ -2053,18 +2051,13 @@ def _synth_value(
     """
     if is_scalar(v):
         return coerce_scalar(v), v
-    # Live-attach unattached inline values so user identity is preserved.
-    # For an inline Table, `_populate_inline_table` fully re-wires state
-    # (including a fresh `_value`), so no separate reset is needed.
+    # Adopt only a free inline value. A view already owned by any
+    # materialised container is cloned, even when neither belongs to a
+    # document: one view cannot represent two CST occurrences.
     cst: Value
     view: Array | Container
-    if is_inline_value(v) and not v._attached:  # noqa: SLF001
-        if isinstance(v, Array):
-            _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
-            _attach_inline_view(v, layout_root, owner)
-            v._name = name or ""  # noqa: SLF001
-            cst, view = v._value, v  # noqa: SLF001
-        else:
+    if is_inline_value(v) and _is_adoptable_inline(v):
+        if isinstance(v, Container) and v._value is None:  # noqa: SLF001
             cst, view = _populate_inline_table(
                 v,
                 list(v.items()),
@@ -2073,6 +2066,20 @@ def _synth_value(
                 name=name,
                 owner=owner,
             )
+        else:
+            owned = v._value  # noqa: SLF001
+            assert owned is not None
+            cst = owned
+            _retarget_to_doc(cst, layout_root)
+            if isinstance(v, Array):
+                v._name = name or ""  # noqa: SLF001
+            elif parent is None:
+                v._path = ()  # noqa: SLF001
+            else:
+                assert name is not None, "name is required with a parent"
+                v._path = (*parent._path, name)  # noqa: SLF001
+            _attach_inline_view(v, layout_root, owner)
+            view = v
     # Cross-document / same-doc live inline values clone CST so source
     # formatting survives; plain Mapping / list inputs have none.
     elif is_inline_value(v) and v._value is not None:  # noqa: SLF001
@@ -2124,30 +2131,42 @@ def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
 
 
 def _attach_inline_view(
-    value: object, layout_root: Document | None, owner: AoTEntry | None
+    value: Array | Container,
+    layout_root: Document | None,
+    owner: AoTEntry | None,
 ) -> None:
-    """Record document attachment on an Array or inline Table, recursively.
-
-    Arrays have no `_owner_aot_entry` field; inline Tables do and
-    inherit ``owner`` from the outermost host. An Array reattach reuses
-    its preserved `ArrayValue` wholesale rather than resynthesising each
-    item, so a nested inline-table item may still carry the `_value =
-    None` that `_reset_inline_for_rehome` set on delete (on the
-    assumption of a full rebuild on reattach, which this path skips) -
-    re-link it from the corresponding array item before recursing.
-    """
+    """Record document attachment throughout a materialised inline tree."""
     if isinstance(value, Array):
         value._layout_root = layout_root  # noqa: SLF001
-        for item, child in zip(value._value.items, value, strict=True):  # noqa: SLF001
-            if _is_inline_table(child) and child._value is None:  # noqa: SLF001
-                assert isinstance(item.value, InlineTableValue)
-                child._value = item.value  # noqa: SLF001
-            _attach_inline_view(child, layout_root, owner)
-    elif _is_inline_table(value):
+        for child in value:
+            if is_inline_value(child):
+                _file_inline_child(child, value, None)
+                _attach_inline_view(child, layout_root, owner)
+    else:
         value._layout_root = layout_root  # noqa: SLF001
         value._owner_aot_entry = owner  # noqa: SLF001
-        for child in value.values():
-            _attach_inline_view(child, layout_root, owner)
+        for key, child in value.items():
+            if is_inline_value(child):
+                _file_inline_child(child, value, key)
+                _attach_inline_view(child, layout_root, owner)
+
+
+def _file_inline_child(
+    child: Array | Container,
+    host: Array | Container,
+    name: str | None,
+) -> None:
+    """Rebuild one child binding inside a preserved inline CST tree."""
+    if isinstance(child, Array):
+        child._host = host  # noqa: SLF001
+        child._name = name or ""  # noqa: SLF001
+    else:
+        child._host = host  # noqa: SLF001
+        if isinstance(host, Array):
+            child._path = ()  # noqa: SLF001
+        else:
+            assert name is not None, "table-hosted child requires a key"
+            child._path = (*host._path, name)  # noqa: SLF001
 
 
 def _populate_inline_table(

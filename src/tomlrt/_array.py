@@ -310,9 +310,13 @@ class Array(_View, list[Any]):
         self, values: Sequence[TomlInput]
     ) -> list[tuple[Value, object]]:
         """Validate a batch before synthesis can attach any nested views."""
+        self._validate_values(values)
+        return [self._synth_item(value) for value in values]
+
+    def _validate_values(self, values: Sequence[TomlInput]) -> None:
+        """Validate a batch before any item is synthesised."""
         for value in values:
             self._validate_item(value)
-        return [self._synth_item(value) for value in values]
 
     @override
     def append(self, value: Any) -> None:
@@ -390,10 +394,8 @@ class Array(_View, list[Any]):
     def _replace_synthesised(self, index: int, cst: Value, decoded: object) -> None:
         """Replace an item with an already-synthesised value."""
         old = self[index]
-        # Assigning an item to itself re-uses the very view being
-        # replaced, which must stay attached; anything else is displaced.
-        if old is not decoded:
-            _layout_ops.reset_displaced_views(old)
+        # Exact same-position assignments returned before synthesis.
+        _layout_ops.reset_displaced_views(old)
         self._value.items[index].value = cst
         list.__setitem__(self, index, decoded)
 
@@ -448,20 +450,28 @@ class Array(_View, list[Any]):
             except TypeError as exc:
                 msg = "can only assign an iterable"
                 raise TypeError(msg) from exc
+            indices = range(*index.indices(len(self)))
+            if (
+                index.step is not None
+                and index.step != 1
+                and len(values) != len(indices)
+            ):
+                msg = (
+                    f"attempt to assign sequence of size {len(values)} "
+                    f"to extended slice of size {len(indices)}"
+                )
+                raise ValueError(msg)
+            self._validate_values(values)
+            if len(values) == len(indices) and all(
+                self[i] is v for i, v in zip(indices, values, strict=True)
+            ):
+                return
+            prepared = [self._synth_item(v) for v in values]
             if index.step is not None and index.step != 1:
-                indices = list(range(*index.indices(len(self))))
-                if len(values) != len(indices):
-                    msg = (
-                        f"attempt to assign sequence of size {len(values)} "
-                        f"to extended slice of size {len(indices)}"
-                    )
-                    raise ValueError(msg)
-                prepared = self._prepare_values(values)
                 # Extended slice positions are unchanged; replace per slot.
                 for k, (cst, decoded) in zip(indices, prepared, strict=True):
                     self._replace_synthesised(k, cst, decoded)
                 return
-            prepared = self._prepare_values(values)
             # Reuse delete/insert boundary handling for contiguous slices.
             start, stop, _ = index.indices(len(self))
             del self[start:stop]
@@ -471,7 +481,10 @@ class Array(_View, list[Any]):
         # int index: reject before synthesising or mutating any CST, to
         # match the IndexError ``list.__setitem__`` raises for a bad index.
         i = _norm_index(index, len(self._value.items), "list assignment")
-        cst, dec = self._prepare_item(value)
+        self._validate_item(value)
+        if self[i] is value:
+            return
+        cst, dec = self._synth_item(value)
         self._replace_synthesised(i, cst, dec)
 
     @override

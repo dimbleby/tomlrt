@@ -411,14 +411,14 @@ wrong.
   `_kind.py` and surfaced as `Container._kind`. The six kinds —
   `DOCUMENT`, `SECTION`, `IMPLICIT_SECTION`, `INLINE_ROOT`,
   `INLINE_FACTORY`, `INLINE_DOTTED_INNER` — pick out the
-  combinations of `_inline` / `_value` / `_layout_root` /
-  `_header_ref` that previously had to be re-derived at every
+  combinations of `_inline` / `_value` / `_host` / `_header_ref`
+  that previously had to be re-derived at every
   call site. In particular, `INLINE_FACTORY` (a detached
   `Table.inline()` not yet assigned anywhere) and
   `INLINE_DOTTED_INNER` (the navigator view for the `a` in
   `{a.b = 1}`) share `_inline=True, _value=None` and differ only in
-  `_layout_root`; dispatch on `_kind` rather than re-discovering
-  the discriminator.
+  `_host`; dispatch on `_kind` rather than re-discovering the
+  discriminator.
 
 ## Tests
 

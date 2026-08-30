@@ -1923,12 +1923,9 @@ def test_assigned_plain_inline_table_element_format() -> None:
     assert reparses(out) == {"x": 1, "k": [{"y": 2}]}
 
 
-# Assigning an already-built, still-detached `Array` view live-attaches it
-# to the document. Its element views were synthesised before the array knew
-# its binding; because an element derives its host from the array *object*,
-# the attach is seen for free -- no per-element re-binding
-# has to be cascaded. These pin that: without the uplink filed at synth
-# time, a scoped layout call on the element walks off the top of the chain.
+# Assigning an already-built, free `Array` view live-attaches it to the
+# document. Its materialised element tree is re-pointed to the new document,
+# so scoped layout calls still climb through the correct host chain.
 
 
 def test_live_attached_detached_array_of_inline_tables_set_multiline() -> None:
@@ -1976,17 +1973,12 @@ def test_live_attached_detached_array_of_arrays_format() -> None:
     assert reparses(out) == {"b": [[1, 2]]}
 
 
-# Pulling one element OUT of a detached array and live-attaching it under a
-# key is the reverse move: the element view still carries the uplink to the
-# array it was born in, and key-hosting must REPLACE it with the parent or
-# the derived host climb hops to the now-irrelevant detached array and walks
-# off the top. The single `_file_host` funnel tail files the binding for a
-# view synthesised with no array host (`array_host=None`) by writing the
-# parent into the view's one `_host` field, displacing the stale array.
-# Weakening it -- dropping the `else parent` -- fails these.
+# An element still owned by a detached array clones when assigned under a
+# key. The cloned view must receive the key host rather than retaining the
+# source array's binding, or scoped layout calls walk the wrong host chain.
 
 
-def test_detached_inline_table_element_rehosted_under_key_set_multiline() -> None:
+def test_detached_inline_table_element_cloned_under_key_set_multiline() -> None:
     doc = tomlrt.loads("")
     doc["b"] = tomlrt.Array([{"x": 1}])[0]
     doc.table("b").set_multiline(multiline=True, indent=2)
@@ -1999,7 +1991,7 @@ def test_detached_inline_table_element_rehosted_under_key_set_multiline() -> Non
     assert reparses(out) == {"b": {"x": 1}}
 
 
-def test_detached_inline_table_element_rehosted_under_key_format() -> None:
+def test_detached_inline_table_element_cloned_under_key_format() -> None:
     doc = tomlrt.loads("")
     doc["b"] = tomlrt.Array([{"x": 1}])[0]
     doc.table("b").format()
@@ -2008,7 +2000,7 @@ def test_detached_inline_table_element_rehosted_under_key_format() -> None:
     assert reparses(out) == {"b": {"x": 1}}
 
 
-def test_detached_array_element_rehosted_under_key_set_multiline() -> None:
+def test_detached_array_element_cloned_under_key_set_multiline() -> None:
     doc = tomlrt.loads("")
     doc["b"] = tomlrt.Array([[1, 2]])[0]
     doc.array("b").set_multiline(multiline=True, indent=2)
@@ -2022,7 +2014,7 @@ def test_detached_array_element_rehosted_under_key_set_multiline() -> None:
     assert reparses(out) == {"b": [1, 2]}
 
 
-def test_detached_array_element_rehosted_under_key_format() -> None:
+def test_detached_array_element_cloned_under_key_format() -> None:
     doc = tomlrt.loads("")
     doc["b"] = tomlrt.Array([[1, 2]])[0]
     doc.array("b").format()

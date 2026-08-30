@@ -1,12 +1,11 @@
 """Live-attach semantics for ``Table.inline`` (and later ``Array``, ``AoT``).
 
-A typed-container assigned to a document attaches *live* when it is not
-already attached elsewhere: the user's own reference becomes the view at
+A typed container assigned to a document attaches *live* when it has no
+current materialised owner: the user's own reference becomes the view at
 the assignment site, and subsequent mutations through that reference are
-visible in the document. An already-attached typed container is cloned
-on assignment instead, so a single object never lives in two CST
-locations. Plain ``dict`` / ``list`` continue to be snapshot-synthesised
-and are unchanged.
+visible in the document. An already-owned typed container is cloned on
+assignment, so a single object never lives in two CST locations. Plain
+``dict`` / ``list`` continue to be snapshot-synthesised and are unchanged.
 """
 
 from __future__ import annotations
@@ -452,6 +451,104 @@ def test_array_cross_document_assignment_clones() -> None:
     assert out2 == "xs = [1, 2, 3]\n"
     assert _reparses(out1) == {"xs": [1, 2, 3, 99]}
     assert _reparses(out2) == {"xs": [1, 2, 3]}
+
+
+def test_table_inside_standalone_array_mutates_its_cst() -> None:
+    arr = Array([{"x": 1, "remove": 2}])
+    item = arr.table(0)
+    item["x"] = 9
+    del item["remove"]
+
+    doc = tomlrt.Document()
+    doc["items"] = arr
+    assert doc["items"] is arr
+    assert doc.array("items").table(0) is item
+    out = tomlrt.dumps(doc)
+    assert out == "items = [{ x = 9 }]\n"
+    assert _reparses(out) == doc.to_dict()
+
+
+@pytest.mark.parametrize(
+    "operation", ["constructor", "append", "extend", "insert", "slice"]
+)
+def test_repeated_table_in_standalone_array_clones_new_bindings(
+    operation: str,
+) -> None:
+    table = Table.inline({"x": 1})
+    if operation == "constructor":
+        arr = Array([table, table])
+    else:
+        arr = Array()
+        if operation == "append":
+            arr.append(table)
+            arr.append(table)
+        elif operation == "extend":
+            arr.extend([table, table])
+        elif operation == "insert":
+            arr.append(table)
+            arr.insert(1, table)
+        else:
+            arr[0:0] = [table, table]
+
+    first = arr.table(0)
+    second = arr.table(1)
+    assert first is table
+    assert second is not table
+    first["first"] = 10
+    second["second"] = 20
+
+    doc = tomlrt.Document()
+    doc["items"] = arr
+    out = tomlrt.dumps(doc)
+    assert out == ("items = [{ x = 1, first = 10 }, { x = 1, second = 20 }]\n")
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_bound_standalone_array_item_clones_until_removed() -> None:
+    source = Array([{"x": 1}])
+    item = source.table(0)
+
+    copied = tomlrt.Document()
+    copied["item"] = item
+    assert copied["item"] is not item
+    item["x"] = 2
+    copied.table("item")["y"] = 3
+
+    source_doc = tomlrt.Document()
+    source_doc["source"] = source
+    copied_out = tomlrt.dumps(copied)
+    source_out = tomlrt.dumps(source_doc)
+    assert copied_out == "item = { x = 1, y = 3 }\n"
+    assert source_out == "source = [{ x = 2 }]\n"
+    assert _reparses(copied_out) == copied.to_dict()
+    assert _reparses(source_out) == source_doc.to_dict()
+
+
+def test_removed_standalone_array_item_attaches_live() -> None:
+    source = Array([{"x": 1}])
+    item = source.pop(0)
+
+    doc = tomlrt.Document()
+    doc["item"] = item
+    assert doc["item"] is item
+    item["x"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == "item = { x = 2 }\n"
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_removed_materialised_table_attaches_live_inside_array() -> None:
+    source = Array([{"x": 1}])
+    item = source.pop(0)
+    target = Array([item])
+    assert target.table(0) is item
+
+    item["x"] = 2
+    doc = tomlrt.Document()
+    doc["target"] = target
+    out = tomlrt.dumps(doc)
+    assert out == "target = [{ x = 2 }]\n"
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_array_multiline_layout_preserved_through_live_attach() -> None:
@@ -1430,14 +1527,7 @@ def test_append_aot_entry_from_overwritten_noncontiguous_section() -> None:
 
 
 def test_inline_overwrite_detaches_nested_dotted_view() -> None:
-    """Replacing an inline value detaches views nested inside it.
-
-    Only the displaced root used to be reset, stranding any dotted-key
-    navigator held beneath it: it still claimed to be attached while its
-    backing inline value was gone, so mutating it tripped an internal
-    assertion. It must instead fall back to detached dict-only mode and
-    stay reusable.
-    """
+    """A dotted child remains live inside its displaced materialised root."""
     doc = tomlrt.loads("x = { a.c = 1, a.b = 2 }\n")
     inner = doc["x"]["a"]
     doc["x"] = 5
@@ -1456,22 +1546,42 @@ def test_inline_overwrite_detaches_nested_dotted_view() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_inline_overwrite_detaches_nested_array_view() -> None:
-    """The same subtree walk covers arrays nested in a displaced value."""
+def test_inline_overwrite_keeps_nested_array_bound_to_displaced_root() -> None:
+    """A nested array clones until its displaced materialised root moves."""
     doc = tomlrt.loads("x = { arr = [1, 2] }\n")
-    arr = doc["x"]["arr"]
+    outer = doc.table("x")
+    arr = outer.array("arr")
     doc["x"] = 5
     assert not arr._attached  # noqa: SLF001
 
     arr.append(3)
     doc["y"] = arr
-    # Live-attach, not clone: the detached view becomes the one in the doc.
-    assert doc["y"] is arr
+    assert doc["y"] is not arr
+    arr.append(4)
+    doc["z"] = outer
+    assert doc["z"] is outer
+    assert doc.table("z").array("arr") is arr
     out = tomlrt.dumps(doc)
     assert out == td("""
         x = 5
         y = [1, 2, 3]
+        z = { arr = [1, 2, 3, 4] }
         """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_displaced_nested_inline_tables_reattach_with_identity() -> None:
+    doc = tomlrt.loads("x = { inner = { value = 1 } }\n")
+    outer = doc.table("x")
+    inner = outer.table("inner")
+    del doc["x"]
+
+    doc["y"] = outer
+    assert doc["y"] is outer
+    assert doc.table("y").table("inner") is inner
+    inner["value"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == "y = { inner = { value = 2 } }\n"
     assert _reparses(out) == doc.to_dict()
 
 
@@ -1585,10 +1695,8 @@ def test_inline_overwrite_detaches_displaced_array() -> None:
 def test_array_item_assigned_to_itself_stays_attached() -> None:
     """``arr[i] = arr[i]`` re-uses the item view rather than displacing it.
 
-    ``Array.__setitem__`` has no identity short-circuit, so the
-    synthesised replacement for an unattached view is that same view.
-    Detaching it would leave the caller holding a dead reference to a
-    value the array still renders.
+    The identity short-circuit leaves the existing logical and CST
+    binding untouched.
     """
     doc = tomlrt.loads(
         td("""
@@ -1609,6 +1717,41 @@ def test_array_item_assigned_to_itself_stays_attached() -> None:
         [dest]
         arr = [ { c = 1, d = 3 }, 2 ]
         """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_array_same_position_slice_assignments_are_noops() -> None:
+    src = "x = [ { a = 1 }, 2, [3] ]\n"
+    doc = tomlrt.loads(src)
+    arr = doc.array("x")
+    original = list(arr)
+
+    arr[0:1] = [arr[0]]
+    arr[:] = arr
+    arr[::2] = [arr[0], arr[2]]
+
+    assert all(before is after for before, after in zip(original, arr, strict=True))
+    assert tomlrt.dumps(doc) == src
+    assert _reparses(src) == doc.to_dict()
+
+
+def test_displaced_dotted_factory_frees_child_cst_roots() -> None:
+    doc = tomlrt.loads("x = { n.a = {z=1}, n.b = [ 2, 3 ] }\n")
+    inner = doc.table("x").table("n")
+    table = inner.table("a")
+    array = inner.array("b")
+
+    del doc.table("x")["n"]
+    inner["c"] = 3
+    table["z"] = 9
+    array.append(4)
+    doc["y"] = inner
+
+    assert doc["y"] is inner
+    assert doc.table("y").table("a") is table
+    assert doc.table("y").array("b") is array
+    out = tomlrt.dumps(doc)
+    assert out == "x = { }\ny = { a = {z=9}, b = [ 2, 3, 4 ], c = 3 }\n"
     assert _reparses(out) == doc.to_dict()
 
 

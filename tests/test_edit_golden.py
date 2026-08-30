@@ -4858,20 +4858,13 @@ def test_mixed_eol_parse_still_roundtrips_byte_exact() -> None:
     assert tomlrt.dumps(tomlrt.loads(mixed)) == mixed
 
 
-def test_displaced_inline_view_detaches_on_overwrite() -> None:
-    """Held inline-table reference is detached when its hosting KV is dropped.
+def test_displaced_inline_root_adopts_but_owned_descendants_clone() -> None:
+    """A removed root is free; a descendant remains owned by that root.
 
     The structural-overwrite path (assigning a section/AoT into a
-    key currently bound to an inline value, or ``del`` of the
-    holding key) used to leave inline Containers and Arrays in
-    the displaced subtree with stale ``_layout_root`` /
-    ``_attached`` state. That broke identity preservation on
-    re-assignment: a held reference would silently be cloned
-    instead of live-attached.
-
-    Sections and AoTs already detached correctly via the
-    private-orphan rehome dance; this test pins the same
-    behaviour for inline views.
+    key currently bound to an inline value, or deleting the holding
+    key) frees that value itself. Nested values retain their binding to
+    its preserved CST and clone if assigned separately.
     """
     # 1. Inline displaced by section overwrite.
     doc = tomlrt.loads("k = {x = 1}\n")
@@ -4892,21 +4885,21 @@ def test_displaced_inline_view_detaches_on_overwrite() -> None:
     inner = doc["outer"]["inner"]
     del doc["outer"]
     doc["new"] = inner
-    assert doc["new"] is inner
+    assert doc["new"] is not inner
 
     # 4. Array nested in inline displaced.
     doc = tomlrt.loads("o = {a = [1, 2]}\n")
     arr = doc["o"]["a"]
     del doc["o"]
     doc["x"] = arr
-    assert doc["x"] is arr
+    assert doc["x"] is not arr
 
     # 5. Inline nested in array displaced.
     doc = tomlrt.loads("a = [{x = 1}]\n")
     it = doc["a"][0]
     del doc["a"]
     doc["new"] = it
-    assert doc["new"] is it
+    assert doc["new"] is not it
 
 
 def test_scalar_overwrite_of_implicit_table_preserves_position() -> None:

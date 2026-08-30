@@ -13,25 +13,23 @@ class _Kind(Enum):
     """The state a `Container` is in.
 
     `Container` (base of `Table` and `Document`) covers six distinct
-    shapes, each picked out by a combination of `_inline`, `_value`,
-    `_layout_root`, `_header_ref`, and whether the instance is the
-    `Document` itself. The combinations are:
+    shapes. For inline tables, `_value` names CST ownership and `_host`
+    distinguishes an unmaterialised factory from a dotted navigator:
 
     ============================  ========  ==========  ============  ==============
-    Kind                          _inline   _value      _layout_root  _header_ref
+    Kind                          _inline   _value      _layout_root  _host
     ============================  ========  ==========  ============  ==============
     `DOCUMENT`                    False     None        self          None
-    `SECTION` (``[a.b]``)         False     None        doc           SlotRef
-    `IMPLICIT_SECTION`            False     None        doc           None
-    `INLINE_ROOT` (``{x = 1}``)   True      InlineVal   doc           None
+    `SECTION` (``[a.b]``)         False     None        doc           Container
+    `IMPLICIT_SECTION`            False     None        doc / None    Container / None
+    `INLINE_ROOT` (``{x = 1}``)   True      InlineVal   doc / None    view / None
     `INLINE_FACTORY`              True      None        None          None
-    `INLINE_DOTTED_INNER`         True      None        doc           None
+    `INLINE_DOTTED_INNER`         True      None        doc / None    Container
     ============================  ========  ==========  ============  ==============
 
-    `INLINE_FACTORY` and `INLINE_DOTTED_INNER` share their flag
-    pattern except for `_layout_root`; this enum names the
-    distinction so callers can dispatch on intent rather than
-    re-deriving the discriminator.
+    Attachment is deliberately not part of an inline table's kind: a
+    materialised root or dotted navigator can live inside a standalone
+    `Array` without belonging to a document.
     """
 
     DOCUMENT = auto()
