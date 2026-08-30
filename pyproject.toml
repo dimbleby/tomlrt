@@ -1,6 +1,6 @@
 [project]
 name = "tomlrt"
-version = "2.2.5"
+version = "2.2.6"
 description = "A format-preserving TOML reader and writer for Python."
 readme = "README.md"
 requires-python = ">=3.10"
