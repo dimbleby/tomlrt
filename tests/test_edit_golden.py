@@ -968,6 +968,52 @@ def test_clone_keeps_the_spelling_of_the_key_it_did_not_move() -> None:
     assert _reparses(out) == dst.to_dict()
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_implicit_graft_keeps_unchanged_key_suffix(newline: str) -> None:
+    src = td("""
+        a.'quoted'  .  "leaf" = 0x01 # keep
+        """).replace("\n", newline)
+    source = tomlrt.loads(src)
+    target = tomlrt.loads("[dest]\n".replace("\n", newline))
+    target.table("dest")["copy"] = source.table("a")
+    out = tomlrt.dumps(target)
+    assert out == td("""
+        [dest]
+        copy.'quoted'  .  "leaf" = 0x01 # keep
+        """).replace("\n", newline)
+    assert tomlrt.dumps(source) == src
+    assert _reparses(out) == target.to_dict()
+
+
+def test_aot_reinsert_at_same_path_keeps_key_spelling() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[ 'items' ]] # first
+        x = 0x01 # one
+
+        [ 'items' . "child" ] # child
+        y = 0x02 # two
+
+        [[ 'items' ]] # second
+        x = 0x03 # three
+        """)
+    )
+    items = doc.aot("items")
+    items.append(items.pop(0))
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[ 'items' ]] # second
+        x = 0x03 # three
+
+        [[ 'items' ]] # first
+        x = 0x01 # one
+
+        [ 'items' . "child" ] # child
+        y = 0x02 # two
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_cross_doc_implicit_table_graft_preserves_trivia() -> None:
     """Grafting an implicit (dotted) table keeps its body trivia and style.
 

@@ -12,13 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Copying a table keeps formatting it used to lose: end-of-line comments, and
   the quoting and spacing of a key.
 - An assignment reads its source first, so `pkgs[::-1] = pkgs` swaps the entries
-  and `pkgs[0] = {"copy": pkgs[0]}` copies what was there.
+  and `pkgs[0] = {"copy": pkgs[0]}` copies what was there. This also holds when
+  a slice assignment grows or shrinks the array.
 - A table from another document is copied when you assign it, not taken over.
 - Removing an entry from an array of tables keeps its formatting, so putting it
   back somewhere keeps its comments.
 - Assigning a slice of an array of tables that covers as many entries as it
   replaces now leaves the rest of the document untouched, as assigning a single
   entry does.
+- Parsed sections retain their body formatting when used as array-of-tables
+  entries, whether appended or used to replace an existing entry.
 
 ## [2.2.6] - 2026-08-30
 
