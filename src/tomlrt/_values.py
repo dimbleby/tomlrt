@@ -7,9 +7,11 @@ comment, and whitespace run needed for exact re-emission.
 
 from __future__ import annotations
 
+import copy
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
 from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 if sys.version_info >= (3, 12):
@@ -25,49 +27,71 @@ from tomlrt._trivia import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import date, datetime, time
+
+    from typing_extensions import Self
+
+
+_ScalarT = TypeVar("_ScalarT")
 
 
 @dataclass(slots=True, eq=False)
-class ScalarValue:
+class ScalarValue(Generic[_ScalarT]):
     """Base of the five TOML scalar leaves.
 
     Every scalar re-emits verbatim from the ``lexeme`` it was parsed
     from -- quotes, radix prefix, digit separators, and case all
-    included -- so the rendering is shared here; each subclass adds
-    only its own decoded ``value`` field, keeping the
-    ``(lexeme, value)`` positional signature and the precise per-type
-    ``value`` annotation.
+    included. The leaves specialize their decoded value type while
+    sharing rendering, copying and the positional ``(lexeme, value)``
+    constructor.
     """
 
     lexeme: str
+    value: _ScalarT
 
     def render(self) -> str:
         return self.lexeme
 
+    @property
+    def is_shareable(self) -> bool:
+        """Whether both fields are known to be transitively immutable."""
+        kind = type(self.value)
+        return type(self.lexeme) is str and (
+            kind is str or kind is int or kind is float or kind is bool
+        )
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        """Share atomic data; copy temporal values and Python subclasses safely."""
+        if self.is_shareable:
+            return self
+        new = type(self)(self.lexeme, self.value)
+        memo[id(self)] = new
+        new.lexeme = copy.deepcopy(self.lexeme, memo)
+        new.value = copy.deepcopy(self.value, memo)
+        return new
+
 
 @dataclass(slots=True, eq=False)
-class StringValue(ScalarValue):
+class StringValue(ScalarValue[str]):
     value: str
 
 
 @dataclass(slots=True, eq=False)
-class IntegerValue(ScalarValue):
+class IntegerValue(ScalarValue[int]):
     value: int
 
 
 @dataclass(slots=True, eq=False)
-class FloatValue(ScalarValue):
+class FloatValue(ScalarValue[float]):
     value: float
 
 
 @dataclass(slots=True, eq=False)
-class BoolValue(ScalarValue):
+class BoolValue(ScalarValue[bool]):
     value: bool
 
 
 @dataclass(slots=True, eq=False)
-class DateTimeValue(ScalarValue):
+class DateTimeValue(ScalarValue[datetime | date | time]):
     value: datetime | date | time
 
 

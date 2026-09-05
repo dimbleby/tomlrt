@@ -35,12 +35,12 @@ Scalar = bool | int | float | str | datetime | date | time
 # their own, being subclasses of `int` and `date`.
 PLAIN_SCALARS: Final = (int, float, str)
 CHECKED_SCALARS: Final = (date, time)
-_SCALARS: Final = PLAIN_SCALARS + CHECKED_SCALARS
+SCALAR_TYPES: Final = PLAIN_SCALARS + CHECKED_SCALARS
 
 
 def is_scalar(v: object) -> TypeIs[Scalar]:
     """True iff ``v`` is a TOML scalar (and not an array / table)."""
-    return isinstance(v, _SCALARS)
+    return isinstance(v, SCALAR_TYPES)
 
 
 def coerce_scalar(

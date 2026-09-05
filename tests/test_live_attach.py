@@ -1983,3 +1983,28 @@ def test_aot_factory_copies_a_live_section_it_holds() -> None:
         q = 16 # keep
         """)
     assert _reparses(tomlrt.dumps(dst)) == dst.to_dict()
+
+
+def test_nested_aot_factory_keeps_standalone_inline_child_ownership() -> None:
+    standalone = Array([{"value": 1}])
+    child = standalone.table(0)
+    nested = AoT([{"inline": child}])
+    factory = AoT([{"section": Table.section({"nested": nested})}])
+    entry, nested_entry = factory[0], nested[0]
+    doc = tomlrt.Document()
+    doc["items"] = factory
+
+    child["value"] = 2
+    entry["held"] = True
+    nested_entry["extra"] = 3
+
+    assert tomlrt.dumps(doc) == td("""
+        [[items]]
+        held = true
+
+        [[items.section.nested]]
+        inline = { value = 1 }
+        extra = 3
+        """)
+    assert tomlrt.dumps({"standalone": standalone}) == "standalone = [{ value = 2 }]\n"
+    assert _reparses(tomlrt.dumps(doc)) == doc.to_dict()

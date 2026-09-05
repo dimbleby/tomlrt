@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 from tomlrt import _array, _container
 from tomlrt._comment_text import _split_attached_block
 from tomlrt._kind import _Kind
-from tomlrt._scalar import is_scalar
+from tomlrt._scalar import SCALAR_TYPES, is_scalar
 from tomlrt._slots import (
     AoTEntry,
     KVSlot,
@@ -1865,7 +1865,7 @@ def _retarget_separator(slot: Slot, new_separator: str) -> None:
     comments and own indent are kept; the source's positional
     prefix is dropped.
     """
-    _positional, remainder = _split_leading_structural(slot.leading)
+    remainder = _split_leading_structural(slot.leading)[1] if slot.leading else ""
     slot.leading = new_separator + remainder
 
 
@@ -3373,6 +3373,20 @@ def _snapshot_in_copy(
     return cur
 
 
+def _capture_items(
+    items: Iterable[tuple[str, TomlInput]],
+    sites: Sequence[Container | AoT],
+    snapshots: dict[int, Document],
+) -> dict[str, TomlInput]:
+    """Snapshot mapping storage, recursing only into compound values."""
+    return {
+        key: value
+        if isinstance(value, SCALAR_TYPES)
+        else _capture_input(value, sites, snapshots)
+        for key, value in items
+    }
+
+
 def _capture_input(
     value: TomlInput,
     sites: Sequence[Container | AoT],
@@ -3382,10 +3396,9 @@ def _capture_input(
 
     Detached factories retain their identity; plain mappings and lists
     are rebuilt. Other values keep ordinary installation semantics,
-    including adoption of descendants orphaned by the write.
+    including adoption of descendants orphaned by the write. Callers
+    handle scalar leaves without entering this recursive path.
     """
-    if is_scalar(value):
-        return value
     if isinstance(value, (_container.Container, _array.AoT)):
         # A detached view's storage is all it has, so that is where its
         # own sources are captured; an attached one is copied from its
@@ -3398,9 +3411,12 @@ def _capture_input(
     if is_inline_value(value):
         return value
     if isinstance(value, Mapping):
-        return {k: _capture_input(v, sites, snapshots) for k, v in value.items()}
+        return _capture_items(value.items(), sites, snapshots)
     assert isinstance(value, list)
-    return [_capture_input(v, sites, snapshots) for v in value]
+    return [
+        v if isinstance(v, SCALAR_TYPES) else _capture_input(v, sites, snapshots)
+        for v in value
+    ]
 
 
 def _capture_into_factory(
@@ -3413,8 +3429,7 @@ def _capture_into_factory(
         for entry in factory:
             _capture_into_factory(entry, sites, snapshots)
         return
-    for key, value in list(dict.items(factory)):
-        dict.__setitem__(factory, key, _capture_input(value, sites, snapshots))
+    dict.update(factory, _capture_items(dict.items(factory), sites, snapshots))
 
 
 def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
@@ -3501,7 +3516,7 @@ def _prepare_entry(
         if cloned_head is not None:
             header = cloned_head
     else:
-        payload = {k: _capture_input(v, sites, snapshots) for k, v in body.items()}
+        payload = _capture_items(body.items(), sites, snapshots)
     if header is None:
         header = _new_section_header(
             path, leading="", doc=doc, entry=owner, owner_aot_entry=owner

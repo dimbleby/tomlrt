@@ -169,12 +169,16 @@ def test_replace_aot_extended_slice(benchmark: BenchmarkFixture, source: str) ->
     benchmark.pedantic(work, setup=_parsed(_aot_doc(100)), rounds=100)
 
 
-@pytest.mark.parametrize("source", ["entry", "mapping", "aot", "inline", "factory"])
+@pytest.mark.parametrize(
+    "source", ["entry", "mapping", "aot", "inline", "factory", "scalars"]
+)
 @pytest.mark.parametrize("size", [2, 1000])
 def test_replace_aot_entry(benchmark: BenchmarkFixture, source: str, size: int) -> None:
     src = _aot_doc(50) + "\n[template]\n"
     if source == "aot":
         src += "".join(f"[[template.nested]]\nx = {i}\n" for i in range(size))
+    elif source == "scalars":
+        src += "".join(f"k{i} = {i}\n" for i in range(size))
     else:
         src += "nested = [" + ", ".join(str(i) for i in range(size)) + "]\n"
 
@@ -190,6 +194,35 @@ def test_replace_aot_entry(benchmark: BenchmarkFixture, source: str, size: int) 
             items[0] = doc.table("template")
 
     benchmark.pedantic(work, setup=_parsed(src), rounds=200)
+
+
+@pytest.mark.parametrize("size", [10, 1000])
+def test_append_list_in_aot_entry(benchmark: BenchmarkFixture, size: int) -> None:
+    values = list(range(size))
+
+    def work(doc: Document) -> None:
+        doc.aot("items").append({"values": values})
+
+    benchmark.pedantic(work, setup=_parsed(_aot_doc(50)), rounds=200)
+
+
+@pytest.mark.parametrize(
+    ("entries", "width", "depth"),
+    [(1, 5, 0), (500, 5, 0), (1, 1000, 0), (1, 5, 5), (1, 5, 25)],
+)
+def test_attach_aot_factory(
+    benchmark: BenchmarkFixture, entries: int, width: int, depth: int
+) -> None:
+    def setup() -> tuple[tuple[Document, tomlrt.AoT], dict[str, object]]:
+        factory = tomlrt.AoT([{"values": list(range(width))} for _ in range(entries)])
+        for _ in range(depth):
+            factory = tomlrt.AoT([{"child": factory}])
+        return (tomlrt.Document(), factory), {}
+
+    def work(doc: Document, factory: tomlrt.AoT) -> None:
+        doc["items"] = factory
+
+    benchmark.pedantic(work, setup=setup, rounds=100)
 
 
 @pytest.mark.parametrize("source", ["section", "aot"])
