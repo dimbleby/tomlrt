@@ -621,19 +621,6 @@ class AoT(_View, list["Table"]):
             return self[-1]
         return _layout_ops.add_aot_entry(self, body)
 
-    def _add_entry_attached(self, value: Mapping[str, TomlInput]) -> Table:
-        """Dispatch a new attached AoT entry from ``value``.
-
-        Precondition: attached AoT. Prefers the trivia-preserving clone
-        path for an existing AoT entry or section.
-        """
-        if isinstance(value, _container.Table) and value._layout_root is not None:  # noqa: SLF001
-            if value._is_own_aot_entry:  # noqa: SLF001
-                return _layout_ops.clone_aot_entry(self, value)
-            if value._header_ref is not None and not value._inline:  # noqa: SLF001
-                return _layout_ops.clone_table_as_aot_entry(self, value)
-        return _layout_ops.add_aot_entry(self, value)
-
     # Each of these must route attached vs. detached AoTs differently:
     # inherited `list` behaviour alone would corrupt the doc-stream.
 
@@ -706,39 +693,13 @@ class AoT(_View, list["Table"]):
                     self, index, [_make_unattached_entry(v) for v in typed_values]
                 )
                 return
-            # Same length, so every entry keeps its place: replace each
-            # one where it stands, exactly as ``aot[i] = value`` does,
-            # and leave the rest of the document alone.
-            if len(typed_values) == len(indices):
-                _layout_ops.replace_aot_entries(
-                    self, zip(indices, typed_values, strict=True)
-                )
-                return
-            # The array changes length, so the entries after the slice
-            # move: delete, append via dispatcher, then renormalise to
-            # the requested order. Only a contiguous slice reaches here
-            # — an extended one of the wrong length was rejected above.
-            start = index.indices(len(self))[0]
-            if indices:
-                _layout_ops.remove_aot_entries(self, indices)
-            # New entries are appended at the tail, so they only need
-            # moving if that is not where they belong. Comparing orders
-            # instead would compare entries by value, and value-equal
-            # entries are not interchangeable: the reorder is keyed on
-            # identity.
-            needs_reorder = bool(typed_values) and start != len(self)
-            new_entries = [self._add_entry_attached(v) for v in typed_values]
-            if needs_reorder:
-                cur: list[Table] = list(self)[: -len(new_entries)]
-                for off, e in enumerate(new_entries):
-                    cur.insert(start + off, e)
-                _layout_ops.renormalise_aot_order(self, cur)
+            _layout_ops.assign_aot_entries(self, index, typed_values)
             return
         entry = _prepare_aot_entries((value,))[0]
         if self._layout_root is None:
             list.__setitem__(self, index, _make_unattached_entry(entry))
             return
-        _layout_ops.replace_aot_entries(self, ((operator.index(index), entry),))
+        _layout_ops.assign_aot_entries(self, operator.index(index), (entry,))
 
     @override
     def append(self, value: Table | Mapping[str, TomlInput]) -> None:
@@ -751,7 +712,7 @@ class AoT(_View, list["Table"]):
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(entry))
             return
-        self._add_entry_attached(entry)
+        _layout_ops.add_aot_entry(self, entry)
 
     @override
     def extend(self, values: Iterable[Table | Mapping[str, TomlInput]]) -> None:
@@ -771,7 +732,7 @@ class AoT(_View, list["Table"]):
         # Normalise against the pre-append length to match list.insert.
         idx = _norm_insert_index(index, len(self))
         needs_reorder = idx != len(self)
-        new_entry = self._add_entry_attached(entry)
+        new_entry = _layout_ops.add_aot_entry(self, entry)
         if needs_reorder:
             new_order: list[Table] = list(self)
             new_order.pop()
@@ -835,7 +796,7 @@ class AoT(_View, list["Table"]):
         originals = list(self)
         for _ in range(n - 1):
             for e in originals:
-                _layout_ops.clone_aot_entry(self, e)
+                _layout_ops.add_aot_entry(self, e)
         return self
 
 

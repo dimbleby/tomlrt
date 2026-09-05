@@ -240,11 +240,18 @@ def _mutate_aot(node: AoT, rng: random.Random, pool: list[tuple[str, _Target]]) 
     elif op == "sort":
         node.sort(key=lambda t: repr(dict(t)))
     elif op == "replace_slice" and node:
-        target = slice(None, None, rng.choice([-2, -1, 2]))
+        step = rng.choice([1, -2, -1, 2])
+        if step == 1:
+            start = rng.randrange(len(node) + 1)
+            target = slice(start, rng.randrange(start, len(node) + 1))
+            count = rng.randrange(4)
+        else:
+            target = slice(None, None, step)
+            count = len(range(*target.indices(len(node))))
         before = node.to_list()
         values: list[dict[str, TomlInput] | Table] = []
         expected = []
-        for _ in range(len(range(*target.indices(len(node))))):
+        for _ in range(count):
             source = rng.randrange(len(node))
             shape = rng.choice(["entry", "nested", "factory"])
             if shape == "entry":

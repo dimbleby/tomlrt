@@ -1130,7 +1130,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
 
     if transplanting:
         assert isinstance(val, (_container.Container, _array.AoT))
-        transplant_to_orphan(
+        _transplant_to_orphan(
             val,
             ordered_for_transplant,
             doc._newline,  # noqa: SLF001
@@ -1144,12 +1144,12 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     dict.__delitem__(c, key)
 
 
-def transplant_to_orphan(
+def _transplant_to_orphan(
     val: Container | AoT,
     slots: list[Slot],
     nl: str,
     views: Iterable[Container | Array | AoT],
-) -> Document:
+) -> None:
     """Give ``val``'s unlinked ``slots`` a private document to live on.
 
     What is removed from a document keeps its own layout: the slots move
@@ -1172,7 +1172,6 @@ def transplant_to_orphan(
     for view in itertools.chain(views, _displaced_inline_views(val)):
         view._layout_root = orphan  # noqa: SLF001
     _root_orphan_subtree(orphan, val, slots)
-    return orphan
 
 
 def _walk_view_tree(vals: Iterable[_View], visit: Callable[[_View], None]) -> None:
@@ -2000,78 +1999,26 @@ def _aot_separator(aot: AoT, doc: Document) -> str:
 
 
 def add_aot_entry(
-    aot: AoT, body: Mapping[str, TomlInput] | None, *, rehome: Table | None = None
+    aot: AoT,
+    body: Mapping[str, TomlInput] | None,
+    *,
+    rehome: Table | None = None,
+    preserve_source_separator: bool = False,
 ) -> Table:
-    """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view.
+    """Capture and append an entry, preserving a structural source's layout.
 
-    If ``rehome`` is supplied (must be an unattached ``Table``), it is
-    used as the entry view so the caller can preserve identity for a
-    user reference. ``body`` is then ignored — ``rehome``'s own dict
-    storage is used as the source body and is cleared/repopulated
-    in place.
+    ``rehome`` selects an unattached factory entry as the destination
+    view and supplies its body. Bulk cloning can retain source separators
+    after the first entry instead of deriving destination-style gaps.
     """
-    from tomlrt._container import (  # noqa: PLC0415
-        Table,
-        _is_synth_inline,
-    )
-
-    parent = aot._host  # noqa: SLF001
-    doc = aot._attached_doc  # noqa: SLF001
-    path = aot._path  # noqa: SLF001
-    assert parent is not None
-    assert path
-
-    ordinal = len(aot)
-    # Consume the ``key = []`` placeholder before computing the append
-    # anchor or demoting the parent header: the first ``[[path]]`` header
-    # takes the AoT's structural position (after the parent body), not
-    # the placeholder's in-body position, which could otherwise capture
-    # trailing parent KVs on re-parse.
-    _consume_first_entry_placeholder(aot, ordinal)
-    entry = AoTEntry()
-    leading = _build_section_leading(doc) if ordinal == 0 else _aot_separator(aot, doc)
-    header = _new_section_header(
-        path,
-        leading=leading,
-        doc=doc,
-        entry=entry,
-        owner_aot_entry=entry,
-    )
-    # Build entry-root container (or rehome an existing one).
-    body_items: list[tuple[str, TomlInput]]
     if rehome is not None:
-        assert isinstance(rehome, Table)
         assert rehome._layout_root is None  # noqa: SLF001
-        entry_table = rehome
-        body_items = list(rehome.items())
-        dict.clear(entry_table)
-    else:
-        entry_table = Table()
-        body_items = list(body.items()) if body is not None else []
-    entry_table._wire(  # noqa: SLF001
-        layout_root=doc,
-        path=path,
-        parent=parent,
-        owner=entry,
+        body = rehome
+    table = _container.Table() if rehome is None else rehome
+    prepared = _prepare_entry(aot, table, {} if body is None else body, (aot,), {})
+    return _install_entry(
+        aot, prepared, preserve_source_separator=preserve_source_separator
     )
-    # Splice before filing: a ref is placed by its slot's order key, so
-    # the slot has to be in the doc-stream first.
-    _splice_block_after([header], _aot_append_anchor(aot), doc)
-    file_own_header(entry_table, header)
-    _file_header_binding_chain(parent, header)
-    list.append(aot, entry_table)
-
-    # An entry header under a synthetic placeholder section makes that
-    # placeholder redundant — the dotted-implicit anchor lives entirely
-    # in `[[tool.list]]`.
-    _maybe_demote_synthetic_empty_header(parent)
-
-    for k, v in body_items:
-        if not (is_scalar(v) or _is_synth_inline(v)):
-            entry_table._setitem_validated(k, v)  # noqa: SLF001
-            continue
-        append_synth_kv(entry_table, k, v)
-    return entry_table
 
 
 def prepare_promoted_inline_entries(
@@ -2131,34 +2078,6 @@ def populate_promoted_inline_entries(
         dict.__setitem__(leaf_parent, leaf, decoded)
 
 
-def clone_aot_entry(
-    aot: AoT,
-    src: Container,
-    *,
-    dst_path: tuple[str, ...] | None = None,
-    preserve_source_separator: bool = False,
-) -> Table:
-    """Append a deep CST clone of ``src`` (a live attached entry) to ``aot``.
-
-    The live view supplies its complete subtree, including nested AoT
-    entries. Paths and newlines are retargeted; source trivia is kept.
-    The destination separator is used unless
-    ``preserve_source_separator`` is true.
-    """
-    owner = src._owner_aot_entry  # noqa: SLF001
-    assert owner is not None, "source entry has no owning AoTEntry"
-    src_slots = _gather_subtree_slots(src)
-
-    target_path = dst_path if dst_path is not None else aot._path  # noqa: SLF001
-    return _install_cloned_aot_entry(
-        aot,
-        src_slots,
-        owner.path,
-        target_path=target_path,
-        rewrite_separator=not preserve_source_separator,
-    )
-
-
 def _install_cloned_structural_block(
     table: Table,
     *,
@@ -2193,72 +2112,6 @@ def _install_cloned_structural_block(
     )
     _extend_header_bindings_to_root(parent, cloned_slots)
     _maybe_demote_synthetic_empty_header(parent)
-
-
-def _install_cloned_aot_entry(
-    aot: AoT,
-    src_slots: list[Slot],
-    src_prefix: tuple[str, ...],
-    *,
-    target_path: tuple[str, ...],
-    rewrite_separator: bool,
-) -> Table:
-    """Common installer for appending a cloned aot-entry to ``aot``.
-
-    Deep-clones ``src_slots`` (head becomes an aot-entry), wires a fresh
-    entry container, splices after the AoT's last slot, files the parent
-    binding ref, and populates child views.
-
-    ``src_slots[0]`` must be the entry's own header: an array entry's
-    content can never physically precede its own ``[[..]]``/``[..]``
-    header (unlike a plain table's, which a nested descendant can
-    forward-declare).
-
-    ``rewrite_separator``: if True, the source's structural leading is
-    replaced with destination-style preamble (entry 0) or the AoT's
-    inter-entry separator (entry > 0). :func:`clone_aot` sets this False
-    past entry 0 so source separators survive.
-    """
-    parent = aot._host  # noqa: SLF001
-    doc = aot._attached_doc  # noqa: SLF001
-    assert parent is not None
-    assert target_path
-
-    ordinal = len(aot)
-    _consume_first_entry_placeholder(aot, ordinal)
-    new_entry = AoTEntry()
-
-    cloned_slots, cloned_header = _clone_entry_slots(
-        src_slots,
-        new_entry=new_entry,
-        body_owner=new_entry,
-        src_prefix=src_prefix,
-        target_prefix=target_path,
-        dst_newline=doc._newline,  # noqa: SLF001
-        head=src_slots[0],
-    )
-    assert cloned_header is not None
-
-    if ordinal == 0:
-        _retarget_separator(cloned_header, _build_section_leading(doc))
-    elif rewrite_separator:
-        _retarget_separator(cloned_header, _aot_separator(aot, doc))
-    # else: keep source leading verbatim (bulk-clone past entry 0).
-
-    append_anchor = _aot_append_anchor(aot)
-    entry_table = _container.Table()
-    _install_cloned_structural_block(
-        entry_table,
-        parent=parent,
-        doc=doc,
-        target_path=target_path,
-        owner=new_entry,
-        cloned_slots=cloned_slots,
-        anchor=append_anchor,
-    )
-
-    list.append(aot, entry_table)
-    return entry_table
 
 
 def _install_cloned_section(
@@ -2482,10 +2335,9 @@ def _hoist_own_slots_first(slots: list[Slot], root_path: tuple[str, ...]) -> lis
     :func:`_owned_slots_ordered`) — a table can always be reopened. An
     array-of-tables entry can never be reopened this way (a later plain
     ``[..]`` for an already-``[[..]]``-opened path is invalid TOML), so
-    installing a clone as a new AoT entry (:func:`clone_table_as_aot_entry`)
-    must gather all of the root's own slots to the front, ahead of any
-    nested descendant's content, unlike a plain-section install which
-    keeps true doc-stream order.
+    preparing an AoT entry must gather all of the root's own slots to
+    the front, ahead of any nested descendant's content, unlike a
+    plain-section install which keeps true doc-stream order.
     """
 
     def is_own(s: Slot) -> bool:
@@ -2585,29 +2437,6 @@ def extract_subtree_slots(src_table: Container) -> tuple[list[Slot], str]:
             ensure_terminator(s, nl)
     stitch_run(None, cloned, None)
     return cloned, promoted
-
-
-def clone_table_as_aot_entry(
-    aot: AoT,
-    src_table: Container,
-) -> Table:
-    """Append ``src_table`` (a standard ``[k]`` section) to ``aot`` as an entry.
-
-    Deep-clones the source section's slots, rewriting the head from
-    ``[k]`` to ``[[aot._path]]`` and rebasing paths to ``aot._path``.
-    Preserves per-slot leading / EOL / lexeme bytes.
-    """
-    head, src_slots = _gather_headered_subtree_slots(src_table)
-    assert head.kind == "table", (
-        "clone_table_as_aot_entry source must be a standard section"
-    )
-    return _install_cloned_aot_entry(
-        aot,
-        _hoist_own_slots_first(src_slots, src_table._path),  # noqa: SLF001
-        src_table._path,  # noqa: SLF001
-        target_path=aot._path,  # noqa: SLF001
-        rewrite_separator=True,
-    )
 
 
 def clone_section_as_section(
@@ -2812,7 +2641,9 @@ def _retarget_slot_paths(
     assert s.path[: len(src_prefix)] == src_prefix, (
         "a header in a rebased block is spelled from the source prefix down"
     )
-    _respell_prefix(s, len(src_prefix), target_prefix)
+    s.key_parts, s.key_seps = respell_key_prefix(
+        s.key_parts, s.key_seps, len(src_prefix), target_prefix
+    )
 
 
 def _rehome_view_tree(
@@ -3023,7 +2854,9 @@ def _rebase_implicit_slot_in_place(
         new_key = (*new_prefix, *within)[len(host_path) :]
         head_n = len(new_key) - len(within)
         s.host_path = host_path
-        _respell_prefix(s, len(s.key_parts) - len(within), new_key[:head_n])
+        s.key_parts, s.key_seps = respell_key_prefix(
+            s.key_parts, s.key_seps, len(s.key_parts) - len(within), new_key[:head_n]
+        )
     else:
         _retarget_slot_paths(s, old_prefix, new_prefix, nl)
 
@@ -3048,10 +2881,9 @@ def clone_aot(
 
     dict.__setitem__(parent, key, new_aot)
     for src_entry_table in list(src_aot):
-        clone_aot_entry(
+        add_aot_entry(
             new_aot,
             src_entry_table,
-            dst_path=target_path,
             preserve_source_separator=True,
         )
     if len(new_aot) == 0:
@@ -3142,21 +2974,28 @@ def _clone_entry_slots(
     return cloned, cloned_head
 
 
-def _respell_prefix(
-    s: KVSlot | StructuralHeaderSlot, drop: int, prefix: tuple[str, ...]
-) -> None:
-    """Respell ``s``'s first ``drop`` key components as ``prefix``.
-
-    Only the components that moved are rewritten. The rest is the
-    source's own spelling — its quoting and the spacing around its
-    dots — which is as much a part of the line as anything else in it,
-    and which an identity rebase therefore leaves entirely alone.
-    """
-    tail = s.key_parts[drop:]
+def respell_key_prefix(
+    parts: tuple[KeyPart, ...],
+    seps: tuple[str, ...],
+    drop: int,
+    prefix: tuple[str, ...],
+) -> tuple[tuple[KeyPart, ...], tuple[str, ...]]:
+    """Replace a key prefix, retaining the spelling of its unchanged suffix."""
+    shared = 0
+    while (
+        shared < min(drop, len(prefix))
+        and parts[drop - shared - 1].value == prefix[-shared - 1]
+    ):
+        shared += 1
+    if shared:
+        drop -= shared
+        prefix = prefix[:-shared]
+    if not drop and not prefix:
+        return parts, seps
+    tail = parts[drop:]
     head = make_keyparts(prefix)
-    s.key_parts = head + tail
     joins = len(head) - 1 + bool(head and tail)
-    s.key_seps = (".",) * max(joins, 0) + s.key_seps[drop:]
+    return head + tail, (".",) * max(joins, 0) + seps[drop:]
 
 
 def _rebase_path(
@@ -3350,8 +3189,8 @@ def _scrub_owned_slots_via_backptrs(
     owned slots should be left in place — the typical caller is
     `delete_key`, which transplants the deleted subtree to a fresh
     orphan doc and needs the subtree containers' internal
-    structure intact. The default (empty) is correct for AoT removal,
-    which discards the popped entries' containers entirely.
+    structure intact. AoT removal likewise retains the departing
+    entries' internal refs.
     """
     for s in owned:
         # Snapshot — unfile_ref mutates slot._refs.
@@ -3373,10 +3212,9 @@ def _norm_aot_index(aot: AoT, index: int) -> int:
 def remove_aot_entry(aot: AoT, index: int) -> Table:
     """Remove ``aot[index]``, unlink its slots, and return it detached.
 
-    Returns the popped entry ``Table`` itself (not a fresh copy), reset
-    so it behaves as an unattached, freshly-constructed container —
-    mirroring `delete_key`'s orphan-transplant model. User-held
-    references remain the same object and are reusable.
+    Returns the popped entry itself, with its layout preserved in a
+    private document, mirroring ``delete_key``. Held references remain
+    usable without affecting the source document.
     """
     return remove_aot_entries(aot, [_norm_aot_index(aot, index)])[0]
 
@@ -3386,7 +3224,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
 
     The indices must already be **non-empty, non-negative, in-range,
     distinct, and ascending**; callers are responsible for normalising.
-    Returns the reset popped entry ``Table``s in the same order as
+    Returns the orphaned entry ``Table``s in the same order as
     ``indices``.
 
     Scrubbing the union in reverse document order keeps clear and
@@ -3399,7 +3237,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     assert parent is not None
 
     # Collect each entry's whole subtree in doc-stream order and capture
-    # the entry table itself for return / reset. Distinct entries own
+    # the entry table itself for return. Distinct entries own
     # disjoint subtrees, so concatenating is already a union.
     owned_per_entry: list[list[Slot]] = []
     popped_entries: list[Table] = []
@@ -3453,7 +3291,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     holder = _array.AoT()
     holder._path = aot._path  # noqa: SLF001
     list.extend(holder, popped_entries)
-    transplant_to_orphan(
+    _transplant_to_orphan(
         holder,
         union_owned_ordered,
         doc._newline,  # noqa: SLF001
@@ -3517,6 +3355,10 @@ def _snapshot_in_copy(
     """
     root = view._layout_root  # noqa: SLF001
     assert root is not None, "only an attached view has a document to copy"
+    if isinstance(view, _array.AoT) and not view:
+        # There are no entry slots to preserve, and reparsing [] would
+        # change this typed source into an inline Array.
+        return _array.AoT()
     snapshot = snapshots.get(id(root))
     if snapshot is None:
         snapshot = copy.copy(root)
@@ -3531,61 +3373,51 @@ def _snapshot_in_copy(
     return cur
 
 
-def _capture_replacement_value(
-    value: TomlInput, sites: Sequence[Table], snapshots: dict[int, Document]
+def _capture_input(
+    value: TomlInput,
+    sites: Sequence[Container | AoT],
+    snapshots: dict[int, Document],
 ) -> TomlInput:
-    """``value`` with everything the write is about to destroy replaced.
+    """Capture sources containing a write site, recursively through wrappers.
 
-    A source the destination still holds is swapped for a snapshot of
-    itself; a detached factory is repaired in place, since installing it
-    consumes it anyway; a plain mapping or list is rebuilt. Everything
-    else — a scalar, an inline value, a view the write leaves alone —
-    is installed as it stands, so identity and first-occurrence
-    ownership are decided by the install, not here.
+    Detached factories retain their identity; plain mappings and lists
+    are rebuilt. Other values keep ordinary installation semantics,
+    including adoption of descendants orphaned by the write.
     """
     if is_scalar(value):
         return value
     if isinstance(value, (_container.Container, _array.AoT)):
-        if any(hosts_site(value, site) for site in sites):
-            return _snapshot_in_copy(value, snapshots)
         # A detached view's storage is all it has, so that is where its
         # own sources are captured; an attached one is copied from its
         # slots at install time, which reads nothing this write touches.
         if value._layout_root is None:  # noqa: SLF001
             _capture_into_factory(value, sites, snapshots)
+        elif any(hosts_site(value, site) for site in sites):
+            return _snapshot_in_copy(value, snapshots)
         return value
     if is_inline_value(value):
         return value
     if isinstance(value, Mapping):
-        return {
-            k: _capture_replacement_value(v, sites, snapshots) for k, v in value.items()
-        }
+        return {k: _capture_input(v, sites, snapshots) for k, v in value.items()}
     assert isinstance(value, list)
-    return [_capture_replacement_value(v, sites, snapshots) for v in value]
+    return [_capture_input(v, sites, snapshots) for v in value]
 
 
 def _capture_into_factory(
-    factory: Container | AoT, sites: Sequence[Table], snapshots: dict[int, Document]
+    factory: Container | AoT,
+    sites: Sequence[Container | AoT],
+    snapshots: dict[int, Document],
 ) -> None:
-    """Repair a detached source's own storage, which is all it has.
-
-    The factory is the object the install rehomes, so its contents
-    cannot be captured beside it; they are captured in it. Attachment
-    rewrites that storage anyway, and only the first occurrence of a
-    factory is rehomed — later ones copy what the first became — so no
-    caller can tell the difference.
-    """
+    """Capture in the factory's storage so its first occurrence still attaches."""
     if isinstance(factory, _array.AoT):
         for entry in factory:
             _capture_into_factory(entry, sites, snapshots)
         return
     for key, value in list(dict.items(factory)):
-        dict.__setitem__(
-            factory, key, _capture_replacement_value(value, sites, snapshots)
-        )
+        dict.__setitem__(factory, key, _capture_input(value, sites, snapshots))
 
 
-def hosts_site(view: Container | AoT, site: Container) -> bool:
+def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
     """True iff writing ``site`` writes ``view`` too.
 
     That is ``site`` itself, one of its ancestors, or an
@@ -3598,11 +3430,11 @@ def hosts_site(view: Container | AoT, site: Container) -> bool:
     it: an array-of-tables gives all its entries one path, so a sibling
     entry prefixes the site without ever containing it.
     """
-    cur: Container | None = site
+    cur: Container | AoT | None = site
     while cur is not None:
         if cur is view:
             return True
-        host = cur._parent  # noqa: SLF001
+        host = cur._host if isinstance(cur, _array.AoT) else cur._parent  # noqa: SLF001
         if host is not None and dict.get(host, cur._path[-1]) is view:  # noqa: SLF001
             return True
         cur = host
@@ -3610,90 +3442,150 @@ def hosts_site(view: Container | AoT, site: Container) -> bool:
 
 
 @dataclass(slots=True)
-class _Replacement:
-    """One entry's new body, read before any body is written.
-
-    A whole entry source is captured as the clone of its slots, which
-    carries the source's own line-by-line trivia. Anything else is
-    captured as the values its keys will be installed from, which is
-    all an ordinary assignment ever needed.
-    """
+class _PreparedEntry:
+    """An existing or unpublished entry and its destination-ready body."""
 
     table: Table
-    slots: list[Slot] | None
-    items: list[tuple[str, TomlInput]]
+    header: StructuralHeaderSlot
+    body: list[Slot] | dict[str, TomlInput]
 
 
-def _capture_replacement(
+def _prepare_entry(
     aot: AoT,
     table: Table,
     body: Mapping[str, TomlInput],
-    sites: Sequence[Table],
+    sites: Sequence[Container | AoT],
     snapshots: dict[int, Document],
-) -> _Replacement:
-    """What ``table`` will be given, taken while every source is intact."""
-    doc = aot._attached_doc  # noqa: SLF001
-    if (
-        isinstance(body, _container.Table)
-        and body._layout_root is not None  # noqa: SLF001
-        and body._is_own_aot_entry  # noqa: SLF001
-    ):
-        cloned, _ = _clone_entry_slots(
-            _gather_subtree_slots(body)[1:],
-            new_entry=table._owner_aot_entry,  # noqa: SLF001
-            body_owner=table._owner_aot_entry,  # noqa: SLF001
-            src_prefix=body._path,  # noqa: SLF001
-            target_prefix=aot._path,  # noqa: SLF001
-            dst_newline=doc._newline,  # noqa: SLF001
-        )
-        return _Replacement(table, cloned, [])
-    return _Replacement(
-        table,
-        None,
-        [(k, _capture_replacement_value(v, sites, snapshots)) for k, v in body.items()],
-    )
+) -> _PreparedEntry:
+    """Capture a body without clearing, wiring or publishing its destination.
 
-
-def _install_replacement(aot: AoT, replacement: _Replacement) -> None:
-    """Put a captured body under its destination's retained header."""
-    table = replacement.table
-    table.clear()
-    if replacement.slots is None:
-        for key, value in replacement.items:
-            table._setitem_validated(key, value)  # noqa: SLF001
-        return
-    owner = table._owner_aot_entry  # noqa: SLF001
-    assert owner is not None
-    doc = aot._attached_doc  # noqa: SLF001
-    _splice_block_after(replacement.slots, owner.header, doc)
-    _populate_entry_views(
-        entry_table=table,
-        cloned_slots=replacement.slots,
-        target_prefix=aot._path,  # noqa: SLF001
-        doc=doc,
-    )
-
-
-def replace_aot_entries(
-    aot: AoT, replacements: Iterable[tuple[int, Mapping[str, TomlInput]]]
-) -> None:
-    """Replace entry bodies in place, beneath their own headers and views.
-
-    Every source is read first and every body written afterwards, so an
-    assignment whose sources overlap its destinations — ``aot[::-1] =
-    aot``, or a source nested somewhere inside one of them — sees the
-    document as it was when the assignment began.
+    A whole structural source contributes slots, independently of any
+    later adoption of its children. Nested values in mapping bodies
+    retain ordinary attachment semantics.
     """
-    targets = [(aot[_norm_aot_index(aot, i)], body) for i, body in replacements]
-    sites = [table for table, _ in targets]
-    snapshots: dict[int, Document] = {}
-    captured = [
-        _capture_replacement(aot, table, body, sites, snapshots)
-        for table, body in targets
+    doc = aot._attached_doc  # noqa: SLF001
+    path = aot._path  # noqa: SLF001
+    owner: AoTEntry | None
+    if table._layout_root is None:  # noqa: SLF001
+        owner = AoTEntry()
+        header = None
+    else:
+        owner = table._owner_aot_entry  # noqa: SLF001
+        assert owner is not None
+        header = owner.header
+    payload: list[Slot] | dict[str, TomlInput]
+    if (
+        isinstance(body, _container.Container)
+        and body._layout_root is not None  # noqa: SLF001
+        and not body._inline  # noqa: SLF001
+    ):
+        slots = owned_slots(body)
+        head = body._header_ref.slot if body._header_ref is not None else None  # noqa: SLF001
+        if header is not None:
+            slots = [slot for slot in slots if slot is not head]
+            head = None
+        cloned, cloned_head = _clone_entry_slots(
+            slots,
+            new_entry=owner,
+            body_owner=owner,
+            src_prefix=body._path,  # noqa: SLF001
+            target_prefix=path,
+            dst_newline=doc._newline,  # noqa: SLF001
+            head=head,
+        )
+        payload = [
+            slot
+            for slot in _hoist_own_slots_first(cloned, path)
+            if slot is not cloned_head
+        ]
+        if cloned_head is not None:
+            header = cloned_head
+    else:
+        payload = {k: _capture_input(v, sites, snapshots) for k, v in body.items()}
+    if header is None:
+        header = _new_section_header(
+            path, leading="", doc=doc, entry=owner, owner_aot_entry=owner
+        )
+    return _PreparedEntry(table, header, payload)
+
+
+def _install_entry(
+    aot: AoT, prepared: _PreparedEntry, *, preserve_source_separator: bool = False
+) -> Table:
+    """Publish a fresh header or retain an existing one, then consume its body."""
+    table, header = prepared.table, prepared.header
+    owner = header.entry
+    assert owner is not None
+    parent = aot._host  # noqa: SLF001
+    assert parent is not None
+    doc = aot._attached_doc  # noqa: SLF001
+    path = aot._path  # noqa: SLF001
+    if table._layout_root is None:  # noqa: SLF001
+        ordinal = len(aot)
+        _consume_first_entry_placeholder(aot, ordinal)
+        if ordinal == 0:
+            _retarget_separator(header, _build_section_leading(doc))
+        elif not preserve_source_separator:
+            _retarget_separator(header, _aot_separator(aot, doc))
+        dict.clear(table)
+        table._wire(  # noqa: SLF001
+            layout_root=doc, parent=parent, path=path, owner=owner
+        )
+        _splice_block_after([header], _aot_append_anchor(aot), doc)
+        file_own_header(table, header)
+        _file_header_binding_chain(parent, header)
+        list.append(aot, table)
+        _maybe_demote_synthetic_empty_header(parent)
+    else:
+        table.clear()
+    if isinstance(prepared.body, dict):
+        for key, value in prepared.body.items():
+            table._setitem_validated(key, value)  # noqa: SLF001
+    else:
+        _splice_block_after(prepared.body, header, doc)
+        _populate_entry_views(
+            entry_table=table,
+            cloned_slots=prepared.body,
+            target_prefix=path,
+            doc=doc,
+        )
+        _extend_header_bindings_to_root(parent, prepared.body)
+    return table
+
+
+def assign_aot_entries(
+    aot: AoT, index: int | slice, bodies: Sequence[Mapping[str, TomlInput]]
+) -> None:
+    """Capture all sources, then replace in place or resize the array."""
+    if isinstance(index, slice):
+        start, stop, step = index.indices(len(aot))
+        indices = range(start, stop, step)
+    else:
+        start = _norm_aot_index(aot, index)
+        indices = range(start, start + 1)
+    resizing = len(indices) != len(bodies)
+    tables = (
+        [_container.Table() for _ in bodies] if resizing else [aot[i] for i in indices]
+    )
+    targets = [
+        (table, body)
+        for table, body in zip(tables, bodies, strict=True)
         if table is not body
     ]
-    for replacement in captured:
-        _install_replacement(aot, replacement)
+    sites = [aot] if resizing else [table for table, _ in targets]
+    snapshots: dict[int, Document] = {}
+    prepared = [
+        _prepare_entry(aot, table, body, sites, snapshots) for table, body in targets
+    ]
+    if resizing and indices:
+        remove_aot_entries(aot, indices)
+    for entry in prepared:
+        _install_entry(aot, entry)
+    # New entries were appended; moving them is unnecessary for a tail splice.
+    if resizing and prepared and start != len(aot) - len(prepared):
+        order = list(aot)[: -len(prepared)]
+        order[start:start] = [entry.table for entry in prepared]
+        renormalise_aot_order(aot, order)
 
 
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
@@ -4105,6 +3997,7 @@ __all__ = [
     "add_aot_entry",
     "append_direct_kv",
     "append_synth_kv",
+    "assign_aot_entries",
     "attach_empty_aot",
     "attach_section_at",
     "delete_key",
@@ -4112,7 +4005,6 @@ __all__ = [
     "remove_aot_entry",
     "renormalise_aot_order",
     "reorder_container",
-    "replace_aot_entries",
     "reposition_install",
     "stable_snapshot",
 ]

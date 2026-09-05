@@ -2424,6 +2424,296 @@ def test_aot_extended_slice_captures_source_bodies() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_aot_slice_noop_entries_are_not_write_sites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_snapshot(_doc: tomlrt.Document) -> tomlrt.Document:
+        pytest.fail("an unchanged source does not need a document snapshot")
+
+    monkeypatch.setattr(tomlrt.Document, "__copy__", unexpected_snapshot)
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 0x01 # one
+
+        [[items]]
+        x = 2
+        """)
+    )
+    items = doc.aot("items")
+    items[:] = [items[0], {"nested": items[0]}]
+    assert tomlrt.dumps(doc) == td("""
+        [[items]]
+        x = 0x01 # one
+
+        [[items]]
+
+        [items.nested]
+        x = 0x01 # one
+        """)
+
+
+@pytest.mark.parametrize("operation", ["add", "append", "insert", "replace", "resize"])
+@pytest.mark.parametrize(
+    ("kind", "source_text"),
+    [
+        (
+            "section",
+            td("""
+            [template] # source
+            'x'  =  0x01 # keep
+            """),
+        ),
+        (
+            "aot",
+            td("""
+            [[template]] # source
+            'x'  =  0x01 # keep
+            """),
+        ),
+        ("implicit", "template.'x'  =  0x01 # keep\n"),
+        ("document", "'x'  =  0x01 # keep\n"),
+    ],
+)
+def test_aot_whole_body_capture_preserves_layout_without_copying_document(
+    operation: str,
+    kind: str,
+    source_text: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_snapshot(_doc: tomlrt.Document) -> tomlrt.Document:
+        pytest.fail("capturing a whole body needs only its slots")
+
+    monkeypatch.setattr(tomlrt.Document, "__copy__", unexpected_snapshot)
+    source = tomlrt.loads(source_text)
+    body: tomlrt.Document | Table
+    if kind == "aot":
+        body = source.aot("template")[0]
+    elif kind == "document":
+        body = source
+    else:
+        body = source.table("template")
+    if operation in {"replace", "resize"}:
+        doc = tomlrt.loads("[[items]] # retained\nold = 0\n")
+    else:
+        doc = tomlrt.Document()
+        doc["items"] = AoT()
+    items = doc.aot("items")
+    if operation == "add":
+        items.add(body)
+    elif operation == "append":
+        items.append(body)
+    elif operation == "insert":
+        items.insert(0, body)
+    elif operation == "replace":
+        held = items[0]
+        items[0] = body
+        assert items[0] is held
+    else:
+        items[:] = [body, {"tail": 2}]
+    header = "[[items]]"
+    if operation == "replace":
+        header += " # retained"
+    elif kind in {"section", "aot"}:
+        header += " # source"
+    expected = f"{header}\n'x'  =  0x01 # keep\n"
+    if operation == "resize":
+        expected += td("""
+
+            [[items]]
+            tail = 2
+            """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(source) == source_text
+
+
+@pytest.mark.parametrize(
+    ("target", "tail"),
+    [
+        (
+            slice(0, 0),
+            td("""
+
+            [[items]] # first
+            x = 0x01 # one
+
+            [[items]] # second
+            x = 0x02 # two
+            """),
+        ),
+        (
+            slice(0, 1),
+            td("""
+
+            [[items]]
+            x = 3
+
+            [[items]] # second
+            x = 0x02 # two
+            """),
+        ),
+        (slice(0, 2), ""),
+    ],
+    ids=["insert", "grow", "shrink"],
+)
+@pytest.mark.parametrize("private", [False, True])
+def test_aot_resizing_slice_captures_array_source(
+    target: slice, tail: str, *, private: bool
+) -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]] # first
+        x = 0x01 # one
+
+        [[items]] # second
+        x = 0x02 # two
+        """)
+    )
+    items = doc.aot("items")
+    if private:
+        doc.pop("items")
+    values: list[dict[str, tomlrt.TomlInput]] = [{"nested": items}]
+    if target.stop == 1:
+        values.append({"x": 3})
+    items[target] = values
+    if private:
+        doc["items"] = items
+    out = tomlrt.dumps(doc)
+    assert out == (
+        td("""
+        [[items]]
+
+        [[items.nested]] # first
+        x = 0x01 # one
+
+        [[items.nested]] # second
+        x = 0x02 # two
+        """)
+        + tail
+    )
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_resizing_slice_captures_factory_inputs() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 1
+
+        [[items]]
+        x = 2
+        """)
+    )
+    items = doc.aot("items")
+    inline = Table.inline({"source": MappingProxyType(items[0])})
+    nested = AoT([{"source": items}])
+    body = Table.section({"inline": inline, "nested": nested})
+    items[:] = [body]
+    inline["held"] = True
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        inline = { source = { x = 1 }, held = true }
+
+        [[items.nested]]
+
+        [[items.nested.source]]
+        x = 1
+
+        [[items.nested.source]]
+        x = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert body["inline"] is inline
+    assert body["nested"] is nested
+
+
+def test_aot_resizing_slice_captures_whole_ancestor() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [parent] # source
+        x = 0x01 # one
+
+        [[parent.items]]
+        y = 0x02 # two
+        """)
+    )
+    parent = doc.table("parent")
+    parent.aot("items")[:0] = [parent]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [parent] # source
+        x = 0x01 # one
+
+        [[parent.items]] # source
+        x = 0x01 # one
+
+        [[parent.items.items]]
+        y = 0x02 # two
+
+        [[parent.items]]
+        y = 0x02 # two
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_slice_captures_empty_array_without_changing_its_kind() -> None:
+    doc = tomlrt.Document()
+    doc["items"] = AoT()
+    items = doc.aot("items")
+    items[:0] = [{"nested": items}]
+    items[0].aot("nested").append({"x": 1})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+
+        [[items.nested]]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_resizing_slice_captures_body_before_adopting_its_child() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+
+        [items.parent]
+        x = 0x01 # one
+
+        [items.parent.child]
+        y = 0x02 # two
+
+        [[items]]
+        x = 3
+        """)
+    )
+    items = doc.aot("items")
+    parent = items[0].table("parent")
+    child = parent.table("child")
+    items[:1] = [{"taken": child}, parent]
+    child["held"] = True
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+
+        [items.taken]
+        y = 0x02 # two
+        held = true
+
+        [[items]]
+        x = 0x01 # one
+
+        [items.child]
+        y = 0x02 # two
+
+        [[items]]
+        x = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_aot_extended_slice_captures_nested_source() -> None:
     doc = tomlrt.loads(
         td("""
@@ -6522,13 +6812,9 @@ def test_overwrite_ancestor_with_own_nested_aot_preserves_nested_entries() -> No
     into ancestor) must preserve nested `[[a.x]]` entries living inside
     that AoT's own entries, not just their own direct/dotted content.
 
-    ``_attach_aot``'s private-orphan rehome path gathers each preserved
-    entry's slots via ``clone_aot_entry``'s bare-``AoTEntry`` branch,
-    which only sees the entry's *own* ``entry_slots`` membership, not
-    slots owned by AoT entries nested inside its body. The full subtree
-    must be gathered while the entry is still live, before
-    ``_reset_table_for_rehome`` clears the ``_refs`` that gathering
-    depends on.
+    ``_attach_aot`` must capture the full preserved subtree while the
+    entry is still live, before ``_reset_table_for_rehome`` clears the
+    ``_refs`` that gathering depends on.
     """
     doc = tomlrt.loads(
         td("""
@@ -6598,6 +6884,8 @@ def test_clone_as_aot_entry_hoists_own_content_past_forward_declared_nested() ->
     # entry can never be reopened (unlike a plain table), so the source's
     # own direct content (`better`) must be hoisted ahead of the nested
     # descendant's block (`b`) rather than kept in true doc-stream order.
+    # Capture also keeps the source separator preceding that descendant,
+    # before consuming the empty array's placeholder changes the doc head.
     src = td("""
         [a.b]
         x = 1
@@ -6618,6 +6906,7 @@ def test_clone_as_aot_entry_hoists_own_content_past_forward_declared_nested() ->
 
         [[arr]]
         better = 2
+
         [arr.b]
         x = 1
         """)

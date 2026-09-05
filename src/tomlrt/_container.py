@@ -655,9 +655,9 @@ class Container(_View, dict[str, Any]):
         """Install ``value`` (an AoT) under ``key``.
 
         Live-attached sources or private orphans with intact entry
-        slots route through :func:`clone_aot_entry` to preserve per-entry
-        trivia and nested sub-sections. Detached AoTs without preserved
-        slots are rehomed entry-by-entry.
+        slots are cloned to preserve per-entry trivia and nested
+        sub-sections. Detached AoTs without preserved slots are rehomed
+        entry-by-entry.
         """
         src_root = value._layout_root  # noqa: SLF001
         if src_root is not None and not src_root._is_private:  # noqa: SLF001
@@ -679,10 +679,9 @@ class Container(_View, dict[str, Any]):
             preserve_cst = owner is not None and entry_table._header_ref is not None  # noqa: SLF001
             if preserve_cst:
                 # Gathering includes nested AoTs and requires the live view.
-                _layout_ops.clone_aot_entry(
+                _layout_ops.add_aot_entry(
                     value,
                     entry_table,
-                    dst_path=value._path,  # noqa: SLF001
                     preserve_source_separator=True,
                 )
                 # The copy is the one that lives on, so the original
@@ -694,23 +693,20 @@ class Container(_View, dict[str, Any]):
                 _layout_ops.add_aot_entry(value, None, rehome=entry_table)
         _layout_ops.synthesise_header_for_emptied(emptied)
 
-    def _attach_section(self, key: str, value: Container) -> None:
-        """Install ``value`` (a section-flavoured Table) under ``key``.
+    def _attach_section(self, key: str, source: Container) -> None:
+        """Install ``source`` (a section-flavoured Table) under ``key``.
 
         Clones from a live source so identity and trivia survive where
         possible — including normalising an AoT-entry source's
         ``[[..]]`` head to ``[..]``. Falls back to synthesis only for a
         truly detached source with no slots of its own.
 
-        A source overlapping the destination is read from a snapshot
-        instead; that snapshot lives in another document, so the second
-        pass takes an ordinary live-source branch.
+        An overlapping source is read from a snapshot in another
+        document, through the ordinary live-source branches.
         """
-        snapshot = _snapshot_for_overlapping_install(self, key, value)
-        if snapshot is not value:
-            assert isinstance(snapshot, Container)
-            self._attach_section(key, snapshot)
-            return
+        snapshot = _snapshot_for_overlapping_install(self, key, source)
+        assert isinstance(snapshot, Container)
+        value: Container = snapshot
         src_root = value._layout_root
         live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
         if live_source:
@@ -1647,7 +1643,11 @@ def _reset_table_for_rehome(t: Container) -> None:
     t._body_tail = None  # noqa: SLF001
 
     for child in dict.values(t):
-        if isinstance(child, _View) and child._layout_root not in (None, root):  # noqa: SLF001
+        if (
+            isinstance(child, _View)
+            and child._layout_root is not None  # noqa: SLF001
+            and child._layout_root is not root  # noqa: SLF001
+        ):
             continue
         if _is_section(child):
             _reset_table_for_rehome(child)
@@ -1740,6 +1740,9 @@ def _install_dotted_direct_kvs(
         _retarget_to_doc(cst, doc)
         leading = retarget_newlines(src_slot.leading, doc._newline)  # noqa: SLF001
         eol = retarget_newlines(src_slot.eol, doc._newline)  # noqa: SLF001
+        key_parts, key_seps = _layout_ops.respell_key_prefix(
+            src_slot.key_parts, src_slot.key_seps, len(src_slot.key_parts), leaf_keypath
+        )
         decoded = _decode_value(cst, doc, destination, k, owner)
         _layout_ops.install_dotted_kv_slot(
             host,
@@ -1748,6 +1751,8 @@ def _install_dotted_direct_kvs(
             leaf_parent=destination,
             leading=leading,
             eol=eol,
+            key_parts=key_parts,
+            key_seps=key_seps,
         )
         dict.__setitem__(destination, k, decoded)
 
