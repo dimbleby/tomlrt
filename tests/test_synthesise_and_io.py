@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from typing_extensions import Self
+
 if sys.version_info >= (3, 12):
     from typing import override
 else:  # pragma: no cover -- backport for Python < 3.12
@@ -948,8 +950,12 @@ def test_cloned_scalar_subclass_payloads_are_independent(
 class _MutableLexeme(str):
     __slots__ = ("rendered",)
 
-    def __init__(self, value: str) -> None:
-        self.rendered = value
+    rendered: str
+
+    def __new__(cls, value: str) -> Self:
+        lexeme = super().__new__(cls, value)
+        lexeme.rendered = value
+        return lexeme
 
     @override
     def __format__(self, _format_spec: str) -> str:
