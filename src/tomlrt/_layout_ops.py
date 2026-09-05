@@ -2784,8 +2784,10 @@ def _retarget_slot_paths(
         return
     # `KVSlot` and `StructuralHeaderSlot` are the only concrete slots.
     assert isinstance(s, StructuralHeaderSlot)
-    s.key_parts = make_keyparts(_rebase_path(s.path, src_prefix, target_prefix))
-    s.key_seps = (".",) * (len(s.key_parts) - 1)
+    assert s.path[: len(src_prefix)] == src_prefix, (
+        "a header in a rebased block is spelled from the source prefix down"
+    )
+    _respell_prefix(s, len(src_prefix), target_prefix)
 
 
 def _rehome_view_tree(
@@ -2996,11 +2998,7 @@ def _rebase_implicit_slot_in_place(
         new_key = (*new_prefix, *within)[len(host_path) :]
         head_n = len(new_key) - len(within)
         s.host_path = host_path
-        s.key_parts = (
-            make_keyparts(new_key[:head_n])
-            + s.key_parts[len(s.key_parts) - len(within) :]
-        )
-        s.key_seps = (".",) * (len(new_key) - 1)
+        _respell_prefix(s, len(s.key_parts) - len(within), new_key[:head_n])
     else:
         _retarget_slot_paths(s, old_prefix, new_prefix, nl)
 
@@ -3117,6 +3115,23 @@ def _clone_entry_slots(
             cloned_head = c
 
     return cloned, cloned_head
+
+
+def _respell_prefix(
+    s: KVSlot | StructuralHeaderSlot, drop: int, prefix: tuple[str, ...]
+) -> None:
+    """Respell ``s``'s first ``drop`` key components as ``prefix``.
+
+    Only the components that moved are rewritten. The rest is the
+    source's own spelling — its quoting and the spacing around its
+    dots — which is as much a part of the line as anything else in it,
+    and which an identity rebase therefore leaves entirely alone.
+    """
+    tail = s.key_parts[drop:]
+    head = make_keyparts(prefix)
+    s.key_parts = head + tail
+    joins = len(head) - 1 + bool(head and tail)
+    s.key_seps = (".",) * max(joins, 0) + s.key_seps[drop:]
 
 
 def _rebase_path(
