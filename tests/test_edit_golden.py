@@ -1214,7 +1214,8 @@ def test_new_key_assign_of_ancestor_into_its_own_descendant() -> None:
     ``_install_attached_subtree`` reads it incrementally; since ``t`` is
     nested inside ``ancestor``, installing into ``t`` is also live growth
     of the very structure being walked, which must be snapshotted up
-    front rather than read incrementally.
+    front rather than read incrementally. The snapshot is the same
+    document, so the copy keeps the source's header-less shape.
     """
     doc = tomlrt.loads("x.a = 1\nx.b.c = 2\n")
     x = doc["x"]
@@ -1224,9 +1225,7 @@ def test_new_key_assign_of_ancestor_into_its_own_descendant() -> None:
         x.a = 1
         x.b.c = 2
         x.b.new.a = 1
-
-        [x.b.new.b]
-        c = 2
+        x.b.new.b.c = 2
         """)
     assert doc.to_dict() == {
         "x": {"a": 1, "b": {"c": 2, "new": {"a": 1, "b": {"c": 2}}}}
