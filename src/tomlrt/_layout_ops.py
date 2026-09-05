@@ -3444,6 +3444,15 @@ def _view_route(view: Container | AoT) -> list[tuple[str, int | None]]:
     return route
 
 
+def stable_snapshot(view: Container | AoT) -> Container | AoT:
+    """``view`` as it is now, safe to read across a write to its document.
+
+    For a source an install would otherwise damage or grow while
+    reading it.
+    """
+    return _endangered_snapshot(view, {})
+
+
 def _endangered_snapshot(
     view: Container | AoT, snapshots: dict[int, Document]
 ) -> Container | AoT:
@@ -4058,4 +4067,5 @@ __all__ = [
     "reorder_container",
     "replace_aot_entries",
     "reposition_install",
+    "stable_snapshot",
 ]

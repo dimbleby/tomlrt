@@ -701,7 +701,16 @@ class Container(_View, dict[str, Any]):
         possible — including normalising an AoT-entry source's
         ``[[..]]`` head to ``[..]``. Falls back to synthesis only for a
         truly detached source with no slots of its own.
+
+        A source overlapping the destination is read from a snapshot
+        instead; that snapshot lives in another document, so the second
+        pass takes an ordinary live-source branch.
         """
+        snapshot = _snapshot_for_overlapping_install(self, key, value)
+        if snapshot is not value:
+            assert isinstance(snapshot, Container)
+            self._attach_section(key, snapshot)
+            return
         src_root = value._layout_root
         live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
         if live_source:
@@ -712,18 +721,7 @@ class Container(_View, dict[str, Any]):
             elif isinstance(value, Document):
                 _layout_ops.clone_document_as_section(self, key, value)
             else:
-                snapshot = _snapshot_for_overlapping_install(self, key, value)
-                assert isinstance(snapshot, Container)
-                _install_attached_subtree(self, (key,), snapshot)
-            return
-        # An overlapping install can never be a move — the source would
-        # have to end up inside itself — so it is copied instead, as it
-        # is for a live source above. The copy is a fresh detached
-        # `Document`, which installs as a section.
-        snapshot = _snapshot_for_overlapping_install(self, key, value)
-        if snapshot is not value:
-            assert isinstance(snapshot, Document)
-            _layout_ops.clone_document_as_section(self, key, snapshot)
+                _install_attached_subtree(self, (key,), value)
             return
         if src_root is not None and src_root._is_private and value._refs:  # noqa: SLF001
             # Private orphan with intact slots: move the slots into the
@@ -1775,15 +1773,41 @@ def _is_inline_table(v: object) -> TypeGuard[Container]:
     return isinstance(v, Container) and v._inline  # noqa: SLF001
 
 
+def _hosts_site(value: Container | AoT, parent: Container) -> bool:
+    """True iff ``value`` is one of the views an install into ``parent`` writes.
+
+    That is ``parent`` itself, one of its ancestors, or an
+    array-of-tables reached along the way.
+    """
+    cur: Container | None = parent
+    while cur is not None:
+        if cur is value:
+            return True
+        host = cur._parent  # noqa: SLF001
+        if host is not None and dict.get(host, cur._path[-1]) is value:  # noqa: SLF001
+            return True
+        cur = host
+    return False
+
+
 def _snapshot_for_overlapping_install(
     parent: Container, key: str, value: TomlInput
 ) -> TomlInput:
     """Snapshot ``value`` if an overlapping install cannot safely read it.
 
-    An ancestor source would grow while it is read. During overwrite, a
-    headerless grandchild also depends on implicit intermediates that
-    deletion resets. Other descendants retain independent slot anchors
-    and use the trivia-preserving private-orphan adopt path.
+    A source the write site lives in would grow while it is read.
+    During overwrite, a headerless grandchild also depends on implicit
+    intermediates that deletion resets. Other descendants retain
+    independent slot anchors and use the trivia-preserving
+    private-orphan adopt path.
+
+    "Lives in" is asked of the views themselves, not of their paths: an
+    array-of-tables gives all its entries one path, so a sibling entry
+    prefixes the destination without ever containing it, and copies
+    perfectly well from where it is.
+
+    The snapshot is the same view in a byte-exact copy of the document,
+    so it is read exactly as the source would have been.
     """
     if not isinstance(value, (Container, AoT)):
         return value
@@ -1792,17 +1816,15 @@ def _snapshot_for_overlapping_install(
         return value
     dest_path = (*parent._path, key)  # noqa: SLF001
     value_path = value._path  # noqa: SLF001
-    vlen, dlen = len(value_path), len(dest_path)
-    ancestor_overlap = vlen < dlen and dest_path[:vlen] == value_path
     headerless_value = not isinstance(value, AoT) and value._header_ref is None  # noqa: SLF001
     descendant_overlap = (
-        headerless_value and vlen - dlen >= 2 and value_path[:dlen] == dest_path
+        headerless_value
+        and len(value_path) - len(dest_path) >= 2
+        and value_path[: len(dest_path)] == dest_path
     )
-    if not (ancestor_overlap or descendant_overlap):
+    if not (_hosts_site(value, parent) or descendant_overlap):
         return value
-    if isinstance(value, AoT):
-        return AoT(value.to_list())
-    return Document(value.to_dict())
+    return _layout_ops.stable_snapshot(value)
 
 
 def _collect_private_roots(value: object, found: dict[int, Document]) -> None:

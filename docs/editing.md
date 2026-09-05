@@ -67,6 +67,8 @@ This applies whether the source and destination are in the same document
 (`doc["b"] = doc["a"]`) or different ones (`d2["x"] = d1["x"]`).
 The clone is byte-faithful: comments, whitespace, and string / number style on
 the bytes you didn't touch survive the move.
+That holds when the two overlap, too — `doc["a"]["b"] = doc["a"]` copies the
+`a` that was there before the assignment began.
 
 Assigning a whole parsed `Document` as a value lifts its body into a section,
 preserving the comments and layout that were in the source:

@@ -2499,6 +2499,41 @@ def test_aot_extended_slice_positive_cycle(*, private: bool) -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_aot_integer_captures_two_ancestors_from_one_snapshot() -> None:
+    """Sources from one document are read from one copy of it."""
+    doc = tomlrt.loads(
+        td("""
+        [parent]
+        x = 0x01 # root
+
+        [[parent.items]]
+        y = 0x02 # entry
+        """)
+    )
+    parent = doc.table("parent")
+    parent.aot("items")[0] = {"one": parent, "two": parent}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [parent]
+        x = 0x01 # root
+
+        [[parent.items]]
+
+        [parent.items.one]
+        x = 0x01 # root
+
+        [[parent.items.one.items]]
+        y = 0x02 # entry
+
+        [parent.items.two]
+        x = 0x01 # root
+
+        [[parent.items.two.items]]
+        y = 0x02 # entry
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 @pytest.mark.parametrize("private", [False, True])
 def test_aot_integer_captures_source_array_ancestor(*, private: bool) -> None:
     doc = tomlrt.loads(
@@ -6283,7 +6318,7 @@ def test_overwrite_ancestor_into_own_descendant_snapshots_before_delete() -> Non
         [x.k16]
 
         [x.k16.w]
-        [x.k16.w.w]
+        w = {}
         """)
     assert doc.to_dict() == {"x": {"k16": {"w": {"w": {}}}}}
     assert _reparses(out) == doc.to_dict()
@@ -10085,7 +10120,11 @@ def test_overwrite_with_own_grandchild_then_clone_elsewhere() -> None:
     must snapshot before the old subtree is deleted — deleting it would
     otherwise unlink the descendant's own backing slots before they are
     read, corrupting the clone or (if it later becomes a clone source
-    itself) leaving stale host-path bookkeeping behind."""
+    itself) leaving stale host-path bookkeeping behind.
+
+    The snapshot is the source in a copy of its own document, so each
+    copied key keeps the header-less shape and the leading blank line
+    it has at home."""
     doc = tomlrt.loads(
         td("""
         name.first = "Arthur"
@@ -10103,19 +10142,15 @@ def test_overwrite_with_own_grandchild_then_clone_elsewhere() -> None:
         name.first = "Arthur"
         "name".'last' = "Dent"
 
+        many.dots.dot = 42
+
+        many.k96 = 1
+
         k9 = -7
 
-        [name.k75]
-        k96 = 1
+        name.k75.k96 = 1
 
-        [name.k75.dots]
-        dot = 42
-
-        [many]
-        k96 = 1
-
-        [many.dots]
-        dot = 42
+        name.k75.dots.dot = 42
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -10155,7 +10190,10 @@ def test_clone_section_into_fresh_implicit_intermediate_anchors_locally() -> Non
     entry that has no other content) must anchor via the nearest
     header-bearing ancestor's own extent, not fall through to a
     ``None`` anchor that lands the block at the document's absolute
-    tail — letting a later sibling AoT entry capture it on re-parse."""
+    tail — letting a later sibling AoT entry capture it on re-parse.
+
+    The source here is header-less, so the copy is dotted keys in the
+    entry's own body, which no later entry can capture."""
     doc = tomlrt.loads(
         td("""
         [[a]]
@@ -10171,10 +10209,8 @@ def test_clone_section_into_fresh_implicit_intermediate_anchors_locally() -> Non
         [[a]]
         a.b.c = 1
         a.b.d = 2
-
-        [a.a.k34.b]
-        c = 1
-        d = 2
+        a.k34.b.c = 1
+        a.k34.b.d = 2
 
         [[a]]
         a.b = { x = 1 }
@@ -10266,7 +10302,8 @@ def test_adopt_private_section_unfiles_stale_bindings_for_nested_headers() -> No
     out = tomlrt.dumps(doc)
     assert out == td("""
         [albums]
-          [albums.name.k2]
+            [albums.name]
+        [albums.name.k2]
         w = 1
         """)
     assert _reparses(out) == doc.to_dict()
@@ -10793,16 +10830,47 @@ def test_adopt_private_section_adds_terminator_when_not_at_doc_tail() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_reposition_install_scattered_source_via_disjoint_span_fallback() -> None:
-    """``_recorded_install_span`` detects when an implicit source's
-    recorded slots don't form one contiguous doc-stream span — the
-    direct KVs and structural children land at different anchors, e.g.
-    because the destination promoted from headerless to header-bearing
-    partway through — and signals ``reposition_install`` to leave the
-    fresh install where it landed rather than risk moving the wrong
-    range. Exercises both of its rejection paths: more than one
-    candidate span head, and a span head whose forward walk doesn't
-    reach every recorded slot."""
+def test_reposition_install_leaves_a_scattered_install_where_it_landed() -> None:
+    """A header-less source spells itself in two places at once.
+
+    Its own keys are dotted KVs in the destination's body and its
+    array-of-tables is a block after it, so the install records two
+    runs with other slots between them. ``_recorded_install_span``
+    reports no single span and ``reposition_install`` leaves both runs
+    where they landed rather than move a range that spans slots it
+    never installed.
+    """
+    doc = tomlrt.loads(
+        td("""
+        x = 1
+        a.p = 2
+
+        [[a.q]]
+        r = 3
+        """)
+    )
+    doc["x"] = doc["a"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a.p = 2
+        x.p = 2
+
+        [[a.q]]
+        r = 3
+
+        [[x.q]]
+        r = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_repeated_overlapping_installs_keep_the_source_header_less() -> None:
+    """Each install copies the source as it is spelled where it lives.
+
+    Every one of these sources is header-less, and every copy of one is
+    header-less too, however many times the document has already been
+    written into itself.
+    """
     doc = tomlrt.loads(
         td("""
         name = "Orange"
@@ -10818,22 +10886,14 @@ def test_reposition_install_scattered_source_via_disjoint_span_fallback() -> Non
     doc["name"] = doc["site"]
     out = tomlrt.dumps(doc)
     assert out == td("""
+        name."google.com" = true
+        name.k96."google.com"."google.com" = true
+        name.k96."google.com".k96."google.com" = true
         physical.color = "orange"
         physical.shape."google.com" = true
         site."google.com" = true
-        name."google.com" = true
-
-        [site.k96."google.com"]
-        "google.com" = true
-
-        [site.k96."google.com".k96]
-        "google.com" = true
-
-        [name.k96."google.com"]
-        "google.com" = true
-
-        [name.k96."google.com".k96]
-        "google.com" = true
+        site.k96."google.com"."google.com" = true
+        site.k96."google.com".k96."google.com" = true
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -10859,7 +10919,6 @@ def test_overwrite_aot_entry_key_with_ancestor_aot_snapshots_first() -> None:
         [[a]]
         [[a.b]]
         b = 1
-
         [[a.b]]
         b = 2
         [[a]]
