@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Copying a table keeps formatting it used to lose: end-of-line comments, and
+  the quoting and spacing of a key.
 - An assignment reads its source first, so `pkgs[::-1] = pkgs` swaps the entries
   and `pkgs[0] = {"copy": pkgs[0]}` copies what was there.
 - A table from another document is copied when you assign it, not taken over.

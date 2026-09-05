@@ -937,6 +937,37 @@ def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
     assert _reparses(out) == {"x": {"c": 1, "d": 2}}
 
 
+def test_clone_keeps_the_spelling_of_the_key_it_did_not_move() -> None:
+    """A rebase renames a prefix; the rest of the key is not its business.
+
+    Only the components that move are respelled. Below them the source's
+    own quoting, and the spacing around its dots, is as much a part of
+    the line as the comment at the end of it.
+    """
+    src = tomlrt.loads(
+        td("""
+        [a]
+        p = 1
+
+        [ a . 'b' . "c" ]   # nested
+        q = 2
+        """)
+    )
+    dst = tomlrt.loads("[dest]\n")
+    dst["dest"]["k"] = src["a"]
+    out = tomlrt.dumps(dst)
+    assert out == td("""
+        [dest]
+
+        [dest.k]
+        p = 1
+
+        [ dest.k.'b' . "c" ]   # nested
+        q = 2
+        """)
+    assert _reparses(out) == dst.to_dict()
+
+
 def test_cross_doc_implicit_table_graft_preserves_trivia() -> None:
     """Grafting an implicit (dotted) table keeps its body trivia and style.
 
