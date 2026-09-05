@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A table from another document is copied when you assign it, not taken over.
 - Removing an entry from an array of tables keeps its formatting, so putting it
   back somewhere keeps its comments.
+- Assigning a slice of an array of tables that covers as many entries as it
+  replaces now leaves the rest of the document untouched, as assigning a single
+  entry does.
 
 ## [2.2.6] - 2026-08-30
 
