@@ -2365,6 +2365,445 @@ def test_aot_setitem_negative_index() -> None:
     assert _reparses(rendered)["pkg"][-1] == {"replaced": True}
 
 
+def test_aot_extended_slice_captures_source_bodies() -> None:
+    src = td("""
+        [[items]] # first
+        x = 0x01 # one
+
+        [[items]] # second
+        x = 0x02 # two
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    items = doc.aot("items")
+    first, second = items
+    items[::-1] = items
+    first["held"] = True
+    second["held"] = False
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]] # first
+        x = 0x02 # two
+        held = true
+
+        [[items]] # second
+        x = 0x01 # one
+        held = false
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_extended_slice_captures_nested_source() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 0x01 # one
+
+        [[items]]
+        x = 0x02 # two
+
+        [[items]]
+        x = 0x03 # three
+        """)
+    )
+    items = doc.aot("items")
+    items[::2] = [items[2], {"nested": items[0]}]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        x = 0x03 # three
+
+        [[items]]
+        x = 0x02 # two
+
+        [[items]]
+
+        [items.nested]
+        x = 0x01 # one
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_nested_self() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 0x01 # one
+        """)
+    )
+    items = doc.aot("items")
+    items[0] = {"nested": items[0]}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+
+        [items.nested]
+        x = 0x01 # one
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_inline_factory_inputs() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 1
+        """)
+    )
+    items = doc.aot("items")
+    child = Table.inline({"x": 2})
+    later = Table.inline({"child": child, "source": MappingProxyType(items[0])})
+    items[0] = {"first": child, "later": later}
+    child["x"] = 3
+    later["held"] = True
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        first = { x = 3 }
+        later = { child = { x = 2 }, source = { x = 1 }, held = true }
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+@pytest.mark.parametrize("private", [False, True])
+def test_aot_extended_slice_positive_cycle(*, private: bool) -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 0x01 # one
+
+        [[items]]
+        x = 0x02 # two
+
+        [[items]]
+        x = 0x03 # three
+        """)
+    )
+    items = doc.aot("items")
+    if private:
+        doc.pop("items")
+    items[::2] = [items[2], items[0]]
+    if private:
+        doc["items"] = items
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        x = 0x03 # three
+
+        [[items]]
+        x = 0x02 # two
+
+        [[items]]
+        x = 0x01 # one
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+@pytest.mark.parametrize("private", [False, True])
+def test_aot_integer_captures_source_array_ancestor(*, private: bool) -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]] # first
+        x = 0x01 # one
+
+        [[items]] # second
+        x = 0x02 # two
+        """)
+    )
+    items = doc.aot("items")
+    if private:
+        doc.pop("items")
+    items[0] = {"nested": items}
+    if private:
+        doc["items"] = items
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]] # first
+
+        [[items.nested]] # first
+        x = 0x01 # one
+
+        [[items.nested]] # second
+        x = 0x02 # two
+
+        [[items]] # second
+        x = 0x02 # two
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_document_ancestor_crlf() -> None:
+    src = td("""
+        x = 0x01 # root
+
+        [[items]]
+        y = 0x02 # entry
+        """).replace("\n", "\r\n")
+    doc = tomlrt.loads(src)
+    doc.aot("items")[0] = {"nested": doc}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        x = 0x01 # root
+
+        [[items]]
+
+        [items.nested]
+        x = 0x01 # root
+
+        [[items.nested.items]]
+        y = 0x02 # entry
+        """).replace("\n", "\r\n")
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_forward_declared_ancestor() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [parent.child]
+        z = 0x03 # child
+
+        [parent] # parent
+        x = 0x01 # root
+
+        [[parent.items]]
+        y = 0x02 # entry
+        """)
+    )
+    parent = doc.table("parent")
+    parent.aot("items")[0] = {"nested": parent}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [parent.child]
+        z = 0x03 # child
+
+        [parent] # parent
+        x = 0x01 # root
+
+        [[parent.items]]
+
+        [parent.items.nested.child]
+        z = 0x03 # child
+
+        [parent.items.nested] # parent
+        x = 0x01 # root
+
+        [[parent.items.nested.items]]
+        y = 0x02 # entry
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_implicit_ancestor() -> None:
+    """A header-less ancestor arrives in the shape it has at home.
+
+    Its own keys are dotted KVs in the entry body and each sub-section
+    is a block below, separated as any freshly placed section is.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [parent.child.deep]
+        z = 0x03 # deep
+
+        [parent]
+        child.x = 0x01 # root
+
+        [[parent.child.items]]
+        y = 0x02 # entry
+        """)
+    )
+    parent = doc.table("parent").table("child")
+    parent.aot("items")[0] = {"nested": parent}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [parent.child.deep]
+        z = 0x03 # deep
+
+        [parent]
+        child.x = 0x01 # root
+
+        [[parent.child.items]]
+        nested.x = 0x01 # root
+
+        [parent.child.items.nested.deep]
+        z = 0x03 # deep
+
+        [[parent.child.items.nested.items]]
+        y = 0x02 # entry
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_section_factory_inputs() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 0x01 # one
+        """)
+    )
+    items = doc.aot("items")
+    section = Table.section({"entry": items[0], "proxy": MappingProxyType(items[0])})
+    items[0] = {"first": section, "later": section}
+    section["held"] = True
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+
+        [items.first]
+        proxy = { x = 1 }
+        held = true
+
+        [items.first.entry]
+        x = 0x01 # one
+
+        [items.later]
+        proxy = { x = 1 }
+
+        [items.later.entry]
+        x = 0x01 # one
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_parent_before_adopting_displaced_child() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 0x01 # one
+
+        [items.child]
+        y = 0x02 # two
+        """)
+    )
+    items = doc.aot("items")
+    child = items[0].table("child")
+    items[0] = {"nested": items[0], "kept": child}
+    child["y"] = 9
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+
+        [items.nested]
+        x = 0x01 # one
+
+        [items.nested.child]
+        y = 0x02 # two
+
+        [items.kept]
+        y = 9 # two
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_aot_factory_inputs() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 0x01 # one
+        """)
+    )
+    items = doc.aot("items")
+    nested = AoT([{"entry": items[0]}])
+    held = nested[0]
+    items[0] = {"first": nested, "later": nested}
+    held["held"] = True
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+
+        [[items.first]]
+        held = true
+
+        [items.first.entry]
+        x = 0x01 # one
+
+        [[items.later]]
+
+        [items.later.entry]
+        x = 0x01 # one
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_captures_wrapped_inline_inputs() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 0x01 # one
+        data = [ 2,  3 ]
+        """)
+    )
+    items = doc.aot("items")
+    data = items[0].array("data")
+    items[0] = {"wrapped": [{"proxy": MappingProxyType(items[0])}], "data": data}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        wrapped = [{ proxy = { x = 1, data = [ 2,  3 ] } }]
+        data = [ 2,  3 ]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_integer_capture_keeps_owned_inline_values() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 1
+        """)
+    )
+    standalone = Array([{"y": 2}])
+    child = standalone.table(0)
+    factory = Table.inline(
+        {"child": child, "source": MappingProxyType(doc.aot("items")[0])}
+    )
+    doc.aot("items")[0] = {"factory": factory}
+    child["y"] = 3
+    factory["held"] = True
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        factory = { child = { y = 2 }, source = { x = 1 }, held = true }
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_extended_slice_captures_nested_entry_blocks() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]] # first
+        x = 0x01
+
+        [[items.sub]]
+        n = 0x11 # one
+
+        [[items]] # second
+        x = 0x02
+
+        [[items.sub]]
+        n = 0x22 # two
+        """)
+    )
+    items = doc.aot("items")
+    displaced = items[0].aot("sub")
+    items[::-1] = items
+    displaced[0]["n"] = 99
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]] # first
+        x = 0x02
+
+        [[items.sub]]
+        n = 0x22 # two
+
+        [[items]] # second
+        x = 0x01
+
+        [[items.sub]]
+        n = 0x11 # one
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_aot_setitem_out_of_range_raises() -> None:
     doc = _aot_doc()
     aot = doc.aot("pkg")
@@ -9121,8 +9560,7 @@ def test_aot_self_assign_is_noop() -> None:
 
 
 def test_aot_cross_doc_assign_negative_index() -> None:
-    """Assigning a foreign AoT entry to a negative index normalises the
-    index (line 2769 in replace_aot_entry_with_clone)."""
+    """A foreign entry can replace the entry at a negative index."""
     src_doc = tomlrt.loads("[[s]]\nv = 99\n")
     dst_doc = tomlrt.loads(
         td("""
