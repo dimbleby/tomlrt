@@ -1403,18 +1403,20 @@ def _new_kv_slot(
     doc: Document,
     owner: AoTEntry | None,
     leading: str,
+    eol: str | None = None,
     key_parts: Sequence[KeyPart] | None = None,
     key_seps: Sequence[str] | None = None,
 ) -> KVSlot:
     """Synthesise a fresh KV slot (recorded when spliced, not here).
 
-    By default ``key_parts`` and ``key_seps`` use canonical synthetic
-    spelling. Callers moving an existing value may supply source spelling.
+    By default ``key_parts``, ``key_seps`` and ``eol`` use canonical
+    synthetic spelling. Callers moving an existing value may supply
+    source spelling, and its end-of-line comment with it.
     """
     return KVSlot(
         leading,
         owner,
-        _default_eol(doc),
+        _default_eol(doc) if eol is None else eol,
         host_path,
         make_keyparts(key) if key_parts is None else tuple(key_parts),
         (".",) * (len(key) - 1) if key_seps is None else tuple(key_seps),
@@ -1453,6 +1455,7 @@ def install_dotted_kv_slot(
     *,
     leaf_parent: Container,
     leading: str | None = None,
+    eol: str | None = None,
     key_parts: Sequence[KeyPart] | None = None,
     key_seps: Sequence[str] | None = None,
 ) -> None:
@@ -1462,9 +1465,10 @@ def install_dotted_kv_slot(
     ``[host, ..., leaf_parent]`` and updates ``_body_tail`` along the
     chain. The caller owns dict storage at ``leaf_parent``.
 
-    ``leading`` overrides the synthesised separator/indent — used by the
-    trivia-preserving graft to carry a cloned source slot's leading
-    (standalone comments) onto the new slot.
+    ``leading`` and ``eol`` override the synthesised separator/indent
+    and line tail — used by the trivia-preserving graft to carry a
+    cloned source slot's standalone comments above the new slot, and
+    its end-of-line comment onto it.
 
     Pre-conditions (checked by caller):
     ``host`` can own the KV scope; the implicit chain already exists;
@@ -1489,6 +1493,7 @@ def install_dotted_kv_slot(
         leading=leading
         if leading is not None
         else _kv_leading_after(_last_body_kv(host), doc),
+        eol=eol,
         key_parts=key_parts,
         key_seps=key_seps,
     )
