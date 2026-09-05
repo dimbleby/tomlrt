@@ -1624,15 +1624,21 @@ def _reset_table_for_rehome(t: Container) -> None:
     as freshly constructed.
 
     Also resets nested non-inline ``Container`` / ``AoT`` children from
-    the same detached subtree, descending unconditionally. Most callers
-    re-root a whole subtree to the same orphan in one pass before any of
-    its tables can be independently touched. The exception is an orphan
-    emptied by adoption: a descendant there may still own slots, whose
-    CST is dropped in favour of synthesis from dict storage.
+    the same detached subtree. Most callers re-root a whole subtree to
+    the same orphan in one pass before any of its tables can be
+    independently touched. The exception is an orphan emptied by
+    adoption: a descendant there may still own slots, whose CST is
+    dropped in favour of synthesis from dict storage.
+
+    A child still living in some other document is a *source* the
+    rehome is going to copy, not part of the subtree being moved, so
+    the descent stops there: resetting it would both steal the user's
+    view and throw away the trivia the copy is about to read.
 
     Used when re-installing a held view that was detached into a
     private orphan ``Document``.
     """
+    root = t._layout_root  # noqa: SLF001
     t._layout_root = None  # noqa: SLF001
     t._path = ()  # noqa: SLF001
     t._host = None  # noqa: SLF001
@@ -1643,6 +1649,8 @@ def _reset_table_for_rehome(t: Container) -> None:
     t._body_tail = None  # noqa: SLF001
 
     for child in dict.values(t):
+        if isinstance(child, _View) and child._layout_root not in (None, root):  # noqa: SLF001
+            continue
         if _is_section(child):
             _reset_table_for_rehome(child)
         elif isinstance(child, AoT):
