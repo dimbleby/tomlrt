@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A table from another document is copied when you assign it, not taken over.
+
 ## [2.2.6] - 2026-08-30
 
 ### Fixed
