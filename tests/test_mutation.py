@@ -5357,8 +5357,41 @@ def test_aot_insert_before_value_equal_entry() -> None:
         """)
 
 
+def test_aot_slice_assign_of_equal_length_leaves_the_document_alone() -> None:
+    """Assigning a slice is assigning its entries, one by one.
+
+    The array's entries need not be contiguous in the document. As long
+    as the slice assigns as many as it covers, nothing moves, so what
+    lies between them stays where it is.
+    """
+    src = td("""
+        [[xs]]
+        a=1
+        [other]
+        b=2
+        [[xs]]
+        c=3
+        """)
+    doc = tomlrt.loads(src)
+    doc.aot("xs")[0:1] = [{"k": 9}]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[xs]]
+        k = 9
+        [other]
+        b=2
+        [[xs]]
+        c=3
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_aot_slice_assign_before_value_equal_entry() -> None:
-    """Slice assignment places by index even when entries compare equal."""
+    """A slice that assigns as many entries as it covers replaces them.
+
+    Each entry is replaced where it stands, so nothing is placed and
+    entries that compare equal cannot be confused for one another.
+    """
     src = td("""
         [[a]] # first
         x = 1
@@ -5369,13 +5402,7 @@ def test_aot_slice_assign_before_value_equal_entry() -> None:
     doc = tomlrt.loads(src)
     aot = doc.aot("a")
     aot[0:1] = [{"x": 1}]
-    assert tomlrt.dumps(doc) == td("""
-        [[a]]
-        x = 1
-
-        [[a]] # second
-        x = 1
-        """)
+    assert tomlrt.dumps(doc) == src
 
 
 def test_aot_tail_insert_leaves_interleaved_section_alone() -> None:

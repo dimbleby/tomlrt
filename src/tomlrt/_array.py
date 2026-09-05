@@ -706,29 +706,33 @@ class AoT(_View, list["Table"]):
                     self, index, [_make_unattached_entry(v) for v in typed_values]
                 )
                 return
-            # Contiguous replacement: delete, append via dispatcher,
-            # then renormalise to the requested order.
-            if index.step is None or index.step == 1:
-                start = index.indices(len(self))[0]
-                if indices:
-                    _layout_ops.remove_aot_entries(self, indices)
-                # New entries are appended at the tail, so they only need
-                # moving if that is not where they belong. Comparing orders
-                # instead would compare entries by value, and value-equal
-                # entries are not interchangeable: the reorder is keyed on
-                # identity.
-                needs_reorder = bool(typed_values) and start != len(self)
-                new_entries = [self._add_entry_attached(v) for v in typed_values]
-                if needs_reorder:
-                    cur: list[Table] = list(self)[: -len(new_entries)]
-                    for off, e in enumerate(new_entries):
-                        cur.insert(start + off, e)
-                    _layout_ops.renormalise_aot_order(self, cur)
+            # Same length, so every entry keeps its place: replace each
+            # one where it stands, exactly as ``aot[i] = value`` does,
+            # and leave the rest of the document alone.
+            if len(typed_values) == len(indices):
+                _layout_ops.replace_aot_entries(
+                    self, zip(indices, typed_values, strict=True)
+                )
                 return
-            # Extended slice: length already matched, so replace in place.
-            _layout_ops.replace_aot_entries(
-                self, zip(indices, typed_values, strict=True)
-            )
+            # The array changes length, so the entries after the slice
+            # move: delete, append via dispatcher, then renormalise to
+            # the requested order. Only a contiguous slice reaches here
+            # — an extended one of the wrong length was rejected above.
+            start = index.indices(len(self))[0]
+            if indices:
+                _layout_ops.remove_aot_entries(self, indices)
+            # New entries are appended at the tail, so they only need
+            # moving if that is not where they belong. Comparing orders
+            # instead would compare entries by value, and value-equal
+            # entries are not interchangeable: the reorder is keyed on
+            # identity.
+            needs_reorder = bool(typed_values) and start != len(self)
+            new_entries = [self._add_entry_attached(v) for v in typed_values]
+            if needs_reorder:
+                cur: list[Table] = list(self)[: -len(new_entries)]
+                for off, e in enumerate(new_entries):
+                    cur.insert(start + off, e)
+                _layout_ops.renormalise_aot_order(self, cur)
             return
         entry = _prepare_aot_entries((value,))[0]
         if self._layout_root is None:
