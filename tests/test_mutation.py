@@ -2197,6 +2197,37 @@ def test_aot_pop_first_entry_takes_owned_subsections_with_it() -> None:
     assert _reparses(out) == {"pkg": [{"name": "b"}, {"name": "c"}]}
 
 
+def test_aot_pop_keeps_the_entry_it_hands_back() -> None:
+    """A popped entry leaves with its own lines, as a popped section does.
+
+    Rebuilt from its data instead, it would come back as ``x = 1`` under
+    a bare header, having dropped every comment and the spelling of its
+    own number.
+    """
+    doc = tomlrt.loads(
+        td("""
+        [[items]] # first
+        x = 0x01 # one
+
+        [[items]] # second
+        x = 0x02 # two
+        """)
+    )
+    items = doc.aot("items")
+
+    items.append(items.pop(0))
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]] # second
+        x = 0x02 # two
+
+        [[items]] # first
+        x = 0x01 # one
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_aot_pop_negative_index() -> None:
     doc = _aot_doc()
     aot = doc.aot("pkg")

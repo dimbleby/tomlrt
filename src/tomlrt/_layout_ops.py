@@ -1129,25 +1129,50 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         unlink_slot(slot, doc)
 
     if transplanting:
-        # Keep inline descendants live against the orphan: their backing
-        # CST lives inside a transplanted KV, so re-pointing (rather than
-        # resetting) lets edits through a held reference flow into the
-        # orphaned slot value, which a later rehome moves intact.
         assert isinstance(val, (_container.Container, _array.AoT))
-        displaced = _displaced_inline_views(val)
-        orphan = _container.Document()
-        orphan._newline = doc._newline  # noqa: SLF001
-        orphan._is_private = True  # noqa: SLF001
-        _splice_block_after(ordered_for_transplant, None, orphan)
-        for view in itertools.chain(subtree_containers, subtree_aots, displaced):
-            view._layout_root = orphan  # noqa: SLF001
-        _root_orphan_subtree(orphan, val, ordered_for_transplant)
+        transplant_to_orphan(
+            val,
+            ordered_for_transplant,
+            doc._newline,  # noqa: SLF001
+            itertools.chain(subtree_containers, subtree_aots),
+        )
     else:
         # No orphan (e.g. a top-level inline value): reset so a held
         # reference reports detached and can re-attach cleanly.
         reset_displaced_views(val)
 
     dict.__delitem__(c, key)
+
+
+def transplant_to_orphan(
+    val: Container | AoT,
+    slots: list[Slot],
+    nl: str,
+    views: Iterable[Container | Array | AoT],
+) -> Document:
+    """Give ``val``'s unlinked ``slots`` a private document to live on.
+
+    What is removed from a document keeps its own layout: the slots move
+    to a document of their own rather than being dropped, so a held view
+    goes on working and reinstalling it elsewhere writes the lines the
+    source had rather than re-deriving them from its data.
+
+    Inline descendants are re-pointed rather than reset: their backing
+    CST lives inside a transplanted KV, so an edit through a held
+    reference flows into the orphaned slot value, which a later rehome
+    moves intact.
+
+    ``slots`` must be in doc-stream order — the orphan is a document,
+    with a linked list of its own to keep straight.
+    """
+    orphan = _container.Document()
+    orphan._newline = nl  # noqa: SLF001
+    orphan._is_private = True  # noqa: SLF001
+    _splice_block_after(slots, None, orphan)
+    for view in itertools.chain(views, _displaced_inline_views(val)):
+        view._layout_root = orphan  # noqa: SLF001
+    _root_orphan_subtree(orphan, val, slots)
+    return orphan
 
 
 def _walk_view_tree(vals: Iterable[_View], visit: Callable[[_View], None]) -> None:
@@ -3367,8 +3392,6 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     Scrubbing the union in reverse document order keeps clear and
     slice-delete linear rather than quadratic in sibling count.
     """
-    from tomlrt._container import _reset_table_for_rehome  # noqa: PLC0415
-
     idx_list = list(indices)
     assert idx_list
     doc = aot._attached_doc  # noqa: SLF001
@@ -3391,9 +3414,19 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     union_owned: set[Slot] = set(union_owned_ordered)
     assert len(union_owned) == len(union_owned_ordered)
 
+    # The entries themselves keep their internal caches: they are moving
+    # to a document of their own, not being taken apart.
+    subtree_containers: list[Container] = []
+    subtree_aots: list[AoT] = []
+    for entry_table in popped_entries:
+        _collect_subtree(entry_table, subtree_containers, subtree_aots, lambda _s: None)
+
     # Reverse order unfiles as late in each cache as it can, so every
     # deletion shifts as little as possible.
-    _scrub_owned_slots_via_backptrs(reversed(union_owned_ordered))
+    _scrub_owned_slots_via_backptrs(
+        reversed(union_owned_ordered),
+        skip_container_ids=frozenset(id(c) for c in subtree_containers),
+    )
 
     # Body-tail invalidation on the parent chain, walking all the way to
     # the doc root: the popped slots' min bottom-depth is 0 (every popped
@@ -3413,14 +3446,19 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     for i in reversed(idx_list):
         list.pop(aot, i)
 
-    # Reset each popped entry in place so it presents as a freshly-
-    # constructed unattached Table (matches `delete_key`'s orphan-
-    # transplant model). `_layout_root` is set to `doc` momentarily so
-    # `_reset_table_for_rehome`'s recurse-filter knows which children
-    # belong to this subtree.
-    for entry_table in popped_entries:
-        entry_table._layout_root = doc  # noqa: SLF001
-        _reset_table_for_rehome(entry_table)
+    # The popped entries move to a private document, keeping their own
+    # lines, exactly as a deleted section does. An array-of-tables is
+    # what their ``[[path]]`` headers spell, so that is what holds them
+    # there, at the path they came from.
+    holder = _array.AoT()
+    holder._path = aot._path  # noqa: SLF001
+    list.extend(holder, popped_entries)
+    transplant_to_orphan(
+        holder,
+        union_owned_ordered,
+        doc._newline,  # noqa: SLF001
+        itertools.chain([holder], subtree_containers, subtree_aots),
+    )
 
     last_key = aot._path[-1]  # noqa: SLF001
     if len(aot) == 0 and not parent._index.get(last_key):  # noqa: SLF001
