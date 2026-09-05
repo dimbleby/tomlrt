@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An assignment reads its source first, so `pkgs[::-1] = pkgs` swaps the entries
   and `pkgs[0] = {"copy": pkgs[0]}` copies what was there.
 - A table from another document is copied when you assign it, not taken over.
+- Removing an entry from an array of tables keeps its formatting, so putting it
+  back somewhere keeps its comments.
 
 ## [2.2.6] - 2026-08-30
 
