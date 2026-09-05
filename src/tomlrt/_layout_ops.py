@@ -27,6 +27,7 @@ import contextlib
 import copy
 import itertools
 import operator
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -57,7 +58,7 @@ from tomlrt._values import (
 from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Sequence
 
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table, TomlInput
@@ -3417,95 +3418,227 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     return popped_entries
 
 
-def replace_aot_entry_with_clone(
-    aot: AoT,
-    index: int,
-    src_entry_table: Container,
-) -> None:
-    """Replace ``aot[index]`` with a deep clone of ``src_entry_table``.
+def _view_route(view: Container | AoT) -> list[tuple[str, int | None]]:
+    """The ``(key, entry ordinal)`` steps from a document down to ``view``.
 
-    Preserves the *destination* entry header's leading trivia (and
-    any pre-header comment block) while replacing the body with a clone
-    of the source entry's slots, preserving source per-KV trivia.
-
-    Both entries must be attached AoT-entry tables.
+    A path alone cannot say which entry of an array-of-tables a view
+    sits in, so each step records the ordinal too, and only for the
+    steps that pass through one.
     """
-    index = _norm_aot_index(aot, index)
+    route: list[tuple[str, int | None]] = []
+    cur: Container | AoT = view
+    while cur._path:  # noqa: SLF001
+        host = cur._host  # noqa: SLF001
+        assert host is not None, "an attached view below the root has a host"
+        assert isinstance(host, _container.Container)
+        key = cur._path[-1]  # noqa: SLF001
+        bound = dict.__getitem__(host, key)
+        ordinal = (
+            next(i for i, entry in enumerate(bound) if entry is cur)
+            if isinstance(bound, _array.AoT) and bound is not cur
+            else None
+        )
+        route.append((key, ordinal))
+        cur = host
+    route.reverse()
+    return route
 
-    doc = aot._attached_doc  # noqa: SLF001
-    path = aot._path  # noqa: SLF001
-    assert path  # invariant of _attached_doc
 
-    dst_entry_table = aot[index]
-    if dst_entry_table is src_entry_table:
+def _endangered_snapshot(
+    view: Container | AoT, snapshots: dict[int, Document]
+) -> Container | AoT:
+    """``view`` as it is now, in a copy of the document it lives in.
+
+    One copy serves every source taken from the same document, and it
+    is a byte-exact one, so installing from it preserves the source's
+    own trivia exactly as installing from the original would.
+    """
+    root = view._layout_root  # noqa: SLF001
+    assert root is not None, "only an attached view can be endangered"
+    snapshot = snapshots.get(id(root))
+    if snapshot is None:
+        snapshot = copy.copy(root)
+        snapshots[id(root)] = snapshot
+    cur: Container | AoT = snapshot
+    for key, ordinal in _view_route(view):
+        assert isinstance(cur, _container.Container)
+        cur = dict.__getitem__(cur, key)
+        if ordinal is not None:
+            assert isinstance(cur, _array.AoT)
+            cur = cur[ordinal]
+    return cur
+
+
+def _capture_replacement_value(
+    value: TomlInput, endangered: set[int], snapshots: dict[int, Document]
+) -> TomlInput:
+    """``value`` with everything the write is about to destroy replaced.
+
+    A source the destination still holds is swapped for a snapshot of
+    itself; a detached factory is repaired in place, since installing it
+    consumes it anyway; a plain mapping or list is rebuilt. Everything
+    else — a scalar, an inline value, a view the write leaves alone —
+    is installed as it stands, so identity and first-occurrence
+    ownership are decided by the install, not here.
+    """
+    if is_scalar(value):
+        return value
+    if isinstance(value, (_container.Container, _array.AoT)):
+        if id(value) in endangered:
+            return _endangered_snapshot(value, snapshots)
+        # A detached view's storage is all it has, so that is where its
+        # own sources are captured; an attached one is copied from its
+        # slots at install time, which reads nothing this write touches.
+        if value._layout_root is None:  # noqa: SLF001
+            _capture_into_factory(value, endangered, snapshots)
+        return value
+    if is_inline_value(value):
+        return value
+    if isinstance(value, Mapping):
+        return {
+            k: _capture_replacement_value(v, endangered, snapshots)
+            for k, v in value.items()
+        }
+    assert isinstance(value, list)
+    return [_capture_replacement_value(v, endangered, snapshots) for v in value]
+
+
+def _capture_into_factory(
+    factory: Container | AoT, endangered: set[int], snapshots: dict[int, Document]
+) -> None:
+    """Repair a detached source's own storage, which is all it has.
+
+    The factory is the object the install rehomes, so its contents
+    cannot be captured beside it; they are captured in it. Attachment
+    rewrites that storage anyway, and only the first occurrence of a
+    factory is rehomed — later ones copy what the first became — so no
+    caller can tell the difference.
+    """
+    if isinstance(factory, _array.AoT):
+        for entry in factory:
+            _capture_into_factory(entry, endangered, snapshots)
         return
+    for key, value in list(dict.items(factory)):
+        dict.__setitem__(
+            factory, key, _capture_replacement_value(value, endangered, snapshots)
+        )
 
-    dst_entry = dst_entry_table._owner_aot_entry  # noqa: SLF001
-    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    assert dst_entry is not None
-    assert src_entry is not None
 
-    src_slots = _gather_subtree_slots(src_entry_table)
-    # src_slots[0] is guaranteed src_entry_table's own header: an array
-    # entry's content can never physically precede its own header (unlike
-    # a plain table's, which a nested descendant can forward-declare), so
-    # unlike _gather_headered_subtree_slots this never needs identity
-    # lookup.
-    src_prefix = src_entry.path
+def _endangered_views(tables: Iterable[Table]) -> set[int]:
+    """The views whose contents the replacement is about to destroy.
 
-    # Save the destination header (we keep it in place, only its body
-    # changes). The header's leading carries any pre-header comment
-    # block — that's the trivia the test pins.
-    dst_header = dst_entry.header
+    Clearing an entry empties the entry itself and everything that
+    spells it from above — its ancestor containers, and any AoT they
+    reach it through. A source that is one of those has to be read
+    before the write, not during it. A descendant is not one of them:
+    it leaves with its body intact in a private orphan, which the
+    install adopts or copies from.
 
-    # Pre-clone source body before any destructive cleanup, so a clone
-    # failure can't leave the destination half-emptied. Also covers
-    # the source-inside-destination case (e.g. self-nested clone).
-    cloned_body = (
-        _clone_entry_slots(
-            src_slots[1:],
-            new_entry=dst_entry,
-            body_owner=dst_entry,
-            src_prefix=src_prefix,
-            target_prefix=path,
+    A destination's header is filed on exactly those containers, so its
+    back-pointers name them without climbing any chain by hand.
+    """
+    endangered: set[int] = set()
+    for table in tables:
+        owner = table._owner_aot_entry  # noqa: SLF001
+        assert owner is not None
+        for ref in owner.header._refs:  # noqa: SLF001
+            endangered.add(id(ref.container))
+            key = ref.local_key
+            if key is not None:
+                bound = dict.get(ref.container, key)
+                if isinstance(bound, _array.AoT):
+                    endangered.add(id(bound))
+    return endangered
+
+
+@dataclass(slots=True)
+class _Replacement:
+    """One entry's new body, read before any body is written.
+
+    A whole entry source is captured as the clone of its slots, which
+    carries the source's own line-by-line trivia. Anything else is
+    captured as the values its keys will be installed from, which is
+    all an ordinary assignment ever needed.
+    """
+
+    table: Table
+    slots: list[Slot] | None
+    items: list[tuple[str, TomlInput]]
+
+
+def _capture_replacement(
+    aot: AoT,
+    table: Table,
+    body: Mapping[str, TomlInput],
+    endangered: set[int],
+    snapshots: dict[int, Document],
+) -> _Replacement:
+    """What ``table`` will be given, taken while every source is intact."""
+    doc = aot._attached_doc  # noqa: SLF001
+    if (
+        isinstance(body, _container.Table)
+        and body._layout_root is not None  # noqa: SLF001
+        and body._is_own_aot_entry  # noqa: SLF001
+    ):
+        cloned, _ = _clone_entry_slots(
+            _gather_subtree_slots(body)[1:],
+            new_entry=table._owner_aot_entry,  # noqa: SLF001
+            body_owner=table._owner_aot_entry,  # noqa: SLF001
+            src_prefix=body._path,  # noqa: SLF001
+            target_prefix=aot._path,  # noqa: SLF001
             dst_newline=doc._newline,  # noqa: SLF001
-        )[0]
-        if len(src_slots) > 1
-        else []
+        )
+        return _Replacement(table, cloned, [])
+    return _Replacement(
+        table,
+        None,
+        [
+            (k, _capture_replacement_value(v, endangered, snapshots))
+            for k, v in body.items()
+        ],
     )
 
-    # Reuse the structural-delete path to tear down the destination's
-    # body: orphans held sub-sections / AoTs into a PrivateRoot,
-    # unlinks all body slots from the doc, recomputes tails, and
-    # cleans up nested AoTEntry membership. The destination header
-    # stays in place because it is not a dict-storage entry.
-    dst_entry_table.clear()
-    _splice_block_after(cloned_body, dst_header, doc)
 
-    # Rebuild views / dict storage from the cloned body.
+def _install_replacement(aot: AoT, replacement: _Replacement) -> None:
+    """Put a captured body under its destination's retained header."""
+    table = replacement.table
+    table.clear()
+    if replacement.slots is None:
+        for key, value in replacement.items:
+            table._setitem_validated(key, value)  # noqa: SLF001
+        return
+    owner = table._owner_aot_entry  # noqa: SLF001
+    assert owner is not None
+    doc = aot._attached_doc  # noqa: SLF001
+    _splice_block_after(replacement.slots, owner.header, doc)
     _populate_entry_views(
-        entry_table=dst_entry_table,
-        cloned_slots=cloned_body,
-        target_prefix=path,
+        entry_table=table,
+        cloned_slots=replacement.slots,
+        target_prefix=aot._path,  # noqa: SLF001
         doc=doc,
     )
 
 
-def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, TomlInput]) -> None:
-    """Replace ``aot[index]`` in place.
+def replace_aot_entries(
+    aot: AoT, replacements: Iterable[tuple[int, Mapping[str, TomlInput]]]
+) -> None:
+    """Replace entry bodies in place, beneath their own headers and views.
 
-    Keeps the entry's header slot and live `Table` view; just clears
-    the body and re-populates from ``body``.
-
-    O(m) in the size of ``body``, independent of AoT length and
-    document size. Header position and `_refs` ordering are preserved
-    because no slot splicing is involved.
+    Every source is read first and every body written afterwards, so an
+    assignment whose sources overlap its destinations — ``aot[::-1] =
+    aot``, or a source nested somewhere inside one of them — sees the
+    document as it was when the assignment began.
     """
-    entry_table = aot[_norm_aot_index(aot, index)]
-    items = list(body.items())
-    entry_table.clear()
-    for k, v in items:
-        entry_table._setitem_validated(k, v)  # noqa: SLF001
+    targets = [(aot[_norm_aot_index(aot, i)], body) for i, body in replacements]
+    endangered = _endangered_views(table for table, _ in targets)
+    snapshots: dict[int, Document] = {}
+    captured = [
+        _capture_replacement(aot, table, body, endangered, snapshots)
+        for table, body in targets
+        if table is not body
+    ]
+    for replacement in captured:
+        _install_replacement(aot, replacement)
 
 
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
@@ -3923,6 +4056,6 @@ __all__ = [
     "remove_aot_entry",
     "renormalise_aot_order",
     "reorder_container",
-    "replace_aot_entry",
+    "replace_aot_entries",
     "reposition_install",
 ]

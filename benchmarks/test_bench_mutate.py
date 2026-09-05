@@ -157,6 +157,58 @@ def test_replace_aot_slice(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_aot_doc(500)), rounds=100)
 
 
+@pytest.mark.parametrize("source", ["entry", "mapping"])
+def test_replace_aot_extended_slice(benchmark: BenchmarkFixture, source: str) -> None:
+    def work(doc: Document) -> None:
+        items = doc.aot("items")
+        values = (
+            list(items[::2]) if source == "entry" else [{"x": i} for i in range(50)]
+        )
+        items[98::-2] = values
+
+    benchmark.pedantic(work, setup=_parsed(_aot_doc(100)), rounds=100)
+
+
+@pytest.mark.parametrize("source", ["entry", "mapping", "aot", "inline", "factory"])
+@pytest.mark.parametrize("size", [2, 1000])
+def test_replace_aot_entry(benchmark: BenchmarkFixture, source: str, size: int) -> None:
+    src = _aot_doc(50) + "\n[template]\n"
+    if source == "aot":
+        src += "".join(f"[[template.nested]]\nx = {i}\n" for i in range(size))
+    else:
+        src += "nested = [" + ", ".join(str(i) for i in range(size)) + "]\n"
+
+    def work(doc: Document) -> None:
+        items = doc.aot("items")
+        if source == "entry":
+            items[0] = items[-1]
+        elif source == "mapping":
+            items[0] = {"x": 1}
+        elif source == "factory":
+            items[0] = {"value": tomlrt.Table.inline({"nested": list(range(size))})}
+        else:
+            items[0] = doc.table("template")
+
+    benchmark.pedantic(work, setup=_parsed(src), rounds=200)
+
+
+@pytest.mark.parametrize("source", ["section", "aot"])
+@pytest.mark.parametrize("size", [2, 1000])
+def test_replace_aot_from_ancestor(
+    benchmark: BenchmarkFixture, source: str, size: int
+) -> None:
+    src = "[parent]\nroot = 1\n\n" + _aot_doc(size).replace(
+        "[[items]]", "[[parent.items]]"
+    )
+
+    def work(doc: Document) -> None:
+        parent = doc.table("parent")
+        items = parent.aot("items")
+        items[0] = {"nested": parent if source == "section" else items}
+
+    benchmark.pedantic(work, setup=_parsed(src), rounds=100)
+
+
 def test_overwrite_section_inside_aot_entry(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         doc.aot("a")[0].table("b")["c"] = 5

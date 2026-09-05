@@ -634,19 +634,6 @@ class AoT(_View, list["Table"]):
                 return _layout_ops.clone_table_as_aot_entry(self, value)
         return _layout_ops.add_aot_entry(self, value)
 
-    def _replace_entry_attached(
-        self, index: int, value: Mapping[str, TomlInput]
-    ) -> None:
-        """Dispatch in-place replacement of an attached AoT entry."""
-        if (
-            isinstance(value, _container.Table)
-            and value._layout_root is not None  # noqa: SLF001
-            and value._is_own_aot_entry  # noqa: SLF001
-        ):
-            _layout_ops.replace_aot_entry_with_clone(self, index, value)
-            return
-        _layout_ops.replace_aot_entry(self, index, value)
-
     # Each of these must route attached vs. detached AoTs differently:
     # inherited `list` behaviour alone would corrupt the doc-stream.
 
@@ -739,14 +726,15 @@ class AoT(_View, list["Table"]):
                     _layout_ops.renormalise_aot_order(self, cur)
                 return
             # Extended slice: length already matched, so replace in place.
-            for i, v in zip(indices, typed_values, strict=True):
-                self._replace_entry_attached(i, v)
+            _layout_ops.replace_aot_entries(
+                self, zip(indices, typed_values, strict=True)
+            )
             return
         entry = _prepare_aot_entries((value,))[0]
         if self._layout_root is None:
             list.__setitem__(self, index, _make_unattached_entry(entry))
             return
-        self._replace_entry_attached(operator.index(index), entry)
+        _layout_ops.replace_aot_entries(self, ((operator.index(index), entry),))
 
     @override
     def append(self, value: Table | Mapping[str, TomlInput]) -> None:

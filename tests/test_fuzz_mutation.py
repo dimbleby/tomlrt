@@ -223,7 +223,7 @@ def _mutate_aot(node: AoT, rng: random.Random, pool: list[tuple[str, _Target]]) 
     # foreign-document) rather than a fresh dict, exercising the AoT
     # clone path.
     tables = [t for kind, t in pool if kind == "container" and isinstance(t, Table)]
-    ops = ["append", "insert", "pop", "reverse", "sort"]
+    ops = ["append", "insert", "pop", "reverse", "sort", "replace_slice"]
     if tables:
         ops.append("clone_table")
     op = rng.choice(ops)
@@ -239,6 +239,26 @@ def _mutate_aot(node: AoT, rng: random.Random, pool: list[tuple[str, _Target]]) 
         node.reverse()
     elif op == "sort":
         node.sort(key=lambda t: repr(dict(t)))
+    elif op == "replace_slice" and node:
+        target = slice(None, None, rng.choice([-2, -1, 2]))
+        before = node.to_list()
+        values: list[dict[str, TomlInput] | Table] = []
+        expected = []
+        for _ in range(len(range(*target.indices(len(node))))):
+            source = rng.randrange(len(node))
+            shape = rng.choice(["entry", "nested", "factory"])
+            if shape == "entry":
+                values.append(node[source])
+                expected.append(before[source])
+            elif shape == "nested":
+                values.append({"nested": node[source]})
+                expected.append({"nested": before[source]})
+            else:
+                values.append({"factory": Table.section({"nested": node[source]})})
+                expected.append({"factory": {"nested": before[source]}})
+        node[target] = values
+        before[target] = expected
+        assert deep_equal(node.to_list(), before)
 
 
 def _run_fuzz_programs(

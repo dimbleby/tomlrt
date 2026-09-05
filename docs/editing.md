@@ -104,6 +104,15 @@ entry["version"] = "1.0"
 An array-of-tables with no entries has no `[[key]]` syntax, so it serialises as
 `key = []` — which re-parses as an empty inline `Array`, not an `AoT`.
 
+Integer and extended-slice assignment replace attached entry bodies in place:
+the destination headers (including comments) and held entry views stay put.
+Overlapping sources are captured before any entry body changes, so
+`pkgs[::-1] = pkgs` exchanges the bodies, and
+`pkgs[0] = {"nested": pkgs[0]}` copies the original body into a nested section.
+This also works through nested mappings, lists and factory inputs. Fresh typed values
+still attach at their first installed occurrence; adopting an orphan child
+still removes it from its old parent.
+
 ## Reshaping the layout
 
 Editing changes a document's _data_. To reshape its _layout_ — sort
