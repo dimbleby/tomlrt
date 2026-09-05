@@ -1773,23 +1773,6 @@ def _is_inline_table(v: object) -> TypeGuard[Container]:
     return isinstance(v, Container) and v._inline  # noqa: SLF001
 
 
-def _hosts_site(value: Container | AoT, parent: Container) -> bool:
-    """True iff ``value`` is one of the views an install into ``parent`` writes.
-
-    That is ``parent`` itself, one of its ancestors, or an
-    array-of-tables reached along the way.
-    """
-    cur: Container | None = parent
-    while cur is not None:
-        if cur is value:
-            return True
-        host = cur._parent  # noqa: SLF001
-        if host is not None and dict.get(host, cur._path[-1]) is value:  # noqa: SLF001
-            return True
-        cur = host
-    return False
-
-
 def _snapshot_for_overlapping_install(
     parent: Container, key: str, value: TomlInput
 ) -> TomlInput:
@@ -1800,11 +1783,6 @@ def _snapshot_for_overlapping_install(
     intermediates that deletion resets. Other descendants retain
     independent slot anchors and use the trivia-preserving
     private-orphan adopt path.
-
-    "Lives in" is asked of the views themselves, not of their paths: an
-    array-of-tables gives all its entries one path, so a sibling entry
-    prefixes the destination without ever containing it, and copies
-    perfectly well from where it is.
 
     The snapshot is the same view in a byte-exact copy of the document,
     so it is read exactly as the source would have been.
@@ -1822,7 +1800,7 @@ def _snapshot_for_overlapping_install(
         and len(value_path) - len(dest_path) >= 2
         and value_path[: len(dest_path)] == dest_path
     )
-    if not (_hosts_site(value, parent) or descendant_overlap):
+    if not (_layout_ops.hosts_site(value, parent) or descendant_overlap):
         return value
     return _layout_ops.stable_snapshot(value)
 

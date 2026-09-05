@@ -3450,10 +3450,10 @@ def stable_snapshot(view: Container | AoT) -> Container | AoT:
     For a source an install would otherwise damage or grow while
     reading it.
     """
-    return _endangered_snapshot(view, {})
+    return _snapshot_in_copy(view, {})
 
 
-def _endangered_snapshot(
+def _snapshot_in_copy(
     view: Container | AoT, snapshots: dict[int, Document]
 ) -> Container | AoT:
     """``view`` as it is now, in a copy of the document it lives in.
@@ -3463,7 +3463,7 @@ def _endangered_snapshot(
     own trivia exactly as installing from the original would.
     """
     root = view._layout_root  # noqa: SLF001
-    assert root is not None, "only an attached view can be endangered"
+    assert root is not None, "only an attached view has a document to copy"
     snapshot = snapshots.get(id(root))
     if snapshot is None:
         snapshot = copy.copy(root)
@@ -3479,7 +3479,7 @@ def _endangered_snapshot(
 
 
 def _capture_replacement_value(
-    value: TomlInput, endangered: set[int], snapshots: dict[int, Document]
+    value: TomlInput, sites: Sequence[Table], snapshots: dict[int, Document]
 ) -> TomlInput:
     """``value`` with everything the write is about to destroy replaced.
 
@@ -3493,27 +3493,26 @@ def _capture_replacement_value(
     if is_scalar(value):
         return value
     if isinstance(value, (_container.Container, _array.AoT)):
-        if id(value) in endangered:
-            return _endangered_snapshot(value, snapshots)
+        if any(hosts_site(value, site) for site in sites):
+            return _snapshot_in_copy(value, snapshots)
         # A detached view's storage is all it has, so that is where its
         # own sources are captured; an attached one is copied from its
         # slots at install time, which reads nothing this write touches.
         if value._layout_root is None:  # noqa: SLF001
-            _capture_into_factory(value, endangered, snapshots)
+            _capture_into_factory(value, sites, snapshots)
         return value
     if is_inline_value(value):
         return value
     if isinstance(value, Mapping):
         return {
-            k: _capture_replacement_value(v, endangered, snapshots)
-            for k, v in value.items()
+            k: _capture_replacement_value(v, sites, snapshots) for k, v in value.items()
         }
     assert isinstance(value, list)
-    return [_capture_replacement_value(v, endangered, snapshots) for v in value]
+    return [_capture_replacement_value(v, sites, snapshots) for v in value]
 
 
 def _capture_into_factory(
-    factory: Container | AoT, endangered: set[int], snapshots: dict[int, Document]
+    factory: Container | AoT, sites: Sequence[Table], snapshots: dict[int, Document]
 ) -> None:
     """Repair a detached source's own storage, which is all it has.
 
@@ -3525,39 +3524,36 @@ def _capture_into_factory(
     """
     if isinstance(factory, _array.AoT):
         for entry in factory:
-            _capture_into_factory(entry, endangered, snapshots)
+            _capture_into_factory(entry, sites, snapshots)
         return
     for key, value in list(dict.items(factory)):
         dict.__setitem__(
-            factory, key, _capture_replacement_value(value, endangered, snapshots)
+            factory, key, _capture_replacement_value(value, sites, snapshots)
         )
 
 
-def _endangered_views(tables: Iterable[Table]) -> set[int]:
-    """The views whose contents the replacement is about to destroy.
+def hosts_site(view: Container | AoT, site: Container) -> bool:
+    """True iff writing ``site`` writes ``view`` too.
 
-    Clearing an entry empties the entry itself and everything that
-    spells it from above — its ancestor containers, and any AoT they
-    reach it through. A source that is one of those has to be read
-    before the write, not during it. A descendant is not one of them:
-    it leaves with its body intact in a private orphan, which the
-    install adopts or copies from.
+    That is ``site`` itself, one of its ancestors, or an
+    array-of-tables reached along the way — the views a source has to
+    be read out of before the write, because the write is inside them.
+    A descendant is not one of them: it leaves with its body intact in
+    a private orphan, which an install adopts or copies from.
 
-    A destination's header is filed on exactly those containers, so its
-    back-pointers name them without climbing any chain by hand.
+    The question is asked of the views themselves. A path cannot answer
+    it: an array-of-tables gives all its entries one path, so a sibling
+    entry prefixes the site without ever containing it.
     """
-    endangered: set[int] = set()
-    for table in tables:
-        owner = table._owner_aot_entry  # noqa: SLF001
-        assert owner is not None
-        for ref in owner.header._refs:  # noqa: SLF001
-            endangered.add(id(ref.container))
-            key = ref.local_key
-            if key is not None:
-                bound = dict.get(ref.container, key)
-                if isinstance(bound, _array.AoT):
-                    endangered.add(id(bound))
-    return endangered
+    cur: Container | None = site
+    while cur is not None:
+        if cur is view:
+            return True
+        host = cur._parent  # noqa: SLF001
+        if host is not None and dict.get(host, cur._path[-1]) is view:  # noqa: SLF001
+            return True
+        cur = host
+    return False
 
 
 @dataclass(slots=True)
@@ -3579,7 +3575,7 @@ def _capture_replacement(
     aot: AoT,
     table: Table,
     body: Mapping[str, TomlInput],
-    endangered: set[int],
+    sites: Sequence[Table],
     snapshots: dict[int, Document],
 ) -> _Replacement:
     """What ``table`` will be given, taken while every source is intact."""
@@ -3601,10 +3597,7 @@ def _capture_replacement(
     return _Replacement(
         table,
         None,
-        [
-            (k, _capture_replacement_value(v, endangered, snapshots))
-            for k, v in body.items()
-        ],
+        [(k, _capture_replacement_value(v, sites, snapshots)) for k, v in body.items()],
     )
 
 
@@ -3639,10 +3632,10 @@ def replace_aot_entries(
     document as it was when the assignment began.
     """
     targets = [(aot[_norm_aot_index(aot, i)], body) for i, body in replacements]
-    endangered = _endangered_views(table for table, _ in targets)
+    sites = [table for table, _ in targets]
     snapshots: dict[int, Document] = {}
     captured = [
-        _capture_replacement(aot, table, body, endangered, snapshots)
+        _capture_replacement(aot, table, body, sites, snapshots)
         for table, body in targets
         if table is not body
     ]
@@ -4062,6 +4055,7 @@ __all__ = [
     "attach_empty_aot",
     "attach_section_at",
     "delete_key",
+    "hosts_site",
     "remove_aot_entry",
     "renormalise_aot_order",
     "reorder_container",
