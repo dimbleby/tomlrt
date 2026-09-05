@@ -941,14 +941,15 @@ def test_cross_doc_implicit_table_graft_preserves_trivia() -> None:
     """Grafting an implicit (dotted) table keeps its body trivia and style.
 
     An implicit table's leaf content lives in dotted keys hosted above
-    it; cloning each source slot's value + leading keeps standalone
-    comments, string style, number format, and inline-array pad that
-    re-synthesising from the logical value would drop. Sub-sections clone
-    too, and the source's header-less (dotted) shape is preserved.
+    it; cloning each source slot's value and whole-line trivia keeps
+    standalone and end-of-line comments, string style, number format,
+    and inline-array pad that re-synthesising from the logical value
+    would drop. Sub-sections clone too, and the source's header-less
+    (dotted) shape is preserved.
     """
     d1 = tomlrt.loads(
         td("""
-        a.x = 1
+        a.x = 1 # why x
         # why lit
         a.lit = 'literal'
         a.hex = 0xFF
@@ -962,7 +963,7 @@ def test_cross_doc_implicit_table_graft_preserves_trivia() -> None:
     out = tomlrt.dumps(d2)
     assert out == td("""
         [tool]
-        z.x = 1
+        z.x = 1 # why x
         # why lit
         z.lit = 'literal'
         z.hex = 0xFF

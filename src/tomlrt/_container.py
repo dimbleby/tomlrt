@@ -1716,10 +1716,11 @@ def _install_dotted_direct_kvs(
 
     ``host`` is the nearest header-bearing ancestor at-or-above
     ``dst_parent`` (or the doc / AoT-entry root). Creates implicit
-    intermediates as needed. Each value's CST and leading trivia are
+    intermediates as needed. Each value's CST and whole-line trivia are
     deep-cloned from the corresponding source slot so string/number
-    style, inline-array pad, and standalone comments survive — a
-    re-synthesis from the logical value would drop all of those.
+    style, inline-array pad, and both standalone and end-of-line
+    comments survive — a re-synthesis from the logical value would drop
+    all of those.
     """
     from tomlrt._build import _decode_value  # noqa: PLC0415
 
@@ -1740,6 +1741,7 @@ def _install_dotted_direct_kvs(
         cst = copy.deepcopy(src_slot.value)
         _retarget_to_doc(cst, doc)
         leading = retarget_newlines(src_slot.leading, doc._newline)  # noqa: SLF001
+        eol = retarget_newlines(src_slot.eol, doc._newline)  # noqa: SLF001
         decoded = _decode_value(cst, doc, destination, k, owner)
         _layout_ops.install_dotted_kv_slot(
             host,
@@ -1747,6 +1749,7 @@ def _install_dotted_direct_kvs(
             cst,
             leaf_parent=destination,
             leading=leading,
+            eol=eol,
         )
         dict.__setitem__(destination, k, decoded)
 
