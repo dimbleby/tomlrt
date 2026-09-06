@@ -477,15 +477,15 @@ class _Scanner:
         """
         src = self.src
         end = self.end
-        parts: tuple[KeyPart, ...] = ()
-        seps: tuple[str, ...] = ()
+        parts: list[KeyPart] = []
+        seps: list[str] = []
         path: list[str] = []
         while True:
             start = self.pos
             ch = src[start] if start < end else ""
             if ch == '"' or ch == "'":
                 quoted = self.scan_string(allow_multiline=False)
-                parts += (KeyPart(quoted.lexeme, quoted.value),)
+                parts.append(KeyPart(quoted.lexeme, quoted.value))
                 path.append(quoted.value)
                 ws = self.scan_inline_ws_text()
             else:
@@ -495,18 +495,18 @@ class _Scanner:
                     raise self.error(msg)
                 raw = m[1]
                 ws = m[2]
-                parts += (KeyPart(raw, raw),)
+                parts.append(KeyPart(raw, raw))
                 path.append(raw)
                 self.pos = m.end()
             pos = self.pos
             if pos >= end or src[pos] != ".":
-                return parts, seps, ws, tuple(path)
+                return tuple(parts), tuple(seps), ws, tuple(path)
             # The separator runs from the end of the part just scanned,
             # which is where the whitespace already consumed began.
             sep_start = pos - len(ws)
             self.pos = pos + 1
             self.scan_inline_ws_text()
-            seps += (src[sep_start : self.pos],)
+            seps.append(src[sep_start : self.pos])
 
     # Bare value tokens (bool, special float, number, date/time); the parser
     # dispatches strings, arrays and inline tables itself.
