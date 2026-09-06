@@ -119,3 +119,12 @@ def test_big_inline_table(
 ) -> None:
     benchmark(tomlrt.loads, big_inline_src)
     record_throughput(benchmark, len(big_inline_src.encode()))
+
+
+@pytest.mark.parametrize("depth", [1, 16, 128, 512])
+def test_dotted_key(
+    benchmark: BenchmarkFixture, depth: int, record_throughput: Throughput
+) -> None:
+    src = ".".join(f"k{i}" for i in range(depth)) + " = 1\n"
+    benchmark(tomlrt.loads, src)
+    record_throughput(benchmark, len(src.encode()))
