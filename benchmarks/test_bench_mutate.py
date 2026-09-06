@@ -175,6 +175,23 @@ def test_clear_aot_with_trailing(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_aot_with_trailing(2_000, 5)), rounds=50)
 
 
+@pytest.mark.parametrize("size", [1_000, 16_000])
+def test_clear_aot_before_sections(benchmark: BenchmarkFixture, size: int) -> None:
+    def work(doc: Document) -> None:
+        doc.aot("items").clear()
+
+    src = _aot_doc(size) + _section_doc(size, 1)
+    benchmark.pedantic(work, setup=_parsed(src), rounds=10)
+
+
+@pytest.mark.parametrize("size", [1_000, 16_000])
+def test_delete_aot_prefix(benchmark: BenchmarkFixture, size: int) -> None:
+    def work(doc: Document) -> None:
+        del doc.aot("items")[: size // 2]
+
+    benchmark.pedantic(work, setup=_parsed(_aot_doc(size)), rounds=10)
+
+
 def test_replace_aot_slice(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         doc.aot("items")[150:350] = (

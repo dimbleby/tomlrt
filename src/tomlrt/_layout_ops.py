@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from tomlrt import _array, _container
 from tomlrt._comment_text import _split_attached_block
 from tomlrt._kind import _Kind
+from tomlrt._list_ops import delete_runs, index_runs
 from tomlrt._scalar import SCALAR_TYPES, is_scalar
 from tomlrt._slots import (
     AoTEntry,
@@ -3047,22 +3048,29 @@ def _aot_append_anchor(aot: AoT) -> Slot | None:
 
 
 def _unfile_ordered(refs: list[SlotRef], ref: SlotRef) -> None:
-    """Drop ``ref`` from a doc-ordered projection.
-
-    A bulk scrub eats a projection from one end or the other, so both
-    ends are tried before bisecting for the ref's order key. Bisecting
-    is what keeps a delete from the middle off a scan of ``c._refs``,
-    which runs to the size of the container's subtree.
-
-    ``pop`` rather than ``del refs[i]``: both shift the same tail, but
-    the subscript form is measurably slower, four-fold on CPython 3.14.
-    """
+    """Remove one ref, trying the ends before bisecting its order key."""
     if refs[-1] is ref:
         refs.pop()
         return
     i = 0 if refs[0] is ref else _ordered_index(refs, ref.slot._order)  # noqa: SLF001
     assert refs[i] is ref, "ref must be filed in its slot's order"
     refs.pop(i)
+
+
+def _unfile_ordered_many(refs: list[SlotRef], removed: Sequence[SlotRef]) -> None:
+    """Drop ordered refs without repeatedly shifting the projection's survivors."""
+    if len(refs) == len(removed):
+        refs.clear()
+        return
+    positions: list[int] = []
+    i = 0
+    for ref in removed:
+        if refs[i] is not ref:
+            i = _ordered_index(refs, ref.slot._order)  # noqa: SLF001
+        assert refs[i] is ref, "ref must be filed in its slot's order"
+        positions.append(i)
+        i += 1
+    delete_runs(refs, index_runs(positions))
 
 
 def unfile_ref(ref: SlotRef) -> None:
@@ -3083,12 +3091,11 @@ def unfile_ref(ref: SlotRef) -> None:
         _unfile_ordered(bucket, ref)
         if not bucket:
             del c._index[local_key]  # noqa: SLF001
-    # Back-pointers are unordered, and bounded by path depth.
     ref.slot._refs.remove(ref)  # noqa: SLF001
 
 
 def _scrub_owned_slots_via_backptrs(
-    owned: Iterable[Slot],
+    owned: Sequence[Slot],
     *,
     skip_container_ids: frozenset[int] = frozenset(),
 ) -> None:
@@ -3096,21 +3103,42 @@ def _scrub_owned_slots_via_backptrs(
 
     Walks ``slot._refs`` directly (length ≤ path depth, bounded
     independent of doc size) instead of scanning ancestor containers'
-    ``_index``/``_refs`` lists.
+    ``_index``/``_refs`` lists. Refs are grouped by container so each
+    affected projection can be spliced in one operation.
 
     ``skip_container_ids`` names containers whose internal refs to
     owned slots should be left in place — the typical caller is
     `delete_key`, which transplants the deleted subtree to a fresh
     orphan doc and needs the subtree containers' internal
     structure intact. AoT removal likewise retains the departing
-    entries' internal refs.
+    entries' internal refs. Both multi-slot callers visit binding refs
+    in document order. Each affected ancestor therefore loses an ordered
+    subset of one child binding, never its own header or several different keys.
     """
+    # One slot has at most one ref per container: there is nothing to batch.
+    if len(owned) == 1:
+        for ref in list(owned[0]._refs):  # noqa: SLF001
+            if id(ref.container) not in skip_container_ids:
+                unfile_ref(ref)
+        return
+    by_container: dict[int, list[SlotRef]] = {}
     for s in owned:
-        # Snapshot — unfile_ref mutates slot._refs.
-        for ref in list(s._refs):  # noqa: SLF001
-            if id(ref.container) in skip_container_ids:
+        for ref in s._refs:  # noqa: SLF001
+            container_id = id(ref.container)
+            if container_id in skip_container_ids:
                 continue
-            unfile_ref(ref)
+            by_container.setdefault(container_id, []).append(ref)
+    for removed in by_container.values():
+        c = removed[0].container
+        key = removed[0].local_key
+        assert key is not None, "bulk removal retains subtree containers' own refs"
+        bucket = c._index[key]  # noqa: SLF001
+        _unfile_ordered_many(c._refs, removed)  # noqa: SLF001
+        _unfile_ordered_many(bucket, removed)
+        if not bucket:
+            del c._index[key]  # noqa: SLF001
+        for ref in removed:
+            ref.slot._refs.remove(ref)  # noqa: SLF001
 
 
 def _norm_aot_index(aot: AoT, index: int) -> int:
@@ -3140,8 +3168,8 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     Returns the orphaned entry ``Table``s in the same order as
     ``indices``.
 
-    Scrubbing the union in reverse document order keeps clear and
-    slice-delete linear rather than quadratic in sibling count.
+    Scrubbing the union together removes each projection in bulk,
+    rather than shifting surviving refs after every entry.
     """
     idx_list = list(indices)
     assert idx_list
@@ -3172,10 +3200,8 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     for entry_table in popped_entries:
         _collect_subtree(entry_table, subtree_containers, subtree_aots, lambda _s: None)
 
-    # Reverse order unfiles as late in each cache as it can, so every
-    # deletion shifts as little as possible.
     _scrub_owned_slots_via_backptrs(
-        reversed(union_owned_ordered),
+        union_owned_ordered,
         skip_container_ids=frozenset(id(c) for c in subtree_containers),
     )
 
@@ -3192,10 +3218,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
         for slot in reversed(owned):
             unlink_slot(slot, doc)
 
-    # Drop entries from the logical list in reverse so earlier
-    # indices stay valid as we go.
-    for i in reversed(idx_list):
-        list.pop(aot, i)
+    delete_runs(aot, index_runs(idx_list))
 
     # The popped entries move to a private document, keeping their own
     # lines, exactly as a deleted section does. An array-of-tables is
