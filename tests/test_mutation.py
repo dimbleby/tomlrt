@@ -1205,6 +1205,22 @@ def test_array_setitem_slice() -> None:
     assert _reparses(out) == {"xs": [1, 22, 33, 44, 4]}
 
 
+def test_array_slice_normalizes_an_index_protocol_step_once() -> None:
+    class Step:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __index__(self) -> int:
+            self.calls += 1
+            return 1
+
+    step = Step()
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
+    doc.array("xs")[slice(1, 2, step)] = [22, 33]
+    assert tomlrt.dumps(doc) == "xs = [1, 22, 33, 3]\n"
+    assert step.calls == 1
+
+
 def test_array_setitem_slice_matches_list_semantics() -> None:
     # Array slice-assignment should accept any iterable (matching plain
     # ``list``), and reject non-iterables with TypeError. The previous
@@ -1869,6 +1885,87 @@ def test_array_delete_contiguous_slice_keeps_seam_comments() -> None:
             # dangling
         ]
         """)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_array_inserts_a_run_between_commented_items(newline: str) -> None:
+    doc = tomlrt.loads(
+        td("""
+        arr = [
+            "a", # eol a
+            # above b
+            "b", # eol b
+            # dangling
+        ]
+        """).replace("\n", newline)
+    )
+    doc.array("arr")[1:1] = [10, 20, 30]
+    expected = td("""
+        arr = [
+            "a", # eol a
+            10,
+            20,
+            30,
+            # above b
+            "b", # eol b
+            # dangling
+        ]
+        """).replace("\n", newline)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_array_splice_resamples_style_after_rehoming_the_first_comment() -> None:
+    doc = tomlrt.loads(
+        td("""
+        arr = [0,
+        # above
+          1,
+        2,3,4,5,
+          ]
+        """)
+    )
+    doc.array("arr")[:1] = [-1, -1]
+    expected = td("""
+        arr = [
+          -1,
+          -1,
+        # above
+          1,
+        2,3,4,5,
+          ]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_inline_prefix_removal_keeps_disjoint_survivor_runs() -> None:
+    doc = tomlrt.loads(
+        td("""
+        t = {
+            drop.a = 0,
+            # above keep
+            keep = 1, # keep
+            drop.b = 2,
+            # above another
+            another = 3, # another
+            drop.c = 4,
+            # dangling
+        }
+        """)
+    )
+    del doc.table("t")["drop"]
+    expected = td("""
+        t = {
+            # above keep
+            keep = 1, # keep
+            # above another
+            another = 3, # another
+            # dangling
+        }
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
 
 
 def test_array_delete_strided_slice_keeps_every_seam_comment() -> None:

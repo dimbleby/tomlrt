@@ -96,6 +96,45 @@ def _array_value(draw: st.DrawFn) -> str:
 
 
 @st.composite
+def _array_layout(draw: st.DrawFn) -> str:
+    trivia = st.sampled_from(
+        ["", " ", "  ", "\n", "\n  ", "\n\n  ", " # eol\n  ", "\n# above\n  "]
+    )
+    count = draw(st.integers(min_value=0, max_value=8))
+    trailing_comma = draw(st.booleans())
+    parts = ["arr = [", draw(trivia)]
+    for i in range(count):
+        parts.extend((str(i), draw(trivia)))
+        if i + 1 < count or trailing_comma:
+            parts.extend((",", draw(trivia)))
+    parts.extend((draw(trivia), "]\n"))
+    return "".join(parts).replace("\n", draw(st.sampled_from(["\n", "\r\n"])))
+
+
+@settings(max_examples=1000, deadline=None)
+@given(
+    src=_array_layout(),
+    start=st.integers(min_value=-10, max_value=10),
+    stop=st.integers(min_value=-10, max_value=10),
+    values=st.lists(st.integers(min_value=-100, max_value=-1), max_size=5),
+)
+def test_batch_array_splice_matches_individual_inserts(
+    src: str, start: int, stop: int, values: list[int]
+) -> None:
+    doc = tomlrt.loads(src)
+    expected = tomlrt.loads(src)
+    arr = expected.array("arr")
+    insertion, _, _ = slice(start, stop).indices(len(arr))
+    del arr[start:stop]
+    for offset, value in enumerate(values):
+        arr.insert(insertion + offset, value)
+    doc.array("arr")[start:stop] = values
+    rendered = tomlrt.dumps(doc)
+    assert rendered == tomlrt.dumps(expected)
+    assert tomli.loads(rendered) == doc.to_dict()
+
+
+@st.composite
 def _section(draw: st.DrawFn) -> str:
     parts = draw(
         st.lists(_BARE_KEY, min_size=1, max_size=3, unique=True),

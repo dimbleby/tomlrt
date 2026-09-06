@@ -353,6 +353,42 @@ def test_delete_from_inline_array(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_inline_array(500)), rounds=100)
 
 
+@pytest.mark.parametrize("size", [1_000, 16_000])
+@pytest.mark.parametrize("layout", ["single", "multiline"])
+@pytest.mark.parametrize("step", [1, 2])
+def test_delete_inline_array_slice(
+    benchmark: BenchmarkFixture, size: int, layout: str, step: int
+) -> None:
+    def work(doc: Document) -> None:
+        del doc.array("items")[: size // 2 : step]
+
+    src = (
+        _inline_array(size)
+        if layout == "multiline"
+        else "items = [" + ", ".join(str(i) for i in range(size)) + "]\n"
+    )
+    benchmark.pedantic(work, setup=_parsed(src), rounds=20)
+
+
+@pytest.mark.parametrize("size", [1_000, 16_000])
+@pytest.mark.parametrize("layout", ["single", "multiline"])
+def test_insert_inline_array_slice(
+    benchmark: BenchmarkFixture, size: int, layout: str
+) -> None:
+    values = list(range(size // 2))
+
+    def work(doc: Document) -> None:
+        at = size // 4
+        doc.array("items")[at:at] = values
+
+    src = (
+        _inline_array(size)
+        if layout == "multiline"
+        else "items = [" + ", ".join(str(i) for i in range(size)) + "]\n"
+    )
+    benchmark.pedantic(work, setup=_parsed(src), rounds=20)
+
+
 # --- key-level edits -------------------------------------------------------
 
 
