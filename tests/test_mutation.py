@@ -2453,6 +2453,59 @@ def test_aot_delitem_slice_with_step() -> None:
     assert _reparses(out) == {"p": [{"n": 2}, {"n": 4}]}
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_aot_bulk_removal_keeps_foreign_refs_and_later_edits(newline: str) -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]] # first
+        id = 0
+
+        [other]
+        keep = 1
+
+        [[items]] # middle
+        id = 1
+
+        [items.nested]
+        keep = 10
+
+        [[items]] # last
+        id = 2
+
+        [tail]
+        keep = 3
+        """).replace("\n", newline)
+    )
+    items = doc.aot("items")
+    removed = items[::2]
+    del items[::2]
+    items[0]["extra"] = 4
+    items[0].table("nested")["extra"] = 5
+    doc.table("other")["extra"] = 6
+    doc.table("tail")["extra"] = 7
+    removed[0]["extra"] = 8
+    removed[1]["extra"] = 9
+    expected = td("""
+        [other]
+        keep = 1
+        extra = 6
+
+        [[items]] # middle
+        id = 1
+        extra = 4
+
+        [items.nested]
+        keep = 10
+        extra = 5
+
+        [tail]
+        keep = 3
+        extra = 7
+        """).replace("\n", newline)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
 def test_aot_setitem_replaces_entry() -> None:
     doc = _aot_doc()
     aot = doc.aot("pkg")
