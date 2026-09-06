@@ -340,6 +340,25 @@ def _inline_array(rows: int) -> str:
     )
 
 
+@pytest.mark.parametrize("kind", ["array", "table"])
+def test_clone_section_with_inline_value(
+    benchmark: BenchmarkFixture, kind: str
+) -> None:
+    src = (
+        _inline_array(1_000)
+        if kind == "array"
+        else "items = {\n"
+        + "".join(f"    k{i} = {i}, # item {i}\n" for i in range(1_000))
+        + "}\n"
+    )
+    source = tomlrt.loads("[source]\n" + src).table("source")
+
+    def work(doc: Document) -> None:
+        doc["copy"] = source
+
+    benchmark.pedantic(work, setup=_parsed(""), rounds=100)
+
+
 def test_insert_into_inline_array(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         arr = doc.array("items")
