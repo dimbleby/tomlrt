@@ -7,7 +7,7 @@ direct KV insert and leaf delete. Inline-table mutation lives in
 Design notes:
 
 * The doc-stream linked list is the single source of physical ordering;
-  inserts splice exactly one slot at an explicit anchor.
+  inserts splice a slot run at an explicit anchor.
 * ``c._refs`` mirrors the doc-stream subset referenced by ``c``. A
   direct KV insert's ref goes immediately after the anchor's ref (or
   at the front), not blindly at the tail where child-section refs may
@@ -77,14 +77,12 @@ def _record_install(
 ) -> Iterator[tuple[list[Slot], list[tuple[Slot, str, Slot | None]]]]:
     """Record slots installed and existing slots displaced by the transaction.
 
-    The three insertion primitives (:func:`insert_after`,
-    :func:`insert_before`, :func:`insert_before_head`) — the only points
-    at which a slot is linked into the document — append newly linked
-    slots to the first yielded list. The second captures existing
-    slots whose leading trivia was rewritten by synthetic-header
-    insertion. Slots are normally freshly materialised, but an install
-    that adopts a subtree from the same private document relinks slots
-    that already existed — and so can record the very slot the
+    :func:`_insert_run_between` records newly linked slots in the first
+    yielded list, whether installed individually or as a block. The
+    second captures existing slots whose leading trivia was rewritten
+    by synthetic-header insertion. Slots are normally freshly materialised,
+    but adopting a subtree from the same private document relinks existing
+    slots — and so can record the very slot the
     reposition anchor names. Nested contexts stack; only the innermost
     is active.
     """
@@ -112,13 +110,6 @@ def _suspend_install_recording(doc: Document) -> Iterator[None]:
         yield
     finally:
         doc._install_recorders = prev  # noqa: SLF001
-
-
-def _record_new_slot(doc: Document, slot: Slot) -> None:
-    """Append ``slot`` to ``doc``'s active install recorder, if any."""
-    recorder = doc._install_recorders  # noqa: SLF001
-    if recorder is not None:
-        recorder[0].append(slot)
 
 
 def _slot_is_linked(slot: Slot, doc: Document) -> bool:
@@ -562,12 +553,14 @@ def _link_run_between(
         doc._tail = run[-1] if run else prev  # noqa: SLF001
 
 
-def _insert_between(
-    prev: Slot | None, new_slot: Slot, nxt: Slot | None, doc: Document
+def _insert_run_between(
+    prev: Slot | None, slots: Sequence[Slot], nxt: Slot | None, doc: Document
 ) -> None:
-    """Splice a newly materialised ``new_slot`` between ``prev`` and ``nxt``."""
-    _link_run_between(prev, (new_slot,), nxt, doc)
-    _record_new_slot(doc, new_slot)
+    """Splice newly installed ``slots`` and record the whole run at once."""
+    _link_run_between(prev, slots, nxt, doc)
+    recorder = doc._install_recorders  # noqa: SLF001
+    if recorder is not None:
+        recorder[0].extend(slots)
 
 
 def _relink_run_after(
@@ -585,12 +578,12 @@ def _relink_run_after(
 
 def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
     """Splice ``new_slot`` immediately after ``anchor`` in ``doc``."""
-    _insert_between(anchor, new_slot, anchor._next, doc)  # noqa: SLF001
+    _insert_run_between(anchor, (new_slot,), anchor._next, doc)  # noqa: SLF001
 
 
 def insert_before(anchor: Slot, new_slot: Slot, doc: Document) -> None:
     """Splice ``new_slot`` immediately before ``anchor`` in ``doc``."""
-    _insert_between(anchor._prev, new_slot, anchor, doc)  # noqa: SLF001
+    _insert_run_between(anchor._prev, (new_slot,), anchor, doc)  # noqa: SLF001
 
 
 def insert_before_head(new_slot: Slot, doc: Document) -> None:
@@ -602,7 +595,7 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
     :attr:`Document.preamble` or parsed from a comment-only source)
     should follow up with :func:`_promote_trailing_to_preamble`.
     """
-    _insert_between(None, new_slot, doc._head, doc)  # noqa: SLF001
+    _insert_run_between(None, (new_slot,), doc._head, doc)  # noqa: SLF001
 
 
 def _promote_trailing_to_preamble(doc: Document) -> None:
@@ -1718,28 +1711,23 @@ def _child_header_anchor(parent: Container) -> Slot | None:
 
 
 def _splice_block_after(slots: list[Slot], anchor: Slot | None, doc: Document) -> None:
-    """Splice a contiguous, internally terminated block after ``anchor``.
+    """Splice a block after ``anchor``, allocating its order keys as one run.
 
-    A ``None`` anchor means "no slot in ``doc`` should precede this
-    block", so it goes at the end of the stream. In an empty document
-    that also makes it the head, and any preamble parked in
-    ``_trailing`` migrates onto its leading.
+    A ``None`` anchor defaults to the document tail. Every slot that
+    gains a successor needs a terminator; a block entering an empty
+    document also needs separation from any preamble.
     """
     if not slots:
         return
     tail = doc._tail if anchor is None else anchor  # noqa: SLF001
-    if tail is None:
-        insert_before_head(slots[0], doc)
-        _promote_trailing_to_preamble(doc)
-    else:
+    if tail is not None:
         ensure_terminator(tail, doc._newline)  # noqa: SLF001
-        insert_after(tail, slots[0], doc)
-    prev = slots[0]
-    for s in slots[1:]:
-        ensure_terminator(prev, doc._newline)  # noqa: SLF001
-        insert_after(prev, s, doc)
-        prev = s
-    _terminate_unless_tail(prev, doc)
+    nxt = tail._next if tail is not None else doc._head  # noqa: SLF001
+    _insert_run_between(tail, slots, nxt, doc)
+    for slot in slots:
+        _terminate_unless_tail(slot, doc)
+    if tail is None:
+        _promote_trailing_to_preamble(doc)
 
 
 def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
