@@ -1114,8 +1114,8 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     # order would corrupt the orphan's linked list.
     transplanting = bool(subtree_containers or subtree_aots)
     ordered_for_transplant = (
-        _owned_slots_ordered(owned_slots[0], owned_ids)
-        if transplanting and owned_slots
+        sorted(owned_slots, key=operator.attrgetter("_order"))
+        if transplanting
         else owned_slots
     )
     # Unlink in *reverse* doc-stream order (see remove_aot_entry for the
@@ -1280,46 +1280,6 @@ def _collect_subtree(
             add_slot(placeholder.slot)
         for entry in val:
             _collect_subtree(entry, containers_out, aots_out, add_slot)
-
-
-def _owned_slots_ordered(start: Slot, owned: set[Slot]) -> list[Slot]:
-    """Collect ``owned`` in true doc-stream order, anchored at ``start``.
-
-    ``start`` is typically a binding's own header/primary slot, and
-    usually — but not always — the owned set's doc-stream-first slot: a
-    nested descendant's header or dotted KV may have been written
-    physically *earlier* (legal TOML, e.g. a sub-table ``[a.b]``
-    followed later by its parent's own ``[a]``). Walking forward from
-    ``start`` finds every owned slot that follows it; whatever forward
-    can't reach must precede it, so a walk back from ``start`` collects
-    the shortfall. Interleaved foreign slots are skipped either way (a
-    binding's slots need not be contiguous — ``[[a]] … [b] … [[a]]`` is
-    legal).
-
-    No backward step happens at all once the forward walk has found
-    everything, and the rare shortfall walks back only as far as the
-    missing slots, never the whole document.
-    """
-    forward: list[Slot] = []
-    seen: set[Slot] = set()
-    cur: Slot | None = start
-    while cur is not None and len(seen) < len(owned):
-        if cur in owned:
-            forward.append(cur)
-            seen.add(cur)
-        cur = cur._next  # noqa: SLF001
-    missing = len(owned) - len(seen)
-    if not missing:
-        return forward
-    backward: list[Slot] = []
-    cur = start._prev  # noqa: SLF001
-    while cur is not None and len(backward) < missing:
-        if cur in owned:
-            backward.append(cur)
-        cur = cur._prev  # noqa: SLF001
-    assert len(backward) == missing, "owned slot unreachable from start"
-    backward.reverse()
-    return backward + forward
 
 
 # ---------------------------------------------------------------------------
@@ -2208,7 +2168,7 @@ def clone_aot_entry_as_table(
     assert src_entry_table._header_ref is not None  # noqa: SLF001
     # Gather the complete subtree, including nested ``[[a.x]]`` entries
     # physically inside this entry's body.
-    src_slots = _gather_subtree_slots(src_entry_table)
+    src_slots = owned_slots(src_entry_table)
     return _install_cloned_section(
         parent,
         key,
@@ -2216,40 +2176,6 @@ def clone_aot_entry_as_table(
         src_entry.path,
         src_entry_table._header_ref.slot,  # noqa: SLF001
     )
-
-
-def _owned_slots_from(root: Container, start: Slot) -> list[Slot]:
-    """Collect ``root``'s owned slots in true doc-stream order.
-
-    ``start`` should be ``root``'s own header/first slot; see
-    :func:`_owned_slots_ordered` for why that's usually but not always
-    doc-stream-first, and how it's handled either way.
-    """
-    return _owned_slots_ordered(start, _owned_slots(root))
-
-
-def _owned_slots(root: Container) -> set[Slot]:
-    """Return every slot owned by ``root``'s subtree.
-
-    ``Slot`` is identity-hashable (``eq=False``), so a plain ``set[Slot]``
-    is both correct and faster to build/query than wrapping each slot
-    in ``id()`` — unlike ``Container``, which is an unhashable ``dict``
-    subclass and genuinely needs ``id()`` for this purpose.
-    """
-    owned: set[Slot] = set()
-    _collect_subtree(root, [], [], owned.add)
-    return owned
-
-
-def _gather_subtree_slots(src_table: Container) -> list[Slot]:
-    """Collect a container subtree's owned slots in doc-stream order.
-
-    Includes the container's own header, direct/dotted KVs, nested
-    sub-sections, and nested ``[[a.x]]`` AoT entries — the entire
-    physical body of ``src_table``.
-    """
-    assert src_table._header_ref is not None  # noqa: SLF001
-    return _owned_slots_from(src_table, src_table._header_ref.slot)  # noqa: SLF001
 
 
 def clone_graft_slots(
@@ -2292,14 +2218,12 @@ def owned_slots(view: Container | AoT) -> list[Slot]:
 
     Any shape: headered or not, an array-of-tables, a whole document.
 
-    A container's block need not begin at its own header — a
-    forward-declared descendant (``[a.b]`` before ``[a]``) comes
-    earlier — but every slot in it records a ref on the container,
-    either as its own header or as an ancestor step of a descendant's,
-    so ``_refs`` in doc-stream order starts where the block does.
+    Order keys recover physical order without walking unrelated slots,
+    even when a subtree is interleaved with foreign sections or starts
+    before its own header (``[a.b]`` before ``[a]``).
     """
     if isinstance(view, _array.AoT):
-        return [s for entry in view for s in _gather_subtree_slots(entry)]
+        return [s for entry in view for s in owned_slots(entry)]
     if isinstance(view, _container.Document):
         slots: list[Slot] = []
         cur = view._head  # noqa: SLF001
@@ -2307,8 +2231,9 @@ def owned_slots(view: Container | AoT) -> list[Slot]:
             slots.append(cur)
             cur = cur._next  # noqa: SLF001
         return slots
-    assert view._refs, "an attached view spans at least one slot"  # noqa: SLF001
-    return _owned_slots_from(view, view._refs[0].slot)  # noqa: SLF001
+    owned: set[Slot] = set()
+    _collect_subtree(view, [], [], owned.add)
+    return sorted(owned, key=operator.attrgetter("_order"))
 
 
 def _gather_headered_subtree_slots(
@@ -2320,7 +2245,7 @@ def _gather_headered_subtree_slots(
     container's own header: doc-stream order may put a forward-declared
     nested descendant's header earlier in the returned list.
     """
-    src_slots = _gather_subtree_slots(src_table)
+    src_slots = owned_slots(src_table)
     assert src_table._header_ref is not None  # noqa: SLF001
     head = src_table._header_ref.slot  # noqa: SLF001
     assert isinstance(head, StructuralHeaderSlot)
@@ -2332,7 +2257,7 @@ def _hoist_own_slots_first(slots: list[Slot], root_path: tuple[str, ...]) -> lis
 
     A plain table's own header and direct/dotted keys may legally be
     interleaved with a forward-declared nested descendant's block (see
-    :func:`_owned_slots_ordered`) — a table can always be reopened. An
+    :func:`owned_slots`) — a table can always be reopened. An
     array-of-tables entry can never be reopened this way (a later plain
     ``[..]`` for an already-``[[..]]``-opened path is invalid TOML), so
     preparing an AoT entry must gather all of the root's own slots to
@@ -2412,7 +2337,7 @@ def extract_subtree_slots(src_table: Container) -> tuple[list[Slot], str]:
         # an attached one always has at least one.
         assert src_table._refs, "implicit section has no slots"  # noqa: SLF001
         head = None
-        src_slots = _owned_slots_from(src_table, src_table._refs[0].slot)  # noqa: SLF001
+        src_slots = owned_slots(src_table)
 
     cloned, cloned_head = _clone_entry_slots(
         src_slots,
@@ -2770,7 +2695,7 @@ def adopt_private_implicit(
     # `_attach_section` only dispatches here for an orphan that still owns
     # slots; a slotless one is synthesised instead.
     assert value._refs, "implicit orphan has no slots"  # noqa: SLF001
-    slots = _owned_slots_from(value, value._refs[0].slot)  # noqa: SLF001
+    slots = owned_slots(value)
     _detach_from_source_doc(value, slots)
     _unfile_stale_same_orphan_ancestors(value, slots)
 
@@ -2906,7 +2831,7 @@ def _clone_entry_slots(
 
     ``head``, if given, identifies ``src_slots``' own boundary header by
     identity, not position, since it need not be ``src_slots[0]`` (see
-    :func:`_owned_slots_ordered`). Its clone is returned as the second
+    :func:`owned_slots`). Its clone is returned as the second
     element with ``entry`` set to ``new_entry`` — so ``new_entry=None``
     converts an aot-entry header to a table header and vice versa.
     ``head=None`` means the list is body-only and the second element is
@@ -3245,7 +3170,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
 
     for i in idx_list:
         entry_table = aot[i]
-        owned_ordered = _gather_subtree_slots(entry_table)
+        owned_ordered = owned_slots(entry_table)
         union_owned_ordered.extend(owned_ordered)
         owned_per_entry.append(owned_ordered)
         popped_entries.append(entry_table)
@@ -3638,7 +3563,7 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         e = entry_table._owner_aot_entry  # noqa: SLF001
         assert e is not None
         phys_idx_by_id[id(entry_table)] = len(physical_blocks)
-        physical_blocks.append(_gather_subtree_slots(entry_table))
+        physical_blocks.append(owned_slots(entry_table))
 
     region_predecessor = physical_blocks[0][0]._prev  # noqa: SLF001
     region_successor = physical_blocks[-1][-1]._next  # noqa: SLF001
@@ -3889,12 +3814,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         ):
             header_slot = header_ref.slot
 
-    # Gather and order only c's subtree. The linked walk spans unrelated
-    # slots only when they physically interleave a non-contiguous subtree,
-    # where their relative scope must participate in the reorder.
-    membership = _owned_slots(c)
-    assert c._refs, "attached sortable container must own slots"  # noqa: SLF001
-    ordered_slots = _owned_slots_ordered(c._refs[0].slot, membership)  # noqa: SLF001
+    ordered_slots = owned_slots(c)
 
     key_blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
     child_keys_in_phys_order: list[str] = []
