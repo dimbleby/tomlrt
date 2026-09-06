@@ -379,17 +379,12 @@ class Array(_View, list[Any]):
     def insert(self, index: SupportsIndex, value: Any) -> None:
         i = _norm_insert_index(index, len(self))
         cst, decoded = self._prepare_item(value)
-        self._insert_synthesised(i, cst, decoded)
-
-    def _insert_synthesised(self, index: int, cst: Value, decoded: object) -> None:
-        """Insert an already-synthesised value."""
-        if index == len(self):
+        if i == len(self):
             self._append_with_style(cst, decoded, self._style())
             return
-        style = self._style()
         new_item = _make_item(cst, has_comma=True)
-        splice_insert(self._value, new_item, index, style, self._doc_newline)
-        list.insert(self, index, decoded)
+        splice_insert(self._value, (new_item,), i, self._doc_newline)
+        list.insert(self, i, decoded)
 
     def _replace_synthesised(self, index: int, cst: Value, decoded: object) -> None:
         """Replace an item with an already-synthesised value."""
@@ -450,12 +445,9 @@ class Array(_View, list[Any]):
             except TypeError as exc:
                 msg = "can only assign an iterable"
                 raise TypeError(msg) from exc
-            indices = range(*index.indices(len(self)))
-            if (
-                index.step is not None
-                and index.step != 1
-                and len(values) != len(indices)
-            ):
+            start, stop, step = index.indices(len(self))
+            indices = range(start, stop, step)
+            if step != 1 and len(values) != len(indices):
                 msg = (
                     f"attempt to assign sequence of size {len(values)} "
                     f"to extended slice of size {len(indices)}"
@@ -467,16 +459,22 @@ class Array(_View, list[Any]):
             ):
                 return
             prepared = [self._synth_item(v) for v in values]
-            if index.step is not None and index.step != 1:
+            if step != 1:
                 # Extended slice positions are unchanged; replace per slot.
                 for k, (cst, decoded) in zip(indices, prepared, strict=True):
                     self._replace_synthesised(k, cst, decoded)
                 return
             # Reuse delete/insert boundary handling for contiguous slices.
-            start, stop, _ = index.indices(len(self))
             del self[start:stop]
-            for offset, (cst, decoded) in enumerate(prepared):
-                self._insert_synthesised(start + offset, cst, decoded)
+            if start == len(self):
+                for cst, decoded in prepared:
+                    self._append_with_style(cst, decoded, self._style())
+            elif prepared:
+                new_items = [_make_item(cst, has_comma=True) for cst, _ in prepared]
+                splice_insert(self._value, new_items, start, self._doc_newline)
+                list.__setitem__(
+                    self, slice(start, start), [decoded for _, decoded in prepared]
+                )
             return
         # int index: reject before synthesising or mutating any CST, to
         # match the IndexError ``list.__setitem__`` raises for a bad index.

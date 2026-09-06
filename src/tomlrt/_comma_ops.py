@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
+from tomlrt._list_ops import delete_runs, index_runs
 from tomlrt._trivia import (
     leading_break,
     leading_ws,
@@ -741,52 +742,33 @@ def splice_in(
 
 def splice_insert(
     cv: CommaValue[_CV_ItemT],
-    new_item: _CV_ItemT,
+    new_items: Sequence[_CV_ItemT],
     index: int,
-    style: CommaStyle,
     nl: str,
 ) -> None:
-    """Insert ``new_item`` before the existing item at ``index``."""
+    """Insert a non-empty run, sampling style again after its first item."""
     items = cv.items
-    displaced = _detach_above(cv, index)
-    if style.break_before_comma:
-        new_item.trailing = style.pre_comma_break
-        new_item.leading = "" if index == 0 else style.inter_separator
-        items.insert(index, new_item)
+    # The first insertion can change the sampled separator; the rest share it.
+    runs = (new_items[:1], new_items[1:]) if len(new_items) > 1 else (new_items,)
+    for run in runs:
+        style = detect_style(cv)
+        displaced = _detach_above(cv, index)
+        count = len(run)
+        for item in run:
+            item.leading = style.inter_separator
+            item.trailing = style.pre_comma_break
         if index == 0:
-            # Item 0 keeps an empty leading; the displaced item takes the pad.
-            items[1].leading = style.inter_separator
-    elif index == 0:
-        items[0].leading = style.inter_separator
-        items.insert(0, new_item)
-        if style.is_multiline:
-            _structural_break(new_item, items[1], nl)
-    else:
-        pred = items[index - 1]
-        new_item.leading = style.inter_separator
-        items.insert(index, new_item)
-        if style.is_multiline:
-            _structural_break(pred, new_item, nl)
-            _shift_carried_boundary(
-                cv,
-                index + 1,
-                nl,
-                old=displaced,
-            )
-    # The block belongs to the displaced item, which has moved down past
-    # the new one.
-    _rehome_above(cv, index + 1, displaced, style, nl)
-
-
-def _removed_runs(sorted_removed: Sequence[int]) -> Iterator[tuple[int, int]]:
-    """Yield ``(first, last)`` of each maximal run of consecutive indices."""
-    start = prev = sorted_removed[0]
-    for idx in sorted_removed[1:]:
-        if idx != prev + 1:
-            yield start, prev
-            start = idx
-        prev = idx
-    yield start, prev
+            run[0].leading = ""
+            items[0].leading = style.inter_separator
+        items[index:index] = run
+        if style.is_multiline and not style.break_before_comma:
+            if index == 0:
+                _structural_break(run[-1], items[count], nl)
+            else:
+                _structural_break(items[index - 1], run[0], nl)
+                _shift_carried_boundary(cv, index + count, nl, old=displaced)
+        index += count
+        _rehome_above(cv, index, displaced, style, nl)
 
 
 def splice_out(
@@ -806,7 +788,7 @@ def splice_out(
     if is_multiline:
         cv.reset_multiline_cache()
     orig_len = len(items)
-    sorted_removed = sorted(removed_indices)
+    removed_runs = index_runs(sorted(removed_indices))
     last_idx = orig_len - 1
 
     # Removal only disturbs the boundaries adjacent to a run of removed
@@ -818,14 +800,14 @@ def splice_out(
     first_survivor: int | None = None
     last_survivor: int | None = None
     dropped = 0
-    for start, end in _removed_runs(sorted_removed):
+    for start, stop in removed_runs:
         if start == 0:
-            first_survivor = end + 1 if end < last_idx else None
-        elif end == last_idx:
+            first_survivor = stop if stop < orig_len else None
+        elif stop == orig_len:
             last_survivor = start - 1
         else:
-            seams.append((start - dropped, end + 1))
-        dropped += end - start + 1
+            seams.append((start - dropped, stop))
+        dropped += stop - start
 
     needed = {boundary for _, boundary in seams}
     if first_survivor is not None:
@@ -843,8 +825,7 @@ def splice_out(
         new_last_eol = _take_eol(items[last_survivor])
         new_terminal_has_comma = items[last_idx].has_comma
 
-    for i in reversed(sorted_removed):
-        items.pop(i)
+    delete_runs(items, removed_runs)
 
     if not items:
         cv.header_trivia, cv.final_trivia = strip_trailing_indent(
