@@ -135,6 +135,21 @@ def test_clone_large_aot_entry(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_large_aot_entry(500)), rounds=50)
 
 
+@pytest.mark.parametrize("trailing_kvs", [0, 10_000])
+def test_clone_forward_declared_table(
+    benchmark: BenchmarkFixture, trailing_kvs: int
+) -> None:
+    source = tomlrt.loads(
+        "[target.child]\nx = 1\n[target]\ny = 2\n[other]\n"
+        + "".join(f"k{i} = {i}\n" for i in range(trailing_kvs))
+    ).table("target")
+
+    def work(doc: Document) -> None:
+        doc["copy"] = source
+
+    benchmark.pedantic(work, setup=_parsed(""), rounds=200)
+
+
 def test_clear_aot_with_trailing(benchmark: BenchmarkFixture) -> None:
     """Clear an AoT that is not the last thing in the document.
 

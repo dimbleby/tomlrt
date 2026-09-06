@@ -6551,8 +6551,7 @@ def test_clone_with_forward_declared_nested_supports_later_insert_into_it() -> N
 def test_clone_section_with_forward_declared_nested_past_foreign_section() -> None:
     # As above, but with an unrelated section physically between the
     # forward-declared nested descendant and `a`'s own header, so
-    # recovering doc-stream order must skip a foreign slot while
-    # walking backward from `a`'s header, not just forward from it.
+    # recovering doc-stream order must exclude the foreign slots.
     src = td("""
         [a.b]
         x = 1
@@ -6575,6 +6574,72 @@ def test_clone_section_with_forward_declared_nested_past_foreign_section() -> No
         better = 2
         """)
     assert _reparses(out) == {"moved": {"better": 2, "b": {"x": 1}}}
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_clone_interleaved_block_before_another_section(newline: str) -> None:
+    source = (
+        td("""
+        [source.child] # child
+        x = 0x1
+
+        [unrelated]
+        keep = 2
+
+        [source]
+        y = 'three' # no final newline
+        """)
+        .rstrip("\n")
+        .replace("\n", newline)
+    )
+    donor = tomlrt.loads(source)
+    doc = tomlrt.loads(
+        td("""
+        [before]
+        keep = 1
+
+        [after]
+        keep = 2
+        """).replace("\n", newline)
+    )
+    doc.table("before")["copy"] = donor.table("source")
+    expected = td("""
+        [before]
+        keep = 1
+
+        [before.copy.child] # child
+        x = 0x1
+
+        [before.copy]
+        y = 'three' # no final newline
+
+        [after]
+        keep = 2
+        """).replace("\n", newline)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.dumps(donor) == source
+    assert _reparses(expected) == doc.to_dict()
+
+    copied = doc.table("before").table("copy")
+    copied["extra"] = 3
+    copied.table("child")["extra"] = 4
+    del copied.table("child")["x"]
+    expected = td("""
+        [before]
+        keep = 1
+
+        [before.copy.child] # child
+        extra = 4
+
+        [before.copy]
+        y = 'three' # no final newline
+        extra = 3
+
+        [after]
+        keep = 2
+        """).replace("\n", newline)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
 
 
 def test_overwrite_scalar_anchors_past_forward_declared_nested_predecessor() -> None:
