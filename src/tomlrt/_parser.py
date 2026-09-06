@@ -155,7 +155,7 @@ class _Parser:
         value = self._parse_value()
         eol = sc.scan_eol()
 
-        self._validator.record_keyvalue(key_path, value, at=key_at)
+        self._validator.record_keyvalue(key_path, at=key_at)
         host_path = self._validator.current_section
         owner = self._validator.current_owner_aot_entry
         return KVSlot(

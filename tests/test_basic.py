@@ -494,6 +494,60 @@ def test_parse_error_messages(src: str, message: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "value",
+    ["{ b = 1 }", "{ b.c = 1 }", "{ b = { c = 1 } }", "{ b = {} }"],
+)
+@pytest.mark.parametrize("key", ["a.b", "a.b.c", "a.new"])
+@pytest.mark.parametrize(
+    ("scope", "parent"),
+    [("", "a"), ("[section]\n", "section.a"), ("[[items]]\n", "items.a")],
+)
+def test_inline_table_descendants_are_sealed(
+    value: str, key: str, scope: str, parent: str
+) -> None:
+    first = f"{scope}a = {value}\n"
+    with pytest.raises(tomlrt.TOMLParseError) as exc_info:
+        tomlrt.loads(f"{first}{key} = 2\n")
+    err = exc_info.value
+    line = first.count("\n") + 1
+    assert (
+        str(err) == f"key {parent!r} already defined as a value (line {line}, column 1)"
+    )
+    assert (err.line, err.col, err.offset) == (line, 1, len(first))
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        td("""
+            [[items]]
+            a = { b = 1 }
+            [[items]]
+            a.b = 2
+            """),
+        td("""
+            [[items]]
+            [items.settings]
+            a = { b.c = 1 }
+            [[items]]
+            [items.settings]
+            a.b = 2
+            """),
+        td("""
+            [[items]]
+            a.b = 1
+            [[items]]
+            a = { b = 2 }
+            """),
+    ],
+)
+def test_inline_table_seals_reset_between_aot_entries(src: str) -> None:
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    assert doc.to_dict() == reparses(src)
+
+
+@pytest.mark.parametrize(
     "src",
     [
         # An AoT entry's bound keys / sub-headers must not collide with
