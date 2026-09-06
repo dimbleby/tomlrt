@@ -150,6 +150,18 @@ def test_clone_forward_declared_table(
     benchmark.pedantic(work, setup=_parsed(""), rounds=200)
 
 
+@pytest.mark.parametrize("size", [20, 2_000])
+def test_install_cloned_section_non_tail(
+    benchmark: BenchmarkFixture, size: int
+) -> None:
+    source = tomlrt.loads(_section_doc(1, size)).table("s0")
+
+    def work(doc: Document) -> None:
+        doc.table("a")["child"] = source
+
+    benchmark.pedantic(work, setup=_parsed("[a]\nx = 1\n[other]\ny = 2\n"), rounds=100)
+
+
 def test_clear_aot_with_trailing(benchmark: BenchmarkFixture) -> None:
     """Clear an AoT that is not the last thing in the document.
 
