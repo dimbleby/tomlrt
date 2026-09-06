@@ -12,13 +12,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from tomlrt._slots import AoTEntry
-from tomlrt._values import InlineTableValue
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tomlrt._errors import TOMLParseError
-    from tomlrt._values import Value
 
     ErrorBuilder = Callable[..., TOMLParseError]
 
@@ -121,9 +119,12 @@ class _Validator:
         )
         return new_entry
 
-    def record_keyvalue(
-        self, key_path: tuple[str, ...], value: Value, *, at: int
-    ) -> None:
+    def record_keyvalue(self, key_path: tuple[str, ...], *, at: int) -> None:
+        """Bind a value, sealing its path against subsequent extension.
+
+        Inline-table contents are checked in their own local scope;
+        recording the complete value here closes all its descendants.
+        """
         section = self.current_section
         full = section + key_path if section else key_path
         path_kinds = self._path_kinds
@@ -163,8 +164,6 @@ class _Validator:
                     raise self._error(msg, at=at)
                 self._record_path(sub, "dotted", owner)
         self._record_path(full, "value", owner)
-        if isinstance(value, InlineTableValue):
-            self._register_inline_table(value, abs_prefix=full, owner=owner)
 
     def check_inline_key_conflict(
         self,
@@ -189,28 +188,6 @@ class _Validator:
                 msg = f"inline-table key {'.'.join(sub)!r} already defined as a value"
                 raise self._error(msg, at=at)
             seen_prefixes.add(sub)
-
-    def _register_inline_table(
-        self,
-        table: InlineTableValue,
-        *,
-        abs_prefix: tuple[str, ...],
-        owner: tuple[str, ...] | None,
-    ) -> None:
-        """Record the absolute paths an inline table's entries bind.
-
-        Only reachable for a table that is itself addressable: an inline
-        table nested in an *array* is an element, not a key, so nothing
-        below it has an absolute path and there is nothing to record.
-        """
-        for entry in table.items:
-            path = entry.key_path
-            full = abs_prefix + path
-            self._record_path(full, "value", owner)
-            for i in range(1, len(path)):
-                self._record_path(abs_prefix + path[:i], "dotted", owner)
-            if isinstance(entry.value, InlineTableValue):
-                self._register_inline_table(entry.value, abs_prefix=full, owner=owner)
 
     def _record_path(
         self,
