@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
@@ -161,7 +161,19 @@ def render_dotted(parts: tuple[KeyPart, ...], seps: tuple[str, ...]) -> str:
 
 
 @dataclass(slots=True, eq=False)
-class CommaItem:
+class _CommaNode:
+    """Copy comma records without generic pickle-state reconstruction."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        for attr in fields(self):
+            setattr(new, attr.name, copy.deepcopy(getattr(self, attr.name), memo))
+        return new
+
+
+@dataclass(slots=True, eq=False)
+class CommaItem(_CommaNode):
     """One slot inside a comma-separated value.
 
     Layout: ``leading value trailing [comma post_comma_trivia]``.
@@ -223,7 +235,7 @@ _ItemT = TypeVar("_ItemT", bound=CommaItem)
 
 
 @dataclass(slots=True, eq=False)
-class CommaValue(Generic[_ItemT]):
+class CommaValue(_CommaNode, Generic[_ItemT]):
     """Shared backbone of `ArrayValue` and `InlineTableValue`.
 
     Canonical trivia ownership:
