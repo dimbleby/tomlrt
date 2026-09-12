@@ -9,9 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [2.2.9] - 2026-09-12
+
 - Comment views are faster on documents with many nested tables.
 
-## [2.2.8] - 2026-09-12
+## [2.2.9] - 2026-09-12
 
 ### Changed
 
