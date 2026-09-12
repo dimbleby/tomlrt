@@ -10,7 +10,6 @@ structure.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
 from tomlrt._list_ops import delete_runs, index_runs
@@ -93,13 +92,15 @@ def _first_newline_end(t: str) -> int:
     return t.find("\n") + 1
 
 
-@dataclass(slots=True)
 class _Lane:
     """Text partitions of one physical boundary lane."""
 
-    head: str = ""
-    above: str = ""
-    tail: str = ""
+    __slots__ = ("above", "head", "tail")
+
+    def __init__(self, head: str = "", above: str = "", tail: str = "") -> None:
+        self.head = head
+        self.above = above
+        self.tail = tail
 
     @classmethod
     def capture(cls, trivia: str, start: int) -> _Lane:
@@ -114,15 +115,24 @@ class _Lane:
         return self.head + self.above + self.tail
 
 
-@dataclass(slots=True)
 class Boundary:
     """Lossless snapshot of the complete region before an item or bracket."""
 
-    before: _Lane
-    after: str
-    following: _Lane
-    has_comma: bool = False
-    is_head: bool = False
+    __slots__ = ("after", "before", "following", "has_comma", "is_head")
+
+    def __init__(
+        self,
+        before: _Lane,
+        after: str,
+        following: _Lane,
+        has_comma: bool = False,  # noqa: FBT001, FBT002
+        is_head: bool = False,  # noqa: FBT001, FBT002
+    ) -> None:
+        self.before = before
+        self.after = after
+        self.following = following
+        self.has_comma = has_comma
+        self.is_head = is_head
 
     @classmethod
     def capture(cls, cv: _BoundaryValue, i: int) -> Boundary:
@@ -500,7 +510,6 @@ def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, frozen=True)
 class CommaStyle:
     """Hold inferred layout policy for inline array/table append paths.
 
@@ -511,11 +520,27 @@ class CommaStyle:
     post-comma pad.
     """
 
-    is_multiline: bool
-    inter_separator: str
-    trailing_comma: bool
-    trailing_post: str
-    pre_comma_break: str
+    __slots__ = (
+        "inter_separator",
+        "is_multiline",
+        "pre_comma_break",
+        "trailing_comma",
+        "trailing_post",
+    )
+
+    def __init__(
+        self,
+        is_multiline: bool,  # noqa: FBT001
+        inter_separator: str,
+        trailing_comma: bool,  # noqa: FBT001
+        trailing_post: str,
+        pre_comma_break: str,
+    ) -> None:
+        self.is_multiline = is_multiline
+        self.inter_separator = inter_separator
+        self.trailing_comma = trailing_comma
+        self.trailing_post = trailing_post
+        self.pre_comma_break = pre_comma_break
 
     @property
     def break_before_comma(self) -> bool:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Reduce import overhead by using plain slotted records.
+
 ## [2.2.7] - 2026-09-06
 
 ### Fixed

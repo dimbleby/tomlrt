@@ -56,7 +56,7 @@ or readable code. The goal is the cleanest design, not merely the smallest diff.
    - Strict typing passes without unnecessary casts or ignores.
    - No broad catches, silent fallback, unrelated dependency, or bypass of the
      intended module layer.
-   - Hot-path dataclass construction and other documented performance
+   - Hot-path record construction and other documented performance
      conventions are preserved.
    - Public docs and a concise changelog entry are included when warranted.
    - Comments and docstrings are plain, brief, and valuable. They explain only

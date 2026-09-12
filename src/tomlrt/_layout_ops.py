@@ -28,7 +28,6 @@ import copy
 import itertools
 import operator
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from tomlrt import _array, _container
@@ -3392,13 +3391,20 @@ def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
     return False
 
 
-@dataclass(slots=True)
 class _PreparedEntry:
     """An existing or unpublished entry and its destination-ready body."""
 
-    table: Table
-    header: StructuralHeaderSlot
-    body: list[Slot] | dict[str, TomlInput]
+    __slots__ = ("body", "header", "table")
+
+    def __init__(
+        self,
+        table: Table,
+        header: StructuralHeaderSlot,
+        body: list[Slot] | dict[str, TomlInput],
+    ) -> None:
+        self.table = table
+        self.header = header
+        self.body = body
 
 
 def _prepare_entry(
@@ -3609,17 +3615,36 @@ def _slots_between(
     return out
 
 
-@dataclass(slots=True)
 class _ReorderUnit:
     """One independently sortable slot block and its leading-trivia state."""
 
-    slots: list[Slot]
-    key_rank: int
-    structural: bool
-    mixed: bool
-    prefix: str
-    remainder: str
-    physical_position: int
+    __slots__ = (
+        "key_rank",
+        "mixed",
+        "physical_position",
+        "prefix",
+        "remainder",
+        "slots",
+        "structural",
+    )
+
+    def __init__(
+        self,
+        slots: list[Slot],
+        key_rank: int,
+        structural: bool,  # noqa: FBT001
+        mixed: bool,  # noqa: FBT001
+        prefix: str,
+        remainder: str,
+        physical_position: int,
+    ) -> None:
+        self.slots = slots
+        self.key_rank = key_rank
+        self.structural = structural
+        self.mixed = mixed
+        self.prefix = prefix
+        self.remainder = remainder
+        self.physical_position = physical_position
 
 
 def _peer_placements(

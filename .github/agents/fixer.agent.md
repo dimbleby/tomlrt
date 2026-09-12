@@ -95,7 +95,7 @@ to `status: blocked` with the reason and do not leave partial source changes.
   stale or low-value commentary in the lines touched by the fix.
 - Validate public input at the user-facing boundary, exactly once; trust typed
   helpers below it.
-- Construct hot-path dataclasses positionally as documented.
+- Construct hot-path slotted records positionally as documented.
 - Maintain 100% branch coverage.
 - Do not leave a suspected or measured regression unexplained. Prefer a cleaner,
   generally efficient design; record any remaining trade-off for review.
