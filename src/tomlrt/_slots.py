@@ -9,7 +9,6 @@ in one container.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -33,7 +32,6 @@ from tomlrt._values import ScalarValue, render_dotted, retarget_value_newlines
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, eq=False)
 class AoTEntry:
     """Identifies one entry of an array-of-tables.
 
@@ -42,7 +40,10 @@ class AoTEntry:
     ``[[a]]`` header so :attr:`path` has one canonical source.
     """
 
-    _header: StructuralHeaderSlot | None = field(default=None, init=False, repr=False)
+    __slots__ = ("_header",)
+
+    def __init__(self) -> None:
+        self._header: StructuralHeaderSlot | None = None
 
     def bind_header(self, header: StructuralHeaderSlot) -> None:
         """Record the unique ``[[a]]`` header that introduces this entry."""
@@ -67,7 +68,6 @@ class AoTEntry:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, eq=False)
 class Slot:
     """Base for physical slots, subclassed by `KVSlot` and `StructuralHeaderSlot`.
 
@@ -82,9 +82,20 @@ class Slot:
 
     Constructor fields are positional and required — a slot is built once
     per line and keyword binding roughly doubles that cost. ``_prev`` /
-    ``_next`` / ``_order`` / ``_refs`` are runtime wiring, declared
-    ``init=False`` so they don't force subclass fields keyword-only.
+    ``_next`` / ``_order`` / ``_refs`` are runtime wiring, initialized
+    independently for every new slot. Concrete constructors initialize
+    inherited fields directly to avoid a base-initializer call per line.
     """
+
+    __slots__ = (
+        "_next",
+        "_order",
+        "_prev",
+        "_refs",
+        "eol",
+        "leading",
+        "owner_aot_entry",
+    )
 
     leading: str
     """Trivia before the slot's own text: blank lines, comment lines, indent."""
@@ -99,9 +110,9 @@ class Slot:
     for the last line of a file that ends without one.
     """
 
-    _prev: Slot | None = field(default=None, init=False, repr=False, compare=False)
-    _next: Slot | None = field(default=None, init=False, repr=False, compare=False)
-    _order: int = field(default=0, init=False, repr=False, compare=False)
+    _prev: Slot | None
+    _next: Slot | None
+    _order: int
     """Doc-stream order key: strictly increasing along ``_next``.
 
     Lets "which slot comes first?" — and so where a ref belongs in a
@@ -109,9 +120,7 @@ class Slot:
     Maintained by `stitch_run`; meaningless for an unlinked slot, which
     is stamped afresh when spliced back in.
     """
-    _refs: list[SlotRef] = field(
-        default_factory=list, init=False, repr=False, compare=False
-    )
+    _refs: list[SlotRef]
     """Back-pointers from this slot to every `SlotRef` that references it.
 
     Bounded length (≤ path depth + 1). AoT removal uses this to scrub
@@ -165,9 +174,10 @@ class Slot:
         raise NotImplementedError
 
 
-@dataclass(slots=True, eq=False)
 class KVSlot(Slot):
     """A single ``key = value`` line."""
+
+    __slots__ = ("host_path", "key_parts", "key_seps", "post_eq", "pre_eq", "value")
 
     host_path: tuple[str, ...]
     """Full path of the table body this KV physically belongs to."""
@@ -187,6 +197,32 @@ class KVSlot(Slot):
     post_eq: str
     value: Value
 
+    def __init__(
+        self,
+        leading: str,
+        owner_aot_entry: AoTEntry | None,
+        eol: str,
+        host_path: tuple[str, ...],
+        key_parts: tuple[KeyPart, ...],
+        key_seps: tuple[str, ...],
+        pre_eq: str,
+        post_eq: str,
+        value: Value,
+    ) -> None:
+        self.leading = leading
+        self.owner_aot_entry = owner_aot_entry
+        self.eol = eol
+        self._prev = None
+        self._next = None
+        self._order = 0
+        self._refs = []
+        self.host_path = host_path
+        self.key_parts = key_parts
+        self.key_seps = key_seps
+        self.pre_eq = pre_eq
+        self.post_eq = post_eq
+        self.value = value
+
     @property
     def key(self) -> tuple[str, ...]:
         """Decoded dotted-key path, derived from ``key_parts``."""
@@ -202,7 +238,6 @@ class KVSlot(Slot):
         )
 
 
-@dataclass(slots=True, eq=False)
 class StructuralHeaderSlot(Slot):
     """One ``[a.b]`` or ``[[a.b]]`` header line.
 
@@ -210,6 +245,15 @@ class StructuralHeaderSlot(Slot):
     :class:`AoTEntry`, plain table headers carry ``None``. :attr:`kind`
     is derived from ``entry`` so the two cannot drift.
     """
+
+    __slots__ = (
+        "entry",
+        "inner_post",
+        "inner_pre",
+        "key_parts",
+        "key_seps",
+        "synthetic",
+    )
 
     key_parts: tuple[KeyPart, ...]
     key_seps: tuple[str, ...]
@@ -221,6 +265,32 @@ class StructuralHeaderSlot(Slot):
 
     synthetic: bool
     """True iff this header was introduced by mutation."""
+
+    def __init__(
+        self,
+        leading: str,
+        owner_aot_entry: AoTEntry | None,
+        eol: str,
+        key_parts: tuple[KeyPart, ...],
+        key_seps: tuple[str, ...],
+        inner_pre: str,
+        inner_post: str,
+        entry: AoTEntry | None,
+        synthetic: bool,  # noqa: FBT001
+    ) -> None:
+        self.leading = leading
+        self.owner_aot_entry = owner_aot_entry
+        self.eol = eol
+        self._prev = None
+        self._next = None
+        self._order = 0
+        self._refs = []
+        self.key_parts = key_parts
+        self.key_seps = key_seps
+        self.inner_pre = inner_pre
+        self.inner_post = inner_post
+        self.entry = entry
+        self.synthetic = synthetic
 
     @property
     def path(self) -> tuple[str, ...]:

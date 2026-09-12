@@ -30,7 +30,6 @@ in place. Blank-line runs collapse to one; comment text is rewritten to
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import Boundary
@@ -71,7 +70,6 @@ def _validate_non_negative(value: int, name: str) -> None:
         raise ValueError(msg)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
 class FormatOptions:
     """Canonical formatting options shared by all ``format()`` methods.
 
@@ -89,14 +87,27 @@ class FormatOptions:
     array or inline table has a comma.
     """
 
-    normalize_comments: bool = True
-    indent: int = 2
-    eol_comment_spaces: int = 1
-    multiline_trailing_comma: bool = True
+    __slots__ = (
+        "eol_comment_spaces",
+        "indent",
+        "multiline_trailing_comma",
+        "normalize_comments",
+    )
 
-    def __post_init__(self) -> None:
-        _validate_non_negative(self.indent, "indent")
-        _validate_non_negative(self.eol_comment_spaces, "eol_comment_spaces")
+    def __init__(
+        self,
+        *,
+        normalize_comments: bool = True,
+        indent: int = 2,
+        eol_comment_spaces: int = 1,
+        multiline_trailing_comma: bool = True,
+    ) -> None:
+        _validate_non_negative(indent, "indent")
+        _validate_non_negative(eol_comment_spaces, "eol_comment_spaces")
+        self.normalize_comments = normalize_comments
+        self.indent = indent
+        self.eol_comment_spaces = eol_comment_spaces
+        self.multiline_trailing_comma = multiline_trailing_comma
 
 
 _DEFAULT_FORMAT_OPTIONS = FormatOptions()

@@ -7,7 +7,6 @@ inline-table keys.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from tomlrt._scanner import _Scanner
@@ -23,7 +22,6 @@ if TYPE_CHECKING:
     from tomlrt._values import Value
 
 
-@dataclass
 class ParseResult:
     """The output of `_Parser.parse`.
 
@@ -31,11 +29,14 @@ class ParseResult:
     `newline` is the scanner-detected document-wide line ending.
     """
 
-    slots: list[Slot] = field(default_factory=list)
-    trailing: str = ""
-    newline: str = "\n"
-    prelude: str = ""
-    section_blank_separated: bool = True
+    __slots__ = ("newline", "prelude", "section_blank_separated", "slots", "trailing")
+
+    def __init__(self) -> None:
+        self.slots: list[Slot] = []
+        self.trailing = ""
+        self.newline = "\n"
+        self.prelude = ""
+        self.section_blank_separated = True
 
 
 class _Parser:

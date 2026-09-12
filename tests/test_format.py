@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import FrozenInstanceError
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, TypedDict
 
@@ -1041,14 +1040,32 @@ def test_format_options_rejects_negative_values(
         tomlrt.FormatOptions(**kwargs)
 
 
-def test_format_options_is_frozen_and_keyword_only() -> None:
-    options = tomlrt.FormatOptions()
-    assert options.normalize_comments is True
-    attribute = "normalize_comments"
-    with pytest.raises(FrozenInstanceError):
-        setattr(options, attribute, False)
+def test_format_options_is_keyword_only() -> None:
     parameters = signature(tomlrt.FormatOptions).parameters
     assert all(p.kind is Parameter.KEYWORD_ONLY for p in parameters.values())
+
+
+def test_format_options_can_be_updated() -> None:
+    options = tomlrt.FormatOptions()
+    options.normalize_comments = False
+    options.indent = 4
+    options.eol_comment_spaces = 2
+    options.multiline_trailing_comma = False
+    source = td("""
+        values=[
+          1,#   keep
+          2,
+        ]
+        """)
+    expected = td("""
+        values = [
+            1,  #   keep
+            2
+        ]
+        """)
+    doc = tomlrt.loads(source)
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
 
 
 def test_all_format_options_interact_without_changing_data() -> None:

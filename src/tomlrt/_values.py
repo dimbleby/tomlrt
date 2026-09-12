@@ -4,8 +4,8 @@ Values are pure data with no slot-stream awareness. Scalars carry their
 source ``lexeme``; arrays and inline tables carry every separator,
 comment, and whitespace run needed for exact re-emission.
 
-Fieldless leaves inherit dataclass methods with empty slots rather than
-regenerating the same methods at import time.
+Records use explicit slotted constructors rather than generating methods
+at import time. Fieldless leaves inherit their storage and constructors.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from __future__ import annotations
 import copy
 import re
 import sys
-from dataclasses import dataclass, field, fields
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
@@ -37,7 +36,6 @@ if TYPE_CHECKING:
 _ScalarT = TypeVar("_ScalarT")
 
 
-@dataclass(slots=True, eq=False)
 class ScalarValue(Generic[_ScalarT]):
     """Base of the five TOML scalar leaves.
 
@@ -48,8 +46,11 @@ class ScalarValue(Generic[_ScalarT]):
     constructor.
     """
 
-    lexeme: str
-    value: _ScalarT
+    __slots__ = ("lexeme", "value")
+
+    def __init__(self, lexeme: str, value: _ScalarT) -> None:
+        self.lexeme = lexeme
+        self.value = value
 
     def render(self) -> str:
         return self.lexeme
@@ -108,7 +109,6 @@ class DateTimeValue(ScalarValue[datetime | date | time]):
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, eq=False)
 class KeyPart:
     """A single dotted-key component.
 
@@ -117,8 +117,11 @@ class KeyPart:
     a rebase and `Slot.__deepcopy__` both rely on.
     """
 
-    raw: str  # source representation including any surrounding quotes
-    value: str  # the decoded key string
+    __slots__ = ("raw", "value")
+
+    def __init__(self, raw: str, value: str) -> None:
+        self.raw = raw  # source representation including any surrounding quotes
+        self.value = value  # the decoded key string
 
 
 _KEY_ESCAPES: dict[int, str] = {0x22: '\\"', 0x5C: "\\\\"}
@@ -168,33 +171,48 @@ def render_dotted(parts: tuple[KeyPart, ...], seps: tuple[str, ...]) -> str:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, eq=False)
 class _CommaNode:
     """Copy comma records without generic pickle-state reconstruction."""
+
+    __slots__ = ()
+
+    _copy_fields: ClassVar[tuple[str, ...]]
 
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
         new = object.__new__(type(self))
         memo[id(self)] = new
-        for attr in fields(self):
-            setattr(new, attr.name, copy.deepcopy(getattr(self, attr.name), memo))
+        for attr in self._copy_fields:
+            setattr(new, attr, copy.deepcopy(getattr(self, attr), memo))
         return new
 
 
-@dataclass(slots=True, eq=False)
 class CommaItem(_CommaNode):
     """One slot inside a comma-separated value.
 
     Layout: ``leading value trailing [comma post_comma_trivia]``.
     Shared base of sibling leaves `ArrayItem` and `InlineTableEntry`;
     use `CommaItem` only at polymorphic call sites. Fields are
-    positional, for the reason given on `Slot`.
+    positional, for the reason given on `Slot`. Field-adding subclasses
+    initialize inherited fields directly to avoid an extra call per item.
     """
 
-    leading: str
-    value: Value
-    trailing: str
-    has_comma: bool
-    post_comma_trivia: str
+    __slots__ = ("has_comma", "leading", "post_comma_trivia", "trailing", "value")
+
+    _copy_fields: ClassVar[tuple[str, ...]] = __slots__
+
+    def __init__(
+        self,
+        leading: str,
+        value: Value,
+        trailing: str,
+        has_comma: bool,  # noqa: FBT001
+        post_comma_trivia: str,
+    ) -> None:
+        self.leading = leading
+        self.value = value
+        self.trailing = trailing
+        self.has_comma = has_comma
+        self.post_comma_trivia = post_comma_trivia
 
     def render_tail(self) -> str:
         """Everything the item renders after its value."""
@@ -212,13 +230,16 @@ class ArrayItem(CommaItem):
     __slots__ = ()
 
 
-@dataclass(slots=True, eq=False)
 class InlineTableEntry(CommaItem):
     """One ``key = value`` slot inside an inline table.
 
     The shared trivia/comma machinery lives on `CommaItem`; this leaf
     adds only the key-prefix fields and keyed rendering.
     """
+
+    __slots__ = ("key_parts", "key_path", "key_seps", "post_eq", "pre_eq")
+
+    _copy_fields: ClassVar[tuple[str, ...]] = CommaItem._copy_fields + __slots__  # noqa: SLF001
 
     key_parts: tuple[KeyPart, ...]
     key_seps: tuple[str, ...]  # len = len(key_parts) - 1
@@ -230,6 +251,30 @@ class InlineTableEntry(CommaItem):
     Set by every construction site and read by inline-table validation,
     decoding, and cross-document cloning.
     """
+
+    def __init__(
+        self,
+        leading: str,
+        value: Value,
+        trailing: str,
+        has_comma: bool,  # noqa: FBT001
+        post_comma_trivia: str,
+        key_parts: tuple[KeyPart, ...],
+        key_seps: tuple[str, ...],
+        pre_eq: str,
+        post_eq: str,
+        key_path: tuple[str, ...],
+    ) -> None:
+        self.leading = leading
+        self.value = value
+        self.trailing = trailing
+        self.has_comma = has_comma
+        self.post_comma_trivia = post_comma_trivia
+        self.key_parts = key_parts
+        self.key_seps = key_seps
+        self.pre_eq = pre_eq
+        self.post_eq = post_eq
+        self.key_path = key_path
 
     @override
     def render(self) -> str:
@@ -243,7 +288,6 @@ class InlineTableEntry(CommaItem):
 _ItemT = TypeVar("_ItemT", bound=CommaItem)
 
 
-@dataclass(slots=True, eq=False)
 class CommaValue(_CommaNode, Generic[_ItemT]):
     """Shared backbone of `ArrayValue` and `InlineTableValue`.
 
@@ -261,14 +305,14 @@ class CommaValue(_CommaNode, Generic[_ItemT]):
     Concrete subclasses bind ``_ItemT`` and set the bracket ClassVars.
     """
 
-    items: list[_ItemT] = field(default_factory=list)
-    header_trivia: str = ""
-    final_trivia: str = ""
+    __slots__ = ("_ml_cache", "final_trivia", "header_trivia", "items")
+
+    _copy_fields: ClassVar[tuple[str, ...]] = __slots__
 
     # Memoised `is_multiline()` result; None means "not computed". Mutations
     # that preserve multi-line shape (append/insert/sort/reorder) leave it
     # warm; item removal and the explicit single<->multi toggle invalidate it.
-    _ml_cache: bool | None = field(default=None, init=False, compare=False, repr=False)
+    _ml_cache: bool | None
 
     _open: ClassVar[str] = ""
     _close: ClassVar[str] = ""
@@ -277,6 +321,17 @@ class CommaValue(_CommaNode, Generic[_ItemT]):
     # space for inline tables (``{ a = 1 }``), none for inline arrays
     # (``[1, 2]``). An empty value carries no padding regardless.
     _single_line_pad: ClassVar[str] = ""
+
+    def __init__(
+        self,
+        items: list[_ItemT] | None = None,
+        header_trivia: str = "",
+        final_trivia: str = "",
+    ) -> None:
+        self.items = [] if items is None else items
+        self.header_trivia = header_trivia
+        self.final_trivia = final_trivia
+        self._ml_cache = None
 
     def render(self) -> str:
         body = "".join([it.render() for it in self.items])

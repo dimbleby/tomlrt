@@ -67,7 +67,11 @@ Python 3.10–3.14. `ty` is a second, independent type-checker (run via
   `cast()` either; the typed accessors `Table.array(k)`,
   `Table.table(k)`, `Table.aot(k)`, `Array.array(i)`, `Array.table(i)`
   exist precisely to avoid this.
-- **Construct hot-path dataclasses positionally.** `Slot`, `CommaItem`
+- **Use plain slotted records, not dataclasses.** Runtime class and
+  method generation and its dependency imports are material startup
+  costs. Field-adding subclasses on hot paths initialize inherited
+  fields directly, without extra base-initializer calls.
+- **Construct hot-path records positionally.** `Slot`, `CommaItem`
   and the internal layout records (`CommaStyle`, `Boundary`,
   `_ReorderUnit`) are built once per line, item, sorted
   block or inline edit. A constructor call carrying *any* keyword falls off CPython's
@@ -75,12 +79,14 @@ Python 3.10–3.14. `ty` is a second, independent type-checker (run via
   measurably: sorting 800 sections is ~7% faster for this alone, and
   inserting into an inline array ~13%. Keywords are fine anywhere else —
   an ordinary function call loses only a few ns to them, well below what
-  any benchmark here can resolve. The one thing that blocks a call is a
-  bare boolean *literal*, which ruff `FBT003` rejects (a name is fine);
+  any benchmark here can resolve. At call sites, ruff `FBT003` rejects
+  a bare boolean *literal* (a name is fine);
   take a targeted `# noqa` where the win is measured, as `_inline_ops`
   and `Boundary.capture` do, and leave the keyword where it is not, as
   the two `StructuralHeaderSlot(…, synthetic=…)` calls do — those are
   worth less than the measurement's own noise floor.
+  Targeted `FBT001` / `FBT002` suppressions on record constructor
+  signatures preserve this positional convention.
 - **`from __future__ import annotations`** at the top of every module
   (enforced by ruff's isort `required-imports`).
 - Do not add comments that merely restate the code. Comment intent and
@@ -154,6 +160,10 @@ them. Read roughly in this order:
   concrete leaf when the code is flavour-specific —
   `ArrayValue.items: list[ArrayItem]` narrows away
   `InlineTableEntry` at the type level.
+  Comma records share `_CommaNode.__deepcopy__`: `_copy_fields` is
+  derived from `__slots__` and extended for inherited storage. Register
+  the clone in the memo before copying children; do not reintroduce
+  dataclass field reflection.
 - **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:
@@ -258,7 +268,10 @@ them. Read roughly in this order:
   shape (KV `key = value` spacing, header inner-pad, sibling-
   spacing rules, single-line vs multi-line inline shape, EOL
   comment placement), configured by the public `FormatOptions` (the
-  old `comments=` argument is deprecated). Shape-preserving for
+  old `comments=` argument is deprecated). `FormatOptions` is an
+  ordinary mutable slotted settings object. Numeric validation belongs
+  in its constructor, not on each use; dataclass compatibility and
+  freezing are not part of its interface. Shape-preserving for
   inline values (single-line stays single-line; multi-line stays
   multi-line) and idempotent. The structural counterpart is
   `_comma_ops`, which owns *changing* layout; this module owns
@@ -482,6 +495,9 @@ When adding behaviour, add a focused unit test in the relevant file
 
 ### Test-writing conventions
 
+- **Test through the public API.** Assert observable behaviour rather
+  than private fields, record representations, or storage details.
+  Existing white-box tests are not a precedent for adding more.
 - **Assert on the full rendered document, not substrings.** Compare
   `tomlrt.dumps(doc)` to the complete expected output with `==`.
   Substring checks (`"foo" in out`, `"\n[bar]\n" not in out`) and
