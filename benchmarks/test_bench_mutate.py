@@ -88,6 +88,26 @@ def test_render_only_pyproject(benchmark: BenchmarkFixture, pyproject_src: str) 
     benchmark(tomlrt.dumps, doc)
 
 
+def test_iterate_root_comments_over_nested_sections(
+    benchmark: BenchmarkFixture,
+) -> None:
+    src = "".join(
+        f"[packages.package_{i:04d}]\n"
+        f'z_name = "package-{i}"\n'
+        "enabled = true\n"
+        f"versions = [{i + 2}, {i}, {i + 1}]\n"
+        f'a_description = "Synthetic package number {i}"\n'
+        for i in reversed(range(1_000))
+    )
+    comments = tomlrt.loads(src).comments
+
+    def work() -> None:
+        for key in comments:
+            raise AssertionError(key)
+
+    benchmark(work)
+
+
 def test_parse_update_render_pyproject(
     benchmark: BenchmarkFixture, pyproject_src: str
 ) -> None:

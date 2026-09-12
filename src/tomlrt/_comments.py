@@ -135,14 +135,9 @@ class _SlotKeyedView(MutableMapping[str, _T]):
 
     @override
     def __iter__(self) -> Iterator[str]:
-        seen: set[str] = set()
-        for ref in self._c._refs:  # noqa: SLF001
-            k = ref.local_key
-            if k is None or k in seen:
-                continue
+        for k in dict.keys(self._c):
             slot = self._slot(k)
             if slot is not None and self._get(slot) is not None:
-                seen.add(k)
                 yield k
 
     @override
