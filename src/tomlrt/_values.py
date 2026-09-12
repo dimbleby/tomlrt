@@ -3,6 +3,9 @@
 Values are pure data with no slot-stream awareness. Scalars carry their
 source ``lexeme``; arrays and inline tables carry every separator,
 comment, and whitespace run needed for exact re-emission.
+
+Fieldless leaves inherit dataclass methods with empty slots rather than
+regenerating the same methods at import time.
 """
 
 from __future__ import annotations
@@ -70,28 +73,33 @@ class ScalarValue(Generic[_ScalarT]):
         return new
 
 
-@dataclass(slots=True, eq=False)
 class StringValue(ScalarValue[str]):
+    __slots__ = ()
+
     value: str
 
 
-@dataclass(slots=True, eq=False)
 class IntegerValue(ScalarValue[int]):
+    __slots__ = ()
+
     value: int
 
 
-@dataclass(slots=True, eq=False)
 class FloatValue(ScalarValue[float]):
+    __slots__ = ()
+
     value: float
 
 
-@dataclass(slots=True, eq=False)
 class BoolValue(ScalarValue[bool]):
+    __slots__ = ()
+
     value: bool
 
 
-@dataclass(slots=True, eq=False)
 class DateTimeValue(ScalarValue[datetime | date | time]):
+    __slots__ = ()
+
     value: datetime | date | time
 
 
@@ -198,9 +206,10 @@ class CommaItem(_CommaNode):
         return f"{self.leading}{self.value.render()}{self.render_tail()}"
 
 
-@dataclass(slots=True, eq=False)
 class ArrayItem(CommaItem):
     """Represent one bare-value slot inside an inline array."""
+
+    __slots__ = ()
 
 
 @dataclass(slots=True, eq=False)
@@ -295,17 +304,19 @@ class CommaValue(_CommaNode, Generic[_ItemT]):
         self._ml_cache = None
 
 
-@dataclass(slots=True, eq=False)
 class ArrayValue(CommaValue[ArrayItem]):
     """Inline array literal (``[ ... ]``)."""
+
+    __slots__ = ()
 
     _open: ClassVar[str] = "["
     _close: ClassVar[str] = "]"
 
 
-@dataclass(slots=True, eq=False)
 class InlineTableValue(CommaValue[InlineTableEntry]):
     """Inline table literal (``{ ... }``)."""
+
+    __slots__ = ()
 
     _open: ClassVar[str] = "{"
     _close: ClassVar[str] = "}"
