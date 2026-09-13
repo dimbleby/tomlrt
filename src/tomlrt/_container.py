@@ -83,6 +83,7 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
+    is_shareable_scalar,
     make_keypart,
     retarget_value_newlines,
 )
@@ -522,10 +523,9 @@ class Container(_View, dict[str, Any]):
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        """Materialise a plain-Python ``dict`` (recursive)."""
-        out: dict[str, Any] = {}
-        for k, v in _mapping_items(self):
-            out[k] = _to_python(v)
+        """Materialise independent plain-Python data (recursive)."""
+        out = _to_python(self)
+        assert isinstance(out, dict)
         return out
 
     def _synth_local_value(self, key: str, value: TomlInput) -> tuple[Value, object]:
@@ -1437,6 +1437,11 @@ class Document(Container):
         self._layout_root = self
         if data is None:
             return
+        if isinstance(data, Document):
+            from tomlrt._build import populate_cloned_document  # noqa: PLC0415
+
+            populate_cloned_document(self, data)
+            return
         if _has_extractable_layout(data):
             from tomlrt._build import populate_extracted_document  # noqa: PLC0415
 
@@ -1508,10 +1513,7 @@ class Document(Container):
 
     @override
     def __copy__(self) -> Document:
-        # Round-trip via dumps/loads: preserves bytes exactly.
-        from tomlrt._public import loads  # noqa: PLC0415
-
-        return loads(self.render())
+        return Document(self)
 
 
 def _inline_value_has_inner_comments(v: object) -> bool:
@@ -1584,10 +1586,14 @@ def _clone_private_layout(value: Container | AoT) -> Table | AoT:
     return result
 
 
-def _copy_input(value: TomlInput) -> TomlInput:
+def _copy_input(value: TomlInput, memo: dict[int, object] | None = None) -> TomlInput:
     """Deep-copy validated input without creating layout where none exists."""
-    if is_scalar(value):
+    if is_shareable_scalar(value):
         return value
+    if memo is None:
+        memo = {}
+    if is_scalar(value):
+        return copy.deepcopy(value, memo)
     if is_inline_value(value):
         cst = _detached_inline_value(value)
         if cst is not None:
@@ -1605,19 +1611,19 @@ def _copy_input(value: TomlInput) -> TomlInput:
     if isinstance(value, Container):
         table = Table.inline() if value._inline else Table.section()  # noqa: SLF001
         for key, child in _mapping_items(value):
-            dict.__setitem__(table, key, _copy_input(child))
+            dict.__setitem__(table, key, _copy_input(child, memo))
         return table
     if isinstance(value, AoT):
         aot = AoT()
         for original in value:
-            entry = _copy_input(original)
+            entry = _copy_input(original, memo)
             assert isinstance(entry, Table)
             list.append(aot, entry)
         return aot
     if isinstance(value, Mapping):
-        return {key: _copy_input(child) for key, child in _mapping_items(value)}
+        return {key: _copy_input(child, memo) for key, child in _mapping_items(value)}
     assert isinstance(value, list), "validated compound input expected"
-    return [_copy_input(child) for child in value]
+    return [_copy_input(child, memo) for child in value]
 
 
 def _clear_inline_document_binding(t: Container) -> None:
@@ -1628,13 +1634,19 @@ def _clear_inline_document_binding(t: Container) -> None:
 
 def _to_python(v: object) -> object:
     """Export independent plain data from views and unmaterialized payloads."""
-    if is_scalar(v):
-        return v
+    return _to_python_value(v, {})
+
+
+def _to_python_value(v: object, memo: dict[int, object]) -> object:
+    """Walk an export unit without recursing or copying for atomic values."""
     if isinstance(v, (dict, Mapping)):
-        return {key: _to_python(value) for key, value in _mapping_items(v)}
+        return {
+            key: value if is_shareable_scalar(value) else _to_python_value(value, memo)
+            for key, value in _mapping_items(v)
+        }
     if isinstance(v, list):
-        return [_to_python(x) for x in v]
-    return v
+        return [x if is_shareable_scalar(x) else _to_python_value(x, memo) for x in v]
+    return copy.deepcopy(v, memo) if is_scalar(v) else v
 
 
 def _is_section(v: object) -> TypeGuard[Container]:

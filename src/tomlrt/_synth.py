@@ -61,8 +61,10 @@ from tomlrt._typecheck import _mapping_items, _require_mapping, _validate_key
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
+    EmptyAoTValue,
     InlineTableEntry,
     InlineTableValue,
+    is_shareable_scalar,
     make_keypart,
     make_keyparts,
     retarget_value_newlines,
@@ -220,7 +222,9 @@ class _Plan:
         return bool(self.values) or not self.structural
 
 
-def _plan(mapping: Mapping[_KeyT, object], nl: str) -> _Plan:
+def _plan(
+    mapping: Mapping[_KeyT, object], nl: str, scalar_memo: dict[int, object] | None
+) -> _Plan:
     """Check and classify ``mapping``, keeping its own order.
 
     Anything TOML cannot hold raises the error the caller should see;
@@ -235,27 +239,29 @@ def _plan(mapping: Mapping[_KeyT, object], nl: str) -> _Plan:
         # what it alone can answer. A list is a list, whatever else it
         # may also claim to be.
         if isinstance(raw, list):
-            _plan_list(plan, node, nl)
+            _plan_list(plan, node, nl, scalar_memo)
         elif _wants_section(raw):
-            _plan_section(plan, node, nl)
+            _plan_section(plan, node, nl, scalar_memo)
         else:
-            node.value = _inline_value(raw, nl, key=key)
+            node.value = _inline_value(raw, nl, scalar_memo, key=key)
             plan.add_value(node)
     return plan
 
 
-def _plan_list(plan: _Plan, node: _Node, nl: str) -> None:
+def _plan_list(
+    plan: _Plan, node: _Node, nl: str, scalar_memo: dict[int, object] | None
+) -> None:
     """Plan a list: an array-of-tables if that is what it holds."""
     raw = node.raw
     assert isinstance(raw, list)
     entries = _aot_entries(raw)
     if entries is None:
-        node.value = _inline_value(raw, nl, key=node.key)
+        node.value = _inline_value(raw, nl, scalar_memo, key=node.key)
         plan.add_value(node)
     elif not entries:
         # No entries, so no headers: the key is held by an empty array,
         # which is what a mutation parks there too.
-        node.value = ArrayValue()
+        node.value = EmptyAoTValue()
         plan.add_value(node)
     elif (regions := _graft_regions(raw)) is not None:
         plan.add_graft(node, regions)
@@ -263,7 +269,7 @@ def _plan_list(plan: _Plan, node: _Node, nl: str) -> None:
         node.entries = [
             entry
             if _is_section(entry) and entry._layout_root is not None  # noqa: SLF001
-            else _plan(entry, nl)
+            else _plan(entry, nl, scalar_memo)
             for entry in entries
         ]
         plan.any_grafts |= any(
@@ -272,27 +278,45 @@ def _plan_list(plan: _Plan, node: _Node, nl: str) -> None:
         plan.structural.append(node)
 
 
-def _plan_section(plan: _Plan, node: _Node, nl: str) -> None:
+def _plan_section(
+    plan: _Plan, node: _Node, nl: str, scalar_memo: dict[int, object] | None
+) -> None:
     """Plan a mapping that becomes a ``[section]``."""
     raw = node.raw
     if (regions := _graft_regions(raw)) is not None:
         plan.add_graft(node, regions)
         return
     assert isinstance(raw, Mapping)
-    node.table = _plan(raw, nl)
+    node.table = _plan(raw, nl, scalar_memo)
     plan.any_grafts |= node.table.any_grafts
     plan.structural.append(node)
 
 
-def _inline_value(v: object, nl: str, *, key: str | None = None) -> Value:
+def _inline_value(
+    v: object,
+    nl: str,
+    scalar_memo: dict[int, object] | None,
+    *,
+    key: str | None = None,
+) -> Value:
     """Validate and build the TOML value for ``v``, laid out on one line.
 
     Mirrors the spacing `_fill_inline_array` and `_populate_inline_table`
     give a synthesised value: items separated by ``", "``, brackets
     padded only when there is something between them.
+
+    Construction supplies ``scalar_memo`` to isolate user payloads while
+    retaining scalar aliases. Serialization supplies ``None``: rendering
+    plain data must not invoke its scalar deepcopy hooks. Views already
+    clone their own CST once per occurrence, independently of this memo.
     """
-    if is_scalar(v):
+    if is_shareable_scalar(v):
         return coerce_scalar(v)
+    if is_scalar(v):
+        value = coerce_scalar(v)
+        if scalar_memo is not None:
+            value._copy_payloads(scalar_memo)  # noqa: SLF001
+        return value
     if isinstance(v, AoT):
         msg = "cannot store an array-of-tables inside an inline table"
         raise TOMLError(msg)
@@ -313,7 +337,11 @@ def _inline_value(v: object, nl: str, *, key: str | None = None) -> Value:
         for i, sub in enumerate(v):
             array.items.append(
                 ArrayItem(
-                    "" if i == 0 else " ", _inline_value(sub, nl), "", i != last, ""
+                    "" if i == 0 else " ",
+                    _inline_value(sub, nl, scalar_memo),
+                    "",
+                    i != last,
+                    "",
                 )
             )
         return array
@@ -325,7 +353,7 @@ def _inline_value(v: object, nl: str, *, key: str | None = None) -> Value:
             table.items.append(
                 InlineTableEntry(
                     "" if i == 0 else " ",
-                    _inline_value(sub, nl, key=child_key),
+                    _inline_value(sub, nl, scalar_memo, key=child_key),
                     "",
                     i != last,
                     "",
@@ -495,14 +523,18 @@ def _reorder(container: Container, plan: _Plan) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _slot_run(data: Mapping[str, object], nl: str) -> tuple[_Plan, list[Slot]]:
+def _slot_run(
+    data: Mapping[str, object],
+    nl: str,
+    scalar_memo: dict[int, object] | None = None,
+) -> tuple[_Plan, list[Slot]]:
     """Check ``data`` and write it out as a linked run of slots.
 
     Everything a document built from a mapping physically is. What is
     made of it afterwards -- views, or just text -- is the caller's.
     """
     _require_mapping(data, label="Document data argument")
-    plan = _plan(data, nl)
+    plan = _plan(data, nl, scalar_memo)
     slots: list[Slot] = []
     _emit(plan, (), None, slots, nl, header=False)
     if plan.any_grafts:
@@ -518,7 +550,7 @@ def _slot_run(data: Mapping[str, object], nl: str) -> tuple[_Plan, list[Slot]]:
 def populate(doc: Document, data: Mapping[str, object]) -> None:
     """Populate ``doc`` from ``data``."""
     nl = doc._newline  # noqa: SLF001
-    plan, slots = _slot_run(data, nl)
+    plan, slots = _slot_run(data, nl, {})
     _assemble_document(
         doc,
         slots,

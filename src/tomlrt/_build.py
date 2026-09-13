@@ -11,16 +11,20 @@ from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
 from tomlrt._comment_text import _split_preamble
-from tomlrt._container import Document, Table, _file_host
+from tomlrt._container import Document, Table, _file_host, _reorder_dict_storage
 from tomlrt._layout_ops import (
+    _bind_aot,
+    _clone_entry_slots,
     extract_subtree_slots,
     file_own_header,
     maybe_advance_body_tail,
+    owned_slots,
     record_ref,
 )
-from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._slots import KVSlot, StructuralHeaderSlot, stitch_run
 from tomlrt._values import (
     ArrayValue,
+    EmptyAoTValue,
     InlineTableValue,
 )
 
@@ -267,6 +271,15 @@ def _decode_value(
     build.
     """
     if isinstance(value, ArrayValue):
+        if isinstance(value, EmptyAoTValue):
+            assert not value.items
+            assert parent is not None
+            assert not parent._inline  # noqa: SLF001
+            assert name is not None
+            assert array_host is None
+            aot = AoT()
+            _bind_aot(parent, name, aot)
+            return aot
         return _decode_array(
             value,
             layout_root,
@@ -365,6 +378,31 @@ def populate_extracted_document(doc: Document, src_table: Container) -> None:
     )
 
 
+def populate_cloned_document(doc: Document, source: Document) -> None:
+    """Clone a whole document's CST and its already-separated file envelope."""
+    slots, _head = _clone_entry_slots(
+        owned_slots(source),
+        new_entry=None,
+        body_owner=None,
+        src_prefix=(),
+        target_prefix=(),
+        dst_newline=None,
+    )
+    stitch_run(None, slots, None)
+    _assemble_document(
+        doc,
+        slots,
+        trailing=source._trailing,  # noqa: SLF001
+        newline=source._newline,  # noqa: SLF001
+        prelude=source._prelude,  # noqa: SLF001
+        section_blank_separated=source._section_blank_separated,  # noqa: SLF001
+        preamble=source._preamble,  # noqa: SLF001
+    )
+    keys = list(source)
+    if list(doc) != keys:
+        _reorder_dict_storage(doc, keys)
+
+
 def _assemble_document(
     doc: Document,
     slots: list[Slot],
@@ -373,6 +411,7 @@ def _assemble_document(
     newline: str,
     prelude: str,
     section_blank_separated: bool,
+    preamble: str | None = None,
 ) -> Document:
     """Wire ``doc`` around a linked slot run and build its views."""
     doc._head = slots[0] if slots else None  # noqa: SLF001
@@ -381,7 +420,9 @@ def _assemble_document(
     doc._newline = newline  # noqa: SLF001
     doc._prelude = prelude  # noqa: SLF001
     doc._section_blank_separated = section_blank_separated  # noqa: SLF001
-    if slots:
+    if preamble is not None:
+        doc._preamble = preamble  # noqa: SLF001
+    elif slots:
         # The opening comment paragraph is the document preamble; the rest of
         # the head slot's leading stays as the first construct's block.
         head = slots[0]
@@ -398,4 +439,8 @@ def _assemble_document(
     return doc
 
 
-__all__ = ["build_from_parse", "populate_extracted_document"]
+__all__ = [
+    "build_from_parse",
+    "populate_cloned_document",
+    "populate_extracted_document",
+]
