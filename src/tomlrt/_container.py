@@ -53,11 +53,8 @@ from tomlrt._comments import (
 )
 from tomlrt._errors import TOMLError
 from tomlrt._format import (
-    _canon_slot,
     _resolve_format_options,
-    format_document_trailing,
-    format_inline_root,
-    format_subtree,
+    format_container,
 )
 from tomlrt._inline_comments import _InlineAdapter
 from tomlrt._kind import _Kind
@@ -340,68 +337,7 @@ class Container(_View, dict[str, Any]):
         navigators are unsupported and raise `TOMLError`.
         """
         resolved = _resolve_format_options(options=options, comments=comments)
-        kind = self._kind
-        nl = self._doc_newline
-
-        if kind is _Kind.INLINE_ROOT:
-            assert self._value is not None
-            format_inline_root(
-                self._value,
-                nl=nl,
-                options=resolved,
-                host=_host_kv_slot(self),
-            )
-            return
-
-        if kind in (_Kind.INLINE_FACTORY, _Kind.INLINE_DOTTED_INNER):
-            msg = "format() is not supported on detached inline-table views"
-            raise TOMLError(msg)
-
-        if kind is _Kind.DOCUMENT:
-            assert isinstance(self, Document)
-            # A non-empty preamble already ends in one blank-line
-            # separator, so the first slot must contribute none;
-            # otherwise the document opens with at most one blank line.
-            format_subtree(
-                start=self._head,
-                path=(),
-                owner=None,
-                nl=nl,
-                options=resolved,
-                head_blank_cap=0 if self._preamble else 1,
-            )
-            self._preamble = format_document_trailing(
-                self._preamble, nl=nl, options=resolved
-            )
-            self._trailing = format_document_trailing(
-                self._trailing, nl=nl, options=resolved
-            )
-            return
-
-        if kind is _Kind.SECTION:
-            assert self._header_ref is not None
-            format_subtree(
-                start=self._header_ref.slot,
-                path=self._path,
-                owner=self._owner_aot_entry,
-                nl=nl,
-                options=resolved,
-            )
-            return
-
-        # IMPLICIT_SECTION slots are not contiguous, so canonicalise each
-        # owned slot and recurse through dict storage.
-        if not self._attached:
-            msg = "format() requires the container to be attached to a Document"
-            raise TOMLError(msg)
-        for ref in list(self._refs):
-            _canon_slot(ref.slot, nl=nl, target_blanks=None, options=resolved)
-        for value in self.values():
-            if isinstance(value, (Container, Array)):
-                value.format(options=resolved)
-            elif isinstance(value, AoT):
-                for entry in value:
-                    entry.format(options=resolved)
+        format_container(self, options=resolved)
 
     @property
     def _attached_doc(self) -> Document:
