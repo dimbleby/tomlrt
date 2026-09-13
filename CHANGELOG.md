@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.10] - 2026-09-13
+
 ### Changed
 
 - Tables can have comments before they are added to a document. Adding them
