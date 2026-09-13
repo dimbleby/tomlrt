@@ -72,6 +72,12 @@ def _validate_non_negative(value: int, name: str) -> None:
         raise ValueError(msg)
 
 
+def _prepare_indent(indent: int) -> str:
+    """Validate and prepare indentation before a multiline edit starts."""
+    _validate_non_negative(indent, "indent")
+    return " " * indent
+
+
 class FormatOptions:
     """Canonical formatting options shared by all ``format()`` methods.
 
@@ -648,13 +654,27 @@ def set_comma_value_multiline(
     ``host`` places the closing bracket -- see `_closing_indent`.
     """
     if multiline:
-        _canon_multiline_shape(
-            value,
-            nl=nl,
-            options=_SHAPE_ONLY_OPTIONS,
-            item_indent=indent,
-            outer_indent=_closing_indent(value, host=host),
-        )
+        outer_indent = _closing_indent(value, host=host)
+        if not value.is_multiline():
+            # Single-line outer trivia has no comments; nested values stay intact.
+            items = value.items
+            row_indent = nl + indent
+            value.header_trivia = row_indent if items else ""
+            value.final_trivia = nl + outer_indent
+            last = len(items) - 1
+            trailing_comma = _SHAPE_ONLY_OPTIONS.multiline_trailing_comma
+            for i, item in enumerate(items):
+                item.leading = "" if i == 0 else row_indent
+                item.trailing = item.post_comma_trivia = ""
+                item.has_comma = i < last or trailing_comma
+        else:
+            _canon_multiline_shape(
+                value,
+                nl=nl,
+                options=_SHAPE_ONLY_OPTIONS,
+                item_indent=indent,
+                outer_indent=outer_indent,
+            )
     else:
         for it in value.items:
             if item_has_any_comment(it):
@@ -871,6 +891,7 @@ __all__ = [
     "FormatOptions",
     "_canon_inline_value",
     "_closing_indent",
+    "_prepare_indent",
     "_resolve_format_options",
     "format_container",
     "format_document_trailing",

@@ -8590,6 +8590,169 @@ def test_standalone_array_multiline_property() -> None:
     assert arr_multi.multiline is True
 
 
+def test_empty_multiline_constructor_and_toggle_share_layout() -> None:
+    constructed = Array([], multiline=True, indent=2)
+    toggled = Array([]).set_multiline(multiline=True, indent=2)
+    doc = tomlrt.Document()
+    doc["constructed"] = constructed
+    doc["toggled"] = toggled
+    assert tomlrt.dumps(doc) == td("""
+        constructed = [
+        ]
+        toggled = [
+        ]
+        """)
+    constructed.append(1)
+    toggled.append(1)
+    expected = td("""
+        constructed = [
+            1,
+        ]
+        toggled = [
+            1,
+        ]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_nonempty_multiline_constructor_and_toggle_keep_item_indentation() -> None:
+    constructed = Array([1], multiline=True, indent=2)
+    toggled = Array([1]).set_multiline(multiline=True, indent=2)
+    doc = tomlrt.Document()
+    doc["constructed"] = constructed
+    doc["toggled"] = toggled
+    assert tomlrt.dumps(doc) == td("""
+        constructed = [
+          1,
+        ]
+        toggled = [
+          1,
+        ]
+        """)
+    constructed.append(2)
+    toggled.append(2)
+    expected = td("""
+        constructed = [
+          1,
+          2,
+        ]
+        toggled = [
+          1,
+          2,
+        ]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_multiline_construction_preserves_nested_comments_and_crlf() -> None:
+    source_text = td("""
+        t = [
+          { # opening
+            x=0x1, # keep
+            y='text',
+          },
+        ]
+        """)
+    source = tomlrt.loads(source_text)
+    child = source.array("t").table(0)
+    constructed = Array([child], multiline=True, indent=2)
+    toggled = Array([child]).set_multiline(multiline=True, indent=2)
+    constructed_doc = tomlrt.loads("prefix = 0\r\n")
+    toggled_doc = tomlrt.loads("prefix = 0\r\n")
+    constructed_doc["array"] = constructed
+    toggled_doc["array"] = toggled
+    expected = td("""
+        prefix = 0
+        array = [
+          { # opening
+            x=0x1, # keep
+            y='text',
+          },
+        ]
+        """).replace("\n", "\r\n")
+    assert tomlrt.dumps(constructed_doc) == expected
+    assert tomlrt.dumps(toggled_doc) == expected
+    assert _reparses(expected) == constructed_doc.to_dict()
+    assert tomlrt.dumps(source) == source_text
+
+
+def test_negative_constructor_indent_rejects_before_attaching_child() -> None:
+    child = Table.inline({"x": 1})
+    with pytest.raises(ValueError, match=r"^indent must be non-negative$"):
+        Array([child], multiline=True, indent=-1)
+    doc = tomlrt.Document()
+    doc["child"] = child
+    assert doc.table("child") is child
+    child["x"] = 2
+    assert tomlrt.dumps(doc) == "child = { x = 2 }\n"
+
+
+def test_noninteger_constructor_indent_rejects_before_attaching_child() -> None:
+    child = Array([1])
+    invalid: Any = 1.5
+    with pytest.raises(TypeError):
+        Array([child], multiline=True, indent=invalid)
+    doc = tomlrt.Document()
+    doc["child"] = child
+    assert doc.array("child") is child
+    child.append(2)
+    assert tomlrt.dumps(doc) == "child = [1, 2]\n"
+
+
+def test_negative_expansion_indent_leaves_layout_unchanged() -> None:
+    source = td("""
+        a = [1,2] # array
+        t = { x=3 } # table
+        """)
+    doc = tomlrt.loads(source)
+    with pytest.raises(ValueError, match=r"^indent must be non-negative$"):
+        doc.array("a").set_multiline(multiline=True, indent=-1)
+    assert tomlrt.dumps(doc) == source
+    with pytest.raises(ValueError, match=r"^indent must be non-negative$"):
+        doc.table("t").set_multiline(multiline=True, indent=-1)
+    assert tomlrt.dumps(doc) == source
+
+
+def test_single_line_layout_ignores_unused_indentation() -> None:
+    invalid: Any = object()
+    single = Array([1], indent=invalid)
+    doc = tomlrt.loads(
+        td("""
+        a = [
+          1,
+        ]
+        t = {
+          x = 2,
+        }
+        """)
+    )
+    doc["single"] = single
+    doc.array("a").set_multiline(multiline=False, indent=invalid)
+    doc.table("t").set_multiline(multiline=False, indent=invalid)
+    expected = td("""
+        a = [1]
+        t = { x = 2 }
+        single = [1]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_multiline_construction_accepts_zero_indent() -> None:
+    doc = tomlrt.Document()
+    doc["values"] = Array([1, 2], multiline=True, indent=0)
+    expected = td("""
+        values = [
+        1,
+        2,
+        ]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
 def test_standalone_array_set_multiline_then_attach() -> None:
     arr = Array([1, 2])
     arr.set_multiline(multiline=True, indent=2)
