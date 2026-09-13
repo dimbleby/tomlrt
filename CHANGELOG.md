@@ -9,47 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Copying header-less sections retains their key spelling, spacing, and
-  physical order within the body and structural regions, just as moving does.
-- Copying and moving implicit sections share placement rules: child blocks
-  follow their dotted body, while header-only subtrees use normal section
-  placement rather than moving to the document head.
-- Constructing a document from lists or standalone arrays-of-tables retains
-  each materialised entry's comments and formatting.
-- Copying, moving, and sorting entries retain their full leading comment
-  blocks, including blank-separated groups. Document framing stays with
-  its document.
-- Plain-data exports also copy nested raw mappings and lists independently.
-- `copy.copy()` and `copy.deepcopy()` preserve a view's comments and available
-  formatting, including dotted inline-table subviews. Inherited shallow
-  `dict.copy()` and `list.copy()` behavior is unchanged.
-- Using a dotted inline-table subview as a value elsewhere keeps that view's
-  own entries' style and comments, rather than rebuilding them from its items.
-- Table factories accept comments before attachment.
-  Comments and live views survive attachment, including through an
-  array-of-tables.
-- Reattaching a detached array-of-tables keeps its entries and nested
-  views live. Repeating a standalone array-of-tables retains entry layout
-  and gives each copy independent nested values.
-- `ensure_table` now traverses existing inline tables without promoting them
-  and creates inline children beneath inline parents.
-- `install` preserves inline parents for scalar and inline values, promoting
-  them only when installing a section-style value or array-of-tables requires it.
-- Moving a header-less section into an array-of-tables entry places its keys
-  in that entry's body, so rendered order matches the order keys were assigned.
-- Comment views validate the comment before resolving the key, so an invalid
-  comment raises `TypeError` even when the key is also absent.
+- Tables can have comments before they are added to a document. Adding them
+  keeps their comments, including when used in an array of tables.
+- `copy.copy()` and `copy.deepcopy()` keep comments and formatting.
+  The `.copy()` methods on tables and arrays are unchanged.
+- Copying or assigning part of an inline table keeps its comments and
+  formatting.
+- Copying tables defined by dotted keys preserves more of their original
+  spacing and order. Copying and moving these tables now place them
+  consistently.
+- Copying, moving, and sorting entries keep the comments above them, including
+  groups separated by blank lines. Document-wide opening and closing comments
+  stay with the document.
+- Building a document from existing tables keeps their comments and formatting,
+  including tables inside lists and standalone arrays of tables.
+- `to_dict()` and `to_list()` also copy nested plain dictionaries and lists,
+  so changing the result does not change the original.
+- After moving an array of tables to another document, existing references to
+  its entries and nested tables still work.
+- Repeating a standalone array of tables keeps its formatting and makes
+  independent copies of its contents.
+- `ensure_table()` keeps existing inline tables inline and creates inline
+  children inside them.
+- `install()` keeps existing inline tables inline unless the value being
+  installed requires a section or an array of tables.
+- Invalid comment types raise `TypeError` even when the key is missing.
 
 ### Fixed
 
-- Sorting an implicit table whose children precede its containing header
-  keeps dotted keys in their original scope, including on detached views.
-- Rejected header comments no longer materialise table factories, take
-  ownership of their children, or pin synthetic headers.
+- Sorting tables no longer moves dotted keys under the wrong table header.
+- Setting an invalid header comment leaves the table and its contents unchanged.
 
 ### Deprecated
 
-- The `ensure_table` argument `promote_inline` is deprecated and ignored.
+- The `promote_inline` argument to `ensure_table()` is deprecated and ignored.
   Use `promote_inline()` for explicit conversion.
 
 ## [2.2.9] - 2026-09-12
