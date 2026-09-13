@@ -52,6 +52,7 @@ from tomlrt._trivia import (
 from tomlrt._typecheck import _mapping_items
 from tomlrt._values import (
     ArrayValue,
+    EmptyAoTValue,
     InlineTableValue,
     make_keyparts,
 )
@@ -1843,7 +1844,7 @@ def _bind_aot(parent: Container, key: str, aot: AoT) -> None:
 def _materialise_empty_aot(aot: AoT) -> None:
     """Splice a ``key = []`` placeholder for a now-empty attached AoT.
 
-    The placeholder is a normal direct KV (empty ``ArrayValue``) under
+    The placeholder is a normal direct KV (an ``EmptyAoTValue``) under
     the AoT's parent, so it lands in the parent's body region rather
     than at a header position a re-parse would misattribute. Dict
     storage at ``parent[key]`` is left as the AoT — only the physical
@@ -1853,7 +1854,7 @@ def _materialise_empty_aot(aot: AoT) -> None:
     assert parent is not None
     assert len(aot) == 0
     key = aot._path[-1]  # noqa: SLF001
-    append_direct_kv(parent, key, ArrayValue())
+    append_direct_kv(parent, key, EmptyAoTValue())
 
 
 def _empty_aot_placeholder_ref(aot: AoT) -> SlotRef | None:
@@ -1861,7 +1862,7 @@ def _empty_aot_placeholder_ref(aot: AoT) -> SlotRef | None:
 
     Derived from the parent's ``_index[key]``: an empty AoT's only
     physical presence is one ``KVSlot`` whose value is an empty
-    ``ArrayValue``. Returns ``None`` when the AoT is non-empty or carries
+    ``EmptyAoTValue``. Returns ``None`` when the AoT is non-empty or carries
     no placeholder yet (e.g. a fresh AoT mid-clone, before its first
     entry or placeholder lands).
     """
@@ -1876,7 +1877,7 @@ def _empty_aot_placeholder_ref(aot: AoT) -> SlotRef | None:
     ref = bucket[0]
     slot = ref.slot
     assert isinstance(slot, KVSlot), "empty AoT placeholder must be a KV slot"
-    assert isinstance(slot.value, ArrayValue), (
+    assert isinstance(slot.value, EmptyAoTValue), (
         "empty AoT key must be bound to an array placeholder"
     )
     return ref
@@ -2716,7 +2717,6 @@ def clone_implicit_section(
     """Clone an implicit section's physical run, preserving its dotted shape."""
     doc = dest_parent._attached_doc  # noqa: SLF001
     host = _nearest_header_host(dest_parent)
-    empty_aots = _capture_empty_aots(source)
     slots = clone_graft_slots(
         source,
         target_path=(*dest_parent._path, key),  # noqa: SLF001
@@ -2736,7 +2736,6 @@ def clone_implicit_section(
         _extend_header_bindings_to_root(host._parent, slots)  # noqa: SLF001
     result = dict.__getitem__(dest_parent, key)
     assert isinstance(result, _container.Container)
-    _restore_empty_aots(result, empty_aots)
     return result
 
 
@@ -2843,7 +2842,7 @@ def _clone_entry_slots(
     body_owner: AoTEntry | None,
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
-    dst_newline: str,
+    dst_newline: str | None,
     head: Slot | None = None,
     host_path: tuple[str, ...] | None = None,
 ) -> tuple[list[Slot], StructuralHeaderSlot | None]:
@@ -2873,6 +2872,9 @@ def _clone_entry_slots(
     that lands under a header of its own wants that default; one that
     stays header-less, spelled by dotted keys, wants the enclosing
     section that will host them.
+
+    ``dst_newline=None`` copies a whole document without retargeting its
+    paths or its potentially mixed line endings.
     """
     if host_path is None:
         host_path = target_prefix
@@ -2890,13 +2892,13 @@ def _clone_entry_slots(
 
     cloned: list[Slot] = []
     cloned_head: StructuralHeaderSlot | None = None
+    memo: dict[int, object] = {}
     for s in src_slots:
-        c: Slot = copy.deepcopy(s)
-        c._prev = None  # noqa: SLF001
-        c._next = None  # noqa: SLF001
-        _rebase_implicit_slot_in_place(
-            c, src_prefix, target_prefix, host_path, dst_newline
-        )
+        c: Slot = copy.deepcopy(s, memo)
+        if dst_newline is not None:
+            _rebase_implicit_slot_in_place(
+                c, src_prefix, target_prefix, host_path, dst_newline
+            )
         src_owner = s.owner_aot_entry
         mapped = nested_entry_map.get(src_owner) if src_owner else None
         owner_for_slot = mapped if mapped is not None else body_owner
@@ -3336,42 +3338,6 @@ def _follow_view_route(
     return cur
 
 
-def _capture_empty_aots(source: Container) -> list[list[tuple[str, int | None]]]:
-    """Capture typed empty arrays whose ``[]`` slots alone cannot retain AoT shape."""
-    routes: list[list[tuple[str, int | None]]] = []
-    route: list[tuple[str, int | None]] = []
-
-    def capture(table: Container) -> None:
-        for key, child in table.items():
-            if isinstance(child, _array.AoT):
-                if not child:
-                    routes.append([*route, (key, None)])
-                for ordinal, entry in enumerate(child):
-                    route.append((key, ordinal))
-                    capture(entry)
-                    route.pop()
-            elif _container._is_section(child):  # noqa: SLF001
-                route.append((key, None))
-                capture(child)
-                route.pop()
-
-    capture(source)
-    return routes
-
-
-def _restore_empty_aots(
-    target: Container, routes: Sequence[Sequence[tuple[str, int | None]]]
-) -> None:
-    """Restore only the logical AoT bindings; the cloned placeholders stay intact."""
-    for route in routes:
-        parent = _follow_view_route(target, route[:-1])
-        assert isinstance(parent, _container.Container)
-        key, _ordinal = route[-1]
-        aot = _array.AoT()
-        _bind_aot(parent, key, aot)
-        dict.__setitem__(parent, key, aot)
-
-
 def _snapshot_in_copy(
     view: Container | AoT, snapshots: dict[int, Document]
 ) -> Container | AoT:
@@ -3383,10 +3349,6 @@ def _snapshot_in_copy(
     """
     root = view._layout_root  # noqa: SLF001
     assert root is not None, "only an attached view has a document to copy"
-    if isinstance(view, _array.AoT) and not view:
-        # There are no entry slots to preserve, and reparsing [] would
-        # change this typed source into an inline Array.
-        return _array.AoT()
     snapshot = snapshots.get(id(root))
     if snapshot is None:
         snapshot = copy.copy(root)

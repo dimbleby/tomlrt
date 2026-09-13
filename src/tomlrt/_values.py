@@ -29,11 +29,18 @@ from tomlrt._trivia import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import TypeGuard
 
     from typing_extensions import Self
 
 
 _ScalarT = TypeVar("_ScalarT")
+
+
+def is_shareable_scalar(value: object) -> TypeGuard[str | int | float | bool]:
+    """Whether a Python scalar is known to be transitively immutable."""
+    kind = type(value)
+    return kind is str or kind is int or kind is float or kind is bool
 
 
 class ScalarValue(Generic[_ScalarT]):
@@ -58,10 +65,7 @@ class ScalarValue(Generic[_ScalarT]):
     @property
     def is_shareable(self) -> bool:
         """Whether both fields are known to be transitively immutable."""
-        kind = type(self.value)
-        return type(self.lexeme) is str and (
-            kind is str or kind is int or kind is float or kind is bool
-        )
+        return type(self.lexeme) is str and is_shareable_scalar(self.value)
 
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
         """Share atomic data; copy temporal values and Python subclasses safely."""
@@ -69,9 +73,13 @@ class ScalarValue(Generic[_ScalarT]):
             return self
         new = type(self)(self.lexeme, self.value)
         memo[id(self)] = new
-        new.lexeme = copy.deepcopy(self.lexeme, memo)
-        new.value = copy.deepcopy(self.value, memo)
+        new._copy_payloads(memo)  # noqa: SLF001
         return new
+
+    def _copy_payloads(self, memo: dict[int, object]) -> None:
+        """Isolate the fields of a fresh, unpublished scalar node."""
+        self.lexeme = copy.deepcopy(self.lexeme, memo)
+        self.value = copy.deepcopy(self.value, memo)
 
 
 class StringValue(ScalarValue[str]):
@@ -366,6 +374,12 @@ class ArrayValue(CommaValue[ArrayItem]):
 
     _open: ClassVar[str] = "["
     _close: ClassVar[str] = "]"
+
+
+class EmptyAoTValue(ArrayValue):
+    """Synthetic ``[]`` placeholder retaining an empty array-of-tables' shape."""
+
+    __slots__ = ()
 
 
 class InlineTableValue(CommaValue[InlineTableEntry]):

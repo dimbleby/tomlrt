@@ -143,10 +143,12 @@ class Array(_View, list[Any]):
             it.has_comma = True
 
     def to_list(self) -> list[Any]:
-        """Materialise a plain-Python ``list`` (recursive)."""
+        """Materialise independent plain-Python data (recursive)."""
         from tomlrt._container import _to_python  # noqa: PLC0415
 
-        return [_to_python(x) for x in self]
+        out = _to_python(self)
+        assert isinstance(out, list)
+        return out
 
     @override
     def __copy__(self) -> Array:
@@ -603,8 +605,10 @@ class AoT(_View, list["Table"]):
         return lr
 
     def to_list(self) -> list[dict[str, Any]]:
-        """Materialise a list of plain-Python ``dict``s (recursive)."""
-        return [t.to_dict() for t in self]
+        """Materialise independent plain-Python dictionaries (recursive)."""
+        out = _container._to_python(self)  # noqa: SLF001
+        assert isinstance(out, list)
+        return out
 
     @override
     def __copy__(self) -> AoT:

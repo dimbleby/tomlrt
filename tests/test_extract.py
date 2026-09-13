@@ -43,6 +43,27 @@ def test_document_of_table_matches_dumps() -> None:
     assert tomlrt.dumps(Document(t)) == tomlrt.dumps(t)
 
 
+def test_extracted_section_keeps_empty_aot_kind() -> None:
+    source = tomlrt.loads("[section]\nplain = []\n")
+    source.table("section")["pending"] = tomlrt.AoT()
+    extracted = Document(source.table("section"))
+    assert extracted.array("plain") == []
+    extracted.aot("pending").add({"id": 1})
+    expected = td("""
+        plain = []
+
+        [[pending]]
+        id = 1
+        """)
+    assert tomlrt.dumps(extracted) == expected
+    assert tomlrt.loads(expected).to_dict() == extracted.to_dict()
+    assert tomlrt.dumps(source) == td("""
+        [section]
+        plain = []
+        pending = []
+        """)
+
+
 def test_header_comments_become_the_preamble() -> None:
     src = td("""
         # what t is for
