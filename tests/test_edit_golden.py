@@ -798,21 +798,39 @@ def test_cross_doc_section_assign_does_not_drag_source_preamble() -> None:
     assert tomlrt.dumps(dst) == "# pre\n\n[a]\nx = 1\n"
 
 
-def test_clone_section_drops_above_blank_block() -> None:
-    """Same-doc clone shares ``_install_cloned_section`` with cross-doc
-    assign and so must apply the same positional-vs-travelling-trivia
-    split: any above-blank block (preamble or "archived" comments
-    separated from the header by a blank line) belongs to the source
-    document position, not the section being copied.
-    """
+def test_clone_section_keeps_full_leading_block_but_not_document_preamble() -> None:
     doc = tomlrt.loads("# pre\n\n[a]\nx = 1\n")
     doc["b"] = doc["a"]
     assert tomlrt.dumps(doc) == "# pre\n\n[a]\nx = 1\n\n[b]\nx = 1\n"
 
-    doc = tomlrt.loads("[before]\nfoo = 1\n\n# archived\n\n[a]\nx = 1\n")
+    doc = tomlrt.loads(
+        td("""
+        [before]
+        foo = 1
+
+        # notes
+
+        [a]
+        x = 1
+        """)
+    )
     doc["b"] = doc["a"]
-    expected = "[before]\nfoo = 1\n\n# archived\n\n[a]\nx = 1\n\n[b]\nx = 1\n"
-    assert tomlrt.dumps(doc) == expected
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [before]
+        foo = 1
+
+        # notes
+
+        [a]
+        x = 1
+
+        # notes
+
+        [b]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_aot_sort_does_not_drag_source_preamble() -> None:
@@ -5664,14 +5682,13 @@ def test_reassign_nested_orphan_section_with_array_item_inline_view() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_adopt_orphan_implicit_into_aot_entry_keeps_entry_body_tail() -> None:
-    """An adopted ownerless KV must not become the entry's body tail.
+def test_adopt_orphan_implicit_into_aot_entry_joins_entry_body() -> None:
+    """An adopted dotted KV becomes part of the entry's own body.
 
-    ``adopt_private_implicit`` moves the orphan's dotted KV into an AoT
-    entry without retargeting its ``owner_aot_entry``, so the slot is
-    physically inside the entry but is not part of the entry's own
-    body. A later direct append therefore still lands after ``x``, the
-    entry's real body tail, rather than after the adopted slot.
+    ``adopt_private_implicit`` moves the orphan's dotted KV into the AoT
+    entry and transfers it to that entry, so it is the entry's body tail
+    and a later append follows it. Rendered order then matches the order
+    the keys were assigned in.
     """
     doc = tomlrt.loads(
         td("""
@@ -5689,8 +5706,8 @@ def test_adopt_orphan_implicit_into_aot_entry_keeps_entry_body_tail() -> None:
     assert out == td("""
         [[t]]
         x = 1
-        after = 99
         moved.c = 1
+        after = 99
         """)
     assert _reparses(out) == doc.to_dict()
     assert doc.to_dict() == {"t": [{"x": 1, "moved": {"c": 1}, "after": 99}]}

@@ -31,7 +31,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from tomlrt import _array, _container
-from tomlrt._comment_text import _split_attached_block
 from tomlrt._kind import _Kind
 from tomlrt._list_ops import delete_runs, index_runs
 from tomlrt._scalar import SCALAR_TYPES, is_scalar
@@ -861,7 +860,7 @@ def _new_owned_section_header(
 def _transfer_stale_owner(
     slot: Slot, stale_owner: AoTEntry | None, new_owner: AoTEntry | None
 ) -> None:
-    if stale_owner is None or slot.owner_aot_entry is not stale_owner:
+    if slot.owner_aot_entry is not stale_owner:
         return
     slot.owner_aot_entry = new_owner
     if isinstance(slot, StructuralHeaderSlot) and slot.entry is stale_owner:
@@ -1779,27 +1778,11 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     _scrub_owned_slots_via_backptrs([header])
 
 
-def _split_leading_structural(leading: str) -> tuple[str, str]:
-    """Split a leading-trivia stream into (above-blank prefix, slot-remainder).
+def _split_leading_trivia(slot: Slot) -> tuple[str, str]:
+    """Split positional blank space from the slot's full comment block.
 
-    The slot-remainder is the attached comment block (immediately above
-    the slot, with no blank line between) plus the slot's own column-
-    offset indent. The positional prefix is everything before it.
-
-    Used by reorder paths to decide which prefix travels with the slot
-    under move and which is positional (separator) trivia at the seam.
-    """
-    above, attached, indent = _split_attached_block(leading)
-    return above, attached + indent
-
-
-def _split_leading_for_reorder(slot: Slot) -> tuple[str, str]:
-    """Reorder-aware leading split: disjoint comment blocks travel with the slot.
-
-    Per the public ownership model (``Table.header_leading_block``,
-    ``Container.leading_block``), an above-blank comment block
-    immediately preceding a slot is part of that slot's leading and
-    must travel with it under reorder.
+    Comment groups and their intervening blank lines belong to the slot
+    when it is copied, moved or reordered.
     """
     leading = slot.leading
     cut = leading.split("#", 1)[0].rfind("\n") + 1
@@ -1809,11 +1792,10 @@ def _split_leading_for_reorder(slot: Slot) -> tuple[str, str]:
 def _retarget_separator(slot: Slot, new_separator: str) -> None:
     """Replace ``slot.leading``'s positional prefix with ``new_separator``.
 
-    See :func:`_split_leading_structural`: the slot's attached
-    comments and own indent are kept; the source's positional
-    prefix is dropped.
+    Keep all comment groups and their indentation; only the blank
+    separator before them is replaced.
     """
-    remainder = _split_leading_structural(slot.leading)[1] if slot.leading else ""
+    remainder = _split_leading_trivia(slot)[1] if slot.leading else ""
     slot.leading = new_separator + remainder
 
 
@@ -2284,7 +2266,7 @@ def _hoist_root_level_kvs(run: list[Slot], doc: Document) -> list[Slot]:
         return run
     hoisted = own + [s for s in run if not is_root_level(s)]
     seam = hoisted[len(own)]
-    seam.leading = _build_section_leading(doc) + _split_leading_for_reorder(seam)[1]
+    _retarget_separator(seam, _build_section_leading(doc))
     return hoisted
 
 
@@ -2296,7 +2278,7 @@ def _promoted_header_comments(head: StructuralHeaderSlot, nl: str) -> str:
     become the extracted document's opening block instead. The trailing
     blank keeps that block from attaching itself to the first construct.
     """
-    _positional, above = _split_leading_for_reorder(head)
+    _positional, above = _split_leading_trivia(head)
     # Any trailing indent belonged to the header's own line, which is gone.
     above = strip_trailing_ws(above)
     if "#" in head.eol:
@@ -2345,7 +2327,7 @@ def extract_subtree_slots(src_table: Container) -> tuple[list[Slot], str]:
         # The run starts a document of its own: it keeps the comment
         # block it owns but not the separator that positioned it, and
         # the source document's final line may lack a terminator.
-        cloned[0].leading = _split_leading_for_reorder(cloned[0])[1]
+        _retarget_separator(cloned[0], "")
         for s in cloned[:-1]:
             ensure_terminator(s, nl)
     stitch_run(None, cloned, None)
@@ -2416,9 +2398,8 @@ def clone_document_as_section(
 def detach_aot_from_orphan(value: AoT) -> None:
     """Cut a private-orphan AoT loose from the document it lives in.
 
-    Its entries are cloned into the destination rather than moved, so
-    the orphan must stop naming them: otherwise a later adopt of the
-    orphan would gather slots that now live in the destination. An
+    The orphan must stop naming entries that move to the destination:
+    otherwise a later adopt of the orphan would gather their slots. An
     array emptied by :meth:`AoT.pop` still renders as ``k = []`` and
     has no entry left to carry that slot away, so it goes here too.
 
@@ -2506,25 +2487,12 @@ def adopt_private_section(
     section attached to a private orphan with intact slots.
     """
     doc = dest_parent._attached_doc  # noqa: SLF001
-    old_prefix = value._path  # noqa: SLF001
     new_prefix = (*dest_parent._path, key)  # noqa: SLF001
-    # The orphan's stale owner: non-None whenever it was itself an AoT
-    # entry, *or* nested inside one (e.g. a plain section that lived in
-    # the body of an ``[[a]]`` entry now being removed).
-    stale_owner = value._owner_aot_entry  # noqa: SLF001
-    new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
-
-    _, slots = _gather_headered_subtree_slots(value)
-    _detach_from_source_doc(value, slots)
-    # Every header in the subtree — value's own included — retains
-    # bindings to the orphan's old ancestors.
-    headers = [s for s in slots if isinstance(s, StructuralHeaderSlot)]
-    _unfile_stale_same_orphan_ancestors(value, headers)
-    for s in slots:
-        _retarget_slot_paths(s, old_prefix, new_prefix, doc._newline)  # noqa: SLF001
-        _transfer_stale_owner(s, stale_owner, new_owner)
-    _rehome_view_tree(
-        value, dest_parent, old_prefix, new_prefix, doc, stale_owner=stale_owner
+    slots = _move_private_subtree(
+        value,
+        dest_parent,
+        new_prefix,
+        owner=dest_parent._owner_aot_entry,  # noqa: SLF001
     )
 
     # A forward-declared descendant may physically precede value's header.
@@ -2536,6 +2504,90 @@ def adopt_private_section(
     dict.__setitem__(dest_parent, key, value)
     _maybe_demote_synthetic_empty_header(dest_parent)
     return value
+
+
+def _move_private_subtree(
+    value: Container,
+    dest_parent: Container,
+    new_prefix: tuple[str, ...],
+    *,
+    owner: AoTEntry | None,
+    host_path: tuple[str, ...] | None = None,
+) -> list[Slot]:
+    """Detach and rebase private layout, leaving publication to the caller."""
+    doc = dest_parent._attached_doc  # noqa: SLF001
+    old_prefix = value._path  # noqa: SLF001
+    stale_owner = value._owner_aot_entry  # noqa: SLF001
+    slots = owned_slots(value)
+    _detach_from_source_doc(value, slots)
+    targets = (
+        slots
+        if value._header_ref is None  # noqa: SLF001
+        else [s for s in slots if isinstance(s, StructuralHeaderSlot)]
+    )
+    _unfile_stale_same_orphan_ancestors(value, targets)
+    if host_path is None:
+        host_path = new_prefix
+    for slot in slots:
+        _rebase_implicit_slot_in_place(
+            slot,
+            old_prefix,
+            new_prefix,
+            host_path,
+            doc._newline,  # noqa: SLF001
+        )
+        _transfer_stale_owner(slot, stale_owner, owner)
+    _rehome_view_tree(
+        value,
+        dest_parent,
+        old_prefix,
+        new_prefix,
+        doc,
+        stale_owner=stale_owner,
+        new_owner=owner,
+    )
+    return slots
+
+
+def adopt_private_entry(
+    aot: AoT, value: Table, *, preserve_source_separator: bool = False
+) -> None:
+    """Move a private table into its AoT, retaining layout and all live views."""
+    doc = aot._attached_doc  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
+    assert parent is not None
+    old_parent = value._parent  # noqa: SLF001
+    path = aot._path  # noqa: SLF001
+    owner = AoTEntry()
+    head_ref = value._header_ref  # noqa: SLF001
+    slots = _move_private_subtree(value, parent, path, owner=owner)
+    if head_ref is None:
+        header = _new_section_header(
+            path, leading="", doc=doc, entry=owner, owner_aot_entry=owner
+        )
+        slots.insert(0, header)
+    else:
+        stored = head_ref.slot
+        assert isinstance(stored, StructuralHeaderSlot)
+        header = stored
+        header.entry = owner
+        owner.bind_header(header)
+
+    _append_entry_run(
+        aot, header, slots, preserve_source_separator=preserve_source_separator
+    )
+    ordered = _hoist_own_slots_first(slots, path)
+    if ordered is not slots:
+        predecessor, successor = slots[0]._prev, slots[-1]._next  # noqa: SLF001
+        with _refile_region_refs(doc, predecessor, successor):
+            _link_run_between(predecessor, ordered, successor, doc)
+    if head_ref is None:
+        file_own_header(value, header)
+        value._body_tail = _recompute_body_tail(value)  # noqa: SLF001
+    _extend_header_bindings_to_root(parent, ordered)
+    list.append(aot, value)
+    _maybe_demote_synthetic_empty_header(parent)
+    synthesise_header_for_emptied(old_parent)
 
 
 def _retarget_slot_paths(
@@ -2566,7 +2618,8 @@ def _rehome_view_tree(
     new_prefix: tuple[str, ...],
     doc: Document,
     *,
-    stale_owner: AoTEntry | None = None,
+    stale_owner: AoTEntry | None,
+    new_owner: AoTEntry | None,
 ) -> None:
     """Re-point ``root``'s existing view subtree at ``doc`` with rebased paths.
 
@@ -2574,7 +2627,6 @@ def _rehome_view_tree(
     parallel. Views owned by ``stale_owner`` transfer to the destination
     entry; nested AoT entries retain their own owners.
     """
-    new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
     def visit(node: _View) -> None:
         # Narrows for the assignments below; `_View` has no other subclass.
@@ -2584,7 +2636,6 @@ def _rehome_view_tree(
             node._path = _rebase_path(node._path, old_prefix, new_prefix)  # noqa: SLF001
             if (
                 isinstance(node, _container.Container)
-                and stale_owner is not None
                 and node._owner_aot_entry is stale_owner  # noqa: SLF001
             ):
                 node._owner_aot_entry = new_owner  # noqa: SLF001
@@ -2608,19 +2659,6 @@ def _detach_from_source_doc(value: Container | AoT, slots: list[Slot]) -> None:
     assert src_doc is not None, "private orphan section must be attached"
     for s in reversed(slots):
         unlink_slot(s, src_doc, strip_new_head_leading=False)
-
-
-def unlink_cloned_orphan_entry(entry: Container) -> None:
-    """Unlink an orphan entry's own slots once it has been cloned out.
-
-    The AoT attach path copies an entry into the destination rather than
-    relinking it. For a private orphan that leaves the originals in a
-    stream nothing refers to any more, so the orphan renders entries its
-    model no longer claims — and a later adopt of the orphan carries
-    that stray text into the destination.
-    """
-    _, slots = _gather_headered_subtree_slots(entry)
-    _detach_from_source_doc(entry, slots)
 
 
 def synthesise_header_for_emptied(parent: Container | None) -> None:
@@ -2673,31 +2711,19 @@ def adopt_private_implicit(
     keep their shape.
     """
     doc = dest_parent._attached_doc  # noqa: SLF001
-    old_prefix = value._path  # noqa: SLF001
     new_prefix = (*dest_parent._path, key)  # noqa: SLF001
     host = _nearest_header_host(dest_parent)
     host_path = host._path  # noqa: SLF001
-    stale_owner = value._owner_aot_entry  # noqa: SLF001
-    new_owner = dest_parent._owner_aot_entry  # noqa: SLF001
 
     # `_attach_section` only dispatches here for an orphan that still owns
     # slots; a slotless one is synthesised instead.
     assert value._refs, "implicit orphan has no slots"  # noqa: SLF001
-    slots = owned_slots(value)
-    _detach_from_source_doc(value, slots)
-    _unfile_stale_same_orphan_ancestors(value, slots)
-
-    nl = doc._newline  # noqa: SLF001
-    for s in slots:
-        _rebase_implicit_slot_in_place(s, old_prefix, new_prefix, host_path, nl)
-        _transfer_stale_owner(s, stale_owner, new_owner)
-    _rehome_view_tree(
+    slots = _move_private_subtree(
         value,
         dest_parent,
-        old_prefix,
         new_prefix,
-        doc,
-        stale_owner=stale_owner,
+        owner=dest_parent._owner_aot_entry,  # noqa: SLF001
+        host_path=host_path,
     )
 
     # Dotted KVs inherit scope from position, so anchor at the host's
@@ -2708,14 +2734,14 @@ def adopt_private_implicit(
     to_head = anchor is None and doc._head is not None  # noqa: SLF001
     # The block carries a separator sized for the orphan it came from,
     # so it is resized for the run it is joining. A head has nothing
-    # before it to be separated from, so there the separator goes
-    # altogether, taking a header's above-blank comment block with it;
-    # a KV owns its own such block, so that stays.
+    # before it to be separated from, so there the separator goes.
+    # The moved slots keep their full comment blocks.
     first = slots[0]
     if isinstance(first, StructuralHeaderSlot):
-        _retarget_separator(first, "" if to_head else _build_section_leading(doc))
+        separator = "" if to_head else _build_section_leading(doc)
+        _retarget_separator(first, separator)
     elif to_head:
-        first.leading = _split_leading_for_reorder(first)[1]
+        _retarget_separator(first, "")
 
     if to_head:
         old_head = doc._head  # noqa: SLF001
@@ -2949,10 +2975,19 @@ def _populate_entry_views(
     _build_containers(entry_table, cloned_slots)
 
 
+def materialise_section(source: Table, *, preserve_header: bool) -> None:
+    """Give a validated section factory private layout until its first attachment."""
+    holder = _container.Document()
+    holder._is_private = True  # noqa: SLF001
+    attach_section_at(holder, ("",), source, preserve_header=preserve_header)
+
+
 def attach_section_at(
     parent: Container,
     sub_path: tuple[str, ...] | list[str],
     source: Table,
+    *,
+    preserve_header: bool = False,
 ) -> Table:
     """Synthesise ``[parent_path.sub_path]`` (multi-component) at end-of-doc.
 
@@ -2977,6 +3012,8 @@ def attach_section_at(
         doc=doc,
         owner_aot_entry=owner,
     )
+    if preserve_header:
+        header.synthetic = False
 
     # Build implicit chain: intermediates become header-less Tables
     # living in dict storage; the deepest is where the new explicit
@@ -3466,6 +3503,29 @@ def _prepare_entry(
     return _PreparedEntry(table, header, payload)
 
 
+def _append_entry_run(
+    aot: AoT,
+    header: StructuralHeaderSlot,
+    run: list[Slot],
+    *,
+    preserve_source_separator: bool,
+) -> None:
+    """Splice a new entry's slots at the AoT's tail, separated to fit there.
+
+    A bulk clone may keep the separators its source had, but the first
+    entry always takes the destination's own section spacing: it is the
+    one being positioned, not spaced from a predecessor.
+    """
+    doc = aot._attached_doc  # noqa: SLF001
+    ordinal = len(aot)
+    _consume_first_entry_placeholder(aot, ordinal)
+    if ordinal == 0:
+        _retarget_separator(header, _build_section_leading(doc))
+    elif not preserve_source_separator:
+        _retarget_separator(header, _aot_separator(aot, doc))
+    _splice_block_after(run, _aot_append_anchor(aot), doc)
+
+
 def _install_entry(
     aot: AoT, prepared: _PreparedEntry, *, preserve_source_separator: bool = False
 ) -> Table:
@@ -3478,17 +3538,13 @@ def _install_entry(
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
     if table._layout_root is None:  # noqa: SLF001
-        ordinal = len(aot)
-        _consume_first_entry_placeholder(aot, ordinal)
-        if ordinal == 0:
-            _retarget_separator(header, _build_section_leading(doc))
-        elif not preserve_source_separator:
-            _retarget_separator(header, _aot_separator(aot, doc))
         dict.clear(table)
         table._wire(  # noqa: SLF001
             layout_root=doc, parent=parent, path=path, owner=owner
         )
-        _splice_block_after([header], _aot_append_anchor(aot), doc)
+        _append_entry_run(
+            aot, header, [header], preserve_source_separator=preserve_source_separator
+        )
         file_own_header(table, header)
         _file_header_binding_chain(parent, header)
         list.append(aot, table)
@@ -3654,7 +3710,7 @@ def _peer_placements(
     prefixes: list[str] = []
     remainder_by_head: dict[Slot, str] = {}
     for block in physical_blocks:
-        prefix, remainder = _split_leading_for_reorder(block[0])
+        prefix, remainder = _split_leading_trivia(block[0])
         prefixes.append(prefix)
         remainder_by_head[block[0]] = remainder
     return [
@@ -3899,7 +3955,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             front_foreign.append(scan)
         scan = scan._next  # noqa: SLF001
     if front_foreign:
-        head_structural, head_remainder = _split_leading_for_reorder(earliest_owned)
+        head_structural, head_remainder = _split_leading_trivia(earliest_owned)
         earliest_owned.leading = head_remainder
         with _refile_region_refs(doc, region_predecessor, region_successor):
             for f in front_foreign:
@@ -3920,7 +3976,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         for slots, is_structural in ((leaves, False), (structural, True)):
             if not slots:
                 continue
-            prefix, remainder = _split_leading_for_reorder(slots[0])
+            prefix, remainder = _split_leading_trivia(slots[0])
             units.append(
                 _ReorderUnit(
                     slots,
@@ -3936,7 +3992,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     header_prefix = ""
     header_remainder = ""
     if header_slot is not None:
-        header_prefix, header_remainder = _split_leading_for_reorder(header_slot)
+        header_prefix, header_remainder = _split_leading_trivia(header_slot)
         if header_slot is not earliest_owned:
             first_unit = min(units, key=lambda unit: unit.physical_position)
             header_prefix, first_unit.prefix = first_unit.prefix, header_prefix

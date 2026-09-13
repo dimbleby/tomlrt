@@ -22,14 +22,12 @@ else:  # pragma: no cover -- backport for Python < 3.12
 from tomlrt._comma_comments import (
     CommaCommentAdapter,
 )
-from tomlrt._errors import TOMLError
 from tomlrt._inline_ops import (
     _entry_key_path,
     _find_entry,
     _outermost_inline,
     ensure_inline_multiline,
 )
-from tomlrt._kind import _Kind
 from tomlrt._values import InlineTableEntry
 
 if TYPE_CHECKING:
@@ -37,21 +35,6 @@ if TYPE_CHECKING:
 
     from tomlrt._container import Container
     from tomlrt._values import InlineTableValue
-
-
-def _require_value(c: Container) -> None:
-    """Reject comment-view use on a detached inline-table factory.
-
-    A `Table.inline()` factory has no `InlineTableValue` until it is
-    attached to a `Document`, so there is nowhere to store comments.
-    """
-    if c._kind is _Kind.INLINE_FACTORY:  # noqa: SLF001
-        msg = (
-            "comments view is unavailable on a detached inline table; "
-            "attach it to a Document first (e.g. doc[k] = table) and "
-            "then mutate doc[k].comments"
-        )
-        raise TOMLError(msg)
 
 
 class _InlineAdapter(CommaCommentAdapter[str, InlineTableEntry]):
@@ -63,14 +46,13 @@ class _InlineAdapter(CommaCommentAdapter[str, InlineTableEntry]):
 
     @override
     def value(self) -> InlineTableValue:
-        _require_value(self._c)
         iv = _outermost_inline(self._c)._value  # noqa: SLF001
         assert iv is not None
         return iv
 
     @override
     def resolve(self, key: object) -> int | None:
-        if not isinstance(key, str):
+        if not isinstance(key, str) or self._c._needs_layout:  # noqa: SLF001
             return None
         iv = self.value()
         key_path = _entry_key_path(self._c, key)
@@ -90,6 +72,10 @@ class _InlineAdapter(CommaCommentAdapter[str, InlineTableEntry]):
         return idx
 
     @override
+    def ensure_value(self, key: str, *, materialize: bool) -> bool:
+        return self._c._prepare_comment_write(key, materialize=materialize)  # noqa: SLF001
+
+    @override
     def promote(self) -> None:
         ensure_inline_multiline(self._c)
 
@@ -99,6 +85,8 @@ class _InlineAdapter(CommaCommentAdapter[str, InlineTableEntry]):
 
     @override
     def indexed_candidates(self) -> Iterator[tuple[str, int]]:
+        if self._c._needs_layout:  # noqa: SLF001
+            return
         iv = self.value()
         root = _outermost_inline(self._c)
         prefix = self._c._path[len(root._path) :]  # noqa: SLF001

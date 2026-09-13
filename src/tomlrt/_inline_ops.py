@@ -12,9 +12,13 @@ trailing-comma policy — are delegated to :mod:`tomlrt._comma_ops`.
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import (
+    Boundary,
+    _value_indent,
+    _value_newline,
     detect_style,
     reorder_owned,
     splice_in,
@@ -22,14 +26,16 @@ from tomlrt._comma_ops import (
 )
 from tomlrt._format import set_comma_value_multiline
 from tomlrt._kind import _Kind
+from tomlrt._trivia import split_line
 from tomlrt._values import (
     InlineTableEntry,
+    InlineTableValue,
     make_keyparts,
 )
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
-    from tomlrt._values import InlineTableValue, Value
+    from tomlrt._values import Value
 
 
 def _outermost_inline(t: Container) -> Container:
@@ -75,6 +81,48 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
 # ---------------------------------------------------------------------------
 # Public ops
 # ---------------------------------------------------------------------------
+
+
+def copy_dotted_table(table: Container) -> InlineTableValue:
+    """Extract a navigator's entries without copying its owner's framing comments."""
+    root = _outermost_inline(table)
+    source = root._value  # noqa: SLF001
+    assert source is not None
+    prefix = table._path[len(root._path) :]  # noqa: SLF001
+    depth = len(prefix)
+    value = copy.deepcopy(source)
+    multiline = source.is_multiline()
+    newline = _value_newline(source) if multiline else table._doc_newline  # noqa: SLF001
+    removed = [
+        i for i, entry in enumerate(value.items) if entry.key_path[:depth] != prefix
+    ]
+    if removed:
+        splice_out(value, removed, newline, is_multiline=multiline)
+    if not value.items:
+        return InlineTableValue()
+
+    opening = Boundary.capture(value, 0)
+    _pad, comment, terminator = split_line(opening.following.head)
+    if comment:
+        opening.following.head = terminator
+    opening.restore(value, 0)
+    Boundary.capture(value, len(value.items)).remove_above().restore(
+        value, len(value.items)
+    )
+    for entry in value.items:
+        entry.key_parts = entry.key_parts[depth:]
+        entry.key_seps = entry.key_seps[depth:]
+        entry.key_path = entry.key_path[depth:]
+    value.reset_multiline_cache()
+    if multiline and not value.is_multiline():
+        set_comma_value_multiline(
+            value,
+            multiline=True,
+            nl=newline,
+            indent=_value_indent(source),
+            host=None,
+        )
+    return value
 
 
 def replace_entry_value(t: Container, key: str, new_value: Value) -> None:

@@ -9,10 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Copying, moving, and sorting entries retain their full leading comment
+  blocks, including blank-separated groups. Document framing stays with
+  its document.
+- Plain-data exports also copy nested raw mappings and lists independently.
+- `copy.copy()` and `copy.deepcopy()` preserve a view's comments and available
+  formatting, including dotted inline-table subviews. Inherited shallow
+  `dict.copy()` and `list.copy()` behavior is unchanged.
+- Using a dotted inline-table subview as a value elsewhere keeps that view's
+  own entries' style and comments, rather than rebuilding them from its items.
+- Table factories accept comments before attachment.
+  Comments and live views survive attachment, including through an
+  array-of-tables.
+- Reattaching a detached array-of-tables keeps its entries and nested
+  views live. Repeating a standalone array-of-tables retains entry layout
+  and gives each copy independent nested values.
 - `ensure_table` now traverses existing inline tables without promoting them
   and creates inline children beneath inline parents.
 - `install` preserves inline parents for scalar and inline values, promoting
   them only when installing a section-style value or array-of-tables requires it.
+- Moving a header-less section into an array-of-tables entry places its keys
+  in that entry's body, so rendered order matches the order keys were assigned.
+- Comment views validate the comment before resolving the key, so an invalid
+  comment raises `TypeError` even when the key is also absent.
 
 ### Deprecated
 
@@ -21,9 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.2.9] - 2026-09-12
 
+### Changed
+
 - Comment views are faster on documents with many nested tables.
 
-## [2.2.9] - 2026-09-12
+## [2.2.8] - 2026-09-12
 
 ### Changed
 

@@ -101,18 +101,17 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
     set_boundary_break_holder(value, idx + 1, nxt)
 
 
-def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
-    """Remove the EOL comment on item ``idx``; return whether one existed."""
+def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> None:
+    """Remove the EOL comment on item ``idx``, which is known to have one."""
     item = value.items[idx]
     eol, rest = split_eol_section(item_eol_channel(item))
-    if not eol:
-        return False
+    assert eol, "caller checks for an EOL comment first"
     if item.has_comma and item_eol_on_trailing(item):
         # The eol section's terminating newline is this row's break and
         # the comma follows it. Keep the break (drop only whitespace +
         # comment) and leave the next item alone.
         item.trailing = nl + rest
-        return True
+        return
     # Non-comma-first: the row break lived inside the eol section. Drop the
     # whole section and re-home the break (plus any structural rest) onto the
     # downstream holder, mirroring _set_eol_raw in reverse. A bare break left
@@ -122,7 +121,6 @@ def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> bool:
     set_item_eol_channel(item, "")
     nxt = boundary_break_holder(value, idx + 1)
     set_boundary_break_holder(value, idx + 1, nl + rest + nxt)
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +211,20 @@ class CommaCommentAdapter(ABC, Generic[_KeyT, _ItemT]):
         must not propagate it (``__contains__``) catch it.
         """
 
+    def ensure_value(
+        self,
+        key: _KeyT,  # noqa: ARG002
+        *,
+        materialize: bool,  # noqa: ARG002
+    ) -> bool:
+        """Ready the backing value for a write on ``key``.
+
+        Returns ``False`` when there is no backing value and the caller
+        asked for none to be built. Adapters whose value always exists
+        accept the default.
+        """
+        return True
+
     @abstractmethod
     def promote(self) -> None:
         """Ensure the value is multi-line so a comment has somewhere to live."""
@@ -246,11 +258,32 @@ class _CommaView(
     def _get(self, idx: int) -> _ValueT | None:
         """Return the value at ``idx``, or None when absent."""
 
+    @abstractmethod
+    def _clear(self, idx: int) -> None:
+        """Remove this view's value from the item at ``idx``."""
+
+    @override
+    def __delitem__(self, key: _KeyT) -> None:
+        idx = self._idx(key)
+        if self._get(idx) is None:
+            raise KeyError(key)
+        self._clear(idx)
+
     def _idx(self, key: _KeyT) -> int:
         idx = self._a.resolve(key)
         if idx is None:
             raise KeyError(key)
         return idx
+
+    def _write_idx(self, key: _KeyT, *, materialize: bool) -> int | None:
+        """Index to write at, or ``None`` when nothing backs ``key`` yet.
+
+        ``None`` means an empty assignment to an unmaterialised factory:
+        a clear with nothing to clear.
+        """
+        if not self._a.ensure_value(key, materialize=materialize):
+            return None
+        return self._idx(key)
 
     @override
     def __contains__(self, key: object) -> bool:
@@ -293,19 +326,18 @@ class CommaEolView(_CommaView[_KeyT, str, _ItemT]):
 
     @override
     def __setitem__(self, key: _KeyT, value: str) -> None:
-        _validate_comment_str(value, "comment text")
+        _validate_comment_str(value, "comment")
         # Resolve before any structural change: a missing key must not
         # leave a partially-promoted single-line value in multi-line form.
-        idx = self._idx(key)
+        idx = self._write_idx(key, materialize=True)
+        assert idx is not None
         self._a.promote()
         # Promotion preserves item order, so the resolved index is stable.
         _set_eol_raw(self._a.value(), idx, _encode_comment(value), self._a.newline())
 
     @override
-    def __delitem__(self, key: _KeyT) -> None:
-        idx = self._idx(key)
-        if not _del_eol(self._a.value(), idx, self._a.newline()):
-            raise KeyError(key)
+    def _clear(self, idx: int) -> None:
+        _del_eol(self._a.value(), idx, self._a.newline())
 
 
 class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]", _ItemT]):
@@ -319,14 +351,16 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]", _ItemT]):
 
     @override
     def __setitem__(self, key: _KeyT, value: tuple[str, ...] | list[str]) -> None:
-        idx = self._idx(key)
         seq = _validate_comment_seq(value, "leading_comments")
+        idx = self._write_idx(key, materialize=bool(seq))
+        if idx is None:
+            return
         if not seq:
             # Empty assignment means "no leading comments" — a
             # delete-if-present. Don't promote: zero comments need no
             # newlines.
             if self._get(idx) is not None:
-                _clear_attached_comments(self._a.value(), idx)
+                self._clear(idx)
             return
         self._a.promote()
         value_obj = self._a.value()
@@ -335,10 +369,7 @@ class CommaLeadingView(_CommaView[_KeyT, "tuple[str, ...]", _ItemT]):
         )
 
     @override
-    def __delitem__(self, key: _KeyT) -> None:
-        idx = self._idx(key)
-        if self._get(idx) is None:
-            raise KeyError(key)
+    def _clear(self, idx: int) -> None:
         _clear_attached_comments(self._a.value(), idx)
 
 
@@ -355,11 +386,13 @@ class CommaLeadingBlockView(_CommaView[_KeyT, "tuple[str | None, ...]", _ItemT])
     def __setitem__(
         self, key: _KeyT, value: tuple[str | None, ...] | list[str | None]
     ) -> None:
-        idx = self._idx(key)
         block = _validate_comment_entries(value, "leading_block", allow_none=True)
+        idx = self._write_idx(key, materialize=bool(block))
+        if idx is None:
+            return
         if not block:
             if self._get(idx) is not None:
-                _clear_above_block(self._a.value(), idx)
+                self._clear(idx)
             return
         self._a.promote()
         value_obj = self._a.value()
@@ -368,10 +401,7 @@ class CommaLeadingBlockView(_CommaView[_KeyT, "tuple[str | None, ...]", _ItemT])
         )
 
     @override
-    def __delitem__(self, key: _KeyT) -> None:
-        idx = self._idx(key)
-        if self._get(idx) is None:
-            raise KeyError(key)
+    def _clear(self, idx: int) -> None:
         _clear_above_block(self._a.value(), idx)
 
 

@@ -3294,12 +3294,18 @@ def test_array_leading_block_repr_lists_only_present_indices() -> None:
     assert repr(arr.leading_block) == "{0: ('note', None)}"
 
 
-def test_array_leading_views_resolve_before_validation() -> None:
-    arr = tomlrt.loads("x = [1]\n").array("x")
+def test_array_leading_views_reject_bad_writes_without_reshaping() -> None:
+    doc = tomlrt.loads("x = [1]\n")
+    arr = doc.array("x")
+    with pytest.raises(TypeError):
+        arr.leading_comments[0] = "invalid"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    with pytest.raises(TypeError):
+        arr.leading_block[0] = "invalid"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     with pytest.raises(KeyError, match="2"):
-        arr.leading_comments[2] = "invalid"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        arr.leading_comments[2] = ("note",)
     with pytest.raises(KeyError, match="2"):
-        arr.leading_block[2] = "invalid"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        arr.leading_block[2] = ("note",)
+    assert tomlrt.dumps(doc) == "x = [1]\n"
 
 
 def test_inline_leading_block_distinguishes_attached_comments() -> None:
@@ -3961,32 +3967,8 @@ def test_reorder_via_block_preserves_orphan_between_sections() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Detached-container comment mutation: clear error message
+# Detached-container comment reads
 # ---------------------------------------------------------------------------
-
-
-def test_detached_table_comments_setitem_raises_clear_error() -> None:
-    """Setting a comment on a detached Table should raise TOMLError, not KeyError."""
-    elem = tomlrt.Table.section()
-    elem["x"] = 1
-    assert "x" in elem
-    with pytest.raises(tomlrt.TOMLError, match="detached container"):
-        elem.comments["x"] = "eol"
-    with pytest.raises(tomlrt.TOMLError, match="detached container"):
-        elem.leading_comments["x"] = ("above",)
-    with pytest.raises(tomlrt.TOMLError, match="detached container"):
-        elem.leading_block["x"] = (None, "above")
-
-
-def test_detached_table_comments_delitem_raises_clear_error() -> None:
-    elem = tomlrt.Table.section()
-    elem["x"] = 1
-    with pytest.raises(tomlrt.TOMLError, match="detached container"):
-        del elem.comments["x"]
-    with pytest.raises(tomlrt.TOMLError, match="detached container"):
-        del elem.leading_comments["x"]
-    with pytest.raises(tomlrt.TOMLError, match="detached container"):
-        del elem.leading_block["x"]
 
 
 def test_detached_table_comments_reads_are_forgiving() -> None:
@@ -4266,12 +4248,6 @@ def test_inline_set_multiline_on_navigator_raises() -> None:
     inner = doc.table("t")["a"]
     with pytest.raises(tomlrt.TOMLError, match="whole inline table"):
         inner.set_multiline(multiline=True)
-
-
-def test_inline_comments_detached_factory_raises() -> None:
-    t = tomlrt.Table.inline({"a": 1})
-    with pytest.raises(tomlrt.TOMLError, match="detached inline"):
-        t.comments["a"] = "x"
 
 
 def test_inline_comment_set_missing_key_raises() -> None:

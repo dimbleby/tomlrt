@@ -13,7 +13,7 @@ import math
 import sys
 from copy import copy, deepcopy
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -1133,6 +1133,23 @@ def test_cloned_scalar_lexemes_are_independent() -> None:
     assert copied.lexeme.rendered == "1"
 
 
+def test_plain_export_copies_raw_nested_containers_and_views() -> None:
+    array = tomlrt.Array([2])
+    raw: dict[str, Any] = {"items": [1, {"nested": array}], "pending": None}
+    table = tomlrt.Table.section({"raw": raw})
+    exported = table.to_dict()
+    exported["raw"]["items"].append(3)
+    exported["raw"]["items"][1]["nested"].append(4)
+    raw["pending"] = "ready"
+    assert exported == {"raw": {"items": [1, {"nested": [2, 4]}, 3], "pending": None}}
+    doc = tomlrt.Document()
+    doc["original"] = table
+    assert tomlrt.dumps(doc) == td("""
+        [original]
+        raw = { items = [1, { nested = [2] }], pending = "ready" }
+        """)
+
+
 def test_deepcopy_yields_independent_document() -> None:
 
     src = "[a]\nx = 1\n"
@@ -1159,16 +1176,26 @@ def test_deepcopy_table_subview_is_independent_and_round_trips() -> None:
     src = td("""
         [t]
         x = 1
-        y = 2
-        """)
+        y = [ 1,2 ] # array
+        """).replace("\n", "\r\n")
     doc = tomlrt.loads(src)
     t = doc.table("t")
     t2 = deepcopy(t)
-    assert dict(t2) == {"x": 1, "y": 2}
+    assert tomlrt.dumps(t2) == td("""
+        x = 1
+        y = [ 1,2 ] # array
+        """).replace("\n", "\r\n")
     t2["x"] = 99
-    assert t["x"] == 1
-    assert t2["x"] == 99
-    # The original document's bytes are unaffected.
+    t2["y"].append(3)
+    fresh = tomlrt.loads("prefix = 0\r\n")
+    fresh["copy"] = t2
+    assert tomlrt.dumps(fresh) == td("""
+        prefix = 0
+
+        [copy]
+        x = 99
+        y = [ 1,2,3 ] # array
+        """).replace("\n", "\r\n")
     assert tomlrt.dumps(doc) == src
 
 
@@ -1206,7 +1233,9 @@ def test_deepcopy_aot_subview_preserves_length() -> None:
 
     src = td("""
         [[t]]
-        x = 1
+        x = 1 # first
+
+        # second
         [[t]]
         x = 2
         """)
@@ -1218,19 +1247,38 @@ def test_deepcopy_aot_subview_preserves_length() -> None:
     # Mutations on the copy do not leak.
     aot2[0]["x"] = 99
     assert aot[0]["x"] == 1
+    fresh = tomlrt.Document()
+    fresh["copy"] = aot2
+    assert tomlrt.dumps(fresh) == td("""
+        [[copy]]
+        x = 99 # first
+
+        # second
+        [[copy]]
+        x = 2
+        """)
     assert tomlrt.dumps(doc) == src
 
 
-def test_copy_array_subview_does_not_double_cst() -> None:
-
-    src = "xs = [1, 2, 3]\n"
+def test_copy_array_preserves_layout_and_independent_nested_values() -> None:
+    src = td("""
+        xs = [
+          0x1, # keep
+          [ 2,3 ],
+        ]
+        """)
     doc = tomlrt.loads(src)
     arr = doc.array("xs")
     arr2 = copy(arr)
-    arr2.append(4)
+    arr2.array(1).append(4)
     fresh = tomlrt.loads("")
     fresh["ys"] = arr2
-    assert tomlrt.dumps(fresh) == "ys = [1, 2, 3, 4]\n"
+    assert tomlrt.dumps(fresh) == td("""
+        ys = [
+          0x1, # keep
+          [ 2,3,4 ],
+        ]
+        """)
     assert tomlrt.dumps(doc) == src
 
 
@@ -1296,6 +1344,137 @@ def test_deepcopy_table_subview_recurses_into_aot_child() -> None:
     items[0]["x"] = 99
     assert t.aot("items")[0]["x"] == 1
     assert tomlrt.dumps(doc) == src
+
+
+def test_copy_dotted_inline_view_preserves_quoted_keys_and_values() -> None:
+    src = "cfg = { scope.'g'.\"x\"=0x0f, other=9, scope.'g'.inner . y = 1_000 }\n"
+    doc = tomlrt.loads(src)
+    cloned = copy(doc.table(("cfg", "scope", "g")))
+    fresh = tomlrt.Document()
+    fresh["picked"] = cloned
+    out = tomlrt.dumps(fresh)
+    assert out == 'picked = { "x"=0x0f, inner . y = 1_000 }\n'
+    assert reparses(out) == fresh.to_dict()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_deepcopy_dotted_inline_view_keeps_owned_comments_not_framing() -> None:
+    src = td("""
+        cfg = { # outer
+          # first
+          group.x = 0x0f, # x
+          other = 0, # foreign
+          # older
+
+          # y
+          group.'y' = [ 1,2 ], # y-tail
+          # closing
+        }
+        """).replace("\n", "\r\n")
+    doc = tomlrt.loads(src)
+    cloned = deepcopy(doc.table("cfg.group"))
+    fresh = tomlrt.loads("prefix = 0\r\n")
+    fresh["picked"] = cloned
+    cloned["x"] = 2
+    out = tomlrt.dumps(fresh)
+    assert out == td("""
+        prefix = 0
+        picked = {
+          # first
+          x = 2, # x
+          # older
+
+          # y
+          'y' = [ 1,2 ], # y-tail
+        }
+        """).replace("\n", "\r\n")
+    assert reparses(out) == fresh.to_dict()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_copy_dotted_inline_view_keeps_blocks_before_leading_commas() -> None:
+    src = td("""
+        cfg = {
+          other = 0
+          # keep
+          , group.x = 0x0f # x
+          , other2 = 2
+        }
+        """)
+    doc = tomlrt.loads(src)
+    fresh = tomlrt.Document()
+    fresh["picked"] = copy(doc.table("cfg.group"))
+    out = tomlrt.dumps(fresh)
+    assert out == td("""
+        picked = {
+          # keep
+          x = 0x0f   # x
+        }
+        """)
+    assert reparses(out) == fresh.to_dict()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_copy_dotted_inline_view_preserves_multiline_shape() -> None:
+    src = "cfg = { group.x = 1,\n other = 2 }\n"
+    doc = tomlrt.loads(src)
+    fresh = tomlrt.Document()
+    fresh["picked"] = copy(doc.table("cfg.group"))
+    out = tomlrt.dumps(fresh)
+    assert out == "picked = {\n x = 1,\n}\n"
+    assert reparses(out) == fresh.to_dict()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_copy_empty_held_inline_navigator() -> None:
+    doc = tomlrt.loads("cfg = { group.x = 1 }\n")
+    group = doc.table("cfg.group")
+    del group["x"]
+    before = tomlrt.dumps(doc)
+    fresh = tomlrt.Document()
+    fresh["picked"] = copy(group)
+    assert tomlrt.dumps(fresh) == "picked = {}\n"
+    assert tomlrt.dumps(doc) == before
+
+
+def test_view_copies_independently_copy_unmaterialized_payloads() -> None:
+    source = tomlrt.Table.section({"raw": {"values": [1]}})
+    shallow = copy(source)
+    deep = deepcopy(source)
+    shallow["raw"]["values"].append(2)
+    deep["raw"]["values"].append(3)
+    doc = tomlrt.Document()
+    doc["original"] = source
+    doc["shallow"] = shallow
+    doc["deep"] = deep
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [original]
+        raw = { values = [1] }
+
+        [shallow]
+        raw = { values = [1, 2] }
+
+        [deep]
+        raw = { values = [1, 3] }
+        """)
+    assert reparses(out) == doc.to_dict()
+
+
+@pytest.mark.parametrize("aot", [False, True])
+def test_view_copy_validates_factory_before_adopting_children(*, aot: bool) -> None:
+    child = tomlrt.Table.inline({"x": 1})
+    bad: Any = object()
+    body = {"child": child, "bad": bad}
+    value = tomlrt.AoT([body]) if aot else tomlrt.Table.section(body)
+    with pytest.raises(TypeError, match="cannot convert object"):
+        copy(value)
+    with pytest.raises(TypeError, match="cannot convert object"):
+        deepcopy(value)
+    fresh = tomlrt.Document()
+    fresh["child"] = child
+    child["x"] = 2
+    assert tomlrt.dumps(fresh) == "child = { x = 2 }\n"
 
 
 def test_typed_container_assign_now_clones_from_other_doc() -> None:

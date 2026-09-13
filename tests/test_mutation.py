@@ -7019,9 +7019,7 @@ def test_overwrite_ancestor_with_own_nested_aot_preserves_nested_entries() -> No
     into ancestor) must preserve nested `[[a.x]]` entries living inside
     that AoT's own entries, not just their own direct/dotted content.
 
-    ``_attach_aot`` must capture the full preserved subtree while the
-    entry is still live, before ``_reset_table_for_rehome`` clears the
-    ``_refs`` that gathering depends on.
+    Moving the outer entries must retain their complete nested subtrees.
     """
     doc = tomlrt.loads(
         td("""
@@ -7171,19 +7169,21 @@ def test_assign_nested_section_of_aot_entry_as_plain_section() -> None:
     assert _reparses(out) == {"copied": {"y": 2}}
 
 
-def test_assign_dotted_key_navigator_view_synthesises_fresh_inline_table() -> None:
-    """A dotted-key navigator view (e.g. the `a` in `t = {a.b = 1}`) owns
-    no CST of its own — it's a live projection over its parent's inline
-    value — so it must be synthesised fresh, not cloned, when used as a
-    value elsewhere."""
-    doc = tomlrt.loads("t = {a.b = 1, a.c = 2}\n")
+def test_assign_dotted_key_navigator_view_keeps_its_slice_of_layout() -> None:
+    """A dotted-key navigator view (e.g. the `a` in `t = {a.b = 1}`) is a
+    live projection over its parent's inline value. Used as a value
+    elsewhere it contributes that slice, keeping its own entries' style
+    and comments but not its owner's framing or unrelated siblings."""
+    doc = tomlrt.loads("t = {a.b = 1, a.c = 2, d = 3}\n")
     inner = doc["t"]["a"]
     doc2 = tomlrt.loads("")
     doc2["x"] = inner
     out = tomlrt.dumps(doc2)
-    assert out == "x = { b = 1, c = 2 }\n"
+    assert out == "x = {b = 1, c = 2}\n"
     assert doc2["x"].to_dict() == {"b": 1, "c": 2}
     assert _reparses(out) == {"x": {"b": 1, "c": 2}}
+    # The source is untouched by being read.
+    assert tomlrt.dumps(doc) == "t = {a.b = 1, a.c = 2, d = 3}\n"
 
 
 def test_aot_append_dotted_key_navigator_view() -> None:

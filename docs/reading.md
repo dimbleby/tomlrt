@@ -60,6 +60,13 @@ value = doc.entry("tool.poetry.name")           # raises if missing
 maybe = doc.get_entry("tool.poetry.licence")    # None if missing
 ```
 
+## Copying views
+
+Use `copy.copy(view)` or `copy.deepcopy(view)` for an independent copy that
+retains comments and available formatting. Both operations are deep for tomlrt
+views. Inherited methods such as `table.copy()` and `array.copy()` still make
+ordinary shallow `dict` and `list` copies.
+
 ## Back to plain Python
 
 `Table.to_dict()`, `Array.to_list()`, and `AoT.to_list()` return a deep copy
@@ -71,3 +78,6 @@ document, or to hand data off to code that will outlive the document:
 plain = doc.to_dict()
 plain["project"]["name"] = "renamed"   # does not touch the document
 ```
+
+Plain exports deliberately discard formatting and are usually cheaper than
+copying an existing layout.
