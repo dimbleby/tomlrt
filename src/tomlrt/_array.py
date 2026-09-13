@@ -28,6 +28,7 @@ from tomlrt._comma_ops import (
     splice_out,
 )
 from tomlrt._format import (
+    _prepare_indent,
     _resolve_format_options,
     format_inline_root,
     set_comma_value_multiline,
@@ -122,25 +123,22 @@ class Array(_View, list[Any]):
         self._host: Array | Container | None = None
         self._name: str = ""
         items_list = list(items)
+        for item in items_list:
+            self._validate_item(item)
+        indent_text = _prepare_indent(indent) if multiline else ""
         if items_list:
             from tomlrt._container import _fill_inline_array  # noqa: PLC0415
 
-            for item in items_list:
-                self._validate_item(item)
             _fill_inline_array(self, items_list, layout_root=None, owner=None)
         if not multiline:
             return
-        row_indent = f"\n{' ' * indent}"
-        if not val.items:
-            val.final_trivia = row_indent
-            return
-        val.header_trivia = row_indent
-        val.final_trivia = "\n"
-        for k, it in enumerate(val.items):
-            it.leading = "" if k == 0 else row_indent
-            it.post_comma_trivia = ""
-            it.trailing = ""
-            it.has_comma = True
+        set_comma_value_multiline(
+            val,
+            multiline=True,
+            nl=self._doc_newline,
+            indent=indent_text,
+            host=None,
+        )
 
     def to_list(self) -> list[Any]:
         """Materialise independent plain-Python data (recursive)."""
@@ -281,7 +279,7 @@ class Array(_View, list[Any]):
             self._value,
             multiline=multiline,
             nl=self._doc_newline,
-            indent=" " * indent,
+            indent=_prepare_indent(indent) if multiline else "",
             host=_host_kv_slot(self),
         )
         return self

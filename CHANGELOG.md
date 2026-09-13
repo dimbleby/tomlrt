@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Formatting a table now reaches all its sections, even when other tables
   appear between them. Tables removed from a document can also be formatted.
 - `Array.remove()` now recognizes identical objects, including NaN.
+- `Array()` and `set_multiline()` now share multiline spacing rules. Empty
+  arrays use the standard four spaces when their first item is added.
+- Invalid indentation is rejected before expanding to multiple lines, leaving
+  input values unchanged. Indentation is ignored when using a single line.
 
 ## [2.2.10] - 2026-09-13
 

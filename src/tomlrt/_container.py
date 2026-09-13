@@ -53,6 +53,7 @@ from tomlrt._comments import (
 )
 from tomlrt._errors import TOMLError
 from tomlrt._format import (
+    _prepare_indent,
     _resolve_format_options,
     format_container,
 )
@@ -1272,7 +1273,11 @@ class Table(Container):
         Returns ``self`` for chaining.
         """
         root = self._require_inline_root("set_multiline")
-        _inline_ops.set_inline_multiline(root, multiline=multiline, indent=" " * indent)
+        _inline_ops.set_inline_multiline(
+            root,
+            multiline=multiline,
+            indent=_prepare_indent(indent) if multiline else "",
+        )
         return self
 
     @classmethod
@@ -2089,6 +2094,7 @@ def _fill_inline_array(
         )
         val.items.append(item)
         list.append(arr, sub_dec)
+    val._ml_cache = False  # noqa: SLF001
 
 
 __all__ = ["AoT", "Array", "Container", "Document", "Table", "TomlInput"]
