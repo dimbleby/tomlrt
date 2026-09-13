@@ -7,6 +7,7 @@ not collect them; ``make bench`` runs them explicitly.
 from __future__ import annotations
 
 import math
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,18 +28,11 @@ def pytest_configure(config: pytest.Config) -> None:
     source of noise here: it costs ``test_big_aot`` a 96ms IQR against an
     83ms median, against 6ms with the collector off.
 
-    Reporting splits by mode. Against a saved baseline the plugin is at
-    its best: grouping by name puts the baseline and this run in one
-    table, and its ratio column is then exactly the regression. With
-    nothing to compare against, the plain run prints its own table --
-    see `pytest_terminal_summary`.
+    Both plain runs and comparisons use the width-bounded summary below.
+    The plugin still loads and saves results and checks regression limits.
     """
     config.option.benchmark_disable_gc = True
-    if config.option.benchmark_compare:
-        config.option.benchmark_group_by = "name"
-        config.option.benchmark_columns = ["median", "iqr", "rounds"]
-    else:
-        config.option.benchmark_quiet = True
+    config.option.benchmark_quiet = True
 
 
 def _format_time(seconds: float) -> str:
@@ -66,30 +60,88 @@ def _format_noise(stats: Any) -> str:
     return f"{2 * error / stats.median * 100:.1f}%"
 
 
-def pytest_terminal_summary(terminalreporter: Any) -> None:
-    """Print each case's median and its within-run sampling noise.
+def _write_wrapped(reporter: Any, text: str, *, indent: int = 0) -> None:
+    """Keep labels and complete case names inside the terminal width."""
+    width = max(1, reporter._tw.fullwidth)  # noqa: SLF001
+    lines = textwrap.wrap(
+        text, width=width, subsequent_indent=" " * min(indent, width // 2)
+    )
+    for line in lines or [""]:
+        reporter.write_line(line)
 
-    The plugin's own table is not wrong, it answers a different question:
-    it reports the IQR and the round count without saying what they imply
-    between them, and spends ten columns doing it. These two fit every
-    case on one screen, and say whether a case measures itself precisely
-    enough to be worth reading at all.
-    """
+
+def _write_comparison(
+    reporter: Any, benchmarks: list[Any], baseline: dict[str, Any]
+) -> None:
+    """Show median changes, largest slowdowns first, without hiding new cases."""
+    rows: list[tuple[Any, float | None, float | None]] = []
+    for bench in benchmarks:
+        previous = baseline.get(bench.fullname)
+        before = float(previous["stats"]["median"]) if previous is not None else None
+        change = (
+            100 * (bench.stats.median / before - 1)
+            if before is not None and before > 0
+            else None
+        )
+        rows.append((bench, before, change))
+    rows.sort(
+        key=lambda row: (
+            row[2] is None,
+            -row[2] if row[2] is not None else 0,
+            str(row[0].name),
+        )
+    )
+    _write_wrapped(reporter, f"{'base':>10}  {'now':>10}  {'change':>8}  case")
+    for bench, before, change in rows:
+        old = _format_time(before) if before is not None else "-"
+        delta = (
+            f"{change:+.1f}%"
+            if change is not None
+            else ("new" if before is None else "n/a")
+        )
+        prefix = f"{old:>10}  {_format_time(bench.stats.median):>10}  {delta:>8}  "
+        _write_wrapped(reporter, prefix + bench.name, indent=len(prefix))
+    removed = len(baseline.keys() - {bench.fullname for bench in benchmarks})
+    if removed:
+        _write_wrapped(
+            reporter, f"{removed} baseline cases not run (filtered or removed)."
+        )
+
+
+def pytest_terminal_summary(terminalreporter: Any) -> None:
+    """Print compact plain results or one comparison table per saved baseline."""
     config = terminalreporter.config
     # Set unconditionally by the plugin's own pytest_configure, so its
     # absence is a broken install and should raise rather than be
     # swallowed. An empty list is the real case: -k matched nothing.
     session = config._benchmarksession  # noqa: SLF001
-    if not session.benchmarks or config.option.benchmark_compare:
+    benchmarks = [bench for bench in session.benchmarks if bench]
+    if not benchmarks:
         return
 
-    write = terminalreporter.write_line
+    if config.option.benchmark_compare and session.compared_mapping:
+        for path, baseline in session.compared_mapping.items():
+            _write_wrapped(terminalreporter, "")
+            _write_wrapped(terminalreporter, f"Baseline: {path}")
+            _write_comparison(terminalreporter, benchmarks, baseline)
+        _write_wrapped(terminalreporter, "")
+        _write_wrapped(
+            terminalreporter,
+            "Positive change is slower; negative is faster. "
+            "Small changes may be noise.",
+        )
+        return
+
+    def write(text: str) -> None:
+        _write_wrapped(terminalreporter, text)
+
     write("")
     write(f"{'median':>10}  {'+/-':>6}  case")
-    for bench in sorted(session.benchmarks, key=lambda b: str(b.name)):
+    for bench in sorted(benchmarks, key=lambda b: str(b.name)):
         stats = bench.stats
         median, noise = _format_time(stats.median), _format_noise(stats)
-        write(f"{median:>10}  {noise:>6}  {bench.name}")
+        prefix = f"{median:>10}  {noise:>6}  "
+        _write_wrapped(terminalreporter, prefix + bench.name, indent=len(prefix))
     write("")
     write("+/- is sampling noise within this run; compare against a saved")
     write("baseline with --benchmark-autosave/--benchmark-compare.")
