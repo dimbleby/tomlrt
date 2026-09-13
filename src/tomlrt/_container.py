@@ -72,7 +72,12 @@ from tomlrt._scalar import (
 )
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import split_line
-from tomlrt._typecheck import _require_mapping, _validate_key, _validate_mapping
+from tomlrt._typecheck import (
+    _mapping_items,
+    _require_mapping,
+    _validate_key,
+    _validate_mapping,
+)
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -519,7 +524,7 @@ class Container(_View, dict[str, Any]):
     def to_dict(self) -> dict[str, Any]:
         """Materialise a plain-Python ``dict`` (recursive)."""
         out: dict[str, Any] = {}
-        for k, v in self.items():
+        for k, v in _mapping_items(self):
             out[k] = _to_python(v)
         return out
 
@@ -1253,7 +1258,7 @@ def _make_inline_chain(parts: Sequence[str]) -> tuple[Table, Table]:
 
 def _populate_unattached(t: Container, mapping: Mapping[str, TomlInput]) -> None:
     """Populate an unattached ``Container`` whose keys are already validated."""
-    for k, v in mapping.items():
+    for k, v in _mapping_items(mapping):
         dict.__setitem__(t, k, v)
 
 
@@ -1599,7 +1604,7 @@ def _copy_input(value: TomlInput) -> TomlInput:
         return _clone_private_layout(value)
     if isinstance(value, Container):
         table = Table.inline() if value._inline else Table.section()  # noqa: SLF001
-        for key, child in value.items():
+        for key, child in _mapping_items(value):
             dict.__setitem__(table, key, _copy_input(child))
         return table
     if isinstance(value, AoT):
@@ -1610,7 +1615,7 @@ def _copy_input(value: TomlInput) -> TomlInput:
             list.append(aot, entry)
         return aot
     if isinstance(value, Mapping):
-        return {key: _copy_input(child) for key, child in value.items()}
+        return {key: _copy_input(child) for key, child in _mapping_items(value)}
     assert isinstance(value, list), "validated compound input expected"
     return [_copy_input(child) for child in value]
 
@@ -1625,8 +1630,8 @@ def _to_python(v: object) -> object:
     """Export independent plain data from views and unmaterialized payloads."""
     if is_scalar(v):
         return v
-    if isinstance(v, Mapping):
-        return {key: _to_python(value) for key, value in v.items()}
+    if isinstance(v, (dict, Mapping)):
+        return {key: _to_python(value) for key, value in _mapping_items(v)}
     if isinstance(v, list):
         return [_to_python(x) for x in v]
     return v
@@ -1692,7 +1697,7 @@ def _collect_private_roots(value: object, found: dict[int, Document]) -> None:
         if root is not None and root._is_private:  # noqa: SLF001
             found[id(root)] = root
     if isinstance(value, Mapping):
-        for sub in value.values():
+        for _, sub in _mapping_items(value):
             _collect_private_roots(sub, found)
     elif isinstance(value, list):
         for sub in value:
@@ -1862,7 +1867,7 @@ def _validate_mapping_items(
     mapping: Mapping[Any, object], *, inline_only: bool
 ) -> None:
     """Validate each mapping key and its value in one pass."""
-    for raw_key, value in mapping.items():
+    for raw_key, value in _mapping_items(mapping):
         key = _validate_key(raw_key)
         _validate_input(value, inline_only=inline_only, key=key)
 
@@ -1940,7 +1945,7 @@ def _synth_value(
         if isinstance(v, Container) and v._value is None:  # noqa: SLF001
             cst, view = _populate_inline_table(
                 v,
-                list(v.items()),
+                list(_mapping_items(v)),
                 layout_root=layout_root,
                 parent=parent,
                 name=name,
@@ -1973,7 +1978,7 @@ def _synth_value(
     elif isinstance(v, Mapping):
         cst, view = _populate_inline_table(
             Table(),
-            list(v.items()),
+            list(_mapping_items(v)),
             layout_root=layout_root,
             parent=parent,
             name=name,
@@ -2047,7 +2052,7 @@ def _file_inline_child(
 
 def _populate_inline_table(
     table: Container,
-    items: Sequence[tuple[object, TomlInput]],
+    items: Sequence[tuple[str, TomlInput]],
     *,
     layout_root: Document | None,
     parent: Container | None,
@@ -2073,8 +2078,7 @@ def _populate_inline_table(
     table._value = val  # noqa: SLF001
 
     last = len(items) - 1
-    for i, (raw_k, sub) in enumerate(items):
-        k = _validate_key(raw_k)
+    for i, (k, sub) in enumerate(items):
         sub_cst, sub_dec = _synth_value(
             sub,
             layout_root=layout_root,

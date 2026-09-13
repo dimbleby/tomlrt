@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Replacing a value inside an inline table no longer moves its key or removes
   its comments.
+- Custom mappings that repeat a key now consistently keep its last value,
+  including when assigned inside arrays or tables.
 
 ## [2.2.10] - 2026-09-13
 

@@ -57,7 +57,7 @@ from tomlrt._slots import (
     ensure_terminator,
     stitch_run,
 )
-from tomlrt._typecheck import _require_mapping, _validate_key
+from tomlrt._typecheck import _mapping_items, _require_mapping, _validate_key
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -226,13 +226,8 @@ def _plan(mapping: Mapping[_KeyT, object], nl: str) -> _Plan:
     Anything TOML cannot hold raises the error the caller should see;
     a view holding source layout is set aside for `_settle`.
     """
-    if not isinstance(mapping, dict):
-        # A `Mapping` is free to hand out the same key twice, or to
-        # disagree with its own ``__iter__``. Take one reading of it, so
-        # the plan's keys are the document's keys.
-        mapping = dict(mapping.items())
     plan = _Plan()
-    for raw_key, raw in mapping.items():
+    for raw_key, raw in _mapping_items(mapping):
         key = _validate_key(raw_key)
         node = _Node(key, raw)
         plan.keys.append(key)
@@ -323,12 +318,7 @@ def _inline_value(v: object, nl: str, *, key: str | None = None) -> Value:
             )
         return array
     if isinstance(v, Mapping):
-        # One reading of it, as `_plan` takes: a `Mapping` is free to
-        # repeat a key or to disagree with its own ``__len__``, and the
-        # separators are counted from what we take.
-        if not isinstance(v, dict):
-            v = dict(v.items())
-        items = [(_validate_key(raw_key), sub) for raw_key, sub in v.items()]
+        items = [(_validate_key(raw_key), sub) for raw_key, sub in _mapping_items(v)]
         table = InlineTableValue()
         last = len(items) - 1
         for i, (child_key, sub) in enumerate(items):
