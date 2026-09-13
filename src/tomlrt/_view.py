@@ -65,7 +65,7 @@ class _View:
         return lr._newline if lr is not None else "\n"  # noqa: SLF001
 
     def __copy__(self) -> Self:
-        """Return an independent detached copy of this view."""
+        """Return an independent copy of this view, retaining available layout."""
         raise NotImplementedError
 
     def __deepcopy__(self, memo: dict[int, object]) -> Self:

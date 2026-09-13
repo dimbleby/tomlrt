@@ -108,6 +108,9 @@ old = doc.pop("tool")        # detached Table view
 old["debug"] = True          # does NOT affect doc
 ```
 
+Reattaching the detached view keeps its existing entry and nested-view
+references live at the new location.
+
 ## Arrays-of-tables
 
 `AoT.add()` appends a fresh entry and returns the new `Table` view, so you can

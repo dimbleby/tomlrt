@@ -97,6 +97,7 @@ _OPS = (
     "delete_doc",
     "mutate_array",
     "mutate_aot",
+    "attach_commented",
     "attach_empty",
 )
 
@@ -351,6 +352,21 @@ def _run_program(src: str, seed: int) -> None:
                     aot.pop(rng.randrange(len(aot)))
                 else:
                     aot.append({f"e{step}": step})
+        elif op == "attach_commented":
+            target = _resolve(orphan, rng.choice([*paths, ()]))
+            inline = isinstance(target, Array) or (
+                isinstance(target, tomlrt.Table) and target.is_inline
+            )
+            factory = (
+                tomlrt.Table.inline({"value": step})
+                if inline
+                else tomlrt.Table.section({"value": step})
+            )
+            factory.comments["value"] = f"created {step}"
+            if isinstance(target, Container):
+                target[f"n{step}"] = factory
+            else:
+                target.append(factory)
         elif op == "attach_empty":
             # A section (or AoT entry) attached with no body of its own
             # is header-only: the one shape whose body-region cache has

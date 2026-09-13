@@ -57,21 +57,6 @@ def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
     return None
 
 
-def _require_attached(c: Container) -> None:
-    """Reject comment-view mutation on a container with no slot stream.
-
-    Detached containers have nowhere to store comment mutations, so
-    raise a clear `TOMLError` instead of an internal ``KeyError``.
-    """
-    if c._layout_root is None:  # noqa: SLF001
-        msg = (
-            "comments view is unavailable on a detached container; "
-            "attach the container to a Document first (e.g. doc[k] = table) "
-            "and then mutate doc[k].comments"
-        )
-        raise TOMLError(msg)
-
-
 _T = TypeVar("_T")
 
 
@@ -93,11 +78,16 @@ class _SlotKeyedView(MutableMapping[str, _T]):
     def _slot(self, key: str) -> KVSlot | None:
         return _direct_kv_slot(self._c, key)
 
-    def _require_slot(self, key: str, *, missing_msg: str | None = None) -> KVSlot:
+    def _require_slot(self, key: str) -> KVSlot:
         slot = self._slot(key)
         if slot is None:
-            raise KeyError(key if missing_msg is None else missing_msg)
+            raise KeyError(key)
         return slot
+
+    def _write_slot(self, key: str, *, materialize: bool = True) -> KVSlot | None:
+        if not self._c._prepare_comment_write(key, materialize=materialize):  # noqa: SLF001
+            return None
+        return self._require_slot(key)
 
     @abstractmethod
     def _get(self, slot: KVSlot) -> _T | None:
@@ -120,7 +110,6 @@ class _SlotKeyedView(MutableMapping[str, _T]):
 
     @override
     def __delitem__(self, key: str) -> None:
-        _require_attached(self._c)
         slot = self._require_slot(key)
         if self._get(slot) is None:
             raise KeyError(key)
@@ -158,9 +147,9 @@ class EolCommentView(_SlotKeyedView[str]):
 
     @override
     def __setitem__(self, key: str, value: str) -> None:
-        _require_attached(self._c)
-        slot = self._require_slot(key, missing_msg=f"key {key!r} not in container")
         _validate_comment_str(value, "comment")
+        slot = self._write_slot(key)
+        assert slot is not None
         slot.eol = _write_eol_comment(slot.eol, value, self._c._doc_newline)  # noqa: SLF001
 
 
@@ -203,9 +192,10 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
 
     @override
     def __setitem__(self, key: str, value: tuple[str, ...]) -> None:
-        _require_attached(self._c)
-        slot = self._require_slot(key, missing_msg=f"key {key!r} not in container")
         comments = _validate_comment_seq(value, "leading_comments")
+        slot = self._write_slot(key, materialize=bool(comments))
+        if slot is None:
+            return
         nl = self._c._doc_newline  # noqa: SLF001
         slot.leading = _set_attached_block(slot.leading, comments, nl)
 
@@ -232,9 +222,10 @@ class LeadingBlockView(_SlotKeyedView[tuple[str | None, ...]]):
 
     @override
     def __setitem__(self, key: str, value: tuple[str | None, ...]) -> None:
-        _require_attached(self._c)
-        slot = self._require_slot(key, missing_msg=f"key {key!r} not in container")
         block = _validate_comment_entries(value, "leading_block", allow_none=True)
+        slot = self._write_slot(key, materialize=bool(block))
+        if slot is None:
+            return
         _write_leading_block(self._c, slot, block)
 
 
@@ -256,11 +247,28 @@ def _header_slot(c: Container) -> StructuralHeaderSlot | None:
     return slot
 
 
-def _require_header_slot(c: Container, msg: str) -> StructuralHeaderSlot:
-    """Return ``c``'s header slot or raise ``TOMLError`` with ``msg``."""
+def _write_header_slot(
+    c: Container, msg: str, *, pin: bool
+) -> StructuralHeaderSlot | None:
+    """Resolve this container's header for writing.
+
+    ``pin`` says the caller is writing a comment rather than clearing
+    one. A factory materialises to hold it, and the header becomes
+    authored rather than synthetic so nothing may later drop it as an
+    empty section. Clearing returns ``None`` instead: there is nothing
+    to clear, and materialising for it would needlessly take ownership
+    of the factory's children.
+    """
     h = _header_slot(c)
+    if h is None and c._needs_layout:  # noqa: SLF001
+        if not pin:
+            return None
+        c._materialise_layout(preserve_header=True)  # noqa: SLF001
+        h = _header_slot(c)
     if h is None:
         raise TOMLError(msg)
+    if pin:
+        h.synthetic = False
     return h
 
 
@@ -274,7 +282,11 @@ def _header_comment_get(c: Container) -> str | None:
 
 
 def _header_comment_set(c: Container, value: str | None) -> None:
-    h = _require_header_slot(c, "container has no header to attach a comment to")
+    h = _write_header_slot(
+        c, "container has no header to attach a comment to", pin=value is not None
+    )
+    if h is None:
+        return
     if value is None:
         h.eol = _clear_eol_comment(h.eol)
         return
@@ -290,8 +302,12 @@ def _header_leading_get(c: Container) -> tuple[str, ...]:
 
 
 def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
-    h = _require_header_slot(c, "container has no header to attach leading comments to")
     comments = _validate_comment_seq(value, "header_leading_comments")
+    h = _write_header_slot(
+        c, "container has no header to attach leading comments to", pin=bool(comments)
+    )
+    if h is None:
+        return
     h.leading = _set_attached_block(h.leading, comments, c._doc_newline)  # noqa: SLF001
 
 
@@ -303,8 +319,12 @@ def _header_leading_block_get(c: Container) -> tuple[str | None, ...]:
 
 
 def _header_leading_block_set(c: Container, value: tuple[str | None, ...]) -> None:
-    h = _require_header_slot(c, "container has no header to attach a leading block to")
     block = _validate_comment_entries(value, "header_leading_block", allow_none=True)
+    h = _write_header_slot(
+        c, "container has no header to attach a leading block to", pin=bool(block)
+    )
+    if h is None:
+        return
     _write_leading_block(c, h, block)
 
 

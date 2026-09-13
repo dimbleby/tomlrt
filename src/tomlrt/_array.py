@@ -150,7 +150,10 @@ class Array(_View, list[Any]):
 
     @override
     def __copy__(self) -> Array:
-        return Array(self.to_list(), multiline=self.multiline)
+        _container._validate_input(self, inline_only=True)  # noqa: SLF001
+        cloned = _container._copy_input(self)  # noqa: SLF001
+        assert isinstance(cloned, Array)
+        return cloned
 
     def array(self, index: SupportsIndex) -> Array:
         """Return ``self[index]`` typed as a nested `Array`."""
@@ -605,7 +608,10 @@ class AoT(_View, list["Table"]):
 
     @override
     def __copy__(self) -> AoT:
-        return AoT(self.to_list())
+        _container._validate_input(self, inline_only=False)  # noqa: SLF001
+        cloned = _container._copy_input(self)  # noqa: SLF001
+        assert isinstance(cloned, AoT)
+        return cloned
 
     def add(self, entry: Mapping[str, TomlInput] | None = None) -> Table:
         """Append a fresh ``[[path]]`` entry and return its `Table` view.
@@ -782,14 +788,19 @@ class AoT(_View, list["Table"]):
         if n <= 0:
             self.clear()
             return self
-        if n == 1:
+        if n == 1 or not self:
             return self
         if self._layout_root is None:
-            # Detached AoT: replicate via `extend` so `_make_unattached_entry`
-            # stays the source of truth for document-free entries.
-            bodies = self.to_list()
+            from tomlrt._container import _copy_input  # noqa: PLC0415
+
+            bodies = _prepare_aot_entries(self)
+            copies: list[Table] = []
             for _ in range(n - 1):
-                self.extend(bodies)
+                for body in bodies:
+                    entry = _copy_input(body)
+                    assert isinstance(entry, _container.Table)
+                    copies.append(entry)
+            list.extend(self, copies)
             return self
         originals = list(self)
         for _ in range(n - 1):
@@ -816,6 +827,17 @@ def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
     """Build a fresh unattached `Table` view as an AoT-entry placeholder."""
     from tomlrt._container import Table, _populate_unattached  # noqa: PLC0415
 
+    # Keep ordinary mappings free of cold-path imports and helper calls.
+    if (
+        isinstance(body, Table)
+        and body._layout_root is not None  # noqa: SLF001
+        and not body._inline  # noqa: SLF001
+    ):
+        from tomlrt._container import _clone_private_layout  # noqa: PLC0415
+
+        entry = _clone_private_layout(body)
+        assert isinstance(entry, Table)
+        return entry
     t = Table()
     if body is not None:
         _populate_unattached(t, body)

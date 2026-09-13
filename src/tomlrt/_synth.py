@@ -21,7 +21,6 @@ where a section's own keys precede its subsections.
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -32,6 +31,7 @@ from tomlrt._container import (
     Container,
     Document,
     Table,
+    _detached_inline_value,
     _has_extractable_layout,
     _is_inline_table,
     _is_section,
@@ -303,15 +303,14 @@ def _inline_value(v: object, nl: str, *, key: str | None = None) -> Value:
     if _is_section(v):
         msg = "cannot store a section-style table inside an inline-style table"
         raise TOMLError(msg)
-    own = v._value if isinstance(v, (Array, Table)) else None  # noqa: SLF001
+    own = _detached_inline_value(v) if isinstance(v, (Array, Table)) else None
     if own is not None:
         # An `Array` or inline `Table` already holds the value it wants
         # written, including any shape it was given or parsed with; copy
         # that rather than rebuild it from the items alone.
         _validate_input(v, inline_only=True, key=key)
-        cloned = copy.deepcopy(own)
-        retarget_value_newlines(cloned, nl)
-        return cloned
+        retarget_value_newlines(own, nl)
+        return own
     if isinstance(v, list):
         array = ArrayValue()
         last = len(v) - 1

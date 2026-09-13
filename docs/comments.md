@@ -2,6 +2,18 @@
 
 tomlrt exposes comments at every level of a document: end-of-line, above an entry, above a section header, and at the top or bottom of the file.
 
+Tables can be annotated before attachment:
+
+```python
+feature = tomlrt.Table.section({"enabled": True})
+feature.comments["enabled"] = "Enable this feature"
+doc = tomlrt.Document()
+doc["feature"] = feature
+```
+
+This also works for inline tables and entries in standalone arrays of tables.
+Attachment keeps their comments and live references.
+
 ## End-of-line comments
 
 `Table.comments` is a live `MutableMapping[str, str]` keyed by entry name.
@@ -105,6 +117,10 @@ both blank-separated groups and the attached run as a tuple in which each
 `str` is a bare comment line and each `None` is a blank line. The same
 distinction applies to section entries, multiline inline-table entries, and
 multiline array elements.
+
+The full comment block travels with its entry when copied, moved, or sorted.
+Only the blank separator before the block is adjusted to its new position.
+Document preambles and epilogues remain with the document.
 
 ```toml
 [a]

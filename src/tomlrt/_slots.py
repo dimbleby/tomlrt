@@ -264,7 +264,7 @@ class StructuralHeaderSlot(Slot):
     """The AoT entry this header opens; ``None`` for a plain table."""
 
     synthetic: bool
-    """True iff this header was introduced by mutation."""
+    """Whether mutation may omit this header when its section becomes implicit."""
 
     def __init__(
         self,

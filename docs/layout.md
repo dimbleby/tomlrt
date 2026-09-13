@@ -198,7 +198,6 @@ inline-table-entry comments. Opening-bracket comment spacing remains authored.
 
 ### Detached views
 
-`format()` works on attached containers and arrays — those reachable
-from a parsed or built `Document`. Calling it on a detached
-`Table.section()` or `Table.inline()` factory raises `TOMLError`:
-there is no document to canonicalise against.
+`format()` requires backing layout. A fresh `Table.section()` or
+`Table.inline()` factory without layout yet raises `TOMLError`.
+Setting comments or attaching the table creates its layout.

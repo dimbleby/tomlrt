@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+from copy import copy
 from typing import TYPE_CHECKING
 
 import pytest
@@ -86,6 +87,18 @@ def test_parse_and_render_pyproject(
 def test_render_only_pyproject(benchmark: BenchmarkFixture, pyproject_src: str) -> None:
     doc = tomlrt.loads(pyproject_src)
     benchmark(tomlrt.dumps, doc)
+
+
+@pytest.mark.parametrize("operation", ["copy", "export"])
+def test_copy_or_export_formatted_table(
+    benchmark: BenchmarkFixture, operation: str
+) -> None:
+    values = ",".join(str(i) for i in range(1000))
+    table = tomlrt.loads(f"t = {{\n  values = [ {values} ] # values\n}}\n").table("t")
+    if operation == "copy":
+        benchmark(copy, table)
+    else:
+        benchmark(table.to_dict)
 
 
 def test_iterate_root_comments_over_nested_sections(
@@ -284,6 +297,26 @@ def test_attach_aot_factory(
         return (tomlrt.Document(), factory), {}
 
     def work(doc: Document, factory: tomlrt.AoT) -> None:
+        doc["items"] = factory
+
+    benchmark.pedantic(work, setup=setup, rounds=100)
+
+
+@pytest.mark.parametrize(
+    ("entries", "width", "annotated"),
+    [(1, 5, False), (1, 1000, False), (100, 5, False), (1, 1000, True)],
+)
+def test_repeat_and_attach_aot_factory(
+    benchmark: BenchmarkFixture, entries: int, width: int, *, annotated: bool
+) -> None:
+    def setup() -> tuple[tuple[Document, tomlrt.AoT], dict[str, object]]:
+        factory = tomlrt.AoT([{"values": list(range(width))} for _ in range(entries)])
+        if annotated:
+            factory[0].comments["values"] = "retain"
+        return (tomlrt.Document(), factory), {}
+
+    def work(doc: Document, factory: tomlrt.AoT) -> None:
+        factory *= 3
         doc["items"] = factory
 
     benchmark.pedantic(work, setup=setup, rounds=100)

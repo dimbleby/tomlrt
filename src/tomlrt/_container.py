@@ -176,14 +176,25 @@ class Container(_View, dict[str, Any]):
         return _Kind.IMPLICIT_SECTION
 
     @property
+    def _needs_layout(self) -> bool:
+        """Whether this is a factory still holding its data in dict storage.
+
+        Such a container owns no slots and no inline value, so it renders
+        nothing and structural edits are pure dict edits. Layout appears
+        when it is attached to a document, or materialised in place by
+        the first comment written on it.
+        """
+        if self._inline:
+            return self._kind is _Kind.INLINE_FACTORY
+        return self._layout_root is None
+
+    @property
     def comments(self) -> MutableMapping[str, str]:
         """Mapping view of EOL comments on this container's direct keys.
 
-        For a section-backed container the view is keyed by direct key
-        and requires attachment to a `Document` to mutate. For an inline
-        table the view is keyed by direct leaf key over the backing
-        inline value; setting a comment promotes a single-line table to
-        multi-line (a single line has nowhere to hold a comment).
+        Comments may be set before attachment. Section tables expose direct
+        key/value entries; inline tables expose direct leaf entries. Adding
+        comments to a single-line inline table makes it multi-line.
         """
         if self._inline:
             return CommaEolView(_InlineAdapter(self))
@@ -198,11 +209,9 @@ class Container(_View, dict[str, Any]):
         above-blank groups and the blank-line structure between them, see
         [`leading_block`][tomlrt.Table.leading_block].
 
-        Mutating the view requires the container to be attached to a
-        `Document`. On an inline table the view is keyed by direct leaf
-        key over the backing inline value; it has the same attached-run
-        semantics as a section-backed table, and setting comments promotes
-        a single-line table to multi-line.
+        Comments may be set before attachment. Inline tables expose direct
+        leaf entries with the same attached-run semantics. Adding comments
+        makes a single-line inline table multi-line.
         """
         if self._inline:
             return CommaLeadingView(_InlineAdapter(self))
@@ -220,10 +229,9 @@ class Container(_View, dict[str, Any]):
         [`Document.preamble`][tomlrt.Document.preamble] and is omitted here;
         this block starts after the first blank line.
 
-        Mutating the view requires the container to be attached to a
-        `Document`. On an inline table the view is keyed by direct leaf
-        key over the backing inline value; an opening-bracket EOL comment
-        is framing and is not part of the first entry's block.
+        Blocks may be set before attachment. Inline tables expose direct
+        leaf entries; opening-bracket EOL comments are framing and are not
+        part of the first entry's block.
         """
         if self._inline:
             return CommaLeadingBlockView(_InlineAdapter(self))
@@ -233,9 +241,9 @@ class Container(_View, dict[str, Any]):
     def header_comment(self) -> str | None:
         """The EOL comment on this container's section header, or None.
 
-        Containers without a header line (the document root, or implicit
-        sections opened only by a nested ``[a.b]`` header) read as
-        ``None``. Setting on such a container raises
+        Section factories may be annotated before attachment.
+        Document roots and implicit sections opened only by a nested
+        ``[a.b]`` header read as ``None``. Setting on such a container raises
         [`TOMLError`][tomlrt.TOMLError]; inline tables also raise.
         """
         return _header_comment_get(self)
@@ -252,8 +260,9 @@ class Container(_View, dict[str, Any]):
     def header_leading_comments(self) -> tuple[str, ...]:
         """The attached comment block immediately above this container's header.
 
-        Containers without a header line (the document root, or implicit
-        sections opened only by a nested ``[a.b]`` header) read as ``()``.
+        Section factories may be annotated before attachment.
+        Document roots and implicit sections opened only by a nested
+        ``[a.b]`` header read as ``()``.
         Setting on such a container raises [`TOMLError`][tomlrt.TOMLError];
         inline tables also raise.
 
@@ -275,11 +284,11 @@ class Container(_View, dict[str, Any]):
         """The full leading-trivia block above this container's header.
 
         A ``tuple[str | None, ...]`` of comment strings interleaved with
-        ``None`` (one per blank line), in source order. Containers without
-        a header line (the document root, or implicit sections opened only
-        by a nested ``[a.b]`` header) read as ``()``. Setting on such a
-        container raises [`TOMLError`][tomlrt.TOMLError]; inline tables
-        also raise.
+        ``None`` (one per blank line), in source order. Section factories
+        may be annotated before attachment. Document roots and implicit
+        sections opened only by a nested ``[a.b]`` header read as ``()``.
+        Setting on such a container raises [`TOMLError`][tomlrt.TOMLError];
+        inline tables also raise.
 
         For the document's first section, the opening comment paragraph is
         the [`Document.preamble`][tomlrt.Document.preamble] and is omitted
@@ -320,8 +329,8 @@ class Container(_View, dict[str, Any]):
         ``FormatOptions(normalize_comments=...)`` instead. Supplying both
         arguments raises ``ValueError``.
 
-        Detached factory-style containers (``Table.section()`` /
-        ``Table.inline()`` not yet assigned anywhere) and inline dotted
+        Factory-style containers without layout yet (``Table.section()`` /
+        ``Table.inline()``) and inline dotted
         navigators are unsupported and raise `TOMLError`.
         """
         resolved = _resolve_format_options(options=options, comments=comments)
@@ -539,6 +548,35 @@ class Container(_View, dict[str, Any]):
             owner=self._owner_aot_entry,
         )
 
+    def _materialise_layout(self, *, preserve_header: bool = False) -> None:
+        """Give a factory backing layout without changing its public identity."""
+        assert self._needs_layout
+        _validate_input(self, inline_only=self._inline)
+        if self._inline:
+            _synth_value(self, layout_root=None, parent=None, name=None, owner=None)
+        else:
+            assert isinstance(self, Table)
+            _layout_ops.materialise_section(self, preserve_header=preserve_header)
+
+    def _prepare_comment_write(self, key: str, *, materialize: bool) -> bool:
+        """Ready this container's layout for a comment write on ``key``.
+
+        A factory materialises on its first substantive write. Returns
+        ``False`` when it has none and the caller wants none: an empty
+        assignment then has nothing to clear. Keys that carry no comment
+        of their own — a nested section, a populated AoT, or no such key
+        at all — are rejected before any layout is built.
+        """
+        if not self._needs_layout:
+            return True
+        value = dict.__getitem__(self, key)
+        if _is_section(value) or (isinstance(value, AoT) and value):
+            raise KeyError(key)
+        if not materialize:
+            return False
+        self._materialise_layout()
+        return True
+
     def _require_promotable_entry(self, key: str, *, action: str) -> object:
         """Return ``self[key]`` after the shared promotion pre-checks."""
         if self._inline:
@@ -574,10 +612,7 @@ class Container(_View, dict[str, Any]):
         """
         if key in self and self[key] is value:
             return
-        # Unmaterialised factory mode: dict-only storage until attach.
-        if self._layout_root is None and (
-            not self._inline or self._kind is _Kind.INLINE_FACTORY
-        ):
+        if self._needs_layout:
             dict.__setitem__(self, key, value)
             return
         if self._inline:
@@ -655,20 +690,13 @@ class Container(_View, dict[str, Any]):
     def _attach_aot(self, key: str, value: AoT) -> None:
         """Install ``value`` (an AoT) under ``key``.
 
-        Live-attached sources or private orphans with intact entry
-        slots are cloned to preserve per-entry trivia and nested
-        sub-sections. Detached AoTs without preserved slots are rehomed
-        entry-by-entry.
+        Public sources are copied. Private layout moves with its live
+        views; entries without layout are synthesized in place.
         """
         src_root = value._layout_root  # noqa: SLF001
         if src_root is not None and not src_root._is_private:  # noqa: SLF001
             _layout_ops.clone_aot(self, key, value)
             return
-        # Private orphans may still own intact slots from a
-        # structural-overwrite detach; clone those to keep per-KV
-        # trivia, nested sub-sections, and inter-entry separators.
-        # The generic add_aot_entry(rehome=) path rebuilds from dict
-        # storage and drops that CST.
         emptied = value._host  # noqa: SLF001
         existing_entries: list[Table] = list(value)
         _layout_ops.detach_aot_from_orphan(value)
@@ -676,76 +704,48 @@ class Container(_View, dict[str, Any]):
         attached = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, attached)
         for entry_table in existing_entries:
-            owner = entry_table._owner_aot_entry  # noqa: SLF001
-            preserve_cst = owner is not None and entry_table._header_ref is not None  # noqa: SLF001
-            if preserve_cst:
-                # Gathering includes nested AoTs and requires the live view.
-                _layout_ops.add_aot_entry(
+            source_doc = entry_table._layout_root  # noqa: SLF001
+            if source_doc is None:
+                _layout_ops.add_aot_entry(value, None, rehome=entry_table)
+            elif source_doc._is_private:  # noqa: SLF001
+                _layout_ops.adopt_private_entry(
                     value,
                     entry_table,
-                    preserve_source_separator=True,
+                    preserve_source_separator=src_root is not None,
                 )
-                # The copy is the one that lives on, so the original
-                # leaves the orphan's stream rather than lingering as
-                # text nothing accounts for.
-                _layout_ops.unlink_cloned_orphan_entry(entry_table)
-            _reset_table_for_rehome(entry_table)
-            if not preserve_cst:
-                _layout_ops.add_aot_entry(value, None, rehome=entry_table)
+            else:
+                _layout_ops.add_aot_entry(value, entry_table)
         _layout_ops.synthesise_header_for_emptied(emptied)
 
     def _attach_section(self, key: str, source: Container) -> None:
         """Install ``source`` (a section-flavoured Table) under ``key``.
 
-        Clones from a live source so identity and trivia survive where
-        possible — including normalising an AoT-entry source's
-        ``[[..]]`` head to ``[..]``. Falls back to synthesis only for a
-        truly detached source with no slots of its own.
-
-        An overlapping source is read from a snapshot in another
-        document, through the ordinary live-source branches.
+        As with AoTs, synthesize factories, adopt private layout, and clone
+        public sources. Overlapping sources are snapshotted before moving.
         """
         snapshot = _snapshot_for_overlapping_install(self, key, source)
         assert isinstance(snapshot, Container)
         value: Container = snapshot
         src_root = value._layout_root
-        live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
-        if live_source:
-            if value._is_own_aot_entry and self._layout_root is not None:
-                _layout_ops.clone_aot_entry_as_table(self, key, value)
-            elif value._header_ref is not None:
-                _layout_ops.clone_section_as_section(self, key, value)
-            elif isinstance(value, Document):
-                _layout_ops.clone_document_as_section(self, key, value)
-            else:
-                _install_attached_subtree(self, (key,), value)
-            return
-        if src_root is not None and src_root._is_private and value._refs:  # noqa: SLF001
-            # Private orphan with intact slots: move the slots into the
-            # document so identity and trivia both survive. A header-bearing
-            # section (an AoT entry is normalised to a plain section) moves
-            # its block; a header-less implicit section moves its dotted KVs.
+        if src_root is None:
+            assert isinstance(value, Table), "a section factory must be a Table"
+            _layout_ops.attach_section_at(self, (key,), value)
+        elif src_root._is_private:  # noqa: SLF001
+            assert value._refs, "a private section owns slots"
             emptied = value._parent
             if value._header_ref is not None:
                 _layout_ops.adopt_private_section(self, key, value)
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
-            # Only knowable now: the departing block had to go before
-            # its old parent could be seen to be empty.
             _layout_ops.synthesise_header_for_emptied(emptied)
-            return
-        # A source with no slots was never attached: it contributes no
-        # text, so taking it away costs its parent nothing and it is
-        # synthesised at its new home. A section inside a private orphan
-        # always owns a slot, so what arrives here is a detached factory
-        # — which may hold live children that must not be re-rooted.
-        assert isinstance(value, Table), (
-            "internal: detached section source expected to be a Table"
-        )
-        assert value._layout_root is None, (
-            "internal: a private-orphan section owns slots"
-        )
-        _layout_ops.attach_section_at(self, (key,), value)
+        elif value._is_own_aot_entry:
+            _layout_ops.clone_aot_entry_as_table(self, key, value)
+        elif value._header_ref is not None:
+            _layout_ops.clone_section_as_section(self, key, value)
+        elif isinstance(value, Document):
+            _layout_ops.clone_document_as_section(self, key, value)
+        else:
+            _install_attached_subtree(self, (key,), value)
 
     def _replace_scalar(self, key: str, value: Scalar) -> None:
         """Replace a scalar while preserving its existing KV slot."""
@@ -783,10 +783,7 @@ class Container(_View, dict[str, Any]):
 
     @override
     def __delitem__(self, key: str) -> None:
-        # Unmaterialised factory mode: dict-only storage until attach.
-        if self._layout_root is None and (
-            not self._inline or self._kind is _Kind.INLINE_FACTORY
-        ):
+        if self._needs_layout:
             dict.__delitem__(self, key)
             return
         if self._inline:
@@ -912,12 +909,11 @@ class Container(_View, dict[str, Any]):
             new_order = pure_leaves + mixed + pure_sections
         if new_order == current:
             return
-        if self._inline and self._kind is not _Kind.INLINE_FACTORY:
-            # A detached factory table has no backing inline value yet;
-            # dict order alone decides what is emitted when it attaches.
-            _inline_ops.reorder_inline(self, new_order)
-        elif self._layout_root is not None:
-            _layout_ops.reorder_container(self, new_order)
+        if not self._needs_layout:
+            if self._inline:
+                _inline_ops.reorder_inline(self, new_order)
+            else:
+                _layout_ops.reorder_container(self, new_order)
         _reorder_dict_storage(self, new_order)
 
     def has_header(self, key: str) -> bool:
@@ -951,10 +947,10 @@ class Container(_View, dict[str, Any]):
 
     @override
     def __copy__(self) -> Container:
-        # Equivalent to deepcopy: returns an independent detached
-        # container preserving nested typed views, so .table() etc.
-        # continue to work on the copy.
-        return _deep_clone(self)
+        _validate_input(self, inline_only=self._inline)
+        cloned = _copy_input(self)
+        assert isinstance(cloned, Container)
+        return cloned
 
     # ------------------------------------------------------------------
     # Inline-table dispatch
@@ -1576,56 +1572,68 @@ def _comma_value_has_outer_comments(v: CommaValue[_ItemT]) -> bool:
     )
 
 
-def _deep_clone(c: Container) -> Container:
-    """Build a detached deep clone of ``c`` as a lossy snapshot.
+def _detached_inline_value(v: Container | Array) -> Value | None:
+    """An independent copy of ``v``'s backing inline value, if it has one.
 
-    The clone preserves the source's inline vs section shape (so a
-    deepcopy of an inline table returns an inline view) and recurses
-    into nested ``Container`` / ``AoT`` values. Render-level formatting
-    is not preserved; for byte-exact preservation of an entire document,
-    use ``Document``'s ``__copy__``.
+    An inline root or an `Array` owns its value outright. A dotted
+    navigator — the ``a`` in ``{a.b = 1}`` — owns a slice of its
+    outermost table's value, and that slice is extracted here. A factory
+    has no value yet, so callers build one from its items instead.
     """
-    out = Table.inline() if c._inline else Table.section()  # noqa: SLF001
-    for k, v in c.items():
-        if isinstance(v, Container):
-            dict.__setitem__(out, k, _deep_clone(v))
-        elif isinstance(v, AoT):
-            dict.__setitem__(out, k, AoT([_deep_clone(e) for e in v]))
-        else:
-            dict.__setitem__(out, k, _to_python(v))
-    return out
+    if v._value is not None:  # noqa: SLF001
+        return copy.deepcopy(v._value)  # noqa: SLF001
+    # Arrays always own a value, so only a Table reaches here.
+    if v._kind is _Kind.INLINE_DOTTED_INNER:  # noqa: SLF001
+        return _inline_ops.copy_dotted_table(v)
+    return None
 
 
-def _reset_table_for_rehome(t: Container) -> None:
-    """Clear a Table's slot infrastructure so it can be reattached.
+def _clone_private_layout(value: Container | AoT) -> Table | AoT:
+    """Copy structural layout into a private holder without taking its source."""
+    holder = Document()
+    holder._is_private = True  # noqa: SLF001
+    holder._newline = value._doc_newline  # noqa: SLF001
+    with _sources_kept_intact((value,)):
+        holder._setitem_validated("", value)  # noqa: SLF001
+    result = dict.__getitem__(holder, "")
+    assert isinstance(result, (Table, AoT))
+    return result
 
-    Preserves dict storage (so post-detach mutations survive) but drops
-    every slot-linkage field, so the standard attach path treats ``t``
-    as freshly constructed.
 
-    A rooted subtree's descendants share its document: adopting a
-    child elsewhere removes the old logical binding. Non-inline
-    children are reset recursively. Factories have no linkage to clear
-    and may hold independently owned sources, so they are left alone.
-    """
-    if t._layout_root is None:  # noqa: SLF001
-        return
-    t._layout_root = None  # noqa: SLF001
-    t._path = ()  # noqa: SLF001
-    t._host = None  # noqa: SLF001
-    t._owner_aot_entry = None  # noqa: SLF001
-    t._refs = []  # noqa: SLF001
-    t._index = {}  # noqa: SLF001
-    t._header_ref = None  # noqa: SLF001
-    t._body_tail = None  # noqa: SLF001
+def _copy_input(value: TomlInput) -> TomlInput:
+    """Deep-copy validated input without creating layout where none exists."""
+    if is_scalar(value):
+        return value
+    if is_inline_value(value):
+        cst = _detached_inline_value(value)
+        if cst is not None:
+            from tomlrt._build import _decode_value  # noqa: PLC0415
 
-    for child in dict.values(t):
-        if _is_section(child):
-            _reset_table_for_rehome(child)
-        elif isinstance(child, AoT):
-            for entry in list.__iter__(child):
-                _reset_table_for_rehome(entry)
-            child._unbind_from_document()  # noqa: SLF001
+            cloned = _decode_value(cst, None, None, None, None)
+            assert isinstance(cloned, (Table, Array))
+            return cloned
+    if (
+        isinstance(value, (Container, AoT))
+        and value._layout_root is not None  # noqa: SLF001
+        and not value._inline  # noqa: SLF001
+    ):
+        return _clone_private_layout(value)
+    if isinstance(value, Container):
+        table = Table.inline() if value._inline else Table.section()  # noqa: SLF001
+        for key, child in value.items():
+            dict.__setitem__(table, key, _copy_input(child))
+        return table
+    if isinstance(value, AoT):
+        aot = AoT()
+        for original in value:
+            entry = _copy_input(original)
+            assert isinstance(entry, Table)
+            list.append(aot, entry)
+        return aot
+    if isinstance(value, Mapping):
+        return {key: _copy_input(child) for key, child in value.items()}
+    assert isinstance(value, list), "validated compound input expected"
+    return [_copy_input(child) for child in value]
 
 
 def _clear_inline_document_binding(t: Container) -> None:
@@ -1729,12 +1737,12 @@ def _install_dotted_direct_kvs(
 
 
 def _to_python(v: object) -> object:
-    """Recursively materialise a tomlrt view into plain Python values."""
-    if isinstance(v, Container):
-        return v.to_dict()
-    if isinstance(v, AoT):
-        return [t.to_dict() for t in v]
-    if isinstance(v, Array):
+    """Export independent plain data from views and unmaterialized payloads."""
+    if is_scalar(v):
+        return v
+    if isinstance(v, Mapping):
+        return {key: _to_python(value) for key, value in v.items()}
+    if isinstance(v, list):
         return [_to_python(x) for x in v]
     return v
 
@@ -2069,18 +2077,14 @@ def _synth_value(
             view = v
     # Cross-document / same-doc live inline values clone CST so source
     # formatting survives; plain Mapping / list inputs have none.
-    elif is_inline_value(v) and v._value is not None:  # noqa: SLF001
+    elif is_inline_value(v) and (own := _detached_inline_value(v)) is not None:
         from tomlrt._build import _decode_value  # noqa: PLC0415
 
-        cloned = copy.deepcopy(v._value)  # noqa: SLF001
-        _retarget_to_doc(cloned, layout_root)
-        cst = cloned
-        decoded = _decode_value(cloned, layout_root, parent, name, owner)
+        _retarget_to_doc(own, layout_root)
+        cst = own
+        decoded = _decode_value(own, layout_root, parent, name, owner)
         assert isinstance(decoded, (Array, Container)), "inline CST decodes to a view"
         view = decoded
-    # A dotted-key navigator Table (`_Kind.INLINE_DOTTED_INNER`) owns no
-    # CST of its own; the Mapping branch synthesises it fresh from items.
-    # Arrays always own `_value`, so only such a Table reaches here.
     elif isinstance(v, Mapping):
         cst, view = _populate_inline_table(
             Table(),
