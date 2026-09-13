@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of tables. Copies and plain-data exports also keep mutable values independent.
 - Formatting a table now reaches all its sections, even when other tables
   appear between them. Tables removed from a document can also be formatted.
+- `Array.remove()` now recognizes identical objects, including NaN.
 
 ## [2.2.10] - 2026-09-13
 
