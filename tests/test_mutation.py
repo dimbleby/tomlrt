@@ -849,6 +849,72 @@ def test_inline_table_replace() -> None:
     assert out == "obj = { a = 99, b = 2 }\n"
 
 
+def test_inline_table_value_replacement_preserves_entry() -> None:
+    source = td("""
+        t = {
+            # above a
+            'a'  =  { x = 1 }, # keep me
+            b = 2, # sibling
+        }
+        """)
+    doc = tomlrt.loads(source)
+    assert tomlrt.dumps(doc) == source
+    doc.table("t")["a"] = 3
+    expected = td("""
+        t = {
+            # above a
+            'a'  =  3, # keep me
+            b = 2, # sibling
+        }
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_inline_dotted_value_replacement_preserves_entry() -> None:
+    source = td("""
+        t = {
+            # above a
+            p . 'a'  =  { x = 1 }, # keep me
+            b = 2, # sibling
+        }
+        """).replace("\n", "\r\n")
+    doc = tomlrt.loads(source)
+    assert tomlrt.dumps(doc) == source
+    doc.table(("t", "p"))["a"] = [4]
+    expected = td("""
+        t = {
+            # above a
+            p . 'a'  =  [4], # keep me
+            b = 2, # sibling
+        }
+        """).replace("\n", "\r\n")
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_inline_table_replacement_detaches_old_and_attaches_new() -> None:
+    doc = tomlrt.loads("t = { a = { items = [1] }, b = 2 }\n")
+    host = doc.table("t")
+    old = host.table("a")
+    held = old.array("items")
+    replacement = Table.inline({"new": [3]})
+    host["a"] = replacement
+    assert host.table("a") is replacement
+    held.append(2)
+    replacement.array("new").append(4)
+    host["a"] = replacement
+    expected = "t = { a = { new = [3, 4] }, b = 2 }\n"
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    other = tomlrt.Document()
+    other["old"] = old
+    assert other.table("old") is old
+    assert old.array("items") is held
+    assert tomlrt.dumps(other) == "old = { items = [1, 2] }\n"
+    assert tomlrt.dumps(doc) == expected
+
+
 def test_inline_table_append() -> None:
     src = "obj = { a = 1 }\n"
     doc = tomlrt.loads(src)
