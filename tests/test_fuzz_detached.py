@@ -39,7 +39,7 @@ import pytest
 import tomli
 
 import tomlrt
-from _helpers import fuzz_context, fuzz_seeds
+from _helpers import fuzz_context, fuzz_seeds, td
 from tomlrt import AoT, Array, Table
 from tomlrt._container import Container, _is_section
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
@@ -77,6 +77,20 @@ _SHAPES = (
     "root.c.y.x = 1\n",
     "root.a.b.c = 1\nroot.a.b.d = 2\n\n[dest]\nz = 0\n",
     "root.a.b.c = 1\n\n# comment\nroot.e.f = 2\n\n[dest]\nz = 0\n",
+    td("""
+        root.a.x=0x02 # body
+        root.a.nested.value = [ 1,2 ]
+        root.a.last = 3
+
+        [root.a.deep]
+        z = 0x01 # child
+
+        [[root.a.rows]]
+        id = 4
+
+        [dest]
+        z = 0
+        """),
 )
 
 # One random operation per step, drawn uniformly; ``adopt`` appears

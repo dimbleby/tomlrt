@@ -71,7 +71,7 @@ from tomlrt._scalar import (
     validate_scalar,
 )
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import retarget_newlines, split_line
+from tomlrt._trivia import split_line
 from tomlrt._typecheck import _require_mapping, _validate_key, _validate_mapping
 from tomlrt._values import (
     ArrayItem,
@@ -396,21 +396,6 @@ class Container(_View, dict[str, Any]):
             elif isinstance(value, AoT):
                 for entry in value:
                     entry.format(options=resolved)
-
-    @property
-    def _is_own_aot_entry(self) -> bool:
-        """True iff this container *is* an AoT entry, not merely nested inside one.
-
-        ``_owner_aot_entry`` is set on the entry's own table *and* on
-        every section, inline table, or implicit descendant physically
-        nested inside it — only the entry's own table has a header whose
-        ``entry`` matches ``_owner_aot_entry``.
-        """
-        if self._owner_aot_entry is None or self._header_ref is None:
-            return False
-        header = self._header_ref.slot
-        assert isinstance(header, StructuralHeaderSlot)
-        return header.entry is self._owner_aot_entry
 
     @property
     def _attached_doc(self) -> Document:
@@ -738,14 +723,12 @@ class Container(_View, dict[str, Any]):
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
             _layout_ops.synthesise_header_for_emptied(emptied)
-        elif value._is_own_aot_entry:
-            _layout_ops.clone_aot_entry_as_table(self, key, value)
         elif value._header_ref is not None:
             _layout_ops.clone_section_as_section(self, key, value)
         elif isinstance(value, Document):
             _layout_ops.clone_document_as_section(self, key, value)
         else:
-            _install_attached_subtree(self, (key,), value)
+            _layout_ops.clone_implicit_section(self, key, value)
 
     def _replace_scalar(self, key: str, value: Scalar) -> None:
         """Replace a scalar while preserving its existing KV slot."""
@@ -1426,9 +1409,9 @@ class Document(Container):
         are not visible in it -- and a rejected ``data`` leaves them all
         alone. A [`Table`][tomlrt.Table] / [`Array`][tomlrt.Array] /
         [`AoT`][tomlrt.AoT] contributes its contents and its shape
-        (section or inline, array or array-of-tables). One bound to a
-        key keeps the comments and spacing it holds; one that is an
-        entry of a list or an `AoT` is rebuilt from its data.
+        (section or inline, array or array-of-tables). Available comments
+        and spacing are preserved, including on entries of lists and
+        standalone arrays-of-tables.
 
         To have the document keep your object, assign it instead:
         ``doc[k] = table`` *attaches live*. See
@@ -1640,100 +1623,6 @@ def _clear_inline_document_binding(t: Container) -> None:
     """Forget document metadata while preserving inline CST ownership."""
     t._layout_root = None  # noqa: SLF001
     t._owner_aot_entry = None  # noqa: SLF001
-
-
-def _install_attached_subtree(
-    dst_parent: Container, dst_path: tuple[str, ...], src_table: Container
-) -> None:
-    """Recursively install an attached implicit / Document source.
-
-    Section / AoT children clone via tuple-path :meth:`Container.install`
-    so headers and slots survive. Direct entries at this implicit level
-    are written as dotted KVs hosted by ``dst_parent``'s nearest
-    header-bearing ancestor, preserving dotted form per key.
-
-    Note: bucketing into directs vs structurals can reorder relative
-    to ``src_table.items()`` — at a given implicit level all dotted
-    leaves emit before any subsection. TOML is insensitive to that
-    order; the dotted-form preservation is the win.
-    """
-    direct_kvs: list[tuple[str, object]] = []
-    structural: list[tuple[str, AoT | Container]] = []
-    for k, v in src_table.items():
-        if isinstance(v, AoT) or _is_section(v):
-            structural.append((k, v))
-        else:
-            direct_kvs.append((k, v))
-
-    if direct_kvs:
-        _install_dotted_direct_kvs(dst_parent, dst_path, direct_kvs, src_table)
-
-    for k, v in structural:
-        sub_path = (*dst_path, k)
-        if isinstance(v, AoT) or v._header_ref is not None:  # noqa: SLF001
-            # Bypass Container.install()'s tuple-path validation here:
-            # `k` is a key already known valid on a live source Container
-            # (an empty string is a legal — if unusual — TOML key), not a
-            # human-supplied dotted path where an empty segment signals a
-            # typo. install() rejects the latter; ensure_implicit_chain +
-            # a direct assignment only validates `k` as a single key.
-            leaf_parent = _layout_ops.ensure_implicit_chain(dst_parent, sub_path[:-1])
-            leaf_parent[sub_path[-1]] = v
-        else:
-            _install_attached_subtree(dst_parent, sub_path, v)
-
-
-def _install_dotted_direct_kvs(
-    dst_parent: Container,
-    dst_path: tuple[str, ...],
-    direct_kvs: list[tuple[str, object]],
-    src_table: Container,
-) -> None:
-    """Emit each ``(k, v)`` in ``direct_kvs`` as a dotted KV under host.
-
-    ``host`` is the nearest header-bearing ancestor at-or-above
-    ``dst_parent`` (or the doc / AoT-entry root). Creates implicit
-    intermediates as needed. Each value's CST and whole-line trivia are
-    deep-cloned from the corresponding source slot so string/number
-    style, inline-array pad, and both standalone and end-of-line
-    comments survive — a re-synthesis from the logical value would drop
-    all of those.
-    """
-    from tomlrt._build import _decode_value  # noqa: PLC0415
-
-    doc = dst_parent._attached_doc  # noqa: SLF001
-    destination = _layout_ops.ensure_implicit_chain(dst_parent, dst_path)
-    host = destination
-    while host._header_ref is None and host._parent is not None:  # noqa: SLF001
-        host = host._parent  # noqa: SLF001
-    owner = host._owner_aot_entry  # noqa: SLF001
-    destination_to_host = destination._path[len(host._path) :]  # noqa: SLF001
-    for k, _v in direct_kvs:
-        leaf_keypath = (*destination_to_host, k)
-        # A direct (non-structural) key of an attached source is always
-        # backed by a single KVSlot; clone its value + leading so style
-        # and standalone comments survive (re-synthesis would drop them).
-        src_slot = src_table._index[k][0].slot  # noqa: SLF001
-        assert isinstance(src_slot, KVSlot)
-        cst = copy.deepcopy(src_slot.value)
-        _retarget_to_doc(cst, doc)
-        leading = retarget_newlines(src_slot.leading, doc._newline)  # noqa: SLF001
-        eol = retarget_newlines(src_slot.eol, doc._newline)  # noqa: SLF001
-        key_parts, key_seps = _layout_ops.respell_key_prefix(
-            src_slot.key_parts, src_slot.key_seps, len(src_slot.key_parts), leaf_keypath
-        )
-        decoded = _decode_value(cst, doc, destination, k, owner)
-        _layout_ops.install_dotted_kv_slot(
-            host,
-            leaf_keypath,
-            cst,
-            leaf_parent=destination,
-            leading=leading,
-            eol=eol,
-            key_parts=key_parts,
-            key_seps=key_seps,
-        )
-        dict.__setitem__(destination, k, decoded)
 
 
 def _to_python(v: object) -> object:

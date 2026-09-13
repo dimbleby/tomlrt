@@ -41,7 +41,13 @@ from tomlrt._container import (
 )
 from tomlrt._errors import TOMLError
 from tomlrt._kind import _Kind
-from tomlrt._layout_ops import _retarget_separator, clone_graft_slots
+from tomlrt._layout_ops import (
+    _retarget_separator,
+    _spells_own_key,
+    clone_aot_entry_layout,
+    clone_graft_slots,
+    split_subtree_slots,
+)
 from tomlrt._render import render_run
 from tomlrt._scalar import coerce_scalar, is_scalar
 from tomlrt._slots import (
@@ -67,18 +73,6 @@ if TYPE_CHECKING:
     from tomlrt._values import Value
 
 _KeyT = TypeVar("_KeyT")
-
-
-def _spells_own_key(slot: Slot, depth: int) -> bool:
-    """Whether ``slot`` is a dotted key of the section at ``depth``.
-
-    A header-less section has no line of its own: its keys are written
-    as ``a.b = 1`` in the body of whichever section hosts them, one
-    step above. Everything else in its block is hosted at its depth or
-    below. True of a clone as well as a source, since cloning re-hosts
-    exactly these keys and rebases every other path onto the target.
-    """
-    return isinstance(slot, KVSlot) and len(slot.host_path) < depth
 
 
 def _graft_regions(v: object) -> tuple[bool, bool] | None:
@@ -165,7 +159,7 @@ class _Node:
         self.key = key
         self.raw = raw
         self.table: _Plan | None = None
-        self.entries: list[_Plan] | None = None
+        self.entries: list[_Plan | Container] | None = None
         self.value: Value | None = None
         self.graft = False
         # A graft's cloned slots, split into the two regions they are
@@ -271,8 +265,15 @@ def _plan_list(plan: _Plan, node: _Node, nl: str) -> None:
     elif (regions := _graft_regions(raw)) is not None:
         plan.add_graft(node, regions)
     else:
-        node.entries = [_plan(entry, nl) for entry in entries]
-        plan.any_grafts |= any(e.any_grafts for e in node.entries)
+        node.entries = [
+            entry
+            if _is_section(entry) and entry._layout_root is not None  # noqa: SLF001
+            else _plan(entry, nl)
+            for entry in entries
+        ]
+        plan.any_grafts |= any(
+            isinstance(entry, Container) or entry.any_grafts for entry in node.entries
+        )
         plan.structural.append(node)
 
 
@@ -407,12 +408,22 @@ def _emit(
         assert node.entries, "a structural node is a table or a non-empty AoT"
         for entry in node.entries:
             entry_owner = AoTEntry()
-            entry_header = _header_slot(
-                sub, "" if not out else nl, entry_owner, entry_owner, nl
-            )
-            entry_owner.bind_header(entry_header)
+            entry_header = None
+            body = None
+            if isinstance(entry, Container):
+                entry_header, body = clone_aot_entry_layout(
+                    entry, path=sub, owner=entry_owner, nl=nl
+                )
+            if entry_header is None:
+                entry_header = _header_slot(sub, "", entry_owner, entry_owner, nl)
+                entry_owner.bind_header(entry_header)
+            _retarget_separator(entry_header, "" if not out else nl)
             out.append(entry_header)
-            _emit(entry, sub, entry_owner, out, nl, header=False)
+            if body is None:
+                assert isinstance(entry, _Plan)
+                _emit(entry, sub, entry_owner, out, nl, header=False)
+            else:
+                out.extend(body)
 
 
 def _header_slot(
@@ -450,11 +461,7 @@ def _graft_segments(
     cloned = clone_graft_slots(
         view, target_path=target, host_path=path, owner=owner, nl=nl
     )
-    depth = len(target)
-    body: list[Slot] = []
-    blocks: list[Slot] = []
-    for slot in cloned:
-        (body if _spells_own_key(slot, depth) else blocks).append(slot)
+    body, blocks = split_subtree_slots(cloned, len(target))
     if isinstance(view, Document):
         blocks.insert(0, _header_slot(target, "", owner, None, nl))
     assert (bool(body), bool(blocks)) == _graft_regions(view), (
@@ -487,7 +494,10 @@ def _reorder(container: Container, plan: _Plan) -> None:
         assert node.entries, "a structural node is a table or a non-empty AoT"
         assert isinstance(child, AoT)
         for entry_plan, entry_table in zip(node.entries, child, strict=True):
-            _reorder(entry_table, entry_plan)
+            if isinstance(entry_plan, Container):
+                _reorder_dict_storage(entry_table, list(entry_plan))
+            else:
+                _reorder(entry_table, entry_plan)
 
 
 # ---------------------------------------------------------------------------

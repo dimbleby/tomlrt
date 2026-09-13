@@ -1063,7 +1063,6 @@ def test_cross_doc_implicit_table_graft_preserves_trivia() -> None:
         z.lit = 'literal'
         z.hex = 0xFF
         z.vals = [ "p", "q" ]
-
         [tool.z.sub]
         m = 3
         """)
@@ -1306,11 +1305,9 @@ def test_new_key_assign_of_ancestor_into_its_own_descendant() -> None:
 
     Unlike the overwrite case above, nothing is deleted first, so
     ``ancestor`` stays fully live throughout the install.
-    ``_install_attached_subtree`` reads it incrementally; since ``t`` is
-    nested inside ``ancestor``, installing into ``t`` is also live growth
-    of the very structure being walked, which must be snapshotted up
-    front rather than read incrementally. The snapshot is the same
-    document, so the copy keeps the source's header-less shape.
+    Since ``t`` is nested inside ``ancestor``, installing into ``t`` also
+    grows the source. Capture it before publication so the copy retains
+    the original contents and header-less shape.
     """
     doc = tomlrt.loads("x.a = 1\nx.b.c = 2\n")
     x = doc["x"]
@@ -6708,11 +6705,11 @@ def test_overwrite_a_key_inside_an_orphan_with_an_earlier_sibling() -> None:
     doc["back"] = orphan
     out = tomlrt.dumps(doc)
     assert out == td("""
-        [back.k3]
-        b.c = 1
-
         [dest]
         z = 0
+
+        [back.k3]
+        b.c = 1
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -6933,14 +6930,14 @@ def test_move_one_entry_out_of_an_orphan_aot_keeps_the_rest() -> None:
     doc["back"] = orphan
     out = tomlrt.dumps(doc)
     assert out == td("""
-        [[back.t]]
-        x = 2
-
         [dest]
         z = 0
 
         [m0]
         x = 1
+
+        [[back.t]]
+        x = 2
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -7074,16 +7071,13 @@ def test_adopt_onto_the_document_head_needs_no_separator() -> None:
         """)
     doc = tomlrt.loads(src)
     orphan = doc.pop("root")
-    dest = tomlrt.loads("[dest]\nz = 0\n")
+    dest = tomlrt.Document()
     dest["moved"] = orphan["c"]
 
     out = tomlrt.dumps(dest)
     assert out == td("""
         [moved.y]
         x = 1
-
-        [dest]
-        z = 0
         """)
     assert _reparses(out) == dest.to_dict()
 

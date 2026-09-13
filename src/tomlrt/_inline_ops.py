@@ -16,17 +16,16 @@ import copy
 from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import (
-    Boundary,
     _value_indent,
     _value_newline,
     detect_style,
     reorder_owned,
     splice_in,
     splice_out,
+    strip_framing_comments,
 )
 from tomlrt._format import set_comma_value_multiline
 from tomlrt._kind import _Kind
-from tomlrt._trivia import split_line
 from tomlrt._values import (
     InlineTableEntry,
     InlineTableValue,
@@ -101,14 +100,7 @@ def copy_dotted_table(table: Container) -> InlineTableValue:
     if not value.items:
         return InlineTableValue()
 
-    opening = Boundary.capture(value, 0)
-    _pad, comment, terminator = split_line(opening.following.head)
-    if comment:
-        opening.following.head = terminator
-    opening.restore(value, 0)
-    Boundary.capture(value, len(value.items)).remove_above().restore(
-        value, len(value.items)
-    )
+    strip_framing_comments(value)
     for entry in value.items:
         entry.key_parts = entry.key_parts[depth:]
         entry.key_seps = entry.key_seps[depth:]

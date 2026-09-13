@@ -1426,6 +1426,26 @@ def test_copy_dotted_inline_view_preserves_multiline_shape() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+@pytest.mark.parametrize("operation", ["copy", "assign", "construct"])
+def test_dotted_inline_extraction_keeps_nested_values_independent(
+    operation: str,
+) -> None:
+    text = "cfg = { group.a=[ 1 ], foreign=[ 2 ], group.b={ x=0x03 } }\n"
+    source = tomlrt.loads(text)
+    group = source.table("cfg.group")
+    if operation == "construct":
+        doc = tomlrt.Document({"picked": group})
+    else:
+        doc = tomlrt.Document()
+        doc["picked"] = copy(group) if operation == "copy" else group
+    doc.table("picked").array("a").append(4)
+    doc.table("picked.b")["x"] = 5
+    expected = "picked = { a=[ 1, 4 ], b={ x=5 } }\n"
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(source) == text
+
+
 def test_copy_empty_held_inline_navigator() -> None:
     doc = tomlrt.loads("cfg = { group.x = 1 }\n")
     group = doc.table("cfg.group")

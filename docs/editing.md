@@ -111,6 +111,12 @@ old["debug"] = True          # does NOT affect doc
 Reattaching the detached view keeps its existing entry and nested-view
 references live at the new location.
 
+Copying or moving a header-less table preserves the order and spelling of
+its dotted keys. Those keys remain in the enclosing section's body;
+child sections and arrays-of-tables remain structural blocks below it.
+If the table has only child headers, both copying and moving use normal
+section placement rather than inserting it ahead of existing sections.
+
 ## Arrays-of-tables
 
 `AoT.add()` appends a fresh entry and returns the new `Table` view, so you can

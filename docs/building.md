@@ -45,6 +45,11 @@ Nested mappings become `[section]` blocks (not inline tables); lists of mappings
 become `[[array.of.tables]]` blocks; everything else is an ordinary key-value
 assignment.
 
+Existing table and array views contribute their available comments and
+formatting, including annotated tables inside lists or standalone `AoT`
+values. Construction copies those views without taking ownership of the
+originals; assignment attaches free views live instead.
+
 Once you have a `Document` — whether constructed here or returned by
 `tomlrt.loads` / `tomlrt.load` — see [Editing documents](editing.md) for how
 to mutate it.

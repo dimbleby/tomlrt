@@ -930,10 +930,7 @@ def test_aot_entry_view_identity_preserved_through_attach() -> None:
 
 
 def test_aot_entry_as_table_with_kv_before_nested_section() -> None:
-    """``clone_aot_entry_as_table`` must clone entry slots in doc-stream
-    order, not ``entry_slots`` membership order (same class of bug as
-    :func:`clone_aot_entry`'s private-orphan branch).
-    """
+    """An AoT entry copied as a section retains physical slot order."""
     src = td("""
         [[arr]]
         [arr.subtab]
@@ -1306,6 +1303,113 @@ def test_held_view_after_delete_does_not_corrupt_doc() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("move", [False, True])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_implicit_copy_and_move_preserve_interleaved_body_order(
+    newline: str, *, move: bool
+) -> None:
+    text = td("""
+        a.'first'=0x01 # first
+        a.deep . "x" = [ 1,2 ]
+        a.last = 'three'
+        """)
+    source = tomlrt.loads(text)
+    value = source.table("a")
+    nested = value.table("deep")
+    if move:
+        source.pop("a")
+    doc = tomlrt.loads("prefix = 0" + newline)
+    doc["b"] = value
+    assert (doc.table("b") is value) is move
+    assert (doc.table("b.deep") is nested) is move
+    doc.table("b.deep").array("x").append(3)
+    expected = td("""
+        prefix = 0
+        b.'first'=0x01 # first
+        b.deep . "x" = [ 1,2,3 ]
+        b.last = 'three'
+        """).replace("\n", newline)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(source) == ("" if move else text)
+
+
+@pytest.mark.parametrize("move", [False, True])
+def test_implicit_copy_and_move_hoist_body_before_forward_declared_children(
+    *, move: bool
+) -> None:
+    text = td("""
+        [base.group.deep]
+        z = 0x01 # child
+
+        [base]
+        group.x=0x02 # body
+
+        [[base.group.rows]]
+        id = 0x03 # row
+        """)
+    source = tomlrt.loads(text)
+    value = source.table("base.group")
+    child = value.table("deep")
+    row = value.aot("rows")[0]
+    if move:
+        source.table("base").pop("group")
+    remaining = tomlrt.dumps(source)
+    doc = tomlrt.loads(
+        td("""
+        [dest]
+        before = 0
+
+        [later]
+        after = 1
+        """)
+    )
+    doc.table("dest")["copied"] = value
+    copied = doc.table("dest.copied")
+    assert (copied is value) is move
+    assert (copied.table("deep") is child) is move
+    assert (copied.aot("rows")[0] is row) is move
+    copied["new"] = 4
+    copied.table("deep")["z"] = 5
+    copied.aot("rows")[0]["id"] = 6
+    expected = td("""
+        [dest]
+        before = 0
+        copied.x=0x02 # body
+        copied.new = 4
+
+        [dest.copied.deep]
+        z = 5 # child
+
+        [[dest.copied.rows]]
+        id = 6 # row
+
+        [later]
+        after = 1
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(source) == remaining
+    copied.sort(reverse=True)
+    expected = td("""
+        [dest]
+        before = 0
+        copied.x=0x02 # body
+        copied.new = 4
+
+        [[dest.copied.rows]]
+        id = 6 # row
+
+        [dest.copied.deep]
+        z = 5 # child
+
+        [later]
+        after = 1
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
 def test_per_key_clone_of_dotted_preserves_dotted_form() -> None:
     src = tomlrt.loads(
         td("""
@@ -1323,6 +1427,94 @@ def test_per_key_clone_of_dotted_preserves_dotted_form() -> None:
         [x]
         v.w = "hi"
         """)
+
+
+def test_implicit_clone_preserves_empty_aots_in_distinct_entries() -> None:
+    source = tomlrt.loads(
+        td("""
+        src.x=1
+
+        [[src.rows]]
+        id=1
+
+        [[src.rows]]
+        id=2
+        """)
+    )
+    for entry in source.aot("src.rows"):
+        entry["pending"] = AoT()
+    doc = tomlrt.Document()
+    doc["dst"] = source.table("src")
+    assert tomlrt.dumps(doc) == td("""
+        dst.x=1
+
+        [[dst.rows]]
+        id=1
+        pending = []
+
+        [[dst.rows]]
+        id=2
+        pending = []
+        """)
+    doc.aot("dst.rows")[1].aot("pending").add({"v": 3})
+    expected = td("""
+        dst.x=1
+
+        [[dst.rows]]
+        id=1
+        pending = []
+
+        [[dst.rows]]
+        id=2
+
+        [[dst.rows.pending]]
+        v = 3
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(source) == td("""
+        src.x=1
+
+        [[src.rows]]
+        id=1
+        pending = []
+
+        [[src.rows]]
+        id=2
+        pending = []
+        """)
+
+
+@pytest.mark.parametrize("move", [False, True])
+def test_header_only_implicit_copy_and_move_use_section_anchor(*, move: bool) -> None:
+    text = td("""
+        # child
+        [group.child]
+        x = 1
+        """)
+    source = tomlrt.loads(text)
+    value = source.table("group")
+    if move:
+        source.pop("group")
+    doc = tomlrt.loads(
+        td("""
+        [dest]
+        z = 0
+        """)
+    )
+    doc["copied"] = value
+    assert (doc.table("copied") is value) is move
+    expected = td("""
+        [dest]
+        z = 0
+
+        # child
+        [copied.child]
+        x = 1
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(source) == ("" if move else text)
 
 
 def test_cross_document_clone_of_dotted_preserves_dotted_form() -> None:
