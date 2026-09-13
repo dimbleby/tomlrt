@@ -12,9 +12,10 @@ from __future__ import annotations
 import math
 import sys
 from collections.abc import Mapping
+from copy import copy
 from datetime import date, datetime, time, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -648,29 +649,30 @@ def test_cloned_aot_entry_keeps_mapping_order_without_reformatting(shape: str) -
     assert tomlrt.dumps(source) == before
 
 
+class _RepeatingMapping(Mapping[str, Any]):
+    def __init__(self, pairs: list[tuple[str, Any]]) -> None:
+        self._pairs = pairs
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        return (key for key, _ in self._pairs)
+
+    @override
+    def __len__(self) -> int:
+        return len(self._pairs)
+
+    @override
+    def __getitem__(self, key: str) -> Any:
+        return dict(self._pairs)[key]
+
+    @override
+    def items(self) -> Any:
+        return iter(self._pairs)
+
+
 def test_mapping_that_repeats_a_key_takes_the_last_value() -> None:
     """A `Mapping` may hand out the same key twice; a document may not."""
-
-    class Repeats(Mapping[str, Any]):
-        @override
-        def __iter__(self) -> Iterator[str]:
-            return iter(["a", "b"])
-
-        @override
-        def __len__(self) -> int:
-            return 2
-
-        @override
-        def __getitem__(self, key: str) -> Any:
-            return {"a": 2, "b": 3}[key]
-
-        @override
-        def items(self) -> Any:
-            yield ("a", 1)
-            yield ("a", 2)
-            yield ("b", 3)
-
-    out = tomlrt.dumps(Repeats())
+    out = tomlrt.dumps(_RepeatingMapping([("a", 1), ("a", 2), ("b", 3)]))
     assert out == td("""
         a = 2
         b = 3
@@ -926,30 +928,185 @@ def test_constructor_clones_each_structural_entry_shape(shape: str) -> None:
 
 
 def test_repeating_mapping_inside_an_inline_value_takes_the_last_value() -> None:
-    """The inline builder takes one reading of a mapping, as the plan does."""
+    mapping = _RepeatingMapping([("a", 1), ("b", 3), ("a", 2)])
+    constructed = tomlrt.Document({"k": [mapping, 1]})
+    assigned = tomlrt.Document()
+    assigned["k"] = [mapping, 1]
+    expected = "k = [{ a = 2, b = 3 }, 1]\n"
+    assert tomlrt.dumps(constructed) == expected
+    assert tomlrt.dumps(assigned) == expected
+    assert tomlrt.loads(expected).to_dict() == assigned.to_dict()
 
-    class Repeats(Mapping[str, Any]):
-        _pairs: ClassVar[list[tuple[str, int]]] = [("a", 1), ("a", 2), ("b", 3)]
 
-        @override
-        def __iter__(self) -> Iterator[str]:
-            return (k for k, _ in self._pairs)
+def test_array_inputs_ignore_shadowed_mapping_values() -> None:
+    discarded = Table.inline({"v": 1})
+    mapping = _RepeatingMapping([("x", discarded), ("x", object()), ("x", 2)])
+    array = Array([mapping])
+    doc = tomlrt.Document()
+    doc["a"] = array
+    array.append(mapping)
+    expected = "a = [{ x = 2 }, { x = 2 }]\n"
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == doc.to_dict()
+    doc["unused"] = discarded
+    assert doc.table("unused") is discarded
+    discarded["v"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        a = [{ x = 2 }, { x = 2 }]
+        unused = { v = 3 }
+        """)
 
-        @override
-        def __len__(self) -> int:
-            return len(self._pairs)
 
-        @override
-        def __getitem__(self, key: str) -> Any:
-            return next(v for k, v in self._pairs if k == key)
+def test_repeated_mapping_invalid_winner_rejects_before_attachment() -> None:
+    doc = tomlrt.loads("a = [1]\n")
+    child = Table.inline({"x": 1})
+    invalid = _RepeatingMapping([("x", 2), ("x", object())])
+    with pytest.raises(TypeError, match="cannot convert object"):
+        doc.array("a").extend([child, invalid])
+    assert tomlrt.dumps(doc) == "a = [1]\n"
+    doc["child"] = child
+    assert doc.table("child") is child
+    child["x"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        a = [1]
+        child = { x = 3 }
+        """)
 
+
+def test_aot_capture_ignores_shadowed_mapping_values() -> None:
+    mapping = _RepeatingMapping([("x", object()), ("x", 2)])
+    doc = tomlrt.loads("[[rows]]\ny = 0\n")
+    rows = doc.aot("rows")
+    rows[0] = {"nested": mapping}
+    rows.append(mapping)
+    expected = td("""
+        [[rows]]
+        nested = { x = 2 }
+
+        [[rows]]
+        x = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == doc.to_dict()
+
+
+def test_factory_copy_ignores_shadowed_mapping_values() -> None:
+    mapping = _RepeatingMapping([("x", object()), ("x", 2)])
+    source = Table.section({"nested": mapping})
+    cloned = copy(source)
+    doc = tomlrt.Document()
+    doc["copy"] = cloned
+    expected = td("""
+        [copy]
+        nested = { x = 2 }
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == doc.to_dict()
+    assert source.to_dict() == {"nested": {"x": 2}}
+
+
+def test_dict_subclass_repeating_items_are_normalized() -> None:
+    class Repeats(dict[str, Any]):
         @override
         def items(self) -> Any:
-            return iter(self._pairs)
+            return iter([("x", 1), ("x", 2)])
 
-    out = tomlrt.dumps({"k": [Repeats(), 1]})
-    assert out == "k = [{ a = 2, b = 3 }, 1]\n"
-    assert tomlrt.loads(out).to_dict() == {"k": [{"a": 2, "b": 3}, 1]}
+    mapping = Repeats()
+    constructed = tomlrt.Document({"k": [mapping, 1]})
+    assigned = tomlrt.Document()
+    assigned["k"] = [mapping, 1]
+    expected = "k = [{ x = 2 }, 1]\n"
+    assert tomlrt.dumps(constructed) == expected
+    assert tomlrt.dumps(assigned) == expected
+    assert tomlrt.loads(expected).to_dict() == assigned.to_dict()
+
+
+class _RepeatingTable(Table):
+    @override
+    def items(self) -> Any:
+        return iter([("x", object()), ("x", 2)])
+
+
+def test_repeating_inline_factory_normalizes_before_copy_and_attachment() -> None:
+    source = _RepeatingTable.inline()
+    cloned = copy(source)
+    doc = tomlrt.Document()
+    doc["original"] = source
+    doc["cloned"] = cloned
+    assert doc.table("original") is source
+    expected = td("""
+        original = { x = 2 }
+        cloned = { x = 2 }
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == doc.to_dict()
+
+
+def test_repeating_section_factory_normalizes_before_copy_and_attachment() -> None:
+    source = _RepeatingTable.section()
+    cloned = copy(source)
+    doc = tomlrt.Document()
+    doc["original"] = source
+    doc["cloned"] = cloned
+    assert doc.table("original") is source
+    expected = td("""
+        [original]
+        x = 2
+
+        [cloned]
+        x = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == doc.to_dict()
+
+
+def test_nested_aot_capture_normalizes_factory_inputs() -> None:
+    invalid: Any = object()
+    inline = _RepeatingTable.inline({"x": invalid})
+    section = _RepeatingTable.section({"x": invalid})
+    doc = tomlrt.loads("[[rows]]\ny = 0\n")
+    doc.aot("rows")[0] = {"inline": inline, "section": section}
+    entry = doc.aot("rows")[0]
+    assert entry.table("inline") is inline
+    assert entry.table("section") is section
+    expected = td("""
+        [[rows]]
+        inline = { x = 2 }
+
+        [rows.section]
+        x = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == doc.to_dict()
+
+
+def test_factory_export_does_not_visit_discarded_mapping_values() -> None:
+    discarded: dict[str, object] = {}
+    discarded["self"] = discarded
+
+    class Repeats(Table):
+        @override
+        def items(self) -> Any:
+            return iter([("x", discarded), ("x", 2)])
+
+    source = Repeats.section()
+    assert source.to_dict() == {"x": 2}
+    assert tomlrt.dumps(source) == "x = 2\n"
+
+
+def test_instance_items_override_is_normalized() -> None:
+    class CustomDict(dict[str, int]):
+        pass
+
+    mapping: Any = CustomDict()
+    mapping.items = lambda: iter([("x", 1), ("x", 2)])
+    constructed = tomlrt.Document({"k": [mapping, 1]})
+    assigned = tomlrt.Document()
+    assigned["k"] = [mapping, 1]
+    expected = "k = [{ x = 2 }, 1]\n"
+    assert tomlrt.dumps(constructed) == expected
+    assert tomlrt.dumps(assigned) == expected
+    assert tomlrt.loads(expected).to_dict() == assigned.to_dict()
 
 
 def test_grafts_without_a_header_of_their_own() -> None:

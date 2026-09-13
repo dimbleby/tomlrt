@@ -11,9 +11,21 @@ validation, not parse-time TOML semantics.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import ItemsView
 
 _MappingT = TypeVar("_MappingT", bound=Mapping[str, object])
+_KeyT = TypeVar("_KeyT")
+_ValueT = TypeVar("_ValueT")
+_DICT_ITEMS: type[object] = type({}.items())
+
+
+def _mapping_items(mapping: Mapping[_KeyT, _ValueT]) -> ItemsView[_KeyT, _ValueT]:
+    """Read unique keys in first-occurrence order, keeping their last values."""
+    items = mapping.items()
+    return items if isinstance(items, _DICT_ITEMS) else dict(items).items()
 
 
 def _validate_key(key: object) -> str:
@@ -31,7 +43,7 @@ def _validate_key(key: object) -> str:
 def _validate_mapping(value: _MappingT, *, label: str) -> _MappingT:
     """Require a mapping and shallowly validate its item keys."""
     _require_mapping(value, label=label)
-    for item in value.items():
+    for item in _mapping_items(value):
         _validate_key(item[0])
     return value
 

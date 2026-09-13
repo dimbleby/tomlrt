@@ -49,6 +49,7 @@ from tomlrt._trivia import (
     strip_trailing_ws,
     trailing_ws,
 )
+from tomlrt._typecheck import _mapping_items
 from tomlrt._values import (
     ArrayValue,
     InlineTableValue,
@@ -3026,7 +3027,7 @@ def attach_section_at(
     deepest_parent = ensure_implicit_chain(parent, sub[:-1])
 
     section = source
-    pending: list[tuple[str, TomlInput]] = list(source.items())
+    pending: list[tuple[str, TomlInput]] = list(_mapping_items(source))
     dict.clear(section)
 
     section._wire(  # noqa: SLF001
@@ -3431,7 +3432,7 @@ def _capture_input(
     if is_inline_value(value):
         return value
     if isinstance(value, Mapping):
-        return _capture_items(value.items(), sites, snapshots)
+        return _capture_items(_mapping_items(value), sites, snapshots)
     assert isinstance(value, list)
     return [
         v if isinstance(v, SCALAR_TYPES) else _capture_input(v, sites, snapshots)
@@ -3449,7 +3450,7 @@ def _capture_into_factory(
         for entry in factory:
             _capture_into_factory(entry, sites, snapshots)
         return
-    dict.update(factory, _capture_items(dict.items(factory), sites, snapshots))
+    dict.update(factory, _capture_items(_mapping_items(factory), sites, snapshots))
 
 
 def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
@@ -3566,7 +3567,7 @@ def _prepare_entry(
         if cloned_head is not None:
             header = cloned_head
     else:
-        payload = _capture_items(body.items(), sites, snapshots)
+        payload = _capture_items(_mapping_items(body), sites, snapshots)
     if header is None:
         header = _new_section_header(
             path, leading="", doc=doc, entry=owner, owner_aot_entry=owner
