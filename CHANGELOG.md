@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ensure_table` now traverses existing inline tables without promoting them
+  and creates inline children beneath inline parents.
+- `install` preserves inline parents for scalar and inline values, promoting
+  them only when installing a section-style value or array-of-tables requires it.
+
+### Deprecated
+
+- The `ensure_table` argument `promote_inline` is deprecated and ignored.
+  Use `promote_inline()` for explicit conversion.
+
 ## [2.2.9] - 2026-09-12
 
 - Comment views are faster on documents with many nested tables.

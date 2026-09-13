@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import sys
+import warnings
 from collections.abc import Mapping
 from datetime import date, datetime, time
 from typing import (
@@ -1009,82 +1010,95 @@ class Container(_View, dict[str, Any]):
     def install(self, path: str | Sequence[str], value: TomlInput) -> Any:
         """Set ``value`` at the (possibly dotted) ``path``.
 
-        Intermediate sections are created as needed via `ensure_table`.
-        Returns the live view stored at the leaf. A value that cannot be
-        stored is rejected before anything is created, so a failed call
-        leaves the document unchanged.
+        Existing parents retain their form for scalar and inline values.
+        Installing a section-style container or `AoT` from an attached section
+        or document promotes inline ancestors as needed. An inline receiver
+        or detached inline ancestor cannot be promoted this way.
+
+        Returns the stored value or live view. Rejected paths and values
+        leave the document unchanged.
         """
         parts = validate_path(path)
-        if self._inline and len(parts) > 1:
-            msg = "cannot install dotted path into an inline-style table"
-            raise TOMLError(msg)
-        # Validate the leaf before walking or synthesising anything. A
-        # dotted path hosts the leaf in a section, which the check above
-        # guarantees matches ``self``'s flavour — so the host reached
-        # below can store it through `_setitem_validated`.
-        _validate_input(value, inline_only=self._inline, key=parts[-1])
-        # Section / AoT values keep intermediate components implicit;
-        # only their own header is explicit.
-        is_section = isinstance(value, Table) and not value._inline  # noqa: SLF001
-        is_aot = isinstance(value, AoT)
-        if (is_section or is_aot) and len(parts) > 1 and self._layout_root is not None:
-            cur, i = _walk_existing_sections(
-                self, parts, action="install", limit=len(parts) - 1, promote_inline=True
-            )
-            anchor = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
-            anchor._setitem_validated(parts[-1], value)  # noqa: SLF001
-            return anchor[parts[-1]]
-        # A scalar/inline leaf needs its immediate parent to be an
-        # explicit table regardless, so any inline ancestor along the
-        # way is promoted too (see `ensure_table`'s ``promote_inline``).
-        host = (
-            self
-            if len(parts) == 1
-            else self.ensure_table(
-                parts[:-1], promote_inline=self._layout_root is not None
-            )
+        cur, i = _walk_existing_tables(self, parts[:-1], action="install")
+        promote = (
+            cur._inline  # noqa: SLF001
+            and not self._inline
+            and self._layout_root is not None
+            and (_is_section(value) or isinstance(value, AoT))
         )
+        _validate_input(
+            value,
+            inline_only=cur._inline and not promote,  # noqa: SLF001
+            key=parts[-1],
+        )
+        if promote:
+            prefix = parts[:i]
+            _check_table_promotions(self, prefix)
+            value = _layout_ops._capture_input(value, [cur], {})  # noqa: SLF001
+            cur = _promote_tables(self, prefix)
+        if i == len(parts) - 1:
+            host = cur
+        elif cur._inline:  # noqa: SLF001
+            first, host = _make_inline_chain(parts[i + 1 : -1])
+            # Read the source before publishing any new parents, even
+            # when it contains the inline table being extended.
+            dict.__setitem__(host, parts[-1], value)
+            cur._setitem_validated(parts[i], first)  # noqa: SLF001
+            return host[parts[-1]]
+        elif self._layout_root is not None and (
+            _is_section(value) or isinstance(value, AoT)
+        ):
+            # Only the installed value needs an explicit header.
+            host = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
+        else:
+            host = cur._create_section_chain(parts[i:-1])  # noqa: SLF001
         host._setitem_validated(parts[-1], value)  # noqa: SLF001
         return host[parts[-1]]
 
     def ensure_table(
-        self, key: str | Sequence[str], *, promote_inline: bool = False
+        self, key: str | Sequence[str], *, promote_inline: bool | None = None
     ) -> Table:
         """Return the table at ``key``, creating it if missing.
 
-        If any prefix already exists as a section, descent continues
-        from there. Intermediate components missing entirely are left
-        implicit; only the deepest component gets an explicit
-        ``[a.b.c]`` header. Raises `TOMLError` if a component cannot be
-        descended through: an existing array-of-tables, or a non-table
-        value or (unless ``promote_inline``) inline table.
+        Existing section and inline tables are traversed without changing
+        their representation. A missing child of an inline table is created
+        inline; elsewhere, missing intermediate components stay implicit and
+        only the deepest component gets an explicit ``[a.b.c]`` header.
+        Raises `TOMLError` if an existing component is an array-of-tables or
+        non-table value.
 
-        ``promote_inline`` converts an inline-style ancestor into an
-        explicit section in place instead of raising, preserving its
-        other entries. Used by `install`, since the deepest component
-        is getting an explicit header regardless.
+        ``promote_inline`` is deprecated and ignored. Use `promote_inline()`
+        to request conversion explicitly.
         """
         parts = validate_path(key)
-        cur, i = _walk_existing_sections(
-            self, parts, action="ensure_table", promote_inline=promote_inline
-        )
+        if promote_inline is not None:
+            warnings.warn(
+                "ensure_table(promote_inline=...) is deprecated and ignored; "
+                "use promote_inline() for explicit conversion",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        cur, i = _walk_existing_tables(self, parts, action="ensure_table")
         if i == len(parts):
             assert isinstance(cur, Table)
             return cur
         if cur._inline:  # noqa: SLF001
-            msg = "cannot create section table inside an inline-style table"
-            raise TOMLError(msg)
-        if cur._layout_root is None:  # noqa: SLF001
-            # Detached: build nested Table.section()s purely in dict
-            # storage. No layout ops.
-            for p in parts[i:]:
+            first, deepest = _make_inline_chain(parts[i + 1 :])
+            cur._setitem_validated(parts[i], first)  # noqa: SLF001
+            return deepest
+        return cur._create_section_chain(parts[i:])  # noqa: SLF001
+
+    def _create_section_chain(self, parts: Sequence[str]) -> Table:
+        """Create a wholly missing section path beneath this section."""
+        if self._layout_root is None:
+            cur: Container = self
+            for p in parts:
                 child = Table.section()
                 dict.__setitem__(cur, p, child)
                 cur = child
             assert isinstance(cur, Table)
             return cur
-        new_section = Table.section()
-        attached = _layout_ops.attach_section_at(cur, parts[i:], new_section)
+        attached = _layout_ops.attach_section_at(self, tuple(parts), Table.section())
         assert isinstance(attached, Table)
         return attached
 
@@ -1207,68 +1221,36 @@ def _direct_kv_trivia(c: Container, key: str) -> tuple[str, str]:
     return slot.leading, slot.eol
 
 
-def _walk_existing_sections(
-    start: Container,
-    parts: Sequence[str],
-    *,
-    action: str,
-    limit: int | None = None,
-    promote_inline: bool = False,
-) -> tuple[Container, int]:
-    """Walk the existing section-backed prefix of ``parts[:limit]``.
-
-    ``limit`` defaults to the whole path (`ensure_table`); `install`
-    passes ``len(parts) - 1`` to stop short of the leaf, which it
-    handles itself. ``action`` names the caller for error messages
-    only, independent of ``promote_inline`` (which `ensure_table` also
-    accepts, when called on `install`'s behalf).
-
-    Raises `TOMLError` if a component cannot be descended through: an
-    existing array-of-tables, or a non-table value or (unless
-    ``promote_inline``) inline table. With ``promote_inline``, an
-    inline-style ancestor is promoted to an explicit section in place
-    instead of raising, preserving its other entries; only the final
-    component, handled by the caller, is ever replaced. Every ancestor
-    is validated by `_preflight_section_walk` before any promotion
-    happens, so a component the walk can't get past leaves earlier
-    ancestors unpromoted; the walk below trusts that verdict outright.
-    """
-    if limit is None:
-        limit = len(parts)
-    n, to_promote = _preflight_section_walk(
-        start, parts, action=action, limit=limit, promote_inline=promote_inline
-    )
+def _check_table_promotions(start: Container, parts: Sequence[str]) -> None:
+    """Check promotion of an existing table path without changing its views."""
     cur: Container = start
-    for i in range(n):
-        p = parts[i]
+    for p in parts:
+        cur = dict.__getitem__(cur, p)
+        if cur._inline:  # noqa: SLF001
+            _check_inline_promotable(cur, p)
+
+
+def _promote_tables(start: Container, parts: Sequence[str]) -> Container:
+    """Promote a checked path after the caller has captured any input values."""
+    # Promotion can replace descendant views, so resolve each step again.
+    cur = start
+    for p in parts:
         nxt = dict.__getitem__(cur, p)
-        cur = cur._promote_inline_entry(p, nxt) if i in to_promote else nxt  # noqa: SLF001
-    return cur, n
+        cur = cur._promote_inline_entry(p, nxt) if nxt._inline else nxt  # noqa: SLF001
+    return cur
 
 
-def _preflight_section_walk(
+def _walk_existing_tables(
     start: Container,
     parts: Sequence[str],
     *,
     action: str,
-    limit: int,
-    promote_inline: bool,
-) -> tuple[int, set[int]]:
-    """Validate, read-only, the descent `_walk_existing_sections` will make.
-
-    Mirrors that walk without mutating anything, raising the same
-    errors it would, so a component that blocks it (an AoT, a
-    non-table value, or an inline table with inner comments) is
-    caught before an earlier ancestor is ever promoted. Returns the
-    walked length and the indices needing promotion.
-    """
-    cur: Container = start
-    to_promote: set[int] = set()
-    i = 0
-    while i < limit:
-        p = parts[i]
+) -> tuple[Container, int]:
+    """Walk an existing prefix through section and inline tables."""
+    cur = start
+    for i, p in enumerate(parts):
         if p not in cur:
-            break
+            return cur, i
         nxt = dict.__getitem__(cur, p)
         if isinstance(nxt, AoT):
             msg = (
@@ -1276,18 +1258,22 @@ def _preflight_section_walk(
                 "no addressable target inside an AoT"
             )
             raise TOMLError(msg)
-        if isinstance(nxt, Container) and nxt._inline and promote_inline:  # noqa: SLF001
-            _check_inline_promotable(nxt, p)
-            to_promote.add(i)
-        elif not isinstance(nxt, Container) or (nxt._inline and i < len(parts) - 1):  # noqa: SLF001
-            msg = (
-                f"existing value at {p!r} is not section-backed "
-                "(is an inline table or non-table value)"
-            )
+        if not isinstance(nxt, Container):
+            msg = f"cannot {action} through {p!r}: existing value is not a table"
             raise TOMLError(msg)
         cur = nxt
-        i += 1
-    return i, to_promote
+    return cur, len(parts)
+
+
+def _make_inline_chain(parts: Sequence[str]) -> tuple[Table, Table]:
+    """Build an unpublished inline root and its deepest descendant."""
+    root = Table.inline()
+    deepest = root
+    for p in parts:
+        child = Table.inline()
+        dict.__setitem__(deepest, p, child)
+        deepest = child
+    return root, deepest
 
 
 def _populate_unattached(t: Container, mapping: Mapping[str, TomlInput]) -> None:

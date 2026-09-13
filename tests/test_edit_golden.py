@@ -3542,19 +3542,26 @@ def test_install_section_replaces_existing_and_purges_children() -> None:
 
 
 def test_install_section_overwrites_inline_value() -> None:
-    doc = tomlrt.loads('tool = {poetry = {name = "x"}}\n')
+    doc = tomlrt.loads(
+        td("""
+        [tool]
+        keep = 1
+        poetry = {name = "x"}
+        """)
+    )
     doc.install("tool.poetry", Table.section({"version": "2.0"}))
     rendered = tomlrt.dumps(doc)
-    assert rendered == '[tool.poetry]\nversion = "2.0"\n'
+    assert rendered == td("""
+        [tool]
+        keep = 1
+
+        [tool.poetry]
+        version = "2.0"
+        """)
+    assert _reparses(rendered) == doc.to_dict()
 
 
-def test_install_dotted_path_past_unrelated_inline_key() -> None:
-    """Intermediate inline table exists, but the next path component
-    isn't one of its keys, so there's nothing to drop. The inline table
-    is still promoted to a section: a ``[tool.other.deps]`` header can't
-    be attached beneath a still-inline ``tool = {...}`` value without
-    leaving two conflicting definitions of ``tool``.
-    """
+def test_install_dotted_section_path_promotes_when_needed() -> None:
     doc = tomlrt.loads('tool = {poetry = {name = "x"}}\n')
     doc.install("tool.other.deps", Table.section({"requests": "1.0"}))
     out = tomlrt.dumps(doc)
@@ -3570,14 +3577,7 @@ def test_install_dotted_path_past_unrelated_inline_key() -> None:
     }
 
 
-def test_install_dotted_path_promotes_nested_inline_ancestors() -> None:
-    """Every inline ancestor on the path is promoted to a section in
-    place, preserving its other entries; only the final leaf ("c") is
-    ever replaced. ``a`` and ``a.b`` both start life as inline tables
-    and both need a header, since a ``[a.b.c]`` section can't be
-    attached beneath a still-inline ``a = {...}`` or ``b = {...}``
-    value.
-    """
+def test_install_section_promotes_inline_parents() -> None:
     doc = tomlrt.loads("a = {b = {x = 1}, sibling = 2}\n")
     doc.install("a.b.c", Table.section({"y": 9}))
     out = tomlrt.dumps(doc)
@@ -3614,22 +3614,11 @@ def test_install_dotted_path_overwrites_only_conflicting_leaf_inline_key() -> No
     assert _reparses(out) == {"a": {"sibling": 2, "b": {"sibling2": 2, "c": {"y": 9}}}}
 
 
-def test_install_scalar_leaf_promotes_nested_inline_ancestors() -> None:
-    """Inline ancestors are promoted for a scalar leaf too, not just for
-    section/AoT values: ``a`` and ``a.b`` both need an explicit header
-    regardless, to hold the new ``c = 9``.
-    """
+def test_install_scalar_leaf_preserves_nested_inline_ancestors() -> None:
     doc = tomlrt.loads("a = {b = {x = 1}, sibling = 2}\n")
     doc.install("a.b.c", 9)
     out = tomlrt.dumps(doc)
-    assert out == td("""
-        [a]
-        sibling = 2
-
-        [a.b]
-        x = 1
-        c = 9
-        """)
+    assert out == "a = {b = {x = 1, c = 9}, sibling = 2}\n"
     assert _reparses(out) == {"a": {"sibling": 2, "b": {"x": 1, "c": 9}}}
 
 
@@ -3743,11 +3732,12 @@ def test_install_scalar_on_inline_table() -> None:
     assert tomlrt.dumps(doc) == "it = { a = 1, b = 2 }\n"
 
 
-def test_install_multi_segment_on_inline_table_errors() -> None:
+def test_install_multi_segment_on_inline_table_rejects_scalar_ancestor() -> None:
     doc = tomlrt.loads("it = { a = 1 }\n")
     inline = doc.table("it")
-    with pytest.raises(tomlrt.TOMLError, match="inline-style table"):
+    with pytest.raises(tomlrt.TOMLError, match="existing value is not a table"):
         inline.install("a.b", 1)
+    assert tomlrt.dumps(doc) == "it = { a = 1 }\n"
 
 
 def test_table_accepts_dotted_path() -> None:
