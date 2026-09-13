@@ -23,6 +23,22 @@ They differ at the leaf:
   there is one, or creates an empty one if not.
   It never overwrites an existing value.
 
+`ensure_table` preserves existing tables' form. `install` does the same for scalar
+and inline values. Missing children of inline tables are inline; elsewhere they
+are sections:
+
+```python
+doc = tomlrt.loads("tool = {}\n")
+doc.install("tool.ruff.line-length", 88)
+# tool = { ruff = { line-length = 88 } }
+```
+
+When installing a section or array-of-tables from an attached section or document,
+`install` promotes inline ancestors as needed. A scalar or array blocking the
+path, or a promotion that would lose inner comments, raises `TOMLError` without
+changing the document. Use `promote_inline()` to [request conversion](layout.md)
+without installing a value.
+
 ## Structural assignment
 
 A plain `dict` value installs as an inline table; a plain `list` installs as an

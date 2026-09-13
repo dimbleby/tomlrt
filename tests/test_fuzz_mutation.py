@@ -9,9 +9,9 @@ sub-sections, out-of-order headers) *and* against a single starting
 empty document (reaching the from-scratch section/AoT creation path a
 parsed starting point doesn't exercise as its first step). Programs
 draw from one shared operation vocabulary -- set / delete / overwrite
-/ sort / clone-or-graft across containers, plus append / insert / pop
-/ sort / reverse across arrays and arrays-of-tables -- and assert the
-model stayed self-consistent:
+/ install / ensure-table / sort / clone-or-graft across containers, plus
+append / insert / pop / sort / reverse across arrays and arrays-of-tables --
+and assert the model stayed self-consistent:
 
 * the rendered output is valid TOML (``tomli`` accepts it);
 * dump -> load -> dump is a fixed point (byte-exact idempotence);
@@ -159,7 +159,15 @@ def _mutate_container(
     # started out empty or already had content.
     tables = [t for kind, t in pool if kind == "container" and isinstance(t, Table)]
     aots = [t for kind, t in pool if kind == "aot" and isinstance(t, AoT)]
-    ops = ["set_new", "del", "overwrite", "sort", "set_new_structural"]
+    ops = [
+        "set_new",
+        "del",
+        "overwrite",
+        "sort",
+        "set_new_structural",
+        "install",
+        "ensure_table",
+    ]
     if tables:
         ops.append("clone_table")
     if aots:
@@ -183,6 +191,12 @@ def _mutate_container(
             if rng.random() < 0.5
             else AoT([{"v": _rand_value(rng)} for _ in range(rng.randint(0, 3))])
         )
+    elif op in {"install", "ensure_table"}:
+        path = [clone_key, *(f"p{rng.randint(0, 9)}" for _ in range(rng.randint(0, 2)))]
+        if op == "install":
+            node.install(path, _rand_value(rng))
+        else:
+            node.ensure_table(path)
     elif op == "sort":
         node.sort()
 
