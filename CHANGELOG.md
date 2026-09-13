@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sorting an implicit table whose children precede its containing header
+  keeps dotted keys in their original scope, including on detached views.
 - Rejected header comments no longer materialise table factories, take
   ownership of their children, or pin synthetic headers.
 

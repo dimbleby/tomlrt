@@ -3719,7 +3719,9 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     movable_slots = [slot for block in physical_blocks for slot in block]
     placements = _peer_placements(physical_blocks, output_blocks)
     with _refile_region_refs(doc, region_predecessor, region_successor):
-        _splice_blocks_in_order(doc, movable_slots, placements)
+        _splice_blocks_in_order(
+            doc, movable_slots, placements, anchor_prev=region_predecessor
+        )
 
     # Reflect the new order in the AoT's own list view.
     list.clear(aot)
@@ -3794,6 +3796,8 @@ def _splice_blocks_in_order(
     doc: Document,
     movable_slots: list[Slot],
     placements: list[tuple[list[Slot], str]],
+    *,
+    anchor_prev: Slot | None,
 ) -> None:
     """Reorder movable layout blocks within the doc-stream.
 
@@ -3801,15 +3805,15 @@ def _splice_blocks_in_order(
     the block grouping, order, and head leading to reinsert; callers may
     split an original logical block when its binding order must change.
 
-    Permutes the doc-stream linked list and terminates the former final
-    movable slot if it moves into the middle. Trivia policy (positional
+    ``anchor_prev`` stays linked and names a position in the output's
+    containing scope. Terminates the anchor and former final movable
+    slot if they gain successors. Trivia policy (positional
     vs slot-attached) is the caller's responsibility — see
     ``renormalise_aot_order`` and ``reorder_container`` for the two
     existing flavours.
     """
     assert movable_slots, "both callers permute a non-empty set of blocks"
 
-    anchor_prev = movable_slots[0]._prev  # noqa: SLF001
     former_region_tail = movable_slots[-1]
     for slot in movable_slots:
         unlink_slot(slot, doc, strip_new_head_leading=False)
@@ -3818,6 +3822,8 @@ def _splice_blocks_in_order(
     for block, leading in placements:
         block[0].leading = leading
         ordered.extend(block)
+    if anchor_prev is not None:
+        ensure_terminator(anchor_prev, doc._newline)  # noqa: SLF001
     _relink_run_after(anchor_prev, ordered, doc)
 
     _terminate_unless_tail(former_region_tail, doc)
@@ -3941,7 +3947,9 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     would shove it past a header and silently change its re-parse scope.
 
     An explicit ``[c]`` header moves to the start of the reordered
-    region so direct KVs stay bound to ``c``. For an AoT entry, only
+    region so direct KVs stay bound to ``c``. An implicit table's dotted
+    body stays after its containing header, even when a forward-declared
+    child starts the subtree before that header. For an AoT entry, only
     slots within ``c``'s own subtree participate (see
     :func:`_owned_slots`): nested descendants move with their key, but
     same-path sibling entries are excluded.
@@ -4082,10 +4090,34 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         prefix = next(prefix_iterators[(unit.structural, unit.mixed)])
         placements.append((unit.slots, prefix + unit.remainder))
 
+    original_anchor = earliest_owned._prev  # noqa: SLF001
+    anchor_prev = original_anchor
+    min_depth = 0
+    first_slot = placements[0][0][0]
+    if isinstance(first_slot, KVSlot):
+        host = _nearest_header_host(c)
+        host_header = host._header_ref  # noqa: SLF001
+        if (
+            host_header is not None and host_header.slot._order > earliest_owned._order  # noqa: SLF001
+        ):
+            # A forward-declared child precedes the header hosting c's
+            # dotted body. Keep that header and its other body keys ahead
+            # of the sorted run rather than moving leaves out of scope.
+            min_depth = len(host._path)  # noqa: SLF001
+            anchor_prev = host._body_tail  # noqa: SLF001
+            assert anchor_prev is not None
+            while anchor_prev in movable_ids:
+                anchor_prev = anchor_prev._prev  # noqa: SLF001
+                assert anchor_prev is not None
+            if anchor_prev._order > latest_owned._order:  # noqa: SLF001
+                region_successor = anchor_prev._next  # noqa: SLF001
+
     with _refile_region_refs(doc, region_predecessor, region_successor):
-        _splice_blocks_in_order(doc, movable_slots, placements)
-    moved_ids = movable_ids | set(front_foreign)
-    _invalidate_body_tail_chain(c, moved_ids)
+        _splice_blocks_in_order(doc, movable_slots, placements, anchor_prev=anchor_prev)
+    moved_ids = (
+        movable_ids | set(front_foreign) if anchor_prev is original_anchor else None
+    )
+    _invalidate_body_tail_chain(c, moved_ids, min_depth=min_depth)
 
 
 __all__ = [
