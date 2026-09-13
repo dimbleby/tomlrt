@@ -117,20 +117,6 @@ def copy_dotted_table(table: Container) -> InlineTableValue:
     return value
 
 
-def replace_entry_value(t: Container, key: str, new_value: Value) -> None:
-    """Replace the value of an existing entry in place.
-
-    The logical inline view must already contain ``key``. No trivia is altered.
-    """
-    root = _outermost_inline(t)
-    iv = root._value  # noqa: SLF001
-    assert iv is not None
-    found = _find_entry(iv, _entry_key_path(t, key))
-    assert found is not None, "inline view key must have a backing entry"
-    _, entry = found
-    entry.value = new_value
-
-
 def append_entry(t: Container, key: str, new_value: Value) -> None:
     """Append a fresh entry for `key` to the outermost inline table."""
     root = _outermost_inline(t)
@@ -163,18 +149,23 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
 
 
 def overwrite_entry(t: Container, key: str, new_value: Value) -> None:
-    """Replace a dotted-prefix sub-table with a single fresh entry.
+    """Replace an existing key, preserving any direct entry's trivia.
 
-    Drops every ``key.*`` entry, adds ``key``, and preserves the authored
-    single-line bracket pad while the outer table is transiently empty.
-    Without that, overwriting a sole-content prefix would canonicalise
-    tight ``{...}`` to padded ``{ ... }``. Multi-line pads are recomputed
-    by ``splice_in``.
+    A dotted prefix has no direct entry: replace its ``key.*`` entries
+    without pruning the logical parent chain. Preserve single-line
+    bracket padding while the value is transiently empty.
     """
-    iv = _outermost_inline(t)._value  # noqa: SLF001
+    root = _outermost_inline(t)
+    iv = root._value  # noqa: SLF001
     assert iv is not None
+    full_path = _entry_key_path(t, key)
+    found = _find_entry(iv, full_path)
+    if found is not None:
+        _, entry = found
+        entry.value = new_value
+        return
     keep_pad = None if iv.is_multiline() else (iv.header_trivia, iv.final_trivia)
-    delete_entry(t, key)
+    _remove_entries(iv, _find_prefix_entries(iv, full_path), root._doc_newline)  # noqa: SLF001
     append_entry(t, key, new_value)
     if keep_pad is not None:
         iv.header_trivia, iv.final_trivia = keep_pad
@@ -198,11 +189,16 @@ def delete_entry(t: Container, key: str) -> None:
         indices: list[int] = [found[0]]
     else:
         indices = _find_prefix_entries(iv, full_path)
-        assert indices, "inline view key must have backing prefix entries"
+    _remove_entries(iv, indices, root._doc_newline)  # noqa: SLF001
+
+
+def _remove_entries(iv: InlineTableValue, indices: list[int], nl: str) -> None:
+    """Remove resolved entries while preserving comma-value boundaries."""
+    assert indices, "inline view key must have backing entries"
     splice_out(
         iv,
         indices,
-        root._doc_newline,  # noqa: SLF001
+        nl,
         is_multiline=iv.is_multiline(),
     )
 
@@ -278,7 +274,7 @@ __all__ = [
     "append_entry",
     "delete_entry",
     "ensure_inline_multiline",
+    "overwrite_entry",
     "reorder_inline",
-    "replace_entry_value",
     "set_inline_multiline",
 ]

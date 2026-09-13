@@ -949,12 +949,8 @@ class Container(_View, dict[str, Any]):
         # ``__setitem__`` has already returned if the new value *is* the
         # old one.
         _layout_ops.reset_displaced_views(old)
-        if isinstance(old, Container):
-            # Stay on the CST side when replacing a dotted-prefix
-            # navigator; dict-level delete would prune the parent chain.
+        if key in self:
             _inline_ops.overwrite_entry(self, key, cst)
-        elif key in self:
-            _inline_ops.replace_entry_value(self, key, cst)
         else:
             _inline_ops.append_entry(self, key, cst)
         dict.__setitem__(self, key, decoded)
