@@ -9816,6 +9816,162 @@ def test_sort_hoists_mixed_leaf_before_forward_structural_content() -> None:
     assert tomlrt.dumps(doc) == expected
 
 
+@pytest.mark.parametrize("detached", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_sort_implicit_child_stays_after_its_containing_header(
+    newline: str, *, detached: bool, reverse: bool
+) -> None:
+    text = td("""
+        [root.a.deep] # child
+        z = 1
+        [root] # scope
+        a.b=2
+        a.a=3
+        """).replace("\n", newline)
+    doc = tomlrt.loads(text)
+    root = doc.table("root")
+    table = root.table("a")
+    child = table.table("deep")
+    if detached:
+        doc.pop("root")
+    table.sort(reverse=reverse)
+    if detached:
+        doc["root"] = root
+    first, second = ("b=2", "a=3") if reverse else ("a=3", "b=2")
+    expected = td(f"""
+        [root] # scope
+        a.{first}
+        a.{second}
+        [root.a.deep] # child
+        z = 1
+        """).replace("\n", newline)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert doc.table("root.a") is table
+    assert doc.table("root.a.deep") is child
+
+    table["c"] = 4
+    root["sibling"] = 5
+    child["z"] = 6
+    expected = td(f"""
+        [root] # scope
+        a.{first}
+        a.{second}
+        a.c = 4
+        sibling = 5
+        [root.a.deep] # child
+        z = 6
+        """).replace("\n", newline)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_sort_implicit_child_preserves_foreign_scopes_and_unterminated_body_tail() -> (
+    None
+):
+    text = td("""
+        root_value = 0
+        [keep]
+        id = 0
+
+        [root.a.deep]
+        z = 1
+
+        [foreign]
+        v = 9
+
+        [root]
+        a.b=2
+        a.a=3
+        tail = 4 # last
+        """).removesuffix("\n")
+    doc = tomlrt.loads(text)
+    root = doc.table("root")
+    table = root.table("a")
+    table.sort()
+    expected = td("""
+        root_value = 0
+        [keep]
+        id = 0
+
+        [foreign]
+        v = 9
+
+        [root]
+        tail = 4 # last
+        a.a=3
+        a.b=2
+
+        [root.a.deep]
+        z = 1
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    root["after"] = 5
+    table["c"] = 6
+    doc["root_after"] = 7
+    expected = td("""
+        root_value = 0
+        root_after = 7
+        [keep]
+        id = 0
+
+        [foreign]
+        v = 9
+
+        [root]
+        tail = 4 # last
+        a.a=3
+        a.b=2
+        a.c = 6
+        after = 5
+
+        [root.a.deep]
+        z = 1
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_sort_implicit_child_retains_its_aot_owner() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[outer]]
+        label = "first"
+        [outer.root.a.deep]
+        z = 1
+        [outer.root]
+        a.b=2
+        a.a=3
+
+        [[outer]]
+        label = "second"
+        """)
+    )
+    first = doc.aot("outer")[0]
+    first.table("root.a").sort()
+    expected = td("""
+        [[outer]]
+        label = "first"
+        [outer.root]
+        a.a=3
+        a.b=2
+        [outer.root.a.deep]
+        z = 1
+
+        [[outer]]
+        label = "second"
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert doc.aot("outer").pop(0) is first
+    assert tomlrt.dumps(doc) == td("""
+        [[outer]]
+        label = "second"
+        """)
+
+
 def test_sort_groups_all_mixed_leaves_before_their_structural_content() -> None:
     src = td("""
         [a.x.m]

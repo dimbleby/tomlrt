@@ -572,11 +572,17 @@ def test_sort_nested_sections(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(src), rounds=20)
 
 
-def test_sort_forward_declared_table(benchmark: BenchmarkFixture) -> None:
-    def work(doc: Document) -> None:
-        doc.table("target").sort()
+@pytest.mark.parametrize("implicit", [False, True])
+def test_sort_forward_declared_table(
+    benchmark: BenchmarkFixture, *, implicit: bool
+) -> None:
+    path = "target.inner" if implicit else "target"
+    key = "inner.a" if implicit else "a"
 
-    src = "[target.z]\nvalue = 1\n[target]\na = 2\n" + "".join(
+    def work(doc: Document) -> None:
+        doc.table(path).sort()
+
+    src = f"root_value = 0\n[{path}.z]\nvalue = 1\n[target]\n{key} = 2\n" + "".join(
         f"[trailing_{i}]\nvalue = {i}\n" for i in range(10_000)
     )
     benchmark.pedantic(work, setup=_parsed(src), rounds=50)

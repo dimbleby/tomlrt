@@ -91,6 +91,21 @@ _SHAPES = (
         [dest]
         z = 0
         """),
+    td("""
+        [root.a.deep]
+        z = 0x01 # forward
+
+        [root]
+        a.x=0x02 # body
+        a.nested.value = [ 1,2 ]
+        a.last = 3
+
+        [[root.a.rows]]
+        id = 4
+
+        [dest]
+        z = 0
+        """),
 )
 
 # One random operation per step, drawn uniformly; ``adopt`` appears
