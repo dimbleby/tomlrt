@@ -373,12 +373,7 @@ class Array(_View, list[Any]):
 
     @override
     def remove(self, value: Any) -> None:
-        for i, v in enumerate(self):
-            if v == value:
-                del self[i]
-                return
-        msg = "Array.remove(x): x not in array"
-        raise ValueError(msg)
+        _remove_value(self, value, "Array.remove(x): x not in array")
 
     @override
     def insert(self, index: SupportsIndex, value: Any) -> None:
@@ -534,6 +529,15 @@ class Array(_View, list[Any]):
                 decoded = _decode_value(cst, self._layout_root, None, None, None, self)
                 self._append_with_style(cst, decoded, style)
         return self
+
+
+def _remove_value(items: list[_T], value: object, message: str) -> None:
+    """Remove the first identity-or-equality match through the live list API."""
+    for i, item in enumerate(items):
+        if item is value or item == value:
+            del items[i]
+            return
+    raise ValueError(message)
 
 
 def _norm_insert_index(index: SupportsIndex, n: int) -> int:
@@ -749,12 +753,7 @@ class AoT(_View, list["Table"]):
 
     @override
     def remove(self, value: Mapping[str, TomlInput]) -> None:
-        for i, t in enumerate(self):
-            if t is value or t == value:
-                del self[i]
-                return
-        msg = "list.remove(x): x not in list"
-        raise ValueError(msg)
+        _remove_value(self, value, "list.remove(x): x not in list")
 
     @override
     def reverse(self) -> None:

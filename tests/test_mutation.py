@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections import deque
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,11 @@ import pytest
 
 import tomlrt
 from tomlrt import AoT, Array, Table
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:  # pragma: no cover -- backport for Python < 3.12
+    from typing_extensions import override
 
 # A value with no TOML representation, for rejection tests.
 _OPAQUE: Any = object()
@@ -1172,8 +1178,9 @@ def test_array_indices_and_repeat_counts_require_supports_index() -> None:
 def test_array_remove_missing_raises_valueerror() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc.array("xs")
-    with pytest.raises(ValueError, match="not in array"):
+    with pytest.raises(ValueError, match=r"^Array\.remove\(x\): x not in array$"):
         xs.remove(99)
+    assert tomlrt.dumps(doc) == "xs = [1, 2, 3]\n"
 
 
 def test_array_delitem_out_of_range_raises_indexerror() -> None:
@@ -1770,6 +1777,56 @@ def test_array_remove() -> None:
     out = tomlrt.dumps(doc)
     assert out == "xs = [1, 3, 2]\n"
     assert _reparses(out) == {"xs": [1, 3, 2]}
+
+
+def test_array_remove_matches_the_same_nan_object() -> None:
+    nan = float("nan")
+    array = Array([nan])
+    doc = tomlrt.Document()
+    doc["xs"] = array
+    array.remove(nan)
+    assert tomlrt.dumps(doc) == "xs = []\n"
+
+
+def test_array_remove_does_not_match_a_different_nan() -> None:
+    doc = tomlrt.loads("xs = [nan]\n")
+    with pytest.raises(ValueError, match=r"^Array\.remove\(x\): x not in array$"):
+        doc.array("xs").remove(float("nan"))
+    assert tomlrt.dumps(doc) == "xs = [nan]\n"
+
+
+def test_array_remove_preserves_comparison_exceptions() -> None:
+    failure = ValueError("comparison failed")
+
+    class RaisingInt(int):
+        @override
+        def __eq__(self, _other: object) -> bool:
+            raise failure
+
+        __hash__ = int.__hash__
+
+    value = RaisingInt(1)
+    doc = tomlrt.Document()
+    doc["xs"] = Array([value])
+    with pytest.raises(ValueError, match="comparison failed") as exc:
+        doc.array("xs").remove(1)
+    assert exc.value is failure
+    assert tomlrt.dumps(doc) == "xs = [1]\n"
+    doc.array("xs").remove(value)
+    assert tomlrt.dumps(doc) == "xs = []\n"
+
+
+def test_array_remove_detaches_the_held_inline_view() -> None:
+    doc = tomlrt.loads("xs = [{ items = [1] }, 2]\n")
+    held = doc.array("xs").table(0)
+    doc.array("xs").remove(held)
+    held.array("items").append(3)
+    assert tomlrt.dumps(doc) == "xs = [2]\n"
+    other = tomlrt.Document()
+    other["held"] = held
+    assert other.table("held") is held
+    assert tomlrt.dumps(other) == "held = { items = [1, 3] }\n"
+    assert tomlrt.dumps(doc) == "xs = [2]\n"
 
 
 def test_array_insert() -> None:
@@ -4585,8 +4642,9 @@ def test_aot_remove_drops_first_matching_entry_from_cst() -> None:
 def test_aot_remove_missing_raises_value_error() -> None:
     doc = tomlrt.loads("[[t]]\nx = 1\n")
     aot = doc.aot("t")
-    with pytest.raises(ValueError, match="not in list"):
+    with pytest.raises(ValueError, match=r"^list\.remove\(x\): x not in list$"):
         aot.remove({"x": 999})
+    assert tomlrt.dumps(doc) == "[[t]]\nx = 1\n"
 
 
 def test_aot_slice_replace_contiguous() -> None:
