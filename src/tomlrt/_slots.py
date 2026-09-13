@@ -37,7 +37,7 @@ class AoTEntry:
 
     Carried by every physical slot in that entry. The linked slot stream
     owns membership and order; this marker retains only the entry's own
-    ``[[a]]`` header so :attr:`path` has one canonical source.
+    ``[[a]]`` header.
     """
 
     __slots__ = ("_header",)
@@ -56,11 +56,6 @@ class AoTEntry:
         header = self._header
         assert header is not None, "AoT entry header has not been bound"
         return header
-
-    @property
-    def path(self) -> tuple[str, ...]:
-        """Decoded path of the entry, taken from its header slot."""
-        return self.header.path
 
 
 # ---------------------------------------------------------------------------

@@ -1606,13 +1606,228 @@ def test_format_implicit_section() -> None:
     """)
 
 
-def test_format_implicit_section_detached_raises() -> None:
-    """A detached implicit-section view cannot be formatted."""
-    doc = tomlrt.loads("[a.b]\nx = 1\n")
+def test_format_implicit_orphan_preserves_its_former_document() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [a.b]
+        x  = 1
+        [stay]
+        y  = 2
+        """)
+    )
     implicit = doc.table("a")
     del doc["a"]
-    with pytest.raises(TOMLError, match="attached"):
-        implicit.format()
+    implicit.format()
+    target = tomlrt.Document()
+    target["picked"] = implicit
+    assert tomlrt.dumps(target) == td("""
+        [picked.b]
+        x = 1
+        """)
+    assert tomlrt.dumps(doc) == td("""
+        [stay]
+        y  = 2
+        """)
+
+
+def test_format_orphan_child_stops_before_outer_hosted_body() -> None:
+    source = tomlrt.loads(
+        td("""
+        [a.b.c]
+        y   =1
+        [a]
+        b.x   =2
+        """)
+    )
+    held = source.table("a").table("b")
+    del source.table("a")["b"]
+    held.table("c").format()
+    target = tomlrt.Document()
+    target["copy"] = held
+    expected = td("""
+        copy.x   =2
+
+        [copy.c]
+        y = 1
+        """)
+    assert tomlrt.dumps(target) == expected
+    assert reparses(expected) == target.to_dict()
+    assert tomlrt.dumps(source) == "[a]\n"
+
+
+def test_format_deep_implicit_values_is_idempotent() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a.b.c.d.e.f.g.h.values   = [ { x= [1,2] }, [3 ,4] ] # values
+        a.b.c.d.e.f.g.h.options = { x= [5,6] }
+        outside  =9
+        """)
+    )
+    implicit = doc.table("a")
+    implicit.format()
+    expected = td("""
+        a.b.c.d.e.f.g.h.values = [{ x = [1, 2] }, [3, 4]] # values
+        a.b.c.d.e.f.g.h.options = { x = [5, 6] }
+        outside  =9
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
+    implicit.format()
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_format_implicit_scopes_preserve_parent_owned_gaps() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a.x   =1
+
+
+        [a.b]
+        y=2
+        [a.b.deep]
+        z=3
+        [[a.rows]]
+        v=4
+        [a.rows.deep]
+        w=5
+        """)
+    )
+    doc.table("a").format()
+    expected = td("""
+        a.x = 1
+
+
+        [a.b]
+        y = 2
+
+        [a.b.deep]
+        z = 3
+        [[a.rows]]
+        v = 4
+
+        [a.rows.deep]
+        w = 5
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
+
+
+def test_format_scattered_implicit_section_leaves_foreign_text_untouched() -> None:
+    source = (
+        td("""
+        a.x  =1
+
+        outside  =2
+
+        [a.left]
+        x=3
+
+        [foreign]
+        a  =4
+        [a.right]
+        y=5
+        """)
+        .replace("\n", "\r\n")
+        .rstrip("\r\n")
+    )
+    doc = tomlrt.loads(source)
+    doc.table("a").format()
+    expected = (
+        td("""
+        a.x = 1
+
+        outside  =2
+
+        [a.left]
+        x = 3
+
+        [foreign]
+        a  =4
+        [a.right]
+        y = 5
+        """)
+        .replace("\n", "\r\n")
+        .rstrip("\r\n")
+    )
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
+
+
+def test_format_headered_scope_includes_forward_and_interleaved_children() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [ a . child ]
+        value= [1,2] # child
+
+        [foreign]
+        keep  =7
+
+        [a]
+        root  =1
+        [a.later]
+        value=2
+        """)
+    )
+    section = doc.table("a")
+    section.format()
+    expected = td("""
+        [a.child]
+        value = [1, 2] # child
+
+        [foreign]
+        keep  =7
+
+        [a]
+        root = 1
+
+        [a.later]
+        value = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
+    section.format()
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_format_aot_entry_skips_foreign_sections_and_sibling_entries() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[rows]]
+        id=1
+        [rows.nested]
+        value= [1,2]
+
+        [foreign]
+        keep  =3
+        [rows.nested.deep]
+        x=4
+
+        [[rows]]
+        id  =5
+        [rows.nested]
+        value= [6,7]
+        """)
+    )
+    doc.aot("rows")[0].format()
+    expected = td("""
+        [[rows]]
+        id = 1
+
+        [rows.nested]
+        value = [1, 2]
+
+        [foreign]
+        keep  =3
+        [rows.nested.deep]
+        x = 4
+
+        [[rows]]
+        id  =5
+        [rows.nested]
+        value= [6,7]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
 
 
 # ---------------------------------------------------------------------------

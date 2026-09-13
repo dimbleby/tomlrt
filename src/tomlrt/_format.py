@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import Boundary
 from tomlrt._errors import TOMLError
+from tomlrt._kind import _Kind
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
     leading_break,
@@ -55,9 +56,10 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
-    from tomlrt._slots import AoTEntry, Slot
+    from tomlrt._container import Container
+    from tomlrt._slots import Slot
     from tomlrt._values import (
         CommaItem,
         Value,
@@ -762,79 +764,90 @@ def format_inline_root(
 # ---------------------------------------------------------------------------
 
 
-def _in_subtree(
-    slot: Slot,
-    path: tuple[str, ...],
-    owner: AoTEntry | None,
-) -> bool:
-    """Return whether ``slot`` belongs to the ``path`` / ``owner`` subtree.
+def _format_scopes(container: Container) -> Iterator[Container]:
+    """Yield disjoint scopes, descending only through headerless sections."""
+    yield container
+    if container._kind is not _Kind.IMPLICIT_SECTION:  # noqa: SLF001
+        return
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
 
-    ``owner`` disambiguates AoT-entry views (and sections nested inside
-    them), where sibling entries share the same path. Matching slots must
-    belong to ``owner`` or to a descendant AoT entry under ``owner.path``.
+    pending = [container]
+    while pending:
+        for child in pending.pop().values():
+            if isinstance(child, Container) and not child._inline:  # noqa: SLF001
+                if child._header_ref is None:  # noqa: SLF001
+                    pending.append(child)
+                else:
+                    yield child
+            elif isinstance(child, AoT):
+                yield from child
+
+
+def format_container(container: Container, *, options: FormatOptions) -> None:
+    """Canonicalise each selected physical slot and its inline values once.
+
+    Implicit receivers own only their outer-hosted dotted body directly.
+    Their first header-bearing descendants supply separate scopes, each
+    of which includes its complete subtree. Scope boundaries and gaps
+    across foreign slots preserve parent-owned blank lines.
     """
-    if isinstance(slot, KVSlot):
-        assert slot.host_path[: len(path)] == path
-    else:
-        assert isinstance(slot, StructuralHeaderSlot)
-        if slot.path[: len(path)] != path:
-            return False
-    if owner is None:
-        return True
-    slot_owner = slot.owner_aot_entry
-    if slot_owner is owner:
-        return True
-    assert slot_owner is not None
-    op = owner.path
-    return len(slot_owner.path) > len(op) and slot_owner.path[: len(op)] == op
+    kind = container._kind  # noqa: SLF001
+    nl = container._doc_newline  # noqa: SLF001
+    if kind is _Kind.INLINE_ROOT:
+        from tomlrt._container import _host_kv_slot  # noqa: PLC0415
 
-
-def format_subtree(
-    *,
-    start: Slot | None,
-    path: tuple[str, ...],
-    owner: AoTEntry | None,
-    nl: str,
-    options: FormatOptions,
-    head_blank_cap: int | None = None,
-) -> None:
-    """Canonicalise every slot in the subtree rooted at ``path``.
-
-    Walks the doc-stream from ``start`` until the first outside slot.
-    ``owner`` disambiguates AoT-entry subtrees that share ``path``.
-
-    The first slot's leading head-blanks belong to the parent subtree.
-    ``head_blank_cap`` bounds how many survive: ``None`` preserves them
-    (a nested subtree owns its opening boundary), while a whole-document
-    walk passes the count that leaves one blank line between the
-    document start -- or a preamble, which already supplies one -- and
-    the first slot. Later slots get the canonical count: 1 blank line
-    before a structural header, 0 otherwise.
-    """
-    prev: Slot | None = None
-    slot = start
-    while slot is not None and _in_subtree(slot, path, owner):
-        # A slot parsed as the file's final line carries
-        # ``eol.newline=None``.  If a later mutation (sort, splice)
-        # moved it off the tail, restore the terminator so the
-        # canonical inter-slot blank line materialises.  The walk's
-        # genuinely-final slot is never visited as ``prev``, so its
-        # no-final-newline state survives.
-        if prev is not None:
-            ensure_terminator(prev, nl)
-        if prev is None:
-            target: int | None = None
-        else:
-            target = 1 if isinstance(slot, StructuralHeaderSlot) else 0
-        _canon_slot(
-            slot,
+        assert container._value is not None  # noqa: SLF001
+        format_inline_root(
+            container._value,  # noqa: SLF001
             nl=nl,
-            target_blanks=target,
             options=options,
-            max_preserved_blanks=head_blank_cap if prev is None else None,
+            host=_host_kv_slot(container),
         )
-        prev = slot
-        slot = slot._next  # noqa: SLF001
+        return
+    if kind in (_Kind.INLINE_FACTORY, _Kind.INLINE_DOTTED_INNER):
+        msg = "format() is not supported on detached inline-table views"
+        raise TOMLError(msg)
+    doc = container._layout_root  # noqa: SLF001
+    if doc is None:
+        msg = "format() requires the container to have document layout"
+        raise TOMLError(msg)
+    from tomlrt._layout_ops import implicit_body_slots, owned_slots  # noqa: PLC0415
+
+    head_blank_cap = None
+    if kind is _Kind.DOCUMENT:
+        # A preamble already supplies the document's opening separator.
+        head_blank_cap = 0 if doc._preamble else 1  # noqa: SLF001
+    for scope in _format_scopes(container):
+        implicit = scope._kind is _Kind.IMPLICIT_SECTION  # noqa: SLF001
+        slots = implicit_body_slots(scope) if implicit else owned_slots(scope)
+        prev: Slot | None = None
+        for slot in slots:
+            target: int | None = None
+            if not implicit and prev is not None and slot._prev is prev:  # noqa: SLF001
+                target = 1 if isinstance(slot, StructuralHeaderSlot) else 0
+            _canon_slot(
+                slot,
+                nl=nl,
+                target_blanks=target,
+                options=options,
+                max_preserved_blanks=head_blank_cap if prev is None else None,
+            )
+            # Only the actual document tail may retain no final newline.
+            if slot._next is not None:  # noqa: SLF001
+                ensure_terminator(slot, nl)
+            prev = slot
+    if kind is _Kind.DOCUMENT:
+        doc._preamble = format_document_trailing(  # noqa: SLF001
+            doc._preamble,  # noqa: SLF001
+            nl=nl,
+            options=options,
+        )
+        doc._trailing = format_document_trailing(  # noqa: SLF001
+            doc._trailing,  # noqa: SLF001
+            nl=nl,
+            options=options,
+        )
 
 
 def format_document_trailing(
@@ -857,11 +870,10 @@ def format_document_trailing(
 __all__ = [
     "FormatOptions",
     "_canon_inline_value",
-    "_canon_slot",
     "_closing_indent",
     "_resolve_format_options",
+    "format_container",
     "format_document_trailing",
     "format_inline_root",
-    "format_subtree",
     "set_comma_value_multiline",
 ]

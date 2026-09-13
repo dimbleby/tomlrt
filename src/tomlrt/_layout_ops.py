@@ -2153,11 +2153,11 @@ def clone_graft_slots(
 def owned_slots(view: Container | AoT) -> list[Slot]:
     """Every slot ``view``'s block spans, in doc-stream order.
 
-    Any shape: headered or not, an array-of-tables, a whole document.
-
-    Order keys recover physical order without walking unrelated slots,
-    even when a subtree is interleaved with foreign sections or starts
-    before its own header (``[a.b]`` before ``[a]``).
+    A container's ordered refs already name all its descendant headers.
+    Each header contributes its following body run. A private orphan
+    can omit an enclosing header, so a changed KV host also ends a run.
+    Only implicit containers contribute KV refs directly: a headered
+    container's own header already contributes its body.
     """
     if isinstance(view, _array.AoT):
         return [s for entry in view for s in owned_slots(entry)]
@@ -2168,9 +2168,20 @@ def owned_slots(view: Container | AoT) -> list[Slot]:
             slots.append(cur)
             cur = cur._next  # noqa: SLF001
         return slots
-    owned: set[Slot] = set()
-    _collect_subtree(view, [], [], owned.add)
-    return sorted(owned, key=operator.attrgetter("_order"))
+    owned: list[Slot] = []
+    has_header = view._header_ref is not None  # noqa: SLF001
+    for ref in view._refs:  # noqa: SLF001
+        slot = ref.slot
+        if isinstance(slot, StructuralHeaderSlot):
+            owned.append(slot)
+            host_path = slot.path
+            body = slot._next  # noqa: SLF001
+            while isinstance(body, KVSlot) and body.host_path == host_path:
+                owned.append(body)
+                body = body._next  # noqa: SLF001
+        elif not has_header:
+            owned.append(slot)
+    return owned
 
 
 def _gather_headered_subtree_slots(
@@ -2742,6 +2753,17 @@ def clone_implicit_section(
 def _spells_own_key(slot: Slot, depth: int) -> bool:
     """Whether a subtree slot is a dotted KV hosted above its root."""
     return isinstance(slot, KVSlot) and len(slot.host_path) < depth
+
+
+def implicit_body_slots(container: Container) -> list[Slot]:
+    """Outer-hosted dotted KVs owned by an implicit section, in source order."""
+    depth = len(container._path)  # noqa: SLF001
+    owner = container._owner_aot_entry  # noqa: SLF001
+    return [
+        ref.slot
+        for ref in container._refs  # noqa: SLF001
+        if _spells_own_key(ref.slot, depth) and ref.slot.owner_aot_entry is owner
+    ]
 
 
 def split_subtree_slots(
