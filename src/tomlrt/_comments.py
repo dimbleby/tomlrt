@@ -282,6 +282,8 @@ def _header_comment_get(c: Container) -> str | None:
 
 
 def _header_comment_set(c: Container, value: str | None) -> None:
+    if value is not None:
+        _validate_comment_str(value, "header_comment")
     h = _write_header_slot(
         c, "container has no header to attach a comment to", pin=value is not None
     )
@@ -290,7 +292,6 @@ def _header_comment_set(c: Container, value: str | None) -> None:
     if value is None:
         h.eol = _clear_eol_comment(h.eol)
         return
-    _validate_comment_str(value, "header_comment")
     h.eol = _write_eol_comment(h.eol, value, c._doc_newline)  # noqa: SLF001
 
 

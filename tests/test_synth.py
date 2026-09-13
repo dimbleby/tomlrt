@@ -627,6 +627,27 @@ def test_key_order_follows_the_mapping_with_and_without_a_graft() -> None:
     ]
 
 
+@pytest.mark.parametrize("shape", ["document", "section"])
+def test_cloned_aot_entry_keeps_mapping_order_without_reformatting(shape: str) -> None:
+    data: dict[str, Any] = {"sub": {"x": 1}, "v": 2}
+    source = tomlrt.Document(data if shape == "document" else {"holder": data})
+    entry = source if shape == "document" else source.table("holder")
+    before = tomlrt.dumps(source)
+    doc = tomlrt.Document({"rows": [entry]})
+    assert list(doc.aot("rows")[0]) == ["sub", "v"]
+    expected = td("""
+        [[rows]]
+        v = 2
+
+        [rows.sub]
+        x = 1
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == doc.to_dict()
+    assert list(entry) == ["sub", "v"]
+    assert tomlrt.dumps(source) == before
+
+
 def test_mapping_that_repeats_a_key_takes_the_last_value() -> None:
     """A `Mapping` may hand out the same key twice; a document may not."""
 
@@ -759,6 +780,149 @@ def test_cloned_aot_keeps_the_comments_above_its_first_header() -> None:
         [[b]]
         k = 2
         """)
+
+
+@pytest.mark.parametrize("standalone_aot", [False, True])
+def test_constructor_preserves_annotated_entry_factories(
+    *, standalone_aot: bool
+) -> None:
+    source = Table.section({"x": 1})
+    source.comments["x"] = "value"
+    source.header_comment = "entry"
+    source.header_leading_block = ("older", None, "heading")
+    rows = AoT([source, {"x": 2}]) if standalone_aot else [source, {"x": 2}]
+    data = {"rows": rows}
+    doc = tomlrt.Document(data)
+    expected = td("""
+        # older
+
+        # heading
+        [[rows]] # entry
+        x = 1 # value
+
+        [[rows]]
+        x = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.dumps(data) == expected
+    doc.aot("rows")[0]["x"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        # older
+
+        # heading
+        [[rows]] # entry
+        x = 3 # value
+
+        [[rows]]
+        x = 2
+        """)
+    assert tomlrt.dumps(data) == expected
+    original = tomlrt.Document()
+    original["source"] = source
+    source["x"] = 4
+    assert tomlrt.dumps(original) == td("""
+        # older
+
+        # heading
+        [source] # entry
+        x = 4 # value
+        """)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("standalone_aot", [False, True])
+def test_constructor_entry_layout_normalizes_forward_declarations(
+    newline: str, *, standalone_aot: bool
+) -> None:
+    text = (
+        td("""
+        [source.child] # child
+        x = 0x01
+        [source] # entry
+        z = 0x02 # root
+        [[source.nested]] # nested
+        id = 0x03
+        """)
+        .replace("\n", newline)
+        .removesuffix(newline)
+    )
+    source = tomlrt.loads(text)
+    entry = source.table("source")
+    rows = AoT([entry, {"z": 4}]) if standalone_aot else [entry, {"z": 4}]
+    doc = tomlrt.Document({"prefix": 0, "rows": rows})
+    assert tomlrt.dumps(doc) == td("""
+        prefix = 0
+
+        [[rows]] # entry
+        z = 0x02 # root
+        [rows.child] # child
+        x = 0x01
+        [[rows.nested]] # nested
+        id = 0x03
+
+        [[rows]]
+        z = 4
+        """)
+    doc.aot("rows")[0].table("child")["x"] = 5
+    doc.aot("rows")[0].aot("nested")[0]["id"] = 6
+    assert tomlrt.dumps(doc) == td("""
+        prefix = 0
+
+        [[rows]] # entry
+        z = 0x02 # root
+        [rows.child] # child
+        x = 5
+        [[rows.nested]] # nested
+        id = 6
+
+        [[rows]]
+        z = 4
+        """)
+    assert tomlrt.loads(tomlrt.dumps(doc)).to_dict() == doc.to_dict()
+    assert tomlrt.dumps(source) == text
+
+
+@pytest.mark.parametrize("shape", ["document", "implicit", "section", "aot-entry"])
+def test_constructor_clones_each_structural_entry_shape(shape: str) -> None:
+    if shape == "document":
+        text = td("""
+            x=0x01 # value
+            [sub]
+            y = 2
+            """)
+    elif shape == "implicit":
+        text = td("""
+            group.x=0x01 # value
+            [group.sub]
+            y = 2
+            """)
+    else:
+        header = "[[group]]" if shape == "aot-entry" else "[group]"
+        text = td(f"""
+            {header} # entry
+            x=0x01 # value
+            [group.sub]
+            y = 2
+            """)
+    source = tomlrt.loads(text)
+    entry: tomlrt.Table | tomlrt.Document
+    if shape == "document":
+        entry = source
+    elif shape == "aot-entry":
+        entry = source.aot("group")[0]
+    else:
+        entry = source.table("group")
+    doc = tomlrt.Document({"rows": [entry]})
+    eol = " # entry" if shape in {"section", "aot-entry"} else ""
+    expected = td(f"""
+        [[rows]]{eol}
+        x=0x01 # value
+        [rows.sub]
+        y = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == doc.to_dict()
+    assert tomlrt.dumps(source) == text
 
 
 def test_repeating_mapping_inside_an_inline_value_takes_the_last_value() -> None:

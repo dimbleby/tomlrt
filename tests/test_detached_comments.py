@@ -171,6 +171,35 @@ def test_section_child_is_not_a_direct_comment_target() -> None:
     assert tomlrt.dumps(doc) == "[child]\nx = 1\n"
 
 
+@pytest.mark.parametrize("invalid", [42, "bad\ncomment"])
+def test_invalid_header_comment_leaves_factory_children_free(invalid: Any) -> None:
+    child = Table.inline({"x": 1})
+    table = Table.section({"child": child})
+    with pytest.raises((TypeError, ValueError)):
+        table.header_comment = invalid
+    doc = tomlrt.Document()
+    doc["child"] = child
+    assert doc.table("child") is child
+    child["x"] = 2
+    assert tomlrt.dumps(doc) == "child = { x = 2 }\n"
+
+
+@pytest.mark.parametrize("invalid", [42, "bad\ncomment"])
+def test_invalid_header_comment_does_not_pin_synthetic_header(invalid: Any) -> None:
+    table = Table.section({"temporary": 1})
+    table.comments["temporary"] = "materialise"
+    with pytest.raises((TypeError, ValueError)):
+        table.header_comment = invalid
+    del table["temporary"]
+    table["child"] = Table.section({"x": 1})
+    doc = tomlrt.Document()
+    doc["feature"] = table
+    assert tomlrt.dumps(doc) == td("""
+        [feature.child]
+        x = 1
+        """)
+
+
 def test_empty_aot_placeholder_accepts_a_factory_comment() -> None:
     table = Table.section({"rows": AoT()})
     table.comments["rows"] = "none yet"

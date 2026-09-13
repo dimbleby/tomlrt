@@ -322,6 +322,24 @@ def test_repeat_and_attach_aot_factory(
     benchmark.pedantic(work, setup=setup, rounds=100)
 
 
+@pytest.mark.parametrize("entries", [100, 1000, 3000])
+def test_clone_implicit_with_empty_aot_entries(
+    benchmark: BenchmarkFixture, entries: int
+) -> None:
+    source = tomlrt.loads(
+        "source.marker = 0\n"
+        + _aot_doc(entries).replace("[[items]]", "[[source.rows]]")
+    )
+    for entry in source.aot("source.rows"):
+        entry["pending"] = tomlrt.AoT()
+    table = source.table("source")
+
+    def work(doc: Document) -> None:
+        doc["copy"] = table
+
+    benchmark.pedantic(work, setup=_parsed(""), rounds=20)
+
+
 @pytest.mark.parametrize("source", ["section", "aot"])
 @pytest.mark.parametrize("size", [2, 1000])
 def test_replace_aot_from_ancestor(

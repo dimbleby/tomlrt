@@ -20,6 +20,7 @@ from tomlrt._trivia import (
     restamp_bracket_pad_for_first,
     split_above_block,
     split_eol_section,
+    split_line,
     split_lines,
     strip_trailing_indent,
     strip_trailing_ws,
@@ -936,6 +937,16 @@ def reorder_owned(
         composed[b].restore(cv, b)
 
 
+def strip_framing_comments(cv: CommaValue[_CV_ItemT]) -> None:
+    """Remove bracket-owned comments from a nonempty extracted value."""
+    opening = Boundary.capture(cv, 0)
+    _pad, comment, terminator = split_line(opening.following.head)
+    if comment:
+        opening.following.head = terminator
+    opening.restore(cv, 0)
+    Boundary.capture(cv, len(cv.items)).remove_above().restore(cv, len(cv.items))
+
+
 __all__ = [
     "Boundary",
     "CommaStyle",
@@ -947,4 +958,5 @@ __all__ = [
     "splice_in",
     "splice_insert",
     "splice_out",
+    "strip_framing_comments",
 ]

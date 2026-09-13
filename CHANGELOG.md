@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Copying header-less sections retains their key spelling, spacing, and
+  physical order within the body and structural regions, just as moving does.
+- Copying and moving implicit sections share placement rules: child blocks
+  follow their dotted body, while header-only subtrees use normal section
+  placement rather than moving to the document head.
+- Constructing a document from lists or standalone arrays-of-tables retains
+  each materialised entry's comments and formatting.
 - Copying, moving, and sorting entries retain their full leading comment
   blocks, including blank-separated groups. Document framing stays with
   its document.
@@ -32,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in that entry's body, so rendered order matches the order keys were assigned.
 - Comment views validate the comment before resolving the key, so an invalid
   comment raises `TypeError` even when the key is also absent.
+
+### Fixed
+
+- Rejected header comments no longer materialise table factories, take
+  ownership of their children, or pin synthetic headers.
 
 ### Deprecated
 

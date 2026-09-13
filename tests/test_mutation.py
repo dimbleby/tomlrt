@@ -2223,9 +2223,19 @@ def test_overwrite_aot_with_implicit_table_containing_empty_aot() -> None:
         source.aempty = []
         source.zchild.leaf = 1
 
-        [target]
-        aempty = []
-        zchild.leaf = 1
+        target.aempty = []
+        target.zchild.leaf = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
+    doc.table("target").aot("aempty").add({"x": 2})
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        source.aempty = []
+        source.zchild.leaf = 1
+        target.zchild.leaf = 1
+
+        [[target.aempty]]
+        x = 2
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -6923,17 +6933,12 @@ def test_overwrite_with_no_final_newline_clone_moved_to_anchor_gets_separator() 
     assert _reparses(out) == doc.to_dict()
 
 
-def test_overwrite_with_scattered_implicit_source_skips_reposition() -> None:
+def test_overwrite_with_mixed_implicit_source_preserves_scope() -> None:
     """Overwriting an existing key with an implicit source that has both
     direct KVs and structural children must not crash.
 
-    ``_install_attached_subtree`` hosts the source's direct KVs at the
-    destination's nearest header but gives structural children their
-    own section anchor — the two kinds land in physically disjoint
-    doc-stream regions, not one contiguous block.
-    ``reposition_install``'s position-preserving move assumes a single
-    contiguous span; it must detect this and leave the install where it
-    landed instead of asserting.
+    Dotted KVs stay in the destination's body and the copied structural
+    children follow them without capturing any existing sibling keys.
     """
     doc = tomlrt.loads(
         td("""
@@ -11021,9 +11026,9 @@ def test_overwrite_with_own_grandchild_then_clone_elsewhere() -> None:
 
         k9 = -7
 
-        name.k75.k96 = 1
-
         name.k75.dots.dot = 42
+
+        name.k75.k96 = 1
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -11227,14 +11232,7 @@ def test_overwrite_with_leading_dotted_kvs_anchors_past_foreign_scope() -> None:
 
 
 def test_clone_implicit_source_with_empty_string_header_child() -> None:
-    """``_install_attached_subtree`` recursively installs a headerless
-    source's structural children via ``Container.install()``'s tuple-
-    path API. That API validates each path *segment*, rejecting an
-    empty one — reasonable for a human-supplied dotted path (an empty
-    segment there is almost certainly a typo), but wrong for this
-    internal recursive use: the key comes from an already-live source
-    Container, where an empty string is a legal (if unusual) TOML key,
-    not user input to second-guess."""
+    """An implicit clone preserves empty keys already valid in its source."""
     doc = tomlrt.loads(
         td("""
         x = 1
@@ -11703,16 +11701,8 @@ def test_adopt_private_section_adds_terminator_when_not_at_doc_tail() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_reposition_install_leaves_a_scattered_install_where_it_landed() -> None:
-    """A header-less source spells itself in two places at once.
-
-    Its own keys are dotted KVs in the destination's body and its
-    array-of-tables is a block after it, so the install records two
-    runs with other slots between them. ``_recorded_install_span``
-    reports no single span and ``reposition_install`` leaves both runs
-    where they landed rather than move a range that spans slots it
-    never installed.
-    """
+def test_implicit_clone_keeps_its_aot_block_with_its_body() -> None:
+    """An AoT child uses the same placement as a plain section child."""
     doc = tomlrt.loads(
         td("""
         x = 1
@@ -11728,13 +11718,77 @@ def test_reposition_install_leaves_a_scattered_install_where_it_landed() -> None
         a.p = 2
         x.p = 2
 
-        [[a.q]]
+        [[x.q]]
         r = 3
 
-        [[x.q]]
+        [[a.q]]
         r = 3
         """)
     assert _reparses(out) == doc.to_dict()
+
+
+def test_source_parent_repair_can_split_a_recorded_factory_install() -> None:
+    old_doc = tomlrt.loads(
+        td("""
+        [old.child]
+        x=1
+        """)
+    )
+    old = old_doc.table("old")
+    child = old.table("child")
+    old_doc.pop("old")
+    dest_doc = tomlrt.loads(
+        td("""
+        [dest]
+        a=0
+        """)
+    )
+    dest = dest_doc.table("dest")
+    dest_doc.pop("dest")
+    third = Table.section({"z": 2})
+    factory = Table.section({"parent": old, "child": child, "third": third})
+
+    dest["a"] = factory
+
+    doc = tomlrt.Document()
+    doc["result"] = dest
+    assert doc.table("result") is dest
+    assert doc.table("result.a") is factory
+    assert doc.table("result.a.parent") is old
+    assert doc.table("result.a.child") is child
+    assert doc.table("result.a.third") is third
+    expected = td("""
+        [result]
+
+        [result.a.child]
+        x=1
+
+        [result.a.parent]
+
+        [result.a.third]
+        z = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    old["y"] = 3
+    child["x"] = 4
+    third["z"] = 5
+    expected = td("""
+        [result]
+
+        [result.a.child]
+        x=4
+
+        [result.a.parent]
+        y = 3
+
+        [result.a.third]
+        z = 5
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(old_doc) == ""
+    assert tomlrt.dumps(dest_doc) == ""
 
 
 def test_repeated_overlapping_installs_keep_the_source_header_less() -> None:
