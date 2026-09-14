@@ -55,7 +55,9 @@ from tomlrt._errors import TOMLError
 from tomlrt._format import (
     _prepare_indent,
     _resolve_format_options,
-    format_container,
+    format_document_trailing,
+    format_inline_root,
+    format_slots,
 )
 from tomlrt._inline_comments import _InlineAdapter
 from tomlrt._kind import _Kind
@@ -338,7 +340,69 @@ class Container(_View, dict[str, Any]):
         navigators are unsupported and raise `TOMLError`.
         """
         resolved = _resolve_format_options(options=options, comments=comments)
-        format_container(self, options=resolved)
+        kind = self._kind
+        nl = self._doc_newline
+        if kind is _Kind.INLINE_ROOT:
+            assert self._value is not None
+            format_inline_root(
+                self._value, nl=nl, options=resolved, host=_host_kv_slot(self)
+            )
+            return
+        if kind in (_Kind.INLINE_FACTORY, _Kind.INLINE_DOTTED_INNER):
+            msg = "format() is not supported on detached inline-table views"
+            raise TOMLError(msg)
+        doc = self._layout_root
+        if doc is None:
+            msg = "format() requires the container to have document layout"
+            raise TOMLError(msg)
+        whole_document = kind is _Kind.DOCUMENT
+        # A preamble already supplies the document's opening separator.
+        head_blank_cap = None
+        if whole_document:
+            assert isinstance(self, Document)
+            head_blank_cap = 0 if self._preamble else 1
+        for slots, owns_adjacent_gaps in self._format_scopes():
+            format_slots(
+                slots,
+                nl=nl,
+                options=resolved,
+                owns_adjacent_gaps=owns_adjacent_gaps,
+                head_blank_cap=head_blank_cap,
+            )
+        if whole_document:
+            assert isinstance(self, Document)
+            self._preamble = format_document_trailing(
+                self._preamble, nl=nl, options=resolved
+            )
+            self._trailing = format_document_trailing(
+                self._trailing, nl=nl, options=resolved
+            )
+
+    def _format_scopes(self) -> Iterator[tuple[list[Slot], bool]]:
+        """The disjoint slot runs `format` canonicalises, and who owns each gap.
+
+        A header-bearing receiver is one run: its own block, complete
+        with its subtree. An implicit one owns only the outer-hosted
+        dotted keys that spell it -- lines in someone else's block, so
+        it does not own the gaps between them -- and contributes its
+        first header-bearing descendants as runs of their own.
+        """
+        implicit = self._kind is _Kind.IMPLICIT_SECTION
+        if not implicit:
+            yield _layout_ops.owned_slots(self), True
+            return
+        yield _layout_ops.implicit_body_slots(self), False
+        pending: list[Container] = [self]
+        while pending:
+            for child in pending.pop().values():
+                if _is_section(child):
+                    if child._header_ref is None:  # noqa: SLF001
+                        pending.append(child)
+                    else:
+                        yield _layout_ops.owned_slots(child), True
+                elif isinstance(child, AoT):
+                    for entry in child:
+                        yield _layout_ops.owned_slots(entry), True
 
     @property
     def _attached_doc(self) -> Document:
