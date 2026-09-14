@@ -2106,7 +2106,6 @@ def _fill_inline_array(
         )
         val.items.append(item)
         list.append(arr, sub_dec)
-    val._ml_cache = False  # noqa: SLF001
 
 
 __all__ = ["AoT", "Array", "Container", "Document", "Table", "TomlInput"]
