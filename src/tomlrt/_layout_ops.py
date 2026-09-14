@@ -1250,7 +1250,13 @@ def _collect_subtree(
     aots_out: list[AoT],
     add_slot: Callable[[Slot], None],
 ) -> None:
-    """Walk ``val``'s container subtree, collecting containers, AoTs and owned slots.
+    """Walk ``val``'s subtree, collecting containers, AoTs and their slots.
+
+    Model-driven and unordered, unlike `owned_slots`, which projects the
+    doc-stream run a view's block physically spans. This reaches every
+    slot a descendant container names, including an empty AoT's ``k =
+    []`` placeholder -- which sits in its parent's block and so belongs
+    to no block of the AoT's own.
 
     Only ``Container``/``AoT`` values can ever match below (an inline
     array's contents never own doc-stream slots of their own, and are
