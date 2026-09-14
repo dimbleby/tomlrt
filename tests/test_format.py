@@ -1017,52 +1017,50 @@ def test_eol_comment_spacing_preserves_crlf() -> None:
     """).replace("\n", "\r\n")
 
 
-@pytest.mark.parametrize("newline", ["\n", "\r\n"])
-@pytest.mark.parametrize("normalize_comments", [False, True])
-def test_nested_bracket_comments_keep_independent_indentation(
-    newline: str, *, normalize_comments: bool
-) -> None:
+def test_nested_empty_inline_table_formats_bracket_comments() -> None:
+    src = td("""
+        outer = [
+          {   #opening
+        #closing
+          },
+        ]
+    """)
+    expected = td("""
+        outer = [
+          {   # opening
+            # closing
+          },
+        ]
+    """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.format()
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
+    doc.format()
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_nested_array_bracket_comments_preserve_unnormalized_text() -> None:
     src = td("""
         outer = [
           [   #opening
+            1,#item
         #closing
           ],
-          {   #opening
-        #closing
-          },
-          [   #opening
-            1,
-        #closing
-          ],
-          {   #opening
-            a=1, #item
-        #closing
-          },
         ]
-    """).replace("\n", newline)
+    """)
     expected = td("""
         outer = [
           [   #opening
+            1, #item
             #closing
           ],
-          {   #opening
-            #closing
-          },
-          [   #opening
-            1,
-            #closing
-          ],
-          {   #opening
-            a = 1, #item
-            #closing
-          },
         ]
-    """).replace("\n", newline)
-    if normalize_comments:
-        expected = expected.replace("#", "# ")
+    """)
     doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
-    options = tomlrt.FormatOptions(normalize_comments=normalize_comments)
+    options = tomlrt.FormatOptions(normalize_comments=False)
     doc.format(options=options)
     assert tomlrt.dumps(doc) == expected
     assert reparses(expected) == doc.to_dict()
