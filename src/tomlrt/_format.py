@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import Boundary
 from tomlrt._errors import TOMLError
-from tomlrt._kind import _Kind
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
     leading_break,
@@ -57,9 +56,8 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterable, Sequence
 
-    from tomlrt._container import Container
     from tomlrt._slots import Slot
     from tomlrt._values import (
         CommaItem,
@@ -789,94 +787,47 @@ def format_inline_root(
 
 
 # ---------------------------------------------------------------------------
-# Subtree walk and orchestration
+# Slot-run canonicalisation
 # ---------------------------------------------------------------------------
 
 
-def _format_scopes(container: Container) -> Iterator[Container]:
-    """Yield disjoint scopes, descending only through headerless sections."""
-    yield container
-    if container._kind is not _Kind.IMPLICIT_SECTION:  # noqa: SLF001
-        return
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
+def format_slots(
+    slots: Iterable[Slot],
+    *,
+    nl: str,
+    options: FormatOptions,
+    owns_adjacent_gaps: bool,
+    head_blank_cap: int | None,
+) -> None:
+    """Canonicalise one run of physical slots and the values they hold.
 
-    pending = [container]
-    while pending:
-        for child in pending.pop().values():
-            if isinstance(child, Container) and not child._inline:  # noqa: SLF001
-                if child._header_ref is None:  # noqa: SLF001
-                    pending.append(child)
-                else:
-                    yield child
-            elif isinstance(child, AoT):
-                yield from child
+    The caller selects the run and says whether it owns the gaps within
+    it: a scope whose slots are spelled inside some other block only
+    borrows the lines they sit on, so their separators stay as authored.
+    Where the run does own them, a structural header takes one blank
+    line and anything else none -- and only between slots that are
+    physically adjacent, since a gap spanning a foreign slot belongs to
+    whoever owns that.
 
-
-def format_container(container: Container, *, options: FormatOptions) -> None:
-    """Canonicalise each selected physical slot and its inline values once.
-
-    Implicit receivers own only their outer-hosted dotted body directly.
-    Their first header-bearing descendants supply separate scopes, each
-    of which includes its complete subtree. Scope boundaries and gaps
-    across foreign slots preserve parent-owned blank lines.
+    ``head_blank_cap`` bounds the blanks the first slot keeps; ``None``
+    preserves them, as a nested run's opening boundary is its parent's.
     """
-    kind = container._kind  # noqa: SLF001
-    nl = container._doc_newline  # noqa: SLF001
-    if kind is _Kind.INLINE_ROOT:
-        from tomlrt._container import _host_kv_slot  # noqa: PLC0415
-
-        assert container._value is not None  # noqa: SLF001
-        format_inline_root(
-            container._value,  # noqa: SLF001
+    prev: Slot | None = None
+    for slot in slots:
+        target: int | None = None
+        if owns_adjacent_gaps and prev is not None and slot._prev is prev:  # noqa: SLF001
+            target = 1 if isinstance(slot, StructuralHeaderSlot) else 0
+        _canon_slot(
+            slot,
             nl=nl,
+            target_blanks=target,
             options=options,
-            host=_host_kv_slot(container),
+            max_preserved_blanks=head_blank_cap if prev is None else None,
         )
-        return
-    if kind in (_Kind.INLINE_FACTORY, _Kind.INLINE_DOTTED_INNER):
-        msg = "format() is not supported on detached inline-table views"
-        raise TOMLError(msg)
-    doc = container._layout_root  # noqa: SLF001
-    if doc is None:
-        msg = "format() requires the container to have document layout"
-        raise TOMLError(msg)
-    from tomlrt._layout_ops import implicit_body_slots, owned_slots  # noqa: PLC0415
-
-    head_blank_cap = None
-    if kind is _Kind.DOCUMENT:
-        # A preamble already supplies the document's opening separator.
-        head_blank_cap = 0 if doc._preamble else 1  # noqa: SLF001
-    for scope in _format_scopes(container):
-        implicit = scope._kind is _Kind.IMPLICIT_SECTION  # noqa: SLF001
-        slots = implicit_body_slots(scope) if implicit else owned_slots(scope)
-        prev: Slot | None = None
-        for slot in slots:
-            target: int | None = None
-            if not implicit and prev is not None and slot._prev is prev:  # noqa: SLF001
-                target = 1 if isinstance(slot, StructuralHeaderSlot) else 0
-            _canon_slot(
-                slot,
-                nl=nl,
-                target_blanks=target,
-                options=options,
-                max_preserved_blanks=head_blank_cap if prev is None else None,
-            )
-            # Only the actual document tail may retain no final newline.
-            if slot._next is not None:  # noqa: SLF001
-                ensure_terminator(slot, nl)
-            prev = slot
-    if kind is _Kind.DOCUMENT:
-        doc._preamble = format_document_trailing(  # noqa: SLF001
-            doc._preamble,  # noqa: SLF001
-            nl=nl,
-            options=options,
-        )
-        doc._trailing = format_document_trailing(  # noqa: SLF001
-            doc._trailing,  # noqa: SLF001
-            nl=nl,
-            options=options,
-        )
+        # Only the actual document tail may retain no final newline.
+        if slot._next is not None:  # noqa: SLF001
+            ensure_terminator(slot, nl)
+        prev = slot
 
 
 def format_document_trailing(
@@ -902,8 +853,8 @@ __all__ = [
     "_closing_indent",
     "_prepare_indent",
     "_resolve_format_options",
-    "format_container",
     "format_document_trailing",
     "format_inline_root",
+    "format_slots",
     "set_comma_value_multiline",
 ]

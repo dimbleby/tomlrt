@@ -1712,6 +1712,40 @@ def test_format_implicit_scopes_preserve_parent_owned_gaps() -> None:
     assert reparses(expected) == doc.to_dict()
 
 
+def test_format_implicit_scope_leaves_gaps_between_its_own_dotted_keys() -> None:
+    """An implicit scope's body slots are spelled in someone else's block.
+
+    Its dotted keys sit among the outer host's lines, so the gaps
+    between them belong to that host. Formatting the host closes them;
+    formatting the implicit table alone must not.
+    """
+    src = td("""
+        a.b   =  1
+
+
+        a.c = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("a").format()
+    kept = td("""
+        a.b = 1
+
+
+        a.c = 2
+        """)
+    assert tomlrt.dumps(doc) == kept
+    assert reparses(kept) == doc.to_dict()
+
+    whole = tomlrt.loads(src)
+    whole.format()
+    closed = td("""
+        a.b = 1
+        a.c = 2
+        """)
+    assert tomlrt.dumps(whole) == closed
+    assert reparses(closed) == whole.to_dict()
+
+
 def test_format_scattered_implicit_section_leaves_foreign_text_untouched() -> None:
     source = (
         td("""
