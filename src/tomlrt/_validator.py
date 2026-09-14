@@ -14,11 +14,14 @@ from typing import TYPE_CHECKING, Literal
 from tomlrt._slots import AoTEntry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from typing import Protocol
 
     from tomlrt._errors import TOMLParseError
 
-    ErrorBuilder = Callable[..., TOMLParseError]
+    class ErrorBuilder(Protocol):
+        """Build a parse error at a known source offset."""
+
+        def __call__(self, message: str, *, at: int) -> TOMLParseError: ...
 
 
 _HeaderKind = Literal["table", "aot-entry"]
