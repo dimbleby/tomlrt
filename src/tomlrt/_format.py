@@ -50,7 +50,6 @@ from tomlrt._values import (
     InlineTableValue,
     item_has_any_comment,
     set_item_eol_channel,
-    value_has_own_comment,
 )
 
 if TYPE_CHECKING:
@@ -370,7 +369,7 @@ def _canon_multiline_shape(
     """
     items = v.items
     above_blocks: list[str] = [""] * len(items)
-    if value_has_own_comment(v):
+    if v.has_own_comment():
         for i in range(len(items)):
             boundary = Boundary.capture(v, i)
             above_blocks[i] = _format_above_block(boundary.above)

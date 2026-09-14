@@ -390,14 +390,35 @@ class CommaValue(_CommaNode, Generic[_ItemT]):
         return f"{self._open}{self.header_trivia}{body}{self.final_trivia}{self._close}"
 
     def is_multiline(self) -> bool:
-        """Whether this value renders across multiple physical lines.
+        """Whether this value's own trivia contains a row break.
 
+        Nested values and scalar lexemes do not determine the outer shape.
         Memoised via `_ml_cache`: the first call after a cache-invalidating
         mutation costs an O(n) scan, every other call is O(1).
         """
         if self._ml_cache is None:
-            self._ml_cache = _scan_multiline(self)
+            self._ml_cache = self._own_trivia_contains("\n")
         return self._ml_cache
+
+    def has_own_comment(self) -> bool:
+        """Whether this value's own trivia carries a comment, without caching.
+
+        Unlike `value_has_any_comment`, excludes comments in nested values.
+        """
+        return self._own_trivia_contains("#")
+
+    def _own_trivia_contains(self, needle: str) -> bool:
+        """Search own-level trivia, excluding nested values and scalar lexemes."""
+        if needle in self.header_trivia or needle in self.final_trivia:
+            return True
+        for it in self.items:
+            if (
+                needle in it.leading
+                or needle in it.post_comma_trivia
+                or needle in it.trailing
+            ):
+                return True
+        return False
 
     def reset_multiline_cache(self) -> None:
         """Drop the memoised `is_multiline` result so it recomputes.
@@ -499,31 +520,6 @@ def inter_item_separator(items: Sequence[CommaItem]) -> str:
     return " "
 
 
-def _scan_multiline(v: CommaValue[_ItemT]) -> bool:
-    """Uncached scan: inspect every trivia region that can carry a row break."""
-    if "\n" in v.header_trivia or "\n" in v.final_trivia:
-        return True
-    for it in v.items:
-        if "\n" in it.leading or "\n" in it.post_comma_trivia or "\n" in it.trailing:
-            return True
-    return False
-
-
-def value_has_own_comment(v: ArrayValue | InlineTableValue) -> bool:
-    """Uncached scan: whether ``v``'s own trivia carries any comment.
-
-    Own-level, unlike `value_has_any_comment`: a comment inside a nested
-    value belongs to that value's trivia, not to this one's. The sibling
-    of `_scan_multiline`, over the same set of regions.
-    """
-    if "#" in v.header_trivia or "#" in v.final_trivia:
-        return True
-    for it in v.items:
-        if "#" in it.leading or "#" in it.post_comma_trivia or "#" in it.trailing:
-            return True
-    return False
-
-
 def value_has_any_comment(v: Value) -> bool:
     """Whether any comment appears anywhere within ``v`` (recursively)."""
     if not isinstance(v, CommaValue):
@@ -579,5 +575,4 @@ __all__ = [
     "item_has_any_comment",
     "retarget_value_newlines",
     "set_item_eol_channel",
-    "value_has_own_comment",
 ]

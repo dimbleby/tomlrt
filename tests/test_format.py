@@ -1068,6 +1068,22 @@ def test_nested_array_bracket_comments_preserve_unnormalized_text() -> None:
     assert tomlrt.dumps(doc) == expected
 
 
+def test_scalar_text_does_not_determine_outer_shape() -> None:
+    src = td("""
+        array = ['''first
+        # literal content
+        last''']
+        table = { text = '''first
+        # literal content
+        last''' }
+    """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    doc.format()
+    assert tomlrt.dumps(doc) == src
+    assert reparses(src) == doc.to_dict()
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
