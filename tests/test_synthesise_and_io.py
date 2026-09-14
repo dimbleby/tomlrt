@@ -929,6 +929,52 @@ class _MutableStr(str):
         self.labels = ["original"]
 
 
+class _MutableDelta(timedelta):
+    __slots__ = ("labels",)
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        self.labels = ["original"]
+
+
+def test_cloned_timezone_payload_subclasses_are_independent() -> None:
+    """An exact ``timezone`` is only as immutable as what it was built from.
+
+    It retains the offset and name objects it was handed, so either one
+    being a subclass with state of its own reaches mutable data through
+    an otherwise shareable instance.
+    """
+    offset = _MutableDelta(hours=2)
+    name = _MutableStr("plus-two")
+    source = Document()
+    source["source"] = Table.section(
+        {
+            "offset": datetime(2020, 1, 1, tzinfo=timezone(offset)),
+            "named": datetime(2020, 1, 1, tzinfo=timezone(timedelta(hours=2), name)),
+        }
+    )
+    target = Document()
+    target["copy"] = source.table("source")
+    offset.labels.append("changed")
+    name.labels.append("changed")
+    copied_offset = target.table("copy")["offset"]
+    copied_named = target.table("copy")["named"]
+    assert isinstance(copied_offset, datetime)
+    assert isinstance(copied_named, datetime)
+    carried_offset = copied_offset.utcoffset()
+    carried_name = copied_named.tzname()
+    assert isinstance(carried_offset, _MutableDelta)
+    assert isinstance(carried_name, _MutableStr)
+    assert carried_offset.labels == ["original"]
+    assert carried_name.labels == ["original"]
+    expected = td("""
+        [copy]
+        offset = 2020-01-01T00:00:00+02:00
+        named = 2020-01-01T00:00:00+02:00
+        """)
+    assert tomlrt.dumps(target) == expected
+    assert reparses(expected) == target.to_dict()
+
+
 class _CopyAwareInt(_MutableInt):
     def __init__(self, value: int) -> None:
         super().__init__(value)

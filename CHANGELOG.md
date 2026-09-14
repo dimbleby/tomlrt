@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Copying a document, and exporting one with `to_dict()` / `to_list()`, no
+  longer duplicate dates and times whose payloads cannot change. Values that
+  can — subclasses, or date-times carrying a custom zone — are still copied.
+
 ### Fixed
 
 - Replacing a value inside an inline table no longer moves its key or removes
