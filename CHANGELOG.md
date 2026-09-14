@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arrays use the standard four spaces when their first item is added.
 - Invalid indentation is rejected before expanding to multiple lines, leaving
   input values unchanged. Indentation is ignored when using a single line.
+- Copying a removed table no longer affects assignments to another document
+  made by a custom copying hook.
 
 ## [2.2.10] - 2026-09-13
 

@@ -1839,6 +1839,229 @@ def test_update_from_a_popped_subtree_leaves_it_intact() -> None:
     assert orphan.to_dict() == {"x": 1, "sub": {"y": 2}}
 
 
+def test_copy_callback_can_adopt_a_sibling_into_another_document() -> None:
+    other = Document()
+
+    class MovingInt(int):
+        def __deepcopy__(self, _memo: dict[int, object]) -> int:
+            other["moved"] = sibling
+            return int(self)
+
+    source = tomlrt.loads(
+        td("""
+        [parent.a]
+        value = 1
+        [parent.b]
+        x = 2
+        """)
+    )
+    source.table("parent.a")["value"] = MovingInt(1)
+    held = source.table("parent")
+    del source["parent"]
+    sibling = held.table("b")
+    copied = copy(held.table("a"))
+    assert other.table("moved") is sibling
+    sibling["x"] = 3
+    held.table("a")["value"] = 2
+    target = Document()
+    target["copy"] = copied
+    source["remaining"] = held
+    assert tomlrt.dumps(other) == td("""
+        [moved]
+        x = 3
+        """)
+    assert tomlrt.dumps(target) == td("""
+        [copy]
+        value = 1
+        """)
+    assert tomlrt.dumps(source) == td("""
+        [remaining.a]
+        value = 2
+        """)
+
+
+def test_failed_update_restores_normal_adoption_after_partial_progress() -> None:
+    source = tomlrt.loads("[private]\nx = 1\n")
+    private = source.table("private")
+    del source["private"]
+    target = tomlrt.loads("keep = 0\n")
+    with pytest.raises(TypeError, match="cannot convert NoneType"):
+        target.update({"copied": private, "bad": None})
+    assert target.table("copied") is not private
+    target["moved"] = private
+    assert target.table("moved") is private
+    private["x"] = 2
+    expected = td("""
+        keep = 0
+
+        [copied]
+        x = 1
+
+        [moved]
+        x = 2
+        """)
+    assert tomlrt.dumps(target) == expected
+    assert reparses(expected) == target.to_dict()
+    assert tomlrt.dumps(source) == ""
+
+
+def test_nested_update_protection_is_scoped_to_its_destination() -> None:
+    outer_doc = tomlrt.loads(
+        td("""
+        [root.source]
+        value = 1
+        [root.sibling]
+        x = 2
+        """)
+    )
+    outer = outer_doc.table("root")
+    del outer_doc["root"]
+    incoming = outer.table("source")
+    sibling = outer.table("sibling")
+    inner_doc = tomlrt.loads("[source]\ny = 3\n")
+    inner = inner_doc.table("source")
+    del inner_doc["source"]
+    target = Document()
+
+    class InnerInt(int):
+        def __deepcopy__(self, _memo: dict[int, object]) -> int:
+            target["outer_sibling"] = sibling
+            return int(self)
+
+    class OuterInt(int):
+        def __deepcopy__(self, _memo: dict[int, object]) -> int:
+            with pytest.raises(TypeError, match="cannot convert NoneType"):
+                target.update({"inner": inner, "bad": None})
+            target["outer_after"] = sibling
+            target["inner_released"] = inner
+            return int(self)
+
+    inner["y"] = InnerInt(3)
+    incoming["value"] = OuterInt(1)
+    target.update({"copied": incoming})
+    assert target.table("outer_sibling") is not sibling
+    assert target.table("outer_after") is not sibling
+    assert target.table("inner") is not inner
+    assert target.table("inner_released") is inner
+    sibling["x"] = 20
+    incoming["value"] = 5
+    inner["y"] = 4
+    expected = td("""
+        [outer_sibling]
+        x = 2
+
+        [inner]
+        y = 3
+
+        [outer_after]
+        x = 2
+
+        [inner_released]
+        y = 4
+
+        [copied]
+        value = 1
+        """)
+    assert tomlrt.dumps(target) == expected
+    assert reparses(expected) == target.to_dict()
+    outer_doc["remaining"] = outer
+    assert tomlrt.dumps(outer_doc) == td("""
+        [remaining.source]
+        value = 5
+        [remaining.sibling]
+        x = 20
+        """)
+    assert tomlrt.dumps(inner_doc) == ""
+
+
+def test_update_adopts_roots_orphaned_by_the_current_write() -> None:
+    source = tomlrt.loads("[template]\nvalue = 9\n")
+    private = source.table("template")
+    del source["template"]
+    doc = tomlrt.loads("[outer]\n[outer.child]\nx = 1\n")
+    child = doc.table("outer.child")
+    doc.update({"private": private, "outer": child})
+    assert doc.table("outer") is child
+    assert doc.table("private") is not private
+    expected = td("""
+        [outer]
+        x = 1
+        [private]
+        value = 9
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(private) == "value = 9\n"
+    assert tomlrt.dumps(source) == ""
+
+
+def test_factory_update_keeps_references_for_later_attachment() -> None:
+    source = tomlrt.loads("[template]\nvalue = 9\n")
+    private = source.table("template")
+    del source["template"]
+    factory = Table.section()
+    factory.update({"child": private})
+    target = Document()
+    target["parent"] = factory
+    assert target.table("parent") is factory
+    assert target.table("parent.child") is private
+    private["value"] = 10
+    assert tomlrt.dumps(target) == td("""
+        [parent.child]
+        value = 10
+        """)
+    assert tomlrt.dumps(source) == ""
+
+
+def test_update_keeps_fresh_aot_entries_live_but_copies_existing_layout() -> None:
+    source = tomlrt.loads("[template]\nx = 1 # keep\n")
+    factory = AoT([source.table("template"), {"x": 2}])
+    layout_entry, fresh_entry = factory
+    target = Document()
+    target.update({"rows": factory})
+    assert target.aot("rows") is factory
+    assert factory[0] is not layout_entry
+    assert factory[1] is fresh_entry
+    layout_entry["x"] = 8
+    fresh_entry["x"] = 3
+    expected = td("""
+        [[rows]]
+        x = 1 # keep
+
+        [[rows]]
+        x = 3
+        """)
+    assert tomlrt.dumps(target) == expected
+    assert reparses(expected) == target.to_dict()
+    assert tomlrt.dumps(layout_entry) == "x = 8 # keep\n"
+    assert tomlrt.dumps(source) == "[template]\nx = 1 # keep\n"
+
+
+def test_update_copies_a_private_aot_without_preventing_later_adoption() -> None:
+    source = tomlrt.loads("[[items]]\nx = 1\n")
+    held = source.aot("items")
+    del source["items"]
+    target = Document()
+    target.update({"copied": held})
+    assert target.aot("copied") is not held
+    target["moved"] = held
+    assert target.aot("moved") is held
+    held.add({"x": 2})
+    expected = td("""
+        [[copied]]
+        x = 1
+
+        [[moved]]
+        x = 1
+
+        [[moved]]
+        x = 2
+        """)
+    assert tomlrt.dumps(target) == expected
+    assert reparses(expected) == target.to_dict()
+    assert tomlrt.dumps(source) == ""
+
+
 def test_dumps_a_popped_subtree_wrapped_in_plain_mappings() -> None:
     """A source one level down is still the caller's.
 

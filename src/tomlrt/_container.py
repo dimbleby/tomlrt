@@ -621,7 +621,7 @@ class Container(_View, dict[str, Any]):
         views; entries without layout are synthesized in place.
         """
         src_root = value._layout_root  # noqa: SLF001
-        if src_root is not None and not src_root._is_private:  # noqa: SLF001
+        if src_root is not None and not _can_adopt_from(src_root, self._attached_doc):
             _layout_ops.clone_aot(self, key, value)
             return
         emptied = value._host  # noqa: SLF001
@@ -634,7 +634,7 @@ class Container(_View, dict[str, Any]):
             source_doc = entry_table._layout_root  # noqa: SLF001
             if source_doc is None:
                 _layout_ops.add_aot_entry(value, None, rehome=entry_table)
-            elif source_doc._is_private:  # noqa: SLF001
+            elif _can_adopt_from(source_doc, self._attached_doc):
                 _layout_ops.adopt_private_entry(
                     value,
                     entry_table,
@@ -657,7 +657,7 @@ class Container(_View, dict[str, Any]):
         if src_root is None:
             assert isinstance(value, Table), "a section factory must be a Table"
             _layout_ops.attach_section_at(self, (key,), value)
-        elif src_root._is_private:  # noqa: SLF001
+        elif _can_adopt_from(src_root, self._attached_doc):
             assert value._refs, "a private section owns slots"
             emptied = value._parent
             if value._header_ref is not None:
@@ -763,7 +763,7 @@ class Container(_View, dict[str, Any]):
         # Updating from a mapping must not consume it, and reading it
         # once up front keeps an install that unbinds one of its keys
         # from cutting the read short.
-        with _sources_kept_intact(v for _, v in items):
+        with _sources_kept_intact(self._layout_root, (v for _, v in items)):
             for k, v in items:
                 self[k] = v
 
@@ -1331,6 +1331,7 @@ class Document(Container):
         "_newline",
         "_preamble",
         "_prelude",
+        "_protected_source_roots",
         "_section_blank_separated",
         "_tail",
         "_trailing",
@@ -1367,6 +1368,7 @@ class Document(Container):
         self._newline: str = DEFAULT_NEWLINE
         self._prelude: str = ""
         self._is_private: bool = False
+        self._protected_source_roots: dict[int, Document] | None = None
         self._install_recorders: (
             tuple[
                 list[Slot],
@@ -1520,7 +1522,7 @@ def _clone_private_layout(value: Container | AoT) -> Table | AoT:
     holder = Document()
     holder._is_private = True  # noqa: SLF001
     holder._newline = value._doc_newline  # noqa: SLF001
-    with _sources_kept_intact((value,)):
+    with _sources_kept_intact(holder, (value,)):
         holder._setitem_validated("", value)  # noqa: SLF001
     result = dict.__getitem__(holder, "")
     assert isinstance(result, (Table, AoT))
@@ -1657,25 +1659,35 @@ def _collect_private_roots(value: object, found: dict[int, Document]) -> None:
             _collect_private_roots(sub, found)
 
 
-@contextlib.contextmanager
-def _sources_kept_intact(values: Iterable[object]) -> Iterator[None]:
-    """Present any private source document as one that must be copied.
+def _can_adopt_from(source: Document, destination: Document) -> bool:
+    """Whether this destination may consume the source root's layout."""
+    protected = destination._protected_source_roots  # noqa: SLF001
+    return source._is_private and (protected is None or id(source) not in protected)  # noqa: SLF001
 
-    An install moves out of a private orphan and clones from anything
-    else. Only the former damages the source, so for the duration the
-    orphans reachable from ``values`` claim to be documents in their
-    own right.
+
+@contextlib.contextmanager
+def _sources_kept_intact(
+    destination: Document | None, values: Iterable[object]
+) -> Iterator[None]:
+    """Protect initial source roots during writes to this destination.
+
+    Newly orphaned roots remain adoptable. Strong references keep the
+    captured identity keys valid until the scope exits.
     """
     roots: dict[int, Document] = {}
     for value in values:
         _collect_private_roots(value, roots)
-    for root in roots.values():
-        root._is_private = False  # noqa: SLF001
+    if destination is None:
+        yield
+        return
+    previous = destination._protected_source_roots  # noqa: SLF001
+    if previous is not None:
+        roots.update(previous)
+    destination._protected_source_roots = roots or None  # noqa: SLF001
     try:
         yield
     finally:
-        for root in roots.values():
-            root._is_private = True  # noqa: SLF001
+        destination._protected_source_roots = previous  # noqa: SLF001
 
 
 def _has_extractable_layout(data: Mapping[str, object]) -> TypeGuard[Table]:
