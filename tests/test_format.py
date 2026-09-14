@@ -1017,6 +1017,59 @@ def test_eol_comment_spacing_preserves_crlf() -> None:
     """).replace("\n", "\r\n")
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("normalize_comments", [False, True])
+def test_nested_bracket_comments_keep_independent_indentation(
+    newline: str, *, normalize_comments: bool
+) -> None:
+    src = td("""
+        outer = [
+          [   #opening
+        #closing
+          ],
+          {   #opening
+        #closing
+          },
+          [   #opening
+            1,
+        #closing
+          ],
+          {   #opening
+            a=1, #item
+        #closing
+          },
+        ]
+    """).replace("\n", newline)
+    expected = td("""
+        outer = [
+          [   #opening
+            #closing
+          ],
+          {   #opening
+            #closing
+          },
+          [   #opening
+            1,
+            #closing
+          ],
+          {   #opening
+            a = 1, #item
+            #closing
+          },
+        ]
+    """).replace("\n", newline)
+    if normalize_comments:
+        expected = expected.replace("#", "# ")
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    options = tomlrt.FormatOptions(normalize_comments=normalize_comments)
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == doc.to_dict()
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

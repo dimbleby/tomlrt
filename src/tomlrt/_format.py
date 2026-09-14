@@ -36,7 +36,6 @@ from tomlrt._comma_ops import Boundary
 from tomlrt._errors import TOMLError
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
-    leading_break,
     leading_ws,
     retarget_newlines,
     split_above_block,
@@ -49,7 +48,6 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
-    item_eol_channel,
     item_has_any_comment,
     set_item_eol_channel,
     value_has_own_comment,
@@ -365,25 +363,14 @@ def _canon_multiline_shape(
 ) -> None:
     """Apply multi-line canonical shape to ``v``.
 
-    Canonicalises per-item trivia, restamps bracket pads, then
-    retargets newlines and rewrites comment text. Canonicalising a
-    value that *stays* single-line goes through
-    `_canon_single_line_inline` instead: it produces only
-    empty/single-space trivia.
-
-    With no comment in ``v``'s own trivia the two text-carrying passes
-    are no-ops and are elided. Every above-block and EOL section is
-    then empty by definition, so the `Boundary` harvest has nothing to
-    find, and the item pass and bracket-pad block between them rebuild
-    every outer region from ``nl`` -- leaving `_finalise_inline_trivia`
-    nothing to retarget or normalise. This covers expanding a
-    single-line source, whose trivia is inline whitespace alone.
-    Nested values are untouched either way.
+    Harvests above-item comments before reshaping their boundaries.
+    Comment-free values need no harvest: their pads are rebuilt from
+    ``nl`` and indentation alone. Each pad canonicalises any carried
+    text as it is composed. Nested values are untouched.
     """
     items = v.items
-    carries_text = value_has_own_comment(v)
     above_blocks: list[str] = [""] * len(items)
-    if carries_text:
+    if value_has_own_comment(v):
         for i in range(len(items)):
             boundary = Boundary.capture(v, i)
             above_blocks[i] = _format_above_block(boundary.above)
@@ -403,6 +390,8 @@ def _canon_multiline_shape(
             above=head_above,
             nl=nl,
             trailing_indent=item_indent,
+            comment_indent=item_indent,
+            options=options,
         )
         # Unlike ``header_trivia``, ``final_trivia`` has no bracket-EOL first
         # line, so split it as an item boundary rather than treating its
@@ -416,9 +405,10 @@ def _canon_multiline_shape(
             above=final_above,
             nl=nl,
             trailing_indent=outer_indent,
+            comment_indent=item_indent,
+            options=options,
             row_already_closed=last_row_closed,
         )
-        final_eol_first = False
     else:
         # An empty multi-line value carries all of its trivia
         # (bracket-EOL + above-block + closing pad) in final_trivia;
@@ -431,18 +421,9 @@ def _canon_multiline_shape(
             above=final_above,
             nl=nl,
             trailing_indent=outer_indent,
+            comment_indent=item_indent,
+            options=options,
         )
-        final_eol_first = bool(final_eol)
-    if not carries_text:
-        return
-    _finalise_inline_trivia(
-        v,
-        nl=nl,
-        options=options,
-        item_indent=item_indent,
-        final_first_line_is_eol=final_eol_first,
-        final_row_already_closed=last_row_closed if items else False,
-    )
 
 
 def _format_above(t: str, *, row_already_closed: bool) -> str:
@@ -469,15 +450,26 @@ def _compose_pad(
     above: str,
     nl: str,
     trailing_indent: str,
+    comment_indent: str,
+    options: FormatOptions,
     row_already_closed: bool = False,
 ) -> str:
-    r"""Compose a bracket-pad from (row-attached EOL, above-block, indent).
+    r"""Compose and canonicalise a pad from EOL, above-block, and indent.
 
     Skips the structural newline when ``head_eol`` or the upstream item
-    EOL channel already closed the row.
+    EOL channel already closed the row. Closing-bracket pads indent their
+    comments with the items, independently of the bracket's own indent.
     """
     head = head_eol if head_eol or row_already_closed else nl
-    return head + above + trailing_indent
+    text = head + above + trailing_indent
+    if not head_eol and not above:
+        return text
+    return _canon_trivia_text(
+        retarget_newlines(text, nl),
+        comments=options.normalize_comments,
+        comment_indent=comment_indent,
+        first_line_is_eol=bool(head_eol) or not row_already_closed,
+    )
 
 
 def _inner_space(v: ArrayValue | InlineTableValue) -> str:
@@ -499,55 +491,6 @@ def _canon_single_line_inline(v: ArrayValue | InlineTableValue) -> None:
         it.trailing = ""
         it.post_comma_trivia = ""
         it.has_comma = k < n - 1
-
-
-def _finalise_inline_trivia(
-    v: ArrayValue | InlineTableValue,
-    *,
-    nl: str,
-    options: FormatOptions,
-    item_indent: str = "",
-    final_first_line_is_eol: bool = False,
-    final_row_already_closed: bool = False,
-) -> None:
-    """Retarget newlines + canonicalise comment / blank-WS text across ``v``.
-
-    Runs after shape canonicalisation over bracket pads and per-item
-    trivia. ``item_indent`` keeps full-line comments aligned with
-    multi-line items, not stripped to column 0.
-
-    ``final_first_line_is_eol`` covers the empty-value case where the
-    opening bracket's row-attached EOL lives in ``final_trivia`` and
-    must be treated as EOL context.
-    """
-    v.header_trivia = retarget_newlines(v.header_trivia, nl)
-    v.final_trivia = retarget_newlines(v.final_trivia, nl)
-    v.header_trivia = _canon_trivia_text(
-        v.header_trivia,
-        comments=options.normalize_comments,
-        comment_indent=item_indent,
-        first_line_is_eol=True,
-    )
-    v.final_trivia = _canon_trivia_text(
-        v.final_trivia,
-        comments=options.normalize_comments,
-        comment_indent=item_indent,
-        first_line_is_eol=(
-            final_first_line_is_eol
-            or (bool(leading_break(v.final_trivia)) and not final_row_already_closed)
-        ),
-    )
-    for k, it in enumerate(v.items):
-        it.leading = retarget_newlines(it.leading, nl)
-        previous_row_closed = k > 0 and "\n" in item_eol_channel(v.items[k - 1])
-        it.leading = _canon_trivia_text(
-            it.leading,
-            comments=options.normalize_comments,
-            comment_indent=item_indent,
-            first_line_is_eol=(
-                bool(leading_break(it.leading)) and not previous_row_closed
-            ),
-        )
 
 
 def _canon_multi_line_items(
@@ -576,9 +519,22 @@ def _canon_multi_line_items(
     trailing_comma = options.multiline_trailing_comma
     # A row with no above-block always wants the same pad, so ask for
     # both of its answers once rather than rebuilding them per item.
-    open_pad = _compose_pad(head_eol="", above="", nl=nl, trailing_indent=indent)
+    open_pad = _compose_pad(
+        head_eol="",
+        above="",
+        nl=nl,
+        trailing_indent=indent,
+        comment_indent=indent,
+        options=options,
+    )
     closed_pad = _compose_pad(
-        head_eol="", above="", nl=nl, trailing_indent=indent, row_already_closed=True
+        head_eol="",
+        above="",
+        nl=nl,
+        trailing_indent=indent,
+        comment_indent=indent,
+        options=options,
+        row_already_closed=True,
     )
     for k, it in enumerate(items):
         if k == 0:
@@ -591,6 +547,8 @@ def _canon_multi_line_items(
                     above=above,
                     nl=nl,
                     trailing_indent=indent,
+                    comment_indent=indent,
+                    options=options,
                     row_already_closed=previous_row_closed,
                 )
             else:
