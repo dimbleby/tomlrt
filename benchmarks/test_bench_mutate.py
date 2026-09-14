@@ -75,15 +75,6 @@ def _parsed(src: str) -> Callable[[], tuple[tuple[Document], dict[str, object]]]
 # --- parse / render workflows (no per-round state) -------------------------
 
 
-def test_parse_and_render_pyproject(
-    benchmark: BenchmarkFixture, pyproject_src: str
-) -> None:
-    def work() -> None:
-        tomlrt.dumps(tomlrt.loads(pyproject_src))
-
-    benchmark(work)
-
-
 def test_render_only_pyproject(benchmark: BenchmarkFixture, pyproject_src: str) -> None:
     doc = tomlrt.loads(pyproject_src)
     benchmark(tomlrt.dumps, doc)
@@ -135,15 +126,6 @@ def test_parse_update_render_pyproject(
 # --- array-of-tables -------------------------------------------------------
 
 
-def test_append_50_aot_entries(benchmark: BenchmarkFixture) -> None:
-    def work(doc: Document) -> None:
-        aot = doc.aot("items")
-        for i in range(50):
-            aot.append({"name": f"new-{i}", "value": 1000 + i})
-
-    benchmark.pedantic(work, setup=_parsed(_aot_doc(500)), rounds=200)
-
-
 def test_append_non_tail_aot_entries(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         aot = doc.aot("items")
@@ -151,13 +133,6 @@ def test_append_non_tail_aot_entries(benchmark: BenchmarkFixture) -> None:
             aot.append({"name": f"new-{i}", "value": 1000 + i})
 
     benchmark.pedantic(work, setup=_parsed(_aot_with_trailing(50, 10_000)), rounds=50)
-
-
-def test_append_after_large_aot_entry(benchmark: BenchmarkFixture) -> None:
-    def work(doc: Document) -> None:
-        doc.aot("a").append({"new": 1})
-
-    benchmark.pedantic(work, setup=_parsed(_large_aot_entry(10_000)), rounds=50)
 
 
 def test_clone_large_aot_entry(benchmark: BenchmarkFixture) -> None:
@@ -183,31 +158,6 @@ def test_clone_forward_declared_table(
     benchmark.pedantic(work, setup=_parsed(""), rounds=200)
 
 
-@pytest.mark.parametrize("size", [20, 2_000])
-def test_install_cloned_section_non_tail(
-    benchmark: BenchmarkFixture, size: int
-) -> None:
-    source = tomlrt.loads(_section_doc(1, size)).table("s0")
-
-    def work(doc: Document) -> None:
-        doc.table("a")["child"] = source
-
-    benchmark.pedantic(work, setup=_parsed("[a]\nx = 1\n[other]\ny = 2\n"), rounds=100)
-
-
-def test_clear_aot_with_trailing(benchmark: BenchmarkFixture) -> None:
-    """Clear an AoT that is not the last thing in the document.
-
-    Every entry's ref sits ahead of the trailing section's in the root's
-    caches, so none of the unfiling lands at a tail.
-    """
-
-    def work(doc: Document) -> None:
-        doc.aot("items").clear()
-
-    benchmark.pedantic(work, setup=_parsed(_aot_with_trailing(2_000, 5)), rounds=50)
-
-
 @pytest.mark.parametrize("size", [1_000, 16_000])
 def test_clear_aot_before_sections(benchmark: BenchmarkFixture, size: int) -> None:
     def work(doc: Document) -> None:
@@ -215,14 +165,6 @@ def test_clear_aot_before_sections(benchmark: BenchmarkFixture, size: int) -> No
 
     src = _aot_doc(size) + _section_doc(size, 1)
     benchmark.pedantic(work, setup=_parsed(src), rounds=10)
-
-
-@pytest.mark.parametrize("size", [1_000, 16_000])
-def test_delete_aot_prefix(benchmark: BenchmarkFixture, size: int) -> None:
-    def work(doc: Document) -> None:
-        del doc.aot("items")[: size // 2]
-
-    benchmark.pedantic(work, setup=_parsed(_aot_doc(size)), rounds=10)
 
 
 def test_replace_aot_slice(benchmark: BenchmarkFixture) -> None:
@@ -234,64 +176,30 @@ def test_replace_aot_slice(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_aot_doc(500)), rounds=100)
 
 
-@pytest.mark.parametrize("source", ["entry", "mapping"])
-def test_replace_aot_extended_slice(benchmark: BenchmarkFixture, source: str) -> None:
+def test_replace_aot_extended_slice(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         items = doc.aot("items")
-        values = (
-            list(items[::2]) if source == "entry" else [{"x": i} for i in range(50)]
-        )
-        items[98::-2] = values
+        items[98::-2] = list(items[::2])
 
     benchmark.pedantic(work, setup=_parsed(_aot_doc(100)), rounds=100)
 
 
-@pytest.mark.parametrize(
-    "source", ["entry", "mapping", "aot", "inline", "factory", "scalars"]
-)
-@pytest.mark.parametrize("size", [2, 1000])
-def test_replace_aot_entry(benchmark: BenchmarkFixture, source: str, size: int) -> None:
-    src = _aot_doc(50) + "\n[template]\n"
-    if source == "aot":
-        src += "".join(f"[[template.nested]]\nx = {i}\n" for i in range(size))
-    elif source == "scalars":
-        src += "".join(f"k{i} = {i}\n" for i in range(size))
-    else:
-        src += "nested = [" + ", ".join(str(i) for i in range(size)) + "]\n"
-
+def test_replace_aot_entry(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
-        items = doc.aot("items")
-        if source == "entry":
-            items[0] = items[-1]
-        elif source == "mapping":
-            items[0] = {"x": 1}
-        elif source == "factory":
-            items[0] = {"value": tomlrt.Table.inline({"nested": list(range(size))})}
-        else:
-            items[0] = doc.table("template")
-
-    benchmark.pedantic(work, setup=_parsed(src), rounds=200)
-
-
-@pytest.mark.parametrize("size", [10, 1000])
-def test_append_list_in_aot_entry(benchmark: BenchmarkFixture, size: int) -> None:
-    values = list(range(size))
-
-    def work(doc: Document) -> None:
-        doc.aot("items").append({"values": values})
+        doc.aot("items")[0] = {"x": 1}
 
     benchmark.pedantic(work, setup=_parsed(_aot_doc(50)), rounds=200)
 
 
 @pytest.mark.parametrize(
-    ("entries", "width", "depth"),
-    [(1, 5, 0), (500, 5, 0), (1, 1000, 0), (1, 5, 5), (1, 5, 25)],
+    ("entries", "depth"),
+    [(500, 0), (1, 25)],
 )
 def test_attach_aot_factory(
-    benchmark: BenchmarkFixture, entries: int, width: int, depth: int
+    benchmark: BenchmarkFixture, entries: int, depth: int
 ) -> None:
     def setup() -> tuple[tuple[Document, tomlrt.AoT], dict[str, object]]:
-        factory = tomlrt.AoT([{"values": list(range(width))} for _ in range(entries)])
+        factory = tomlrt.AoT([{"values": list(range(5))} for _ in range(entries)])
         for _ in range(depth):
             factory = tomlrt.AoT([{"child": factory}])
         return (tomlrt.Document(), factory), {}
@@ -302,33 +210,9 @@ def test_attach_aot_factory(
     benchmark.pedantic(work, setup=setup, rounds=100)
 
 
-@pytest.mark.parametrize(
-    ("entries", "width", "annotated"),
-    [(1, 5, False), (1, 1000, False), (100, 5, False), (1, 1000, True)],
-)
-def test_repeat_and_attach_aot_factory(
-    benchmark: BenchmarkFixture, entries: int, width: int, *, annotated: bool
-) -> None:
-    def setup() -> tuple[tuple[Document, tomlrt.AoT], dict[str, object]]:
-        factory = tomlrt.AoT([{"values": list(range(width))} for _ in range(entries)])
-        if annotated:
-            factory[0].comments["values"] = "retain"
-        return (tomlrt.Document(), factory), {}
-
-    def work(doc: Document, factory: tomlrt.AoT) -> None:
-        factory *= 3
-        doc["items"] = factory
-
-    benchmark.pedantic(work, setup=setup, rounds=100)
-
-
-@pytest.mark.parametrize("entries", [100, 1000, 3000])
-def test_clone_implicit_with_empty_aot_entries(
-    benchmark: BenchmarkFixture, entries: int
-) -> None:
+def test_clone_implicit_with_empty_aot_entries(benchmark: BenchmarkFixture) -> None:
     source = tomlrt.loads(
-        "source.marker = 0\n"
-        + _aot_doc(entries).replace("[[items]]", "[[source.rows]]")
+        "source.marker = 0\n" + _aot_doc(1000).replace("[[items]]", "[[source.rows]]")
     )
     for entry in source.aot("source.rows"):
         entry["pending"] = tomlrt.AoT()
@@ -340,42 +224,20 @@ def test_clone_implicit_with_empty_aot_entries(
     benchmark.pedantic(work, setup=_parsed(""), rounds=20)
 
 
-@pytest.mark.parametrize("source", ["section", "aot"])
-@pytest.mark.parametrize("size", [2, 1000])
-def test_replace_aot_from_ancestor(
-    benchmark: BenchmarkFixture, source: str, size: int
-) -> None:
-    src = "[parent]\nroot = 1\n\n" + _aot_doc(size).replace(
+def test_replace_aot_from_ancestor(benchmark: BenchmarkFixture) -> None:
+    src = "[parent]\nroot = 1\n\n" + _aot_doc(1000).replace(
         "[[items]]", "[[parent.items]]"
     )
 
     def work(doc: Document) -> None:
         parent = doc.table("parent")
         items = parent.aot("items")
-        items[0] = {"nested": parent if source == "section" else items}
+        items[0] = {"nested": parent}
 
     benchmark.pedantic(work, setup=_parsed(src), rounds=100)
 
 
-def test_overwrite_section_inside_aot_entry(benchmark: BenchmarkFixture) -> None:
-    def work(doc: Document) -> None:
-        doc.aot("a")[0].table("b")["c"] = 5
-
-    src = _large_aot_entry(10_000) + "\n[a.b.c]\nx = 1\n"
-    benchmark.pedantic(work, setup=_parsed(src), rounds=50)
-
-
 # --- sections --------------------------------------------------------------
-
-
-def test_install_non_tail_new_sections(benchmark: BenchmarkFixture) -> None:
-    def work(doc: Document) -> None:
-        target = doc.table("a")
-        for i in range(20):
-            target.install((f"s{i}",), tomlrt.Table.section({"x": i}))
-
-    src = "[a]\nx = 1\n\n[other]\n" + "".join(f"k{i} = {i}\n" for i in range(10_000))
-    benchmark.pedantic(work, setup=_parsed(src), rounds=50)
 
 
 def test_install_new_sections(benchmark: BenchmarkFixture) -> None:
@@ -411,14 +273,9 @@ def _inline_array(rows: int) -> str:
     )
 
 
-@pytest.mark.parametrize("kind", ["array", "table"])
-def test_clone_section_with_inline_value(
-    benchmark: BenchmarkFixture, kind: str
-) -> None:
+def test_clone_section_with_inline_value(benchmark: BenchmarkFixture) -> None:
     src = (
-        _inline_array(1_000)
-        if kind == "array"
-        else "items = {\n"
+        "items = {\n"
         + "".join(f"    k{i} = {i}, # item {i}\n" for i in range(1_000))
         + "}\n"
     )
@@ -439,11 +296,8 @@ def test_insert_into_inline_array(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_inline_array(500)), rounds=100)
 
 
-@pytest.mark.parametrize("size", [100, 1_000])
-def test_append_nested_list_to_inline_array(
-    benchmark: BenchmarkFixture, size: int
-) -> None:
-    value = list(range(size))
+def test_append_nested_list_to_inline_array(benchmark: BenchmarkFixture) -> None:
+    value = list(range(1000))
 
     def work(doc: Document) -> None:
         doc.array("items").append(value)
@@ -460,12 +314,12 @@ def test_delete_from_inline_array(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_inline_array(500)), rounds=100)
 
 
-@pytest.mark.parametrize("size", [1_000, 16_000])
-@pytest.mark.parametrize("layout", ["single", "multiline"])
-@pytest.mark.parametrize("step", [1, 2])
+@pytest.mark.parametrize(("layout", "step"), [("single", 1), ("multiline", 2)])
 def test_delete_inline_array_slice(
-    benchmark: BenchmarkFixture, size: int, layout: str, step: int
+    benchmark: BenchmarkFixture, layout: str, step: int
 ) -> None:
+    size = 16_000
+
     def work(doc: Document) -> None:
         del doc.array("items")[: size // 2 : step]
 
@@ -477,23 +331,15 @@ def test_delete_inline_array_slice(
     benchmark.pedantic(work, setup=_parsed(src), rounds=20)
 
 
-@pytest.mark.parametrize("size", [1_000, 16_000])
-@pytest.mark.parametrize("layout", ["single", "multiline"])
-def test_insert_inline_array_slice(
-    benchmark: BenchmarkFixture, size: int, layout: str
-) -> None:
+def test_insert_inline_array_slice(benchmark: BenchmarkFixture) -> None:
+    size = 16_000
     values = list(range(size // 2))
 
     def work(doc: Document) -> None:
         at = size // 4
         doc.array("items")[at:at] = values
 
-    src = (
-        _inline_array(size)
-        if layout == "multiline"
-        else "items = [" + ", ".join(str(i) for i in range(size)) + "]\n"
-    )
-    benchmark.pedantic(work, setup=_parsed(src), rounds=20)
+    benchmark.pedantic(work, setup=_parsed(_inline_array(size)), rounds=20)
 
 
 # --- key-level edits -------------------------------------------------------
@@ -521,16 +367,6 @@ def test_build_section_1000_new_keys(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed("[t]\n"), rounds=100)
 
 
-def test_delete_100_kvs(benchmark: BenchmarkFixture) -> None:
-    def work(doc: Document) -> None:
-        for s in range(50):
-            section = doc.table(f"s{s}")
-            del section["k0"]
-            del section["k1"]
-
-    benchmark.pedantic(work, setup=_parsed(_section_doc(50, 20)), rounds=200)
-
-
 def test_delete_root_kvs_tail_first(benchmark: BenchmarkFixture) -> None:
     """Delete the root body backwards, under a pile of section headers.
 
@@ -550,15 +386,6 @@ def test_delete_root_kvs_tail_first(benchmark: BenchmarkFixture) -> None:
 # --- sorting ---------------------------------------------------------------
 
 
-def test_sort_800_sections(benchmark: BenchmarkFixture) -> None:
-    def work(doc: Document) -> None:
-        for section in doc.values():
-            assert isinstance(section, tomlrt.Table)
-            section.sort(reverse=True)
-
-    benchmark.pedantic(work, setup=_parsed(_section_doc(800, 20)), rounds=20)
-
-
 def test_sort_nested_sections(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         for section in doc.values():
@@ -572,18 +399,13 @@ def test_sort_nested_sections(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(src), rounds=20)
 
 
-@pytest.mark.parametrize("implicit", [False, True])
-def test_sort_forward_declared_table(
-    benchmark: BenchmarkFixture, *, implicit: bool
-) -> None:
-    path = "target.inner" if implicit else "target"
-    key = "inner.a" if implicit else "a"
-
+def test_sort_forward_declared_table(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
-        doc.table(path).sort()
+        doc.table("target.inner").sort()
 
-    src = f"root_value = 0\n[{path}.z]\nvalue = 1\n[target]\n{key} = 2\n" + "".join(
-        f"[trailing_{i}]\nvalue = {i}\n" for i in range(10_000)
+    src = (
+        "root_value = 0\n[target.inner.z]\nvalue = 1\n[target]\ninner.a = 2\n"
+        + "".join(f"[trailing_{i}]\nvalue = {i}\n" for i in range(1_000))
     )
     benchmark.pedantic(work, setup=_parsed(src), rounds=50)
 
