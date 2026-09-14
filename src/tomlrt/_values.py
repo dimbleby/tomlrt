@@ -13,7 +13,7 @@ from __future__ import annotations
 import copy
 import re
 import sys
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 if sys.version_info >= (3, 12):
@@ -29,6 +29,7 @@ from tomlrt._trivia import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import tzinfo
     from typing import TypeGuard
 
     from typing_extensions import Self
@@ -37,10 +38,45 @@ if TYPE_CHECKING:
 _ScalarT = TypeVar("_ScalarT")
 
 
-def is_shareable_scalar(value: object) -> TypeGuard[str | int | float | bool]:
-    """Whether a Python scalar is known to be transitively immutable."""
+def _tzinfo_is_shareable(tz: tzinfo | None) -> bool:
+    """Whether a ``tzinfo`` reaches no mutable state.
+
+    `timezone` retains the exact offset and name objects it was built
+    from, so a `timedelta` or `str` subclass carrying attributes of its
+    own makes an otherwise-immutable instance reachable-mutable.
+    Everything the parser produces -- naive, ``timezone.utc``, or
+    ``timezone(timedelta(...))`` -- passes.
+    """
+    if tz is None or tz is timezone.utc:
+        # Redundant with the checks below, but a naive or UTC value is
+        # much the commonest shape and answering it costs a third.
+        return True
+    return (
+        type(tz) is timezone
+        and type(tz.utcoffset(None)) is timedelta
+        and type(tz.tzname(None)) is str
+    )
+
+
+def is_shareable_scalar(
+    value: object,
+) -> TypeGuard[str | int | float | bool | date | time]:
+    """Whether a Python scalar is known to be transitively immutable.
+
+    Exact types only: a subclass may carry mutable attributes of its
+    own, so it is copied rather than shared. A temporal value has to
+    reach nothing mutable through its ``tzinfo`` either.
+
+    Identity comparisons, not a set of types: membership would hash the
+    class and compare it with ``==``, so the answer would come from
+    whatever its metaclass says.
+    """
     kind = type(value)
-    return kind is str or kind is int or kind is float or kind is bool
+    if kind is str or kind is int or kind is float or kind is bool or kind is date:
+        return True
+    if type(value) is datetime or type(value) is time:
+        return _tzinfo_is_shareable(value.tzinfo)
+    return False
 
 
 class ScalarValue(Generic[_ScalarT]):
@@ -64,11 +100,19 @@ class ScalarValue(Generic[_ScalarT]):
 
     @property
     def is_shareable(self) -> bool:
-        """Whether both fields are known to be transitively immutable."""
+        """Whether both fields are known to be transitively immutable.
+
+        A shareable node is handed to a copy rather than cloned, so the
+        two documents then hold the same object. That is sound only
+        because a published scalar node is never written in place: a
+        mutation rebinds its owner's ``value`` to a fresh node instead.
+        The two writers of these fields are the parser, before the node
+        is published, and `_copy_payloads`, on a clone that is not.
+        """
         return type(self.lexeme) is str and is_shareable_scalar(self.value)
 
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
-        """Share atomic data; copy temporal values and Python subclasses safely."""
+        """Share atomic data; copy mutable payloads and subclasses safely."""
         if self.is_shareable:
             return self
         new = type(self)(self.lexeme, self.value)
