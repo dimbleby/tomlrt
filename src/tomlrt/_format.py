@@ -386,7 +386,7 @@ def _canon_multiline_shape(
     if carries_text:
         for i in range(len(items)):
             boundary = Boundary.capture(v, i)
-            above_blocks[i] = boundary.above
+            above_blocks[i] = _format_above_block(boundary.above)
             boundary.remove_above().restore(v, i)
     last_row_closed = _canon_multi_line_items(
         items,
@@ -397,7 +397,7 @@ def _canon_multiline_shape(
     )
     if items:
         head_eol, _ = split_eol_section(v.header_trivia)
-        head_above = _format_above_block(above_blocks[0])
+        head_above = above_blocks[0]
         v.header_trivia = _compose_pad(
             head_eol=head_eol,
             above=head_above,
@@ -567,62 +567,72 @@ def _canon_multi_line_items(
     is empty. Later items keep their above-item comment block but get
     canonical newline+indent, suppressed when the previous item's
     upstream EOL channel already closed the row.
+
+    ``above_blocks`` is already filtered to the blocks worth keeping,
+    so an entry is empty unless it carries a comment.
     """
     previous_row_closed = False
     last_index = len(items) - 1
+    trailing_comma = options.multiline_trailing_comma
+    # A row with no above-block always wants the same pad, so ask for
+    # both of its answers once rather than rebuilding them per item.
+    open_pad = _compose_pad(head_eol="", above="", nl=nl, trailing_indent=indent)
+    closed_pad = _compose_pad(
+        head_eol="", above="", nl=nl, trailing_indent=indent, row_already_closed=True
+    )
     for k, it in enumerate(items):
         if k == 0:
             it.leading = ""
         else:
-            above = _format_above_block(above_blocks[k])
-            it.leading = _compose_pad(
-                head_eol="",
-                above=above,
-                nl=nl,
-                trailing_indent=indent,
-                row_already_closed=previous_row_closed,
-            )
+            above = above_blocks[k]
+            if above:
+                it.leading = _compose_pad(
+                    head_eol="",
+                    above=above,
+                    nl=nl,
+                    trailing_indent=indent,
+                    row_already_closed=previous_row_closed,
+                )
+            else:
+                it.leading = closed_pad if previous_row_closed else open_pad
         # Changing comma state may shift comments between ``trailing``
-        # and ``post_comma_trivia``; collect both sides before clearing them.
-        comments: list[str] = []
-        if "#" in it.trailing or "#" in it.post_comma_trivia:
-            comments = [
-                comment
-                for trivia in (it.trailing, it.post_comma_trivia)
-                for line in split_lines(trivia)
-                if (comment := split_line(line)[1])
-            ]
-        it.has_comma = k < last_index or options.multiline_trailing_comma
-        it.trailing = ""
-        it.post_comma_trivia = ""
-        previous_row_closed = _canon_item_eol(
-            it,
-            comments,
-            nl=nl,
-            options=options,
-            indent=indent,
-        )
+        # and ``post_comma_trivia``; read both before clearing them.
+        trailing, post_comma = it.trailing, it.post_comma_trivia
+        it.has_comma = k < last_index or trailing_comma
+        previous_row_closed = False
+        if trailing or post_comma:
+            it.trailing = it.post_comma_trivia = ""
+            if "#" in trailing or "#" in post_comma:
+                _write_item_eol(
+                    it,
+                    [
+                        comment
+                        for trivia in (trailing, post_comma)
+                        for line in split_lines(trivia)
+                        if (comment := split_line(line)[1])
+                    ],
+                    nl=nl,
+                    options=options,
+                    indent=indent,
+                )
+                previous_row_closed = True
     return previous_row_closed
 
 
-def _canon_item_eol(
+def _write_item_eol(
     item: CommaItem,
     comments: Sequence[str],
     *,
     nl: str,
     options: FormatOptions,
     indent: str,
-) -> bool:
-    r"""Write ``comments`` onto the item's EOL channel.
-
-    Returns whether they close the row.
+) -> None:
+    r"""Write ``comments`` onto the item's EOL channel, closing its row.
 
     The first comment stays on the item row; further comments occupy indented
-    lines below it. With no comments, the row stays open for the next item's
-    leading pad to terminate.
+    lines below it. Callers only reach here with comments to write; a row
+    with none stays open for the next item's leading pad to terminate.
     """
-    if not comments:
-        return False
     separator = " " * options.eol_comment_spaces
     if options.normalize_comments:
         comments = [_canon_comment_text(c) for c in comments]
@@ -633,7 +643,6 @@ def _canon_item_eol(
             for k, comment in enumerate(comments)
         ),
     )
-    return True
 
 
 # ---------------------------------------------------------------------------
