@@ -465,6 +465,21 @@ def _scan_multiline(v: CommaValue[_ItemT]) -> bool:
     return False
 
 
+def value_has_own_comment(v: ArrayValue | InlineTableValue) -> bool:
+    """Uncached scan: whether ``v``'s own trivia carries any comment.
+
+    Own-level, unlike `value_has_any_comment`: a comment inside a nested
+    value belongs to that value's trivia, not to this one's. The sibling
+    of `_scan_multiline`, over the same set of regions.
+    """
+    if "#" in v.header_trivia or "#" in v.final_trivia:
+        return True
+    for it in v.items:
+        if "#" in it.leading or "#" in it.post_comma_trivia or "#" in it.trailing:
+            return True
+    return False
+
+
 def value_has_any_comment(v: Value) -> bool:
     """Whether any comment appears anywhere within ``v`` (recursively)."""
     if not isinstance(v, CommaValue):
@@ -520,4 +535,5 @@ __all__ = [
     "item_has_any_comment",
     "retarget_value_newlines",
     "set_item_eol_channel",
+    "value_has_own_comment",
 ]

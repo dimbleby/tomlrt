@@ -53,6 +53,7 @@ from tomlrt._values import (
     item_eol_channel,
     item_has_any_comment,
     set_item_eol_channel,
+    value_has_own_comment,
 )
 
 if TYPE_CHECKING:
@@ -179,6 +180,11 @@ def _canon_trivia_text(
     :func:`_canon_comment_text` when ``comments`` is true; newline
     retargeting is left to the caller.
     """
+    if "\n" not in t and "\r" not in t and "#" not in t:
+        # No comment to rewrite, and no line terminator, so no complete
+        # line whose trailing whitespace could be stripped: the walk
+        # below would rebuild ``t`` unchanged.
+        return t
     out: list[str] = []
     in_eol = first_line_is_eol
     previous_line_blank = False
@@ -362,15 +368,28 @@ def _canon_multiline_shape(
     """Apply multi-line canonical shape to ``v``.
 
     Canonicalises per-item trivia, restamps bracket pads, then
-    retargets newlines and rewrites comment text. The single-line path
-    bypasses this: it produces only empty/single-space trivia.
+    retargets newlines and rewrites comment text. Canonicalising a
+    value that *stays* single-line goes through
+    `_canon_single_line_inline` instead: it produces only
+    empty/single-space trivia.
+
+    With no comment in ``v``'s own trivia the two text-carrying passes
+    are no-ops and are elided. Every above-block and EOL section is
+    then empty by definition, so the `Boundary` harvest has nothing to
+    find, and the item pass and bracket-pad block between them rebuild
+    every outer region from ``nl`` -- leaving `_finalise_inline_trivia`
+    nothing to retarget or normalise. This covers expanding a
+    single-line source, whose trivia is inline whitespace alone.
+    Nested values are untouched either way.
     """
     items = v.items
-    above_blocks: list[str] = []
-    for i in range(len(items)):
-        boundary = Boundary.capture(v, i)
-        above_blocks.append(boundary.above)
-        boundary.remove_above().restore(v, i)
+    carries_text = value_has_own_comment(v)
+    above_blocks: list[str] = [""] * len(items)
+    if carries_text:
+        for i in range(len(items)):
+            boundary = Boundary.capture(v, i)
+            above_blocks[i] = boundary.above
+            boundary.remove_above().restore(v, i)
     last_row_closed = _canon_multi_line_items(
         items,
         above_blocks=above_blocks,
@@ -416,6 +435,8 @@ def _canon_multiline_shape(
             trailing_indent=outer_indent,
         )
         final_eol_first = bool(final_eol)
+    if not carries_text:
+        return
     _finalise_inline_trivia(
         v,
         nl=nl,
@@ -565,12 +586,14 @@ def _canon_multi_line_items(
             )
         # Changing comma state may shift comments between ``trailing``
         # and ``post_comma_trivia``; collect both sides before clearing them.
-        comments = [
-            comment
-            for trivia in (it.trailing, it.post_comma_trivia)
-            for line in split_lines(trivia)
-            if (comment := split_line(line)[1])
-        ]
+        comments: list[str] = []
+        if "#" in it.trailing or "#" in it.post_comma_trivia:
+            comments = [
+                comment
+                for trivia in (it.trailing, it.post_comma_trivia)
+                for line in split_lines(trivia)
+                if (comment := split_line(line)[1])
+            ]
         it.has_comma = k < last_index or options.multiline_trailing_comma
         it.trailing = ""
         it.post_comma_trivia = ""
@@ -654,27 +677,13 @@ def set_comma_value_multiline(
     ``host`` places the closing bracket -- see `_closing_indent`.
     """
     if multiline:
-        outer_indent = _closing_indent(value, host=host)
-        if not value.is_multiline():
-            # Single-line outer trivia has no comments; nested values stay intact.
-            items = value.items
-            row_indent = nl + indent
-            value.header_trivia = row_indent if items else ""
-            value.final_trivia = nl + outer_indent
-            last = len(items) - 1
-            trailing_comma = _SHAPE_ONLY_OPTIONS.multiline_trailing_comma
-            for i, item in enumerate(items):
-                item.leading = "" if i == 0 else row_indent
-                item.trailing = item.post_comma_trivia = ""
-                item.has_comma = i < last or trailing_comma
-        else:
-            _canon_multiline_shape(
-                value,
-                nl=nl,
-                options=_SHAPE_ONLY_OPTIONS,
-                item_indent=indent,
-                outer_indent=outer_indent,
-            )
+        _canon_multiline_shape(
+            value,
+            nl=nl,
+            options=_SHAPE_ONLY_OPTIONS,
+            item_indent=indent,
+            outer_indent=_closing_indent(value, host=host),
+        )
     else:
         for it in value.items:
             if item_has_any_comment(it):

@@ -342,6 +342,17 @@ def test_insert_inline_array_slice(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_inline_array(size)), rounds=20)
 
 
+def test_expand_inline_array_to_multiline(benchmark: BenchmarkFixture) -> None:
+    """Expanding is not idempotent to time: the source must start flush."""
+    size = 16_000
+
+    def work(doc: Document) -> None:
+        doc.array("items").set_multiline(multiline=True)
+
+    src = "items = [" + ", ".join(str(i) for i in range(size)) + "]\n"
+    benchmark.pedantic(work, setup=_parsed(src), rounds=20)
+
+
 # --- key-level edits -------------------------------------------------------
 
 
