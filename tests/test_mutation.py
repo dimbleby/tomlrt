@@ -4647,6 +4647,14 @@ def test_aot_remove_missing_raises_value_error() -> None:
     assert tomlrt.dumps(doc) == "[[t]]\nx = 1\n"
 
 
+def test_aot_extend_checks_mapping_shapes_before_contents() -> None:
+    doc = tomlrt.loads("[[t]]\nx = 1\n")
+    entries: Any = iter([{"x": _OPAQUE}, None])
+    with pytest.raises(TypeError, match=r"^AoT entry must be a Mapping, got NoneType$"):
+        doc.aot("t").extend(entries)
+    assert tomlrt.dumps(doc) == "[[t]]\nx = 1\n"
+
+
 def test_aot_slice_replace_contiguous() -> None:
     doc = tomlrt.loads(
         td("""

@@ -811,14 +811,14 @@ class AoT(_View, list["Table"]):
 
 
 def _prepare_aot_entries(
-    values: Iterable[Any],
+    values: Iterable[Mapping[str, TomlInput]],
 ) -> list[Mapping[str, TomlInput]]:
-    """Snapshot and validate complete AoT entries."""
+    """Snapshot entries, checking all mapping shapes before their contents."""
     from tomlrt._container import _validate_mapping_items  # noqa: PLC0415
 
-    entries: list[Any] = [
-        _require_mapping(value, label="AoT entry") for value in list(values)
-    ]
+    entries = list(values)
+    for entry in entries:
+        _require_mapping(entry, label="AoT entry")
     for entry in entries:
         _validate_mapping_items(entry, inline_only=False)
     return entries
