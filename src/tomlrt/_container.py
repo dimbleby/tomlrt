@@ -949,13 +949,12 @@ class Container(_View, dict[str, Any]):
         # ``__setitem__`` has already rejected values an inline host
         # cannot store (``AoT``, sections, non-coerceable types).
         cst, decoded = self._synth_local_value(key, value)
-        old = dict.__getitem__(self, key) if key in self else None
-        # Either replacement branch displaces the old value, so a view of
-        # it must stop resolving against the entry it no longer owns.
-        # ``__setitem__`` has already returned if the new value *is* the
-        # old one.
-        _layout_ops.reset_displaced_views(old)
         if key in self:
+            # Overwriting displaces the old value, so a view of it must
+            # stop resolving against the entry it no longer owns.
+            # ``__setitem__`` has already returned if the new value *is*
+            # the old one.
+            _layout_ops.reset_displaced_views(dict.__getitem__(self, key))
             _inline_ops.overwrite_entry(self, key, cst)
         else:
             _inline_ops.append_entry(self, key, cst)
