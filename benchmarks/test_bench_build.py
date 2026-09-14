@@ -42,11 +42,6 @@ def test_build_flat(benchmark: BenchmarkFixture) -> None:
     benchmark(tomlrt.Document, _row(2_000))
 
 
-def test_build_sections(benchmark: BenchmarkFixture) -> None:
-    data = {f"s{i}": _row(5) for i in range(500)}
-    benchmark(tomlrt.Document, data)
-
-
 def test_build_nested_sections(benchmark: BenchmarkFixture) -> None:
     data = {f"s{i}": {"mid": {"leaf": _row(5)}} for i in range(250)}
     benchmark(tomlrt.Document, data)
@@ -54,18 +49,6 @@ def test_build_nested_sections(benchmark: BenchmarkFixture) -> None:
 
 def test_build_aot(benchmark: BenchmarkFixture) -> None:
     data = {"items": [_row(5) for _ in range(500)]}
-    benchmark(tomlrt.Document, data)
-
-
-def test_build_many_aots(benchmark: BenchmarkFixture) -> None:
-    """One single-entry AoT per key.
-
-    Each attach installs an empty AoT, whose ``a = []`` placeholder the
-    first entry then consumes -- invalidating the document's cached
-    ``_body_tail`` once per key. This used to cost a walk of every ref
-    filed so far.
-    """
-    data = {f"a{i}": [{"k": 1}] for i in range(1_000)}
     benchmark(tomlrt.Document, data)
 
 

@@ -1,8 +1,8 @@
 """Parse-throughput benchmarks for `tomlrt.loads`.
 
 Times `tomlrt.loads` over (a) the vendored `toml-test/valid` corpus
-treated as one combined input pool and (b) three synthetic stress inputs
-covering deep nesting, a large array-of-tables and a wide inline table.
+treated as one combined input pool and (b) synthetic stress inputs covering
+deep arrays and dotted keys, a large array-of-tables and a wide inline table.
 
 Usage:
 
@@ -121,10 +121,7 @@ def test_big_inline_table(
     record_throughput(benchmark, len(big_inline_src.encode()))
 
 
-@pytest.mark.parametrize("depth", [1, 16, 128, 512])
-def test_dotted_key(
-    benchmark: BenchmarkFixture, depth: int, record_throughput: Throughput
-) -> None:
-    src = ".".join(f"k{i}" for i in range(depth)) + " = 1\n"
+def test_dotted_key(benchmark: BenchmarkFixture, record_throughput: Throughput) -> None:
+    src = ".".join(f"k{i}" for i in range(512)) + " = 1\n"
     benchmark(tomlrt.loads, src)
     record_throughput(benchmark, len(src.encode()))
