@@ -76,8 +76,9 @@ Python 3.10–3.14. `ty` is a second, independent type-checker (run via
   `_ReorderUnit`) are built once per line, item, sorted
   block or inline edit. A constructor call carrying *any* keyword falls off CPython's
   alloc-and-enter-init specialisation and costs roughly twice as much,
-  measurably: sorting 800 sections is ~7% faster for this alone, and
-  inserting into an inline array ~13%. Keywords are fine anywhere else —
+  measurably: `test_sort_wide_section` is ~6% faster for this alone,
+  and `test_insert_into_inline_array` ~13%. Both are in `benchmarks/`,
+  so the claim stays checkable. Keywords are fine anywhere else —
   an ordinary function call loses only a few ns to them, well below what
   any benchmark here can resolve. At call sites, ruff `FBT003` rejects
   a bare boolean *literal* (a name is fine);
