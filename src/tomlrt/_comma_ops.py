@@ -35,12 +35,15 @@ from tomlrt._values import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
-    from typing import Protocol
+    from typing import Literal, Protocol
 
     from tomlrt._values import (
         CommaItem,
         CommaValue,
     )
+
+    _EolLane = Literal["before", "after"]
+    _AboveLane = Literal["before", "following"]
 
     class _BoundaryValue(Protocol):
         @property
@@ -207,10 +210,10 @@ class Boundary:
             and bool(leading_break(self.following.head))
         )
 
-    def _eol(self) -> tuple[int | None, str]:
+    def _eol(self) -> tuple[_EolLane | None, str]:
         """The lane owning the row-attached EOL, and its payload.
 
-        Lane 0 is the predecessor's ``trailing``, lane 1 its
+        ``before`` is the predecessor's ``trailing``, ``after`` its
         ``post_comma_trivia``; ``None`` means no EOL is present at all.
         The channel choice mirrors `tomlrt._values.item_eol_on_trailing`
         -- see there for why the rule is spelled out in both places.
@@ -219,10 +222,10 @@ class Boundary:
         if self.break_before_comma:
             eol, _rest = split_eol_section(before)
             if eol or "#" not in self.after:
-                return (0 if eol else None), eol
+                return ("before" if eol else None), eol
         channel = self.after if self.has_comma else before
         eol, _rest = split_eol_section(channel)
-        return (1 if self.has_comma else 0) if eol else None, eol
+        return ("after" if self.has_comma else "before") if eol else None, eol
 
     @property
     def eol(self) -> str:
@@ -230,54 +233,54 @@ class Boundary:
         return self._eol()[1]
 
     @property
-    def eol_lane(self) -> int | None:
+    def eol_lane(self) -> _EolLane | None:
         """Physical pre/post-comma lane containing ``eol``."""
         return self._eol()[0]
-
-    @property
-    def above_parts(self) -> tuple[str, str]:
-        return self.before.above, self.following.above
 
     @property
     def above(self) -> str:
         return self.before.above + self.following.above
 
-    def target_lane(self) -> int:
-        return int(
+    def _above_lane(self, selector: _AboveLane) -> _Lane:
+        return self.before if selector == "before" else self.following
+
+    def target_lane(self) -> _AboveLane:
+        if (
             self.is_head
             or not self.break_before_comma
             or self.row_closed
             or bool(self.following.head)
             or bool(self.following.above)
-        )
+        ):
+            return "following"
+        return "before"
 
     @property
-    def attached_lane(self) -> int | None:
+    def attached_lane(self) -> _AboveLane | None:
         if self.following.above:
-            return 1
+            return "following"
         if not self.before.above:
             return None
         if self.row_closed or self.following.head:
             return None
-        return 0
+        return "before"
 
     @property
     def attached_above(self) -> str | None:
         lane = self.attached_lane
-        return None if lane is None else self.above_parts[lane]
+        return None if lane is None else self._above_lane(lane).above
 
     @property
     def target_above(self) -> str:
-        return self.above_parts[self.target_lane()]
+        return self._above_lane(self.target_lane()).above
 
-    def replace_lane(self, lane: int, block: str, nl: str, indent: str) -> None:
-        lanes = self.before, self.following
-        target = lanes[lane]
+    def replace_lane(self, lane: _AboveLane, block: str, nl: str, indent: str) -> None:
+        target = self._above_lane(lane)
         head = target.head
         tail = target.tail
         upstream = (
             self.break_before_comma
-            if lane == 0
+            if lane == "before"
             else (False if self.is_head else self.row_closed)
         )
         if block:
@@ -302,28 +305,30 @@ class Boundary:
     def remove_eol(self) -> Boundary:
         lane = self.eol_lane
         break_before_comma = self.break_before_comma
-        if lane == 0:
+        if lane == "before":
             eol, rest = split_eol_section(self.before.head)
             self.before.head = rest
             if break_before_comma and eol.endswith("\n"):
                 nl_text = "\r\n" if eol.endswith("\r\n") else "\n"
                 self.before.head = nl_text + self.before.head
-        elif lane == 1:
+        elif lane == "after":
             _eol, rest = split_eol_section(self.after)
             self.after = rest
         return self
 
     def set_above(self, block: str, nl: str, indent: str) -> Boundary:
-        before, following = self.above_parts
+        before, following = self.before.above, self.following.above
         target_lane = self.target_lane()
         self.remove_above()
         if before and following:
             lines = split_lines(block)
             cut = len(split_lines(before))
-            self.replace_lane(0, "".join(lines[:cut]), nl, indent)
-            self.replace_lane(1, "".join(lines[cut:]), nl, indent)
+            self.replace_lane("before", "".join(lines[:cut]), nl, indent)
+            self.replace_lane("following", "".join(lines[cut:]), nl, indent)
         else:
-            lane = 0 if before else 1 if following else target_lane
+            lane: _AboveLane = (
+                "before" if before else "following" if following else target_lane
+            )
             self.replace_lane(lane, block, nl, indent)
         return self
 
@@ -349,17 +354,17 @@ class Boundary:
             self.remove_above()
         if preserve_positional and "#" not in source.above:
             return self
-        before, following = source.above_parts
+        before, following = source.before.above, source.following.above
 
-        def append_to(lane: int, block: str) -> None:
-            self.replace_lane(lane, self.above_parts[lane] + block, nl, indent)
+        def append_to(lane: _AboveLane, block: str) -> None:
+            self.replace_lane(lane, self._above_lane(lane).above + block, nl, indent)
 
-        before_stays_attached = source.attached_lane != 0 or (
+        before_stays_attached = source.attached_lane != "before" or (
             not row_closed and not following_head
         )
         if before and break_before_comma and before_stays_attached:
-            append_to(0, before)
-            append_to(1, following)
+            append_to("before", before)
+            append_to("following", following)
         else:
             append_to(target_lane, before + following)
         return self
@@ -371,13 +376,19 @@ class Boundary:
             return self
         lane = positional.eol_lane
         if lane is None:
-            lane = int(
-                self.has_comma
-                and not (source.eol_lane == 0 and positional.break_before_comma)
+            lane = (
+                "after"
+                if (
+                    self.has_comma
+                    and not (
+                        source.eol_lane == "before" and positional.break_before_comma
+                    )
+                )
+                else "before"
             )
-        current = self.before.head if lane == 0 else self.after
+        current = self.before.head if lane == "before" else self.after
         target = source_eol + current[leading_break(current) :]
-        if lane == 0:
+        if lane == "before":
             self.before.head = target
         else:
             self.after = target
