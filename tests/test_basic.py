@@ -474,6 +474,33 @@ def test_parse_error_is_value_error() -> None:
             "[[a.b]]\n[a]\nb.c = 1\n",
             r"cannot extend array-of-tables 'a\.b' via dotted keys",
         ),
+        (
+            td("""
+                [a.b]
+                x = 1
+                [a]
+                b.x = 2
+                """),
+            r"duplicate key 'a\.b\.x'",
+        ),
+        (
+            td("""
+                [[a.b]]
+                x = 1
+                [a]
+                b.x = 2
+                """),
+            r"duplicate key 'a\.b\.x'",
+        ),
+        (
+            td("""
+                [a.b]
+                [a.b.x]
+                [a]
+                b.x = 2
+                """),
+            r"key 'a\.b\.x' already defined as a table",
+        ),
         # Datetime / time value errors.
         ("t = 07:32:00x\n", r"bad fractional seconds"),
         # Inline-table key conflicts.
