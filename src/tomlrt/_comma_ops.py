@@ -18,7 +18,6 @@ from tomlrt._trivia import (
     leading_ws,
     newline_at,
     restamp_bracket_pad_for_first,
-    split_above_block,
     split_eol_section,
     split_line,
     split_lines,
@@ -537,7 +536,6 @@ class CommaStyle:
         "is_multiline",
         "pre_comma_break",
         "trailing_comma",
-        "trailing_post",
     )
 
     def __init__(
@@ -545,13 +543,11 @@ class CommaStyle:
         is_multiline: bool,  # noqa: FBT001
         inter_separator: str,
         trailing_comma: bool,  # noqa: FBT001
-        trailing_post: str,
         pre_comma_break: str,
     ) -> None:
         self.is_multiline = is_multiline
         self.inter_separator = inter_separator
         self.trailing_comma = trailing_comma
-        self.trailing_post = trailing_post
         self.pre_comma_break = pre_comma_break
 
     @property
@@ -589,13 +585,10 @@ def detect_style(value: CommaValue[_CV_ItemT]) -> CommaStyle:
     if is_multiline and leader is None and "\n" not in inter_sep:
         inter_sep = _canonical_separator(value)
     trailing_comma = items[-1].has_comma if items else is_multiline
-    pad_ft, _above_ft = split_above_block(value.final_trivia)
-    trailing_post = pad_ft or value.final_trivia
     return CommaStyle(
         is_multiline,
         inter_sep,
         trailing_comma,
-        trailing_post,
         _pre_comma_break(leader) if leader else "",
     )
 
