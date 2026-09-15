@@ -372,14 +372,17 @@ wrong.
 
 ### Invariants worth knowing
 
-- **Every live view names its host with one field, `_host`.** For a
-  `Container` or an `Array` it is whichever view holds this one: the
-  containing `Array` when the view is an array element, else the
-  `Container` it is keyed in; an `AoT` is never an inline value, so its
-  host is always a `Container`. `Container._parent` is a read-only
-  narrowing of it — never assign it, assign `_host`. `_file_host` is the
-  single stamp of the array-vs-parent choice, at the tail of the
-  `_decode_value` / `_synth_value` funnels.
+- **Every materialized view names its immediate owner with `_host`.**
+  Inline elements name their containing `Array`; keyed values name their
+  `Container`; AoT entries name their `AoT`. An AoT itself is held by a
+  `Container`. `Container._parent` projects the path parent, skipping the
+  AoT, and is `None` for inline array elements. Assign `_host`, not
+  `_parent`. Factory storage can merely reference independently owned
+  views, so it does not establish ownership. `_file_host` stamps inline
+  bindings at the tail of the `_decode_value` / `_synth_value` funnels.
+  Whole-AoT transfers clear entry hosts after bulk ancestor scrubbing;
+  source roots and slots remain available until each entry is adopted.
+  The enclosing transfer repairs the old parent after each adoption.
 - **Comma-value boundaries** may span predecessor `trailing`,
   predecessor `post_comma_trivia`, and successor `leading`. EOL
   payload belongs to the left item; comment-containing above blocks

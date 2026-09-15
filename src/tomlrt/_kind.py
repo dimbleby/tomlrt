@@ -20,7 +20,7 @@ class _Kind(Enum):
     Kind                          _inline   _value      _layout_root  _host
     ============================  ========  ==========  ============  ==============
     `DOCUMENT`                    False     None        self          None
-    `SECTION` (``[a.b]``)         False     None        doc           Container
+    `SECTION` (``[a.b]``)         False     None        doc           Container/AoT
     `IMPLICIT_SECTION`            False     None        doc / None    Container / None
     `INLINE_ROOT` (``{x = 1}``)   True      InlineVal   doc / None    view / None
     `INLINE_FACTORY`              True      None        None          None
@@ -30,6 +30,9 @@ class _Kind(Enum):
     Attachment is deliberately not part of an inline table's kind: a
     materialised root or dotted navigator can live inside a standalone
     `Array` without belonging to a document.
+
+    A section in a whole-AoT transfer temporarily has no host while its
+    source layout remains available for adoption.
     """
 
     DOCUMENT = auto()

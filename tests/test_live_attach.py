@@ -847,6 +847,61 @@ def test_detached_aot_reattaches_live() -> None:
     }
 
 
+def test_private_ancestor_aot_is_copied_before_nested_install() -> None:
+    source = tomlrt.loads("[[items]]\nx = 1\n")
+    items = source.pop("items")
+    assert isinstance(items, AoT)
+    entry = items[0]
+
+    entry["nested"] = items
+    assert entry.aot("nested") is not items
+    entry["x"] = 2
+
+    target = tomlrt.Document()
+    target["result"] = items
+    assert target.aot("result") is items
+    assert items[0] is entry
+    out = tomlrt.dumps(target)
+    assert out == td("""
+        [[result]]
+        x = 2
+
+        [[result.nested]]
+        x = 1
+        """)
+    assert _reparses(out) == target.to_dict()
+    assert tomlrt.dumps(source) == ""
+
+
+def test_whole_aot_transfer_preserves_emptied_parent_header_block() -> None:
+    source = tomlrt.loads(
+        td("""
+            [[parent.rows]]
+            x = 0
+            [[parent.rows]]
+            x = 1
+            """)
+    )
+    parent = source.pop("parent")
+    assert isinstance(parent, Table)
+    rows = parent.aot("rows")
+    target = tomlrt.Document()
+    target["moved"] = rows
+
+    assert parent.header_leading_block == (None,)
+    assert parent.to_dict() == {}
+    assert target.aot("moved") is rows
+    out = tomlrt.dumps(target)
+    assert out == td("""
+        [[moved]]
+        x = 0
+        [[moved]]
+        x = 1
+        """)
+    assert _reparses(out) == target.to_dict()
+    assert tomlrt.dumps(source) == ""
+
+
 def test_detached_aot_reattach_with_kv_before_nested_section() -> None:
     """``entry_slots`` is membership order, not doc-stream order.
 

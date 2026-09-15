@@ -995,10 +995,8 @@ def _root_orphan_subtree(
     val._host = parent  # noqa: SLF001
     dict.__setitem__(parent, path[-1], val)
     if isinstance(val, _array.AoT):
-        # An entry's host is the container holding the AoT, not the
-        # AoT itself, so entries need the same re-hosting.
         for entry in val:
-            entry._host = parent  # noqa: SLF001
+            entry._host = val  # noqa: SLF001
 
     depth_of = {c._path: i for i, c in enumerate(chain)}  # noqa: SLF001
 
@@ -1230,19 +1228,7 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     Used to inherit indent when ``c`` is an AoT entry root with no body
     KV of its own yet.
     """
-    owner = c._owner_aot_entry  # noqa: SLF001
-    if owner is None:
-        return None
-    parent = c._parent  # noqa: SLF001
-    # Only the document root is parentless or pathless, and it never
-    # has an owner.
-    assert parent is not None
-    assert c._path  # noqa: SLF001
-
-    # An unbound key answers this the same way a non-AoT one does: an
-    # entry whose array has been emptied has no siblings to inherit
-    # from either.
-    aot = dict.get(parent, c._path[-1])  # noqa: SLF001
+    aot = c._host  # noqa: SLF001
     if not isinstance(aot, _array.AoT):
         return None
     found_self = False
@@ -2223,7 +2209,9 @@ def detach_aot_from_orphan(value: AoT) -> None:
     array emptied by :meth:`AoT.pop` still renders as ``k = []`` and
     has no entry left to carry that slot away, so it goes here too.
 
-    A genuinely detached source has nothing to cut loose from.
+    Free factories are untouched. Materialized entries release their
+    hosts after bulk scrubbing, retaining source roots and slots until
+    their individual adoption.
     """
     if value._layout_root is None:  # noqa: SLF001
         return
@@ -2235,6 +2223,9 @@ def detach_aot_from_orphan(value: AoT) -> None:
     else:
         slots = owned_slots(value)
     _unfile_stale_same_orphan_ancestors(value, slots)
+    for entry in value:
+        assert entry._host is value  # noqa: SLF001
+        entry._host = None  # noqa: SLF001
     value._unbind_from_document()  # noqa: SLF001
 
 
@@ -2251,33 +2242,27 @@ def _unfile_stale_same_orphan_ancestors(
     that is no longer filed there, so the chain is revalidated after —
     the same repair the delete path makes for the same reason.
     """
-    # A private orphan is rooted at the path its slots spell, so every
-    # value inside one has a parent within the same document.
-    old_parent = value._host  # noqa: SLF001
+    host = value._host  # noqa: SLF001
+    if host is None:
+        # Whole-AoT detachment already removed these ancestor bindings.
+        return
+    old_parent = host._host if isinstance(host, _array.AoT) else host  # noqa: SLF001
     assert isinstance(old_parent, _container.Container)
     assert old_parent._layout_root is value._layout_root  # noqa: SLF001
-    # `_host` is always the immediate path parent, so the key to drop
-    # is the last path component.
     assert len(value._path) == len(old_parent._path) + 1  # noqa: SLF001
     key = value._path[-1]  # noqa: SLF001
-    bound = dict.get(old_parent, key)
-    # `value` may be one entry of an AoT bound here — an entry's `_path`
-    # names the *array*, not itself — in which case the key outlives its
-    # departure and only the entry goes.
-    entries: list[Table] = bound if isinstance(bound, _array.AoT) else []
-    entry_index = next((i for i, entry in enumerate(entries) if entry is value), None)
-    if entry_index is None:
-        dict.pop(old_parent, key, None)
-    else:
-        list.__delitem__(entries, entry_index)
-        if not entries:
+    if isinstance(host, _array.AoT):
+        entry_index = next(i for i, entry in enumerate(host) if entry is value)
+        list.__delitem__(host, entry_index)
+        if not host:
             # The last entry has gone, so the array leaves the model too
             # — and must stop being a view onto the orphan, or a caller
             # still holding it would add entries to a document that no
             # longer names it, which would then render what it denies.
             dict.__delitem__(old_parent, key)
-            assert isinstance(bound, _array.AoT)
-            bound._unbind_from_document()  # noqa: SLF001
+            host._unbind_from_document()  # noqa: SLF001
+    else:
+        dict.pop(old_parent, key, None)
 
     stale_container_ids: set[int] = set()
     node: Container | None = old_parent
@@ -2334,14 +2319,14 @@ def adopt_private_section(
 
 def _move_private_subtree(
     value: Container,
-    dest_parent: Container,
+    dest_host: Container | AoT,
     new_prefix: tuple[str, ...],
     *,
     owner: AoTEntry | None,
     host_path: tuple[str, ...] | None = None,
 ) -> list[Slot]:
     """Detach and rebase private layout, leaving publication to the caller."""
-    doc = dest_parent._attached_doc  # noqa: SLF001
+    doc = dest_host._attached_doc  # noqa: SLF001
     old_prefix = value._path  # noqa: SLF001
     stale_owner = value._owner_aot_entry  # noqa: SLF001
     slots = owned_slots(value)
@@ -2365,7 +2350,7 @@ def _move_private_subtree(
         _transfer_stale_owner(slot, stale_owner, owner)
     _rehome_view_tree(
         value,
-        dest_parent,
+        dest_host,
         old_prefix,
         new_prefix,
         doc,
@@ -2378,15 +2363,17 @@ def _move_private_subtree(
 def adopt_private_entry(
     aot: AoT, value: Table, *, preserve_source_separator: bool = False
 ) -> None:
-    """Move a private table into its AoT, retaining layout and all live views."""
+    """Move a private table into its AoT, retaining layout and all live views.
+
+    The caller retains the source parent and repairs it after adoption.
+    """
     doc = aot._attached_doc  # noqa: SLF001
     parent = aot._host  # noqa: SLF001
     assert parent is not None
-    old_parent = value._parent  # noqa: SLF001
     path = aot._path  # noqa: SLF001
     owner = AoTEntry()
     head_ref = value._header_ref  # noqa: SLF001
-    slots = _move_private_subtree(value, parent, path, owner=owner)
+    slots = _move_private_subtree(value, aot, path, owner=owner)
     if head_ref is None:
         header = _new_section_header(
             path, leading="", doc=doc, entry=owner, owner_aot_entry=owner
@@ -2413,7 +2400,6 @@ def adopt_private_entry(
     _extend_header_bindings_to_root(parent, ordered)
     list.append(aot, value)
     _maybe_demote_synthetic_empty_header(parent)
-    synthesise_header_for_emptied(old_parent)
 
 
 def _retarget_slot_paths(
@@ -2439,7 +2425,7 @@ def _retarget_slot_paths(
 
 def _rehome_view_tree(
     root: Container,
-    dest_parent: Container,
+    dest_host: Container | AoT,
     old_prefix: tuple[str, ...],
     new_prefix: tuple[str, ...],
     doc: Document,
@@ -2466,7 +2452,7 @@ def _rehome_view_tree(
             ):
                 node._owner_aot_entry = new_owner  # noqa: SLF001
 
-    root._host = dest_parent  # noqa: SLF001
+    root._host = dest_host  # noqa: SLF001
     _walk_view_tree((root,), visit)
 
 
@@ -3175,14 +3161,12 @@ def _view_route(view: Container | AoT) -> list[tuple[str, int | None]]:
     while cur._path:  # noqa: SLF001
         host = cur._host  # noqa: SLF001
         assert host is not None, "an attached view below the root has a host"
-        assert isinstance(host, _container.Container)
         key = cur._path[-1]  # noqa: SLF001
-        bound = dict.__getitem__(host, key)
-        ordinal = (
-            next(i for i, entry in enumerate(bound) if entry is cur)
-            if isinstance(bound, _array.AoT) and bound is not cur
-            else None
-        )
+        ordinal = None
+        if isinstance(host, _array.AoT):
+            ordinal = next(i for i, entry in enumerate(host) if entry is cur)
+            host = host._host  # noqa: SLF001
+        assert isinstance(host, _container.Container)
         route.append((key, ordinal))
         cur = host
     route.reverse()
@@ -3302,14 +3286,11 @@ def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
     it: an array-of-tables gives all its entries one path, so a sibling
     entry prefixes the site without ever containing it.
     """
-    cur: Container | AoT | None = site
+    cur: Container | AoT | Array | None = site
     while cur is not None:
         if cur is view:
             return True
-        host = cur._host if isinstance(cur, _array.AoT) else cur._parent  # noqa: SLF001
-        if host is not None and dict.get(host, cur._path[-1]) is view:  # noqa: SLF001
-            return True
-        cur = host
+        cur = cur._host  # noqa: SLF001
     return False
 
 
@@ -3448,7 +3429,7 @@ def _install_entry(
     if table._layout_root is None:  # noqa: SLF001
         dict.clear(table)
         table._wire(  # noqa: SLF001
-            layout_root=doc, parent=parent, path=path, owner=owner
+            layout_root=doc, parent=aot, path=path, owner=owner
         )
         _append_entry_run(
             aot, header, [header], preserve_source_separator=preserve_source_separator

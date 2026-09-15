@@ -140,7 +140,7 @@ def _open_aot_entry(
         f"AoT header [[{'.'.join(path)}]] collides with non-AoT at "
         f"{name!r} (got {type(aot).__name__}); validator drift"
     )
-    table = _make_table(parent, path, owner=entry)
+    table = _make_table(aot, path, owner=entry)
     list.append(aot, table)
     file_own_header(table, header)
     return table
@@ -180,7 +180,7 @@ def _resolve_table_child(
 
 
 def _make_table(
-    parent: Container, path: tuple[str, ...], *, owner: AoTEntry | None
+    parent: Container | AoT, path: tuple[str, ...], *, owner: AoTEntry | None
 ) -> Table:
     table = Table()
     table._wire(  # noqa: SLF001
