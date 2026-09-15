@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [2.2.12] - 2026-09-15
+
 - Installing an array of tables removed from a document beneath one of its
   own entries now copies it safely instead of hanging.
 
