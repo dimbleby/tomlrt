@@ -98,15 +98,10 @@ if TYPE_CHECKING:
     from tomlrt._format import FormatOptions
     from tomlrt._scalar import Scalar
     from tomlrt._slots import AoTEntry, Slot, SlotRef
-    from tomlrt._values import (
-        CommaItem,
-        CommaValue,
-        Value,
-    )
+    from tomlrt._values import Value
 
 
 _T = TypeVar("_T")
-_ItemT = TypeVar("_ItemT", bound="CommaItem")
 
 _MISSING = object()
 
@@ -1134,12 +1129,12 @@ class Container(_View, dict[str, Any]):
             if not (_is_inline_table(el)):
                 msg = f"{key!r} contains a non-inline-table element"
                 raise TOMLError(msg)
-        if _array_value_has_outer_comments(cur._value):  # noqa: SLF001
+        if cur._value.has_own_comment():  # noqa: SLF001
             msg = f"cannot promote {key!r}: array has comments that would be lost"
             raise TOMLError(msg)
         for entry_view in cur:
             ev = entry_view._value  # noqa: SLF001
-            if ev is not None and _inline_value_has_inner_comments(ev):
+            if ev is not None and ev.has_own_comment():
                 msg = (
                     f"cannot promote {key!r}: array entry has inner "
                     f"comments that would be lost"
@@ -1522,46 +1517,19 @@ class Document(Container):
         return Document(self)
 
 
-def _inline_value_has_inner_comments(v: object) -> bool:
-    """Return True iff the inline-table value carries inner comments.
-
-    Used to refuse ``promote_inline`` on inline tables whose comments
-    would have nowhere to live in the promoted form.
-    """
-    return isinstance(v, InlineTableValue) and _comma_value_has_outer_comments(v)
-
-
 def _check_inline_promotable(v: Container, key: str) -> None:
     """Raise `TOMLError` if promoting ``v`` (bound to ``key``) would lose comments.
 
     Callers are expected to have already confirmed ``v`` is an inline
     table (e.g. via `_is_inline_table`).
     """
-    if _inline_value_has_inner_comments(v._value):  # noqa: SLF001
+    value = v._value  # noqa: SLF001
+    if value is not None and value.has_own_comment():
         msg = (
             f"cannot promote {key!r}: inline table has inner "
             f"comments that would be lost"
         )
         raise TOMLError(msg)
-
-
-def _array_value_has_outer_comments(v: object) -> bool:
-    """Return True iff the array carries item-level or final comments.
-
-    "Outer" here means comments at the array layer itself; nested
-    inline-value comments are tested separately (and produce a
-    different error message).
-    """
-    return isinstance(v, ArrayValue) and _comma_value_has_outer_comments(v)
-
-
-def _comma_value_has_outer_comments(v: CommaValue[_ItemT]) -> bool:
-    if "#" in v.header_trivia or "#" in v.final_trivia:
-        return True
-    return any(
-        "#" in p.leading or "#" in p.trailing or "#" in p.post_comma_trivia
-        for p in v.items
-    )
 
 
 def _detached_inline_value(v: Container | Array) -> Value | None:
