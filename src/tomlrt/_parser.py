@@ -223,14 +223,11 @@ class _Parser:
                 raise sc.error(msg)
             item = ArrayItem(leading, value, trailing, ch == ",", post_comma)
             items.append(item)
-            if ch == "]":
-                # No trailing comma: split item EOL from bracket pad.
-                item.trailing, node.final_trivia = split_eol_section(trailing)
-                sc.pos += 1
-                return node
             if sc.pos < end and src[sc.pos] == "]":
-                # Trailing-comma terminator: rest is bracket pad.
-                node.final_trivia = next_leading
+                if item.has_comma:
+                    node.final_trivia = next_leading
+                else:
+                    item.trailing, node.final_trivia = split_eol_section(trailing)
                 sc.pos += 1
                 return node
             leading = next_leading
@@ -292,14 +289,11 @@ class _Parser:
                 key_path,
             )
             entries.append(entry)
-            if ch == "}":
-                # No trailing comma: split entry EOL from bracket pad.
-                entry.trailing, node.final_trivia = split_eol_section(trailing)
-                sc.pos += 1
-                return node
             if sc.pos < end and src[sc.pos] == "}":
-                # Trailing-comma terminator: rest is bracket pad.
-                node.final_trivia = next_leading
+                if entry.has_comma:
+                    node.final_trivia = next_leading
+                else:
+                    entry.trailing, node.final_trivia = split_eol_section(trailing)
                 sc.pos += 1
                 return node
             leading = next_leading
