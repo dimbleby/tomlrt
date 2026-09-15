@@ -3568,7 +3568,6 @@ class _ReorderUnit:
     __slots__ = (
         "key_rank",
         "mixed",
-        "physical_position",
         "prefix",
         "remainder",
         "slots",
@@ -3583,7 +3582,6 @@ class _ReorderUnit:
         mixed: bool,  # noqa: FBT001
         prefix: str,
         remainder: str,
-        physical_position: int,
     ) -> None:
         self.slots = slots
         self.key_rank = key_rank
@@ -3591,7 +3589,6 @@ class _ReorderUnit:
         self.mixed = mixed
         self.prefix = prefix
         self.remainder = remainder
-        self.physical_position = physical_position
 
 
 def _peer_placements(
@@ -3728,24 +3725,21 @@ def _move_slots_to_anchor(
     _terminate_unless_tail(tail, doc)
 
 
-def _direct_child_key(
-    slot: Slot, parent_path: tuple[str, ...], parent_plen: int
-) -> str | None:
-    """Return the direct child key of ``parent_path`` that ``slot`` binds, or None.
+def _owned_child_key(slot: Slot, depth: int) -> str | None:
+    """Classify a slot already known to belong to the container at ``depth``.
 
-    Determined by the slot's full binding path: ``path`` for a
-    structural header, ``(*host_path, *key_parts)`` for a KV, so a
-    dotted KV like ``a.b.c = 1`` is recognised at every prefix depth,
-    not just its host.
+    ``owned_slots`` establishes membership, including AoT-entry ownership.
+    The container's own header names no child; KVs use host/key geometry.
     """
-    if isinstance(slot, StructuralHeaderSlot):
-        root: tuple[str, ...] = slot.path
-    else:
-        assert isinstance(slot, KVSlot), "unknown slot type"
-        root = (*slot.host_path, *[p.value for p in slot.key_parts])
-    if len(root) > parent_plen and root[:parent_plen] == parent_path:
-        return root[parent_plen]
-    return None
+    if isinstance(slot, KVSlot):
+        host = slot.host_path
+        host_depth = len(host)
+        if host_depth > depth:
+            return host[depth]
+        return slot.key_parts[depth - host_depth].value
+    assert isinstance(slot, StructuralHeaderSlot)
+    parts = slot.key_parts
+    return parts[depth].value if len(parts) > depth else None
 
 
 def reorder_container(c: Container, new_key_order: list[str]) -> None:
@@ -3777,8 +3771,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     doc = c._layout_root  # noqa: SLF001
     assert doc is not None
 
-    c_path = c._path  # noqa: SLF001
-    c_plen = len(c_path)
+    c_plen = len(c._path)  # noqa: SLF001
 
     # c's explicit header is the region marker, not a sortable peer: it
     # travels at the splice head so direct KVs keep their binding.
@@ -3808,7 +3801,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     for cur in ordered_slots:
         is_header = cur is header_slot
-        bind_key = None if is_header else _direct_child_key(cur, c_path, c_plen)
+        bind_key = None if is_header else _owned_child_key(cur, c_plen)
         if is_header:
             movable_slots.append(cur)
         elif bind_key is not None and bind_key in key_blocks:
@@ -3816,11 +3809,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
                 child_keys_in_phys_order.append(bind_key)
             key_blocks[bind_key].append(cur)
             movable_slots.append(cur)
-
-    def _is_leaf_slot(slot: Slot, child_path: tuple[str, ...]) -> bool:
-        if not isinstance(slot, KVSlot):
-            return False
-        return slot.host_path[: len(child_path)] != child_path
 
     # `Container.sort` only calls in when the order actually changes, so
     # at least two keys are bound, each contributing a slot.
@@ -3858,14 +3846,9 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         front_foreign[0].leading = head_structural + front_foreign[0].leading
 
     key_rank = {key: rank for rank, key in enumerate(new_key_order)}
-    physical_position = {slot: pos for pos, slot in enumerate(ordered_slots)}
     units: list[_ReorderUnit] = []
     for key in child_keys_in_phys_order:
-        child_path = (*c_path, key)
-        leaves: list[Slot] = []
-        structural: list[Slot] = []
-        for slot in key_blocks[key]:
-            (leaves if _is_leaf_slot(slot, child_path) else structural).append(slot)
+        leaves, structural = split_subtree_slots(key_blocks[key], c_plen + 1)
         mixed = bool(leaves and structural)
         for slots, is_structural in ((leaves, False), (structural, True)):
             if not slots:
@@ -3879,7 +3862,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
                     mixed,
                     prefix,
                     remainder,
-                    physical_position[slots[0]],
                 )
             )
 
@@ -3888,11 +3870,11 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     if header_slot is not None:
         header_prefix, header_remainder = _split_leading_trivia(header_slot)
         if header_slot is not earliest_owned:
-            first_unit = min(units, key=lambda unit: unit.physical_position)
+            first_unit = min(units, key=lambda unit: unit.slots[0]._order)  # noqa: SLF001
             header_prefix, first_unit.prefix = first_unit.prefix, header_prefix
 
     prefixes_by_kind: dict[tuple[bool, bool], list[str]] = {}
-    for unit in sorted(units, key=lambda item: item.physical_position):
+    for unit in sorted(units, key=lambda item: item.slots[0]._order):  # noqa: SLF001
         prefixes_by_kind.setdefault((unit.structural, unit.mixed), []).append(
             unit.prefix
         )
