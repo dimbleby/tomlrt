@@ -200,7 +200,9 @@ them. Read roughly in this order:
   its own (a key bound as a value cannot later be opened as a
   table, `[H]` cannot redefine an already-opened table, dotted
   keys cannot extend an explicitly defined table / AoT, inline-
-  table local key rules). Owned and invoked by `_parser.py`.
+  table local key rules). Table-local namespaces hold declaration
+  kinds; each new AoT entry clears its namespace and gets a fresh
+  ownership token. Owned and invoked by `_parser.py`.
   Separate from `_typecheck.py`, which is the runtime
   input-validation layer for the public mutation API.
 
