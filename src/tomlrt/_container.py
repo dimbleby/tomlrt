@@ -144,7 +144,7 @@ class Container(_View, dict[str, Any]):
         self._layout_root: Document | None = None
         self._path: tuple[str, ...] = ()
         self._inline = False
-        self._host: Array | Container | None = None
+        self._host: Array | AoT | Container | None = None
         self._owner_aot_entry: AoTEntry | None = None
         self._index: dict[str, list[SlotRef]] = {}
         self._refs: list[SlotRef] = []
@@ -154,14 +154,16 @@ class Container(_View, dict[str, Any]):
 
     @property
     def _parent(self) -> Container | None:
-        """The container this one is bound in, or ``None``.
+        """The path-parent container, or ``None`` for an inline array element.
 
-        Read-only: this narrows :attr:`_host`, which is the field to
-        assign. ``None`` for an inline table held as an array element,
-        whose host is the `Array`.
+        An AoT entry's immediate host is its array; its path parent is
+        the container holding that array. Assign :attr:`_host`, not this
+        read-only projection.
         """
         host = self._host
-        return host if isinstance(host, Container) else None
+        if isinstance(host, Container):
+            return host
+        return host._host if isinstance(host, AoT) else None  # noqa: SLF001
 
     @property
     def _kind(self) -> _Kind:
@@ -415,7 +417,7 @@ class Container(_View, dict[str, Any]):
         self,
         *,
         layout_root: Document | None,
-        parent: Container | None,
+        parent: Container | AoT | None,
         path: tuple[str, ...],
         owner: AoTEntry | None,
     ) -> None:
@@ -683,6 +685,11 @@ class Container(_View, dict[str, Any]):
         if src_root is not None and not _can_adopt_from(src_root, self._attached_doc):
             _layout_ops.clone_aot(self, key, value)
             return
+        snapshot = _snapshot_for_overlapping_install(self, key, value)
+        if snapshot is not value:
+            assert isinstance(snapshot, AoT)
+            _layout_ops.clone_aot(self, key, snapshot)
+            return
         emptied = value._host  # noqa: SLF001
         existing_entries: list[Table] = list(value)
         _layout_ops.detach_aot_from_orphan(value)
@@ -694,11 +701,15 @@ class Container(_View, dict[str, Any]):
             if source_doc is None:
                 _layout_ops.add_aot_entry(value, None, rehome=entry_table)
             elif _can_adopt_from(source_doc, self._attached_doc):
+                source_parent = (
+                    emptied if src_root is not None else entry_table._parent  # noqa: SLF001
+                )
                 _layout_ops.adopt_private_entry(
                     value,
                     entry_table,
                     preserve_source_separator=src_root is not None,
                 )
+                _layout_ops.synthesise_header_for_emptied(source_parent)
             else:
                 _layout_ops.add_aot_entry(value, entry_table)
         _layout_ops.synthesise_header_for_emptied(emptied)
@@ -1898,7 +1909,7 @@ def _host_kv_slot(view: Array | Container) -> KVSlot | None:
         return None
     cur: Array | Container = view
     up = cur._host  # noqa: SLF001
-    while up is not None and up._inline:  # noqa: SLF001
+    while is_inline_value(up):
         cur = up
         up = cur._host  # noqa: SLF001
     assert isinstance(up, Container), "internal: attached value has no host container"
