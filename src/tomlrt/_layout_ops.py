@@ -241,6 +241,9 @@ def _anchor_accepts_install(
 ) -> bool:
     """Return whether ``slots`` may be moved to sit after ``anchor``.
 
+    ``slots`` is the nonempty, ordered, contiguous run verified by
+    `_recorded_install_span`.
+
     False either because the anchor is inside the block itself, or
     because the move would change the block's TOML scope.
     """
@@ -253,14 +256,13 @@ def _anchor_accepts_install(
     if not any(isinstance(s, StructuralHeaderSlot) for s in slots):
         return in_parent_body
 
-    installed = set(slots)
+    first = slots[0]
     successor = anchor._next if anchor is not None else doc._head  # noqa: SLF001
-    while successor is not None and successor in installed:
-        successor = successor._next  # noqa: SLF001
+    if successor is first:
+        successor = slots[-1]._next  # noqa: SLF001
     if isinstance(successor, KVSlot):
         return False
 
-    first = slots[0]
     return not (
         isinstance(first, KVSlot)
         and _effective_header_path_before(anchor) != first.host_path
