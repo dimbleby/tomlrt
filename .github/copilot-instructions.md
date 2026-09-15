@@ -216,6 +216,11 @@ them. Read roughly in this order:
 - **`_layout_ops.py`** — section-side mutation primitives: insert
   / delete / sort on the doc-stream linked list; `_index` and `_refs`
   bookkeeping; KV / section / AoT-entry append; subtree rehome.
+  Header-bearing section copies and private moves prepare their slot
+  runs separately, then share `_install_section_layout`: one destination
+  splice, building copied views afterward while retaining adopted views
+  and refs. Dictionary binding and parent-header demotion stay in the
+  callers to preserve their callback-visible order.
   By far the largest file. Internal hot-path conventions:
   - **Reverse-walks of `c._refs`** happen in exactly one place,
     `_recompute_body_tail`, for the one question the caches cannot
