@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 def loads(text: str) -> Document:
     """Parse a TOML document string into a [`Document`][tomlrt.Document]."""
-    parser = _Parser(text)
-    result = parser.parse()
+    # Avoid retaining parser-only state while building logical views.
+    result = _Parser(text).parse()
     return build_from_parse(result)
 
 
