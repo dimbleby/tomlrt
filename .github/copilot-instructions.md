@@ -237,6 +237,8 @@ them. Read roughly in this order:
   - **Container sorting is region-local** and keeps leaf / dotted-KV
     blocks before structural section / AoT blocks so re-parsing cannot
     change ownership. `key` / `reverse` apply within those partitions.
+    Known-owned slots are classified by depth; reorder units read
+    `Slot._order` before splicing rather than storing a second position.
   - **Bulk ref removal** walks each slot's back-pointers through
     `_scrub_owned_slots_via_backptrs`, not ancestor-wide cache scans.
   - **`Container._body_tail`** is the cached doc-stream-tail of
