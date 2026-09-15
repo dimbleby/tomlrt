@@ -724,10 +724,8 @@ class Container(_View, dict[str, Any]):
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
             _layout_ops.synthesise_header_for_emptied(emptied)
-        elif value._header_ref is not None:
-            _layout_ops.clone_section_as_section(self, key, value)
-        elif isinstance(value, Document):
-            _layout_ops.clone_document_as_section(self, key, value)
+        elif value._header_ref is not None or isinstance(value, Document):
+            _layout_ops.clone_section(self, key, value)
         else:
             _layout_ops.clone_implicit_section(self, key, value)
 

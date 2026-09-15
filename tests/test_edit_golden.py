@@ -635,7 +635,7 @@ def test_cross_doc_table_assign_with_explicit_header_and_nested_aot() -> None:
     """Issue #108: cross-doc whole-section assignment must preserve nested AoT.
 
     The source has an explicit ``[a]`` header (so cross-doc copy of ``a``
-    goes through ``clone_section_as_section`` rather than the implicit
+    goes through ``clone_section`` rather than the implicit
     subtree-walk branch). The body contains an AoT (``[[a.x]]``). The
     AoT must survive as ``[[a.x]]`` in the destination, not be downgraded
     to two ``[a.x]`` headers (invalid TOML).
@@ -867,7 +867,7 @@ def test_install_multi_component_attached_section_preserves_comments() -> None:
     Same root cause as #117: the multi-component install path was routing
     attached header-bearing sections through the synthesis path
     (``attach_section_at``) instead of the clone path
-    (``clone_section_as_section``).
+    (``clone_section``).
     """
     src = tomlrt.loads("# c\n[x]  # eol\ny = 1\n")
     dst = Document()

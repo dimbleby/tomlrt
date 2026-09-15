@@ -11374,8 +11374,8 @@ def test_repeated_section_install_after_large_trailing_content() -> None:
 
 def test_pop_aot_entry_removes_self_reference_section() -> None:
     """An entry key assigned to the entry itself (turning a scalar into
-    a nested section snapshot via ``clone_document_as_section``) must be
-    fully removed, header included, when the owning entry is popped."""
+    a nested section snapshot) must be fully removed, header included,
+    when the owning entry is popped."""
     doc = tomlrt.loads(
         td("""
         [fruit]

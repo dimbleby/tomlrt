@@ -2007,117 +2007,38 @@ def populate_promoted_inline_entries(
         dict.__setitem__(leaf_parent, leaf, decoded)
 
 
-def _install_cloned_structural_block(
-    table: Table,
-    *,
+def _install_section_layout(
     parent: Container,
-    doc: Document,
-    target_path: tuple[str, ...],
-    owner: AoTEntry | None,
-    cloned_slots: list[Slot],
-    anchor: Slot | None,
-) -> None:
-    """Wire ``table``'s own-header ref, splice its slots, then build views.
-
-    ``cloned_slots`` includes ``table``'s own header — not necessarily at
-    index 0, since doc-stream order may put a forward-declared nested
-    descendant's header first — so the full list, header included, goes
-    to :func:`_populate_entry_views`; ``_build_containers`` recognises
-    and files ``table``'s own header wherever it falls rather than
-    reopening it as a child.
-    """
-    table._wire(  # noqa: SLF001
-        layout_root=doc,
-        path=target_path,
-        parent=parent,
-        owner=owner,
-    )
-    _splice_block_after(cloned_slots, anchor, doc)
-    _populate_entry_views(
-        entry_table=table,
-        cloned_slots=cloned_slots,
-        target_prefix=target_path,
-        doc=doc,
-    )
-    _extend_header_bindings_to_root(parent, cloned_slots)
-    _maybe_demote_synthetic_empty_header(parent)
-
-
-def _install_cloned_section(
-    parent: Container,
-    key: str,
-    src_slots: list[Slot],
-    src_prefix: tuple[str, ...],
-    head: Slot,
-) -> Table:
-    """Common installer for ``parent[key] = <cloned section>``.
-
-    Deep-clones ``src_slots`` (rewriting ``head`` — the source's own
-    boundary header, identified by identity since doc-stream order may
-    put it after a forward-declared nested descendant — from ``[..]`` /
-    ``[[..]]`` to ``[<key>]``, rebasing paths from ``src_prefix`` to
-    ``parent._path + (key,)``), wires the section container, splices at
-    the parent's subtree anchor, and populates child views.
-    """
-    layout_root = parent._layout_root  # noqa: SLF001
-    assert layout_root is not None, (
-        "cloned-section install requires parent attached to a document"
-    )
-    doc = layout_root
-    target_path = (*parent._path, key)  # noqa: SLF001
-
-    cloned_slots, cloned_head = _clone_entry_slots(
-        src_slots,
-        new_entry=None,
-        body_owner=parent._owner_aot_entry,  # noqa: SLF001
-        src_prefix=src_prefix,
-        target_prefix=target_path,
-        dst_newline=doc._newline,  # noqa: SLF001
-        head=head,
-    )
-    assert cloned_head is not None
-
-    # The slot physically first in the spliced block is the one being
-    # detached from its original doc-stream predecessor, so it needs a
-    # destination-appropriate separator. That may be a forward-declared
-    # nested descendant's header rather than ``cloned_head`` itself, but
-    # either way it must be a header: a bare/dotted KV can never precede
-    # its own table's header in valid TOML.
-    first = cloned_slots[0]
-    assert isinstance(first, StructuralHeaderSlot)
-    _retarget_separator(first, _build_section_leading(doc))
-    return _finish_cloned_section(
-        parent,
-        key,
-        doc=doc,
-        target_path=target_path,
-        cloned_slots=cloned_slots,
-    )
-
-
-def _finish_cloned_section(
-    parent: Container,
-    key: str,
+    slots: list[Slot],
     *,
     doc: Document,
     target_path: tuple[str, ...],
-    cloned_slots: list[Slot],
-) -> Table:
-    """Wire a cloned section block under ``parent[key]`` and store it."""
-    # Fresh implicit parents have no extent, so fall back to their
-    # nearest header-bearing host. A header must also clear any
-    # immediately-following KVs it would otherwise capture.
-    section = _container.Table.section()
-    _install_cloned_structural_block(
-        section,
-        parent=parent,
-        doc=doc,
-        target_path=target_path,
-        owner=parent._owner_aot_entry,  # noqa: SLF001
-        cloned_slots=cloned_slots,
-        anchor=_child_header_anchor(parent),
-    )
-    dict.__setitem__(parent, key, section)
+    existing: Container | None = None,
+) -> Container:
+    """Install a destination-ready, header-bearing slot run.
+
+    An adopted ``existing`` view is already rehomed and retains its refs.
+    Copies acquire fresh views after linking, when slots have order keys.
+    The section's own header may follow forward-declared descendants.
+    """
+    section = existing
+    if section is None:
+        section = _container.Table.section()
+        section._wire(  # noqa: SLF001
+            layout_root=doc,
+            path=target_path,
+            parent=parent,
+            owner=parent._owner_aot_entry,  # noqa: SLF001
+        )
+    _splice_block_after(slots, _child_header_anchor(parent), doc)
+    if existing is None:
+        _populate_entry_views(
+            entry_table=section,
+            cloned_slots=slots,
+            target_prefix=target_path,
+            doc=doc,
+        )
+    _extend_header_bindings_to_root(parent, slots)
     return section
 
 
@@ -2318,64 +2239,57 @@ def extract_subtree_slots(src_table: Container) -> tuple[list[Slot], str]:
     return cloned, promoted
 
 
-def clone_section_as_section(
+def clone_section(
     parent: Container,
     key: str,
-    src_table: Container,
-) -> Table:
-    """Install a deep clone of a header-bearing table under ``parent[key]``.
+    source: Container,
+) -> Container:
+    """Clone a header-bearing table or document under ``parent[key]``.
 
-    Normalises an AoT entry's own header to a section while preserving
-    nested sections and AoTs, slot order, and trivia.
-    """
-    head, src_slots = _gather_headered_subtree_slots(src_table)
-    return _install_cloned_section(parent, key, src_slots, src_table._path, head)  # noqa: SLF001
-
-
-def clone_document_as_section(
-    parent: Container,
-    key: str,
-    src_doc: Document,
-) -> Table:
-    """Install a whole ``Document``'s body under ``parent[key]`` as a section.
-
-    The document is header-less, so a fresh ``[parent.key]`` header is
-    synthesised and the document's entire slot stream is cloned verbatim
-    beneath it (rebasing paths from the document root to the target). This
-    preserves body trivia — standalone comments and inline-array pad —
-    that re-synthesising from logical values would drop. The document's
-    file-level preamble / epilogue belong to no key and are not carried.
+    A table keeps its physical order and spelling, with an AoT entry's
+    own header normalised to a section. A document supplies its body,
+    without its file envelope, beneath a fresh destination header.
     """
     doc = parent._attached_doc  # noqa: SLF001
     target_path = (*parent._path, key)  # noqa: SLF001
-
-    src_slots: list[Slot] = []
-    s = src_doc._head  # noqa: SLF001
-    while s is not None:
-        src_slots.append(s)
-        s = s._next  # noqa: SLF001
-
-    header = _new_section_header(
-        target_path,
-        leading=_build_section_leading(doc),
-        doc=doc,
-        owner_aot_entry=parent._owner_aot_entry,  # noqa: SLF001
+    # Snapshot membership before destination-key spelling can run user code.
+    src_slots = owned_slots(source)
+    source_header = source._header_ref  # noqa: SLF001
+    header = (
+        _new_section_header(
+            target_path,
+            leading=_build_section_leading(doc),
+            doc=doc,
+            owner_aot_entry=parent._owner_aot_entry,  # noqa: SLF001
+        )
+        if isinstance(source, _container.Document)
+        else None
     )
-    cloned_body, _ = _clone_entry_slots(
+    cloned_slots, cloned_head = _clone_entry_slots(
         src_slots,
         new_entry=None,
         body_owner=parent._owner_aot_entry,  # noqa: SLF001
-        src_prefix=src_doc._path,  # noqa: SLF001
+        src_prefix=source._path,  # noqa: SLF001
         target_prefix=target_path,
         dst_newline=doc._newline,  # noqa: SLF001
+        head=source_header.slot if source_header is not None else None,
     )
-    return _finish_cloned_section(
+    if header is not None:
+        cloned_slots.insert(0, header)
+    else:
+        assert cloned_head is not None
+        first = cloned_slots[0]
+        assert isinstance(first, StructuralHeaderSlot)
+        _retarget_separator(first, _build_section_leading(doc))
+    section = _install_section_layout(
         parent,
-        key,
+        cloned_slots,
         doc=doc,
         target_path=target_path,
-        cloned_slots=[header, *cloned_body],
     )
+    _maybe_demote_synthetic_empty_header(parent)
+    dict.__setitem__(parent, key, section)
+    return section
 
 
 def detach_aot_from_orphan(value: AoT) -> None:
@@ -2482,8 +2396,13 @@ def adopt_private_section(
     first = slots[0]
     assert isinstance(first, StructuralHeaderSlot)
     _retarget_separator(first, _build_section_leading(doc))
-    _splice_block_after(slots, _child_header_anchor(dest_parent), doc)
-    _extend_header_bindings_to_root(dest_parent, slots)
+    _install_section_layout(
+        dest_parent,
+        slots,
+        doc=doc,
+        target_path=new_prefix,
+        existing=value,
+    )
     dict.__setitem__(dest_parent, key, value)
     _maybe_demote_synthetic_empty_header(dest_parent)
     return value
