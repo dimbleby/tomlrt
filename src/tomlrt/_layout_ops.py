@@ -1058,21 +1058,12 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         # doc-stream-first slot now, while it is still linked.
         mat_primary = c._index[key][0].slot  # noqa: SLF001
 
-    owned_ids: set[Slot] = set()
-    owned_slots: list[Slot] = []
-
-    def _add_slot(s: Slot) -> None:
-        if s in owned_ids:
-            return
-        owned_ids.add(s)
-        owned_slots.append(s)
-
-    for r in c._index.get(key, []):  # noqa: SLF001
-        _add_slot(r.slot)
-
-    subtree_containers: list[Container] = []
-    subtree_aots: list[AoT] = []
-    _collect_subtree(val, subtree_containers, subtree_aots, _add_slot)
+    owned = {ref.slot for ref in c._index.get(key, ())}  # noqa: SLF001
+    views: list[_View] = []
+    if _container._is_section(val) or isinstance(val, _array.AoT):  # noqa: SLF001
+        owned.update(owned_slots(val))
+        _walk_view_tree((val,), views.append)
+    slots = sorted(owned, key=operator.attrgetter("_order"))
 
     # Synthesise the now-empty section's physical presence while the
     # descendant's primary slot is still linked, so the replacement takes
@@ -1089,28 +1080,20 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
 
     # Scrub via back-pointers, *skipping* subtree containers: those move
     # to a fresh Document and keep their internal caches.
-    skip_ids = frozenset(id(sc) for sc in subtree_containers)
-    _scrub_owned_slots_via_backptrs(owned_slots, skip_container_ids=skip_ids)
+    skip_ids = frozenset(
+        id(view)
+        for view in views
+        if not view._inline and isinstance(view, _container.Container)  # noqa: SLF001
+    )
+    _scrub_owned_slots_via_backptrs(slots, skip_container_ids=skip_ids)
 
     min_owned_depth = len(c._path)  # noqa: SLF001
-    for s in owned_slots:
+    for s in slots:
         d = len(s.host_path) if isinstance(s, KVSlot) else 0
         if d < min_owned_depth:
             min_owned_depth = d
-    _invalidate_body_tail_chain(c, owned_ids, min_depth=min_owned_depth, departing=True)
+    _invalidate_body_tail_chain(c, owned, min_depth=min_owned_depth, departing=True)
 
-    # Unlink owned slots; transplant user-referenced subtrees to an
-    # orphan Document so clone/re-install can still read the full CST.
-    # Capture doc-stream order *before* the unlink loop severs the linked
-    # list. ``owned_slots`` is in collection order (key's own refs first,
-    # then the subtree body), not doc-stream order; transplanting in that
-    # order would corrupt the orphan's linked list.
-    transplanting = bool(subtree_containers or subtree_aots)
-    ordered_for_transplant = (
-        sorted(owned_slots, key=operator.attrgetter("_order"))
-        if transplanting
-        else owned_slots
-    )
     # Unlink in *reverse* doc-stream order (see remove_aot_entry for the
     # same idiom): unlinking a doc-stream-first owned slot promotes its
     # successor to the new doc head, stripping that successor's leading
@@ -1118,16 +1101,16 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     # the strip is wasted and the *actually* surviving new head never
     # gets stripped. Working back-to-front lands any head-promotion
     # strip on the true surviving successor.
-    for slot in reversed(ordered_for_transplant):
+    for slot in reversed(slots):
         unlink_slot(slot, doc)
 
-    if transplanting:
+    if views:
         assert isinstance(val, (_container.Container, _array.AoT))
         _transplant_to_orphan(
             val,
-            ordered_for_transplant,
+            slots,
             doc._newline,  # noqa: SLF001
-            itertools.chain(subtree_containers, subtree_aots),
+            views,
         )
     else:
         # No orphan (e.g. a top-level inline value): reset so a held
@@ -1141,7 +1124,7 @@ def _transplant_to_orphan(
     val: Container | AoT,
     slots: list[Slot],
     nl: str,
-    views: Iterable[Container | Array | AoT],
+    views: Iterable[_View],
 ) -> None:
     """Give ``val``'s unlinked ``slots`` a private document to live on.
 
@@ -1155,14 +1138,15 @@ def _transplant_to_orphan(
     reference flows into the orphaned slot value, which a later rehome
     moves intact.
 
-    ``slots`` must be in doc-stream order — the orphan is a document,
-    with a linked list of its own to keep straight.
+    ``slots`` must be in doc-stream order, and ``views`` must include
+    every retained view, including inline descendants.
     """
     orphan = _container.Document()
     orphan._newline = nl  # noqa: SLF001
     orphan._is_private = True  # noqa: SLF001
     _splice_block_after(slots, None, orphan)
-    for view in itertools.chain(views, _displaced_inline_views(val)):
+    for view in views:
+        assert isinstance(view, (_container.Container, _array.AoT, _array.Array))
         view._layout_root = orphan  # noqa: SLF001
     _root_orphan_subtree(orphan, val, slots)
 
@@ -1183,26 +1167,6 @@ def _walk_view_tree(vals: Iterable[_View], visit: Callable[[_View], None]) -> No
 
     for val in vals:
         walk(val)
-
-
-def _displaced_inline_views(val: Container | AoT) -> list[Container | Array]:
-    """The inline views inside an about-to-be-displaced subtree.
-
-    Section Containers and AoTs are handled by ``_collect_subtree``
-    + the orphan-rehome step. This walker complements that by
-    reaching into inline tables and inline arrays — which carry no
-    doc-stream slots of their own but do hold ``_layout_root`` /
-    ``_attached`` state that goes stale when their hosting KV is
-    deleted.
-    """
-    found: list[Container | Array] = []
-
-    def visit(node: _View) -> None:
-        if is_inline_value(node):
-            found.append(node)
-
-    _walk_view_tree((val,), visit)
-    return found
 
 
 def _reset_view(node: _View) -> None:
@@ -1242,43 +1206,6 @@ def reset_displaced_views(*vals: object) -> None:
     for val in vals:
         if is_inline_value(val):
             _detach_displaced_inline(val)
-
-
-def _collect_subtree(
-    val: object,
-    containers_out: list[Container],
-    aots_out: list[AoT],
-    add_slot: Callable[[Slot], None],
-) -> None:
-    """Walk ``val``'s subtree, collecting containers, AoTs and their slots.
-
-    Model-driven and unordered, unlike `owned_slots`, which projects the
-    doc-stream run a view's block physically spans. This reaches every
-    slot a descendant container names, including an empty AoT's ``k =
-    []`` placeholder -- which sits in its parent's block and so belongs
-    to no block of the AoT's own.
-
-    Only ``Container``/``AoT`` values can ever match below (an inline
-    array's contents never own doc-stream slots of their own, and are
-    handled separately by ``_walk_view_tree``), so non-container leaves
-    are skipped without recursing into them.
-    """
-    if isinstance(val, _container.Container):
-        if val._inline:  # noqa: SLF001
-            return
-        containers_out.append(val)
-        for r in val._refs:  # noqa: SLF001
-            add_slot(r.slot)
-        for child in val.values():
-            if isinstance(child, (_container.Container, _array.AoT)):
-                _collect_subtree(child, containers_out, aots_out, add_slot)
-    elif isinstance(val, _array.AoT):
-        aots_out.append(val)
-        placeholder = _empty_aot_placeholder_ref(val)
-        if placeholder is not None:
-            add_slot(placeholder.slot)
-        for entry in val:
-            _collect_subtree(entry, containers_out, aots_out, add_slot)
 
 
 # ---------------------------------------------------------------------------
@@ -1868,12 +1795,10 @@ def _empty_aot_placeholder_ref(aot: AoT) -> SlotRef | None:
 
     Derived from the parent's ``_index[key]``: an empty AoT's only
     physical presence is one ``KVSlot`` whose value is an empty
-    ``EmptyAoTValue``. Returns ``None`` when the AoT is non-empty or carries
-    no placeholder yet (e.g. a fresh AoT mid-clone, before its first
-    entry or placeholder lands).
+    ``EmptyAoTValue``. Returns ``None`` before a fresh AoT has received
+    its first entry or placeholder.
     """
-    if len(aot) != 0:
-        return None
+    assert not aot
     parent = aot._host  # noqa: SLF001
     assert parent is not None
     key = aot._path[-1]  # noqa: SLF001
@@ -2080,11 +2005,10 @@ def clone_graft_slots(
 def owned_slots(view: Container | AoT) -> list[Slot]:
     """Every slot ``view``'s block spans, in doc-stream order.
 
-    A container's ordered refs already name all its descendant headers.
-    Each header contributes its following body run. A private orphan
-    can omit an enclosing header, so a changed KV host also ends a run.
-    Only implicit containers contribute KV refs directly: a headered
-    container's own header already contributes its body.
+    A container's ordered refs name its own KVs and descendant headers.
+    Only descendant headers need their following body runs expanded;
+    the own header's body is already filed. A changed KV host also
+    ends a run because a private orphan can omit an enclosing header.
     """
     if isinstance(view, _array.AoT):
         return [s for entry in view for s in owned_slots(entry)]
@@ -2096,18 +2020,17 @@ def owned_slots(view: Container | AoT) -> list[Slot]:
             cur = cur._next  # noqa: SLF001
         return slots
     owned: list[Slot] = []
-    has_header = view._header_ref is not None  # noqa: SLF001
+    header_ref = view._header_ref  # noqa: SLF001
+    own_header = header_ref.slot if header_ref is not None else None
     for ref in view._refs:  # noqa: SLF001
         slot = ref.slot
-        if isinstance(slot, StructuralHeaderSlot):
-            owned.append(slot)
+        owned.append(slot)
+        if isinstance(slot, StructuralHeaderSlot) and slot is not own_header:
             host_path = slot.path
             body = slot._next  # noqa: SLF001
             while isinstance(body, KVSlot) and body.host_path == host_path:
                 owned.append(body)
                 body = body._next  # noqa: SLF001
-        elif not has_header:
-            owned.append(slot)
     return owned
 
 
@@ -2307,10 +2230,11 @@ def detach_aot_from_orphan(value: AoT) -> None:
     if not value:
         ref = _empty_aot_placeholder_ref(value)
         assert ref is not None, "an attached empty AoT renders as `k = []`"
-        _detach_from_source_doc(value, [ref.slot])
-    owned: set[Slot] = set()
-    _collect_subtree(value, [], [], owned.add)
-    _unfile_stale_same_orphan_ancestors(value, owned)
+        slots = [ref.slot]
+        _detach_from_source_doc(value, slots)
+    else:
+        slots = owned_slots(value)
+    _unfile_stale_same_orphan_ancestors(value, slots)
     value._unbind_from_document()  # noqa: SLF001
 
 
@@ -3186,14 +3110,16 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
 
     # The entries themselves keep their internal caches: they are moving
     # to a document of their own, not being taken apart.
-    subtree_containers: list[Container] = []
-    subtree_aots: list[AoT] = []
-    for entry_table in popped_entries:
-        _collect_subtree(entry_table, subtree_containers, subtree_aots, lambda _s: None)
+    views: list[_View] = []
+    _walk_view_tree(popped_entries, views.append)
 
     _scrub_owned_slots_via_backptrs(
         union_owned_ordered,
-        skip_container_ids=frozenset(id(c) for c in subtree_containers),
+        skip_container_ids=frozenset(
+            id(view)
+            for view in views
+            if not view._inline and isinstance(view, _container.Container)  # noqa: SLF001
+        ),
     )
 
     # Body-tail invalidation on the parent chain, walking all the way to
@@ -3218,11 +3144,12 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     holder = _array.AoT()
     holder._path = aot._path  # noqa: SLF001
     list.extend(holder, popped_entries)
+    views.append(holder)
     _transplant_to_orphan(
         holder,
         union_owned_ordered,
         doc._newline,  # noqa: SLF001
-        itertools.chain([holder], subtree_containers, subtree_aots),
+        views,
     )
 
     last_key = aot._path[-1]  # noqa: SLF001

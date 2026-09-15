@@ -221,6 +221,9 @@ them. Read roughly in this order:
   splice, building copied views afterward while retaining adopted views
   and refs. Dictionary binding and parent-header demotion stay in the
   callers to preserve their callback-visible order.
+  Removal separates physical slot discovery (`owned_slots` plus binding
+  refs) from logical traversal. Collect every retained `_View` once,
+  including inline descendants, and pass that list to orphan transplantation.
   By far the largest file. Internal hot-path conventions:
   - **Reverse-walks of `c._refs`** happen in exactly one place,
     `_recompute_body_tail`, for the one question the caches cannot
