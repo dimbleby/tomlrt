@@ -6,6 +6,7 @@ from typing import IO, TYPE_CHECKING, Any
 
 from tomlrt._build import build_from_parse
 from tomlrt._container import Document
+from tomlrt._errors import TOMLParseError
 from tomlrt._parser import _Parser
 from tomlrt._synth import render_mapping
 
@@ -32,7 +33,22 @@ def load(fp: IO[bytes]) -> Document:
             f"got a text stream returning {type(data).__name__}"
         )
         raise TypeError(msg)
-    return loads(bytes(data).decode("utf-8"))
+    encoded = bytes(data)
+    try:
+        text = encoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        prefix = encoded[: exc.start].decode("utf-8")
+        offset = len(prefix)
+        line = prefix.count("\n") + 1
+        col = offset - prefix.rfind("\n")
+        msg = "invalid UTF-8"
+        raise TOMLParseError(
+            msg,
+            line=line,
+            col=col,
+            offset=offset,
+        ) from exc
+    return loads(text)
 
 
 def dumps(data: Mapping[str, Any]) -> str:

@@ -73,6 +73,18 @@ def test_load_rejects_text_stream() -> None:
         tomlrt.load(fp)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
+def test_load_reports_invalid_utf8_as_parse_error() -> None:
+    fp = io.BytesIO("é = 1\nx = ".encode() + b"\xff")
+    with pytest.raises(
+        tomlrt.TOMLParseError,
+        match=r"^invalid UTF-8 \(line 2, column 5\)$",
+    ) as exc_info:
+        tomlrt.load(fp)
+    assert exc_info.value.line == 2
+    assert exc_info.value.col == 5
+    assert exc_info.value.offset == 10
+
+
 def test_load_preserves_crlf_line_endings(tmp_path: Path) -> None:
     p = tmp_path / "win.toml"
     p.write_bytes(b"a = 1\r\nb = 2\r\n")
