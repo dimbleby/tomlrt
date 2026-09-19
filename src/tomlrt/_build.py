@@ -17,7 +17,6 @@ from tomlrt._layout_ops import (
     _clone_entry_slots,
     extract_subtree_slots,
     file_own_header,
-    maybe_advance_body_tail,
     owned_slots,
     record_ref,
 )
@@ -211,7 +210,6 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
     parts = slot.key_parts
     target = host
     record_ref(target, slot)
-    maybe_advance_body_tail(target, slot)
     for part in parts[:-1]:
         target = _resolve_table_child(
             target,
@@ -219,7 +217,6 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
             owner=slot.owner_aot_entry,
         )
         record_ref(target, slot)
-        maybe_advance_body_tail(target, slot)
     name = parts[-1].value
     assert name not in target, (
         f"duplicate key {name!r} reached builder under {target._path}; "  # noqa: SLF001

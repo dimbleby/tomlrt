@@ -329,13 +329,6 @@ def _ordered_index(refs: list[SlotRef], order: int) -> int:
     return bisect.bisect_left(refs, order, key=_ref_order)
 
 
-def _filed_predecessor(c: Container, slot: Slot) -> Slot | None:
-    """Slot of ``c``'s last filed ref that precedes ``slot`` in the doc-stream."""
-    refs = c._refs  # noqa: SLF001
-    idx = _ordered_index(refs, slot._order)  # noqa: SLF001
-    return refs[idx - 1].slot if idx else None
-
-
 def record_ref(c: Container, slot: Slot) -> SlotRef:
     """Create a `SlotRef(slot, c)` and file it in doc order on ``c``.
 
@@ -343,6 +336,11 @@ def record_ref(c: Container, slot: Slot) -> SlotRef:
     ``(slot, container)`` geometry, so callers cannot file under a
     disagreeing key. ``slot`` must already be linked into the
     doc-stream, since its order key is what places the ref.
+
+    Filing is also where ``c._body_tail`` advances. The tail is the
+    latest body slot among ``c``'s refs, so a ref filed past it is
+    exactly what moves it; deciding that here is what stops the two
+    from disagreeing.
     """
     ref = SlotRef(slot, c)
     order = slot._order  # noqa: SLF001
@@ -353,7 +351,29 @@ def record_ref(c: Container, slot: Slot) -> SlotRef:
             refs.append(ref)
         else:
             refs.insert(_ordered_index(refs, order), ref)
+    _maybe_advance_body_tail(c, slot, order)
     return ref
+
+
+def _maybe_advance_body_tail(c: Container, slot: Slot, order: int) -> None:
+    """Advance ``c._body_tail`` to ``slot`` if it is a later body slot.
+
+    Owners can differ from ``c``'s: a KV owned by no AoT entry can be
+    moved into a container owned by one, and then sits inside ``c``
+    without belonging to its body.
+
+    Filing runs in doc order only for an append, so the order test
+    carries weight: a replacement spliced in ahead of the slot it
+    supersedes, as `_materialise_empty_inline_table` does, files a body
+    KV that sits before a tail which has to survive.
+    """
+    if not isinstance(slot, KVSlot):
+        return
+    if slot.owner_aot_entry is not c._owner_aot_entry:  # noqa: SLF001
+        return
+    tail = c._body_tail  # noqa: SLF001
+    if tail is None or tail._order < order:  # noqa: SLF001
+        c._body_tail = slot  # noqa: SLF001
 
 
 @contextlib.contextmanager
@@ -421,32 +441,14 @@ def _replace_ordered_run(refs: list[SlotRef], run: list[SlotRef], start: int) ->
 def file_own_header(c: Container, header: StructuralHeaderSlot) -> None:
     """File ``header`` as ``c``'s own physical presence.
 
-    Every header-filing path establishes ``_header_ref`` and
-    ``_body_tail`` together — the other is
-    `_file_synthetic_header_and_kv`, which lands the tail on the KV it
-    inserts. Here ``c`` has no body yet, so its own header is the tail,
-    which is exactly what `_recompute_body_tail` derives for it.
+    A header cannot advance the body tail through `record_ref`, which
+    only advances for a body KV, so this is one of the paths that
+    establishes ``_header_ref`` and ``_body_tail`` together. Here ``c``
+    has no body yet, so its own header is the tail, which is exactly
+    what `_recompute_body_tail` derives for it.
     """
     c._header_ref = record_ref(c, header)  # noqa: SLF001
     c._body_tail = header  # noqa: SLF001
-
-
-def maybe_advance_body_tail(c: Container, slot: Slot) -> None:
-    """Advance ``c._body_tail`` if ``slot`` is a body-region KV of ``c``.
-
-    A KV's ref is filed on its host container and on each implicit
-    dotted container below it. A dotted intermediate can never also be
-    an explicit section (the validator rejects that), so a SECTION here
-    is always the KV's own host.
-
-    Owners really can differ, though: a KV owned by no AoT entry can be
-    moved into a container owned by one, and then sits inside ``c``
-    without belonging to its body.
-    """
-    assert isinstance(slot, KVSlot)
-    assert c._kind is not _Kind.SECTION or slot.host_path == c._path  # noqa: SLF001
-    if slot.owner_aot_entry is c._owner_aot_entry:  # noqa: SLF001
-        c._body_tail = slot  # noqa: SLF001
 
 
 def _file_header_binding_chain(
@@ -498,7 +500,6 @@ def _file_synthetic_header_and_kv(
     )
     insert_after(header_slot, new_kv, doc)
     record_ref(c, new_kv)
-    c._body_tail = new_kv  # noqa: SLF001
     return new_kv
 
 
@@ -746,7 +747,6 @@ def append_direct_kv(
         doc=doc,
     )
     record_ref(c, new_slot)
-    c._body_tail = new_slot  # noqa: SLF001
 
 
 def append_synth_kv(
@@ -1015,7 +1015,6 @@ def _root_orphan_subtree(
         # of that descent is inside the subtree and already filed.
         for anc in chain[host_depth:]:
             record_ref(anc, slot)
-            maybe_advance_body_tail(anc, slot)
 
 
 def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> None:
@@ -1391,15 +1390,9 @@ def install_dotted_kv_slot(
         doc=doc,
     )
 
-    # A cached tail can lie on either side of this newly-spliced slot, so
-    # each ancestor advances its own only when nothing of its own is
-    # filed in between.
     for i, anc in enumerate(chain):
-        predecessor = _filed_predecessor(anc, new_slot)
         ref = record_ref(anc, new_slot)
         assert ref.local_key == leaf_keypath[i]
-        if predecessor is anc._body_tail or anc._body_tail is None:  # noqa: SLF001
-            anc._body_tail = new_slot  # noqa: SLF001
 
 
 def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
@@ -2554,7 +2547,6 @@ def adopt_private_implicit(
             continue
         for anc in chain:
             record_ref(anc, s)
-            maybe_advance_body_tail(anc, s)
     dict.__setitem__(dest_parent, key, value)
     return value
 
