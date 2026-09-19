@@ -57,6 +57,13 @@ _OCT_DIGITS: Final[frozenset[str]] = frozenset("01234567")
 _BIN_DIGITS: Final[frozenset[str]] = frozenset("01")
 _DEC_DIGITS: Final[frozenset[str]] = frozenset("0123456789")
 
+_RADIX: Final[dict[str, tuple[frozenset[str], int]]] = {
+    "0x": (_HEX_DIGITS, 16),
+    "0o": (_OCT_DIGITS, 8),
+    "0b": (_BIN_DIGITS, 2),
+}
+"""Digit set and base of each integer radix prefix."""
+
 
 def _is_ascii_digits(s: str) -> bool:
     """Return True iff ``s`` is non-empty and contains only ASCII ``0-9``.
@@ -571,12 +578,11 @@ class _Scanner:
     def _parse_integer_token(self, token: str, *, at: int) -> IntegerValue:
         body = token
         if body.startswith(("0x", "0o", "0b")):
-            prefix = body[:2]
+            allowed, base = _RADIX[body[:2]]
             digits = body[2:]
             if not digits or digits.startswith("_") or digits.endswith("_"):
                 msg = f"invalid integer {token!r}"
                 raise self.error(msg, at=at)
-            allowed = {"0x": _HEX_DIGITS, "0o": _OCT_DIGITS, "0b": _BIN_DIGITS}[prefix]
             for c in digits:
                 if c == "_":
                     continue
@@ -586,7 +592,6 @@ class _Scanner:
             if "__" in digits:
                 msg = f"consecutive underscores in {token!r}"
                 raise self.error(msg, at=at)
-            base = {"0x": 16, "0o": 8, "0b": 2}[prefix]
             value = int(digits.replace("_", ""), base)
             return IntegerValue(token, value)
 
