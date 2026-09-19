@@ -298,8 +298,7 @@ them. Read roughly in this order:
   ("break unless the row is already closed"); folding them together
   would push a `force_indent` flag into the mutation core and needs
   `Boundary` to model empty values first. Investigated and declined.
-  Re-uses
-  `flip_to_*` / `_take_eol` / `_put_eol` from `_comma_ops` for
+  Re-uses `Boundary` and `set_item_eol_channel` from `_comma_ops` for
   the bits that touch the comma-value boundary. Also owns
   `set_comma_value_multiline` — the shared single ↔ multi-line
   expand / collapse for any `CommaValue`, used by both
