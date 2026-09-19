@@ -126,8 +126,10 @@ def _take_eol(item: CommaItem) -> str:
 
     The item keeps only the structural rest in that channel.
     """
-    eol, rest = split_eol_section(item_eol_channel(item))
-    set_item_eol_channel(item, rest)
+    if item_eol_on_trailing(item):
+        eol, item.trailing = split_eol_section(item.trailing)
+    else:
+        eol, item.post_comma_trivia = split_eol_section(item.post_comma_trivia)
     return eol
 
 
