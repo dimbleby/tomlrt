@@ -22,8 +22,11 @@ from tomlrt._comma_ops import (
     Boundary,
     _value_indent,
     boundary_break_holder,
+    item_eol_channel,
+    item_eol_on_trailing,
     reindent_as_leader,
     set_boundary_break_holder,
+    set_item_eol_channel,
     shift_breaks,
 )
 from tomlrt._comment_text import (
@@ -37,11 +40,6 @@ from tomlrt._comment_text import (
     _validate_comment_str,
 )
 from tomlrt._trivia import leading_break, split_eol_section, split_lines
-from tomlrt._values import (
-    item_eol_channel,
-    item_eol_on_trailing,
-    set_item_eol_channel,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

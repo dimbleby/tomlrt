@@ -269,9 +269,10 @@ them. Read roughly in this order:
   adjacent items. The cross-module
   surface is intentionally small — a few `splice_*` / `reorder_owned`
   entry points consumed by `Array` / `_inline_ops`, plus the
-  row-break primitives (`shift_breaks`, `boundary_break_holder`)
-  shared with `_comma_comments`; the lower-level boundary-flip and
-  EOL-section helpers stay module-private. Above-item comment
+  row-break primitives (`shift_breaks`, `boundary_break_holder`) and
+  the per-item EOL-channel accessors (`item_eol_channel` and friends)
+  shared with `_comma_comments` / `_format`; the boundary-flip
+  helpers stay module-private. Above-item comment
   blocks are re-anchored through `Boundary` itself, so an insertion
   finds them wherever the row break ahead of them lives. A future
   change to the canonical inline-value model only needs to land here.

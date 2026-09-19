@@ -32,7 +32,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
-from tomlrt._comma_ops import Boundary
+from tomlrt._comma_ops import Boundary, set_item_eol_channel
 from tomlrt._errors import TOMLError
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
@@ -49,7 +49,6 @@ from tomlrt._values import (
     InlineTableEntry,
     InlineTableValue,
     item_has_any_comment,
-    set_item_eol_channel,
 )
 
 if TYPE_CHECKING:
