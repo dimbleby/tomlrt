@@ -230,7 +230,10 @@ them. Read roughly in this order:
     answer: recomputing an invalidated `_body_tail`. Everything else
     reads the cache through `_last_body_kv`. Don't add a second walk.
   - **Ordered ref filing** goes through `record_ref`, which places a
-    ref by its slot's order key; a physical change to a region of the
+    ref by its slot's order key and, for a body KV that lands past the
+    cached tail, advances `_body_tail` with it — filing is the only
+    thing that moves the tail forward, so the two cannot disagree; a
+    physical change to a region of the
     stream is wrapped in `_refile_region_refs`, which puts every
     affected `_refs` / `_index` projection back in the refreshed key
     order.
@@ -418,7 +421,8 @@ wrong.
 - **`Container._body_tail`** ≡ "the most recent slot in `_refs`
   belonging to the body region" (KV with matching owner; or, for
   a header-bearing container with no body, the header itself).
-  Maintained eagerly on every body-region append, recomputed by
+  Maintained by `record_ref`, which advances it whenever it files a
+  body KV past the current tail, and recomputed by
   `_recompute_body_tail` on body-affecting deletes. Every header-
   filing path establishes it, so a container with a `_header_ref`
   always has a `_body_tail`: insertion anchors read the tail alone
