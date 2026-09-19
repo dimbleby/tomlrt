@@ -21,14 +21,9 @@ if sys.version_info >= (3, 12):
 else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
-from tomlrt._trivia import (
-    retarget_newlines,
-    split_eol_section,
-    split_item_above,
-)
+from tomlrt._trivia import retarget_newlines
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from datetime import tzinfo
     from typing import TypeGuard
 
@@ -468,58 +463,6 @@ Value = (
 )
 
 
-def item_breaks_before_comma(item: CommaItem) -> bool:
-    """Return whether the row break and any EOL comment precede the comma."""
-    return item.has_comma and "\n" in item.trailing
-
-
-def item_eol_on_trailing(item: CommaItem) -> bool:
-    """Whether ``trailing`` (rather than ``post_comma_trivia``) owns the EOL.
-
-    A comma-first item normally uses ``trailing``. If its pre-comma break is
-    structural while an EOL comment follows the comma, the post-comma channel
-    owns that EOL instead. Deciding it here lets callers read, write, and
-    normalise the EOL without rediscovering the distinction.
-
-    `tomlrt._comma_ops.Boundary._eol` selects the same channel by the same
-    rule, over captured lanes rather than a live item, and layers an
-    "is there an EOL at all?" test on top. The two are deliberately not
-    shared: expressing the rule once would mean spelling `Boundary`'s
-    head/above/tail lane split in this module, and this layer is pure data.
-    Change one and you must change the other.
-    """
-    if item_breaks_before_comma(item):
-        trailing_eol, _rest = split_eol_section(item.trailing)
-        if trailing_eol or "#" not in item.post_comma_trivia:
-            return True
-    return not item.has_comma
-
-
-def item_eol_channel(item: CommaItem) -> str:
-    """The trivia run that owns the item's row-attached EOL section."""
-    return item.trailing if item_eol_on_trailing(item) else item.post_comma_trivia
-
-
-def set_item_eol_channel(item: CommaItem, text: str) -> None:
-    """Write back the run that :func:`item_eol_channel` reads."""
-    if item_eol_on_trailing(item):
-        item.trailing = text
-    else:
-        item.post_comma_trivia = text
-
-
-def inter_item_separator(items: Sequence[CommaItem]) -> str:
-    """Structural-pad portion of ``items[1].leading``; ``" "`` if ``len < 2``.
-
-    Excludes any above-item comment block, which belongs to the item's
-    leading rather than to the separator.
-    """
-    if len(items) >= 2:
-        head, _above, tail = split_item_above(items[1].leading)
-        return head + tail
-    return " "
-
-
 def value_has_any_comment(v: Value) -> bool:
     """Whether any comment appears anywhere within ``v`` (recursively)."""
     if not isinstance(v, CommaValue):
@@ -568,11 +511,6 @@ __all__ = [
     "KeyPart",
     "StringValue",
     "Value",
-    "inter_item_separator",
-    "item_breaks_before_comma",
-    "item_eol_channel",
-    "item_eol_on_trailing",
     "item_has_any_comment",
     "retarget_value_newlines",
-    "set_item_eol_channel",
 ]

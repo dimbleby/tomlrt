@@ -19,17 +19,12 @@ from tomlrt._trivia import (
     newline_at,
     restamp_bracket_pad_for_first,
     split_eol_section,
+    split_item_above,
     split_line,
     split_lines,
     strip_trailing_indent,
     strip_trailing_ws,
     trailing_ws,
-)
-from tomlrt._values import (
-    inter_item_separator,
-    item_breaks_before_comma,
-    item_eol_channel,
-    set_item_eol_channel,
 )
 
 if TYPE_CHECKING:
@@ -58,6 +53,72 @@ _CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
 # ---------------------------------------------------------------------------
 # Per-item EOL section helpers
 # ---------------------------------------------------------------------------
+
+
+def _eol_on_pre_comma(
+    pre_comma: str,
+    post_comma: str,
+    *,
+    breaks_before_comma: bool,
+    has_comma: bool,
+) -> bool:
+    """Whether the pre-comma channel, not the post-comma one, owns the EOL.
+
+    A comma-first row normally keeps its EOL ahead of the comma; if that
+    break is structural and an EOL comment follows the comma, the
+    post-comma channel owns it instead.
+
+    Callers supply the two channels and the break decision because the
+    two representations spell them differently: a live `CommaItem` holds
+    flat ``trailing`` / ``post_comma_trivia`` runs, while a `Boundary`
+    holds the pre-comma run split into lanes and looks for the break in
+    its head lane alone.
+    """
+    if breaks_before_comma:
+        eol, _rest = split_eol_section(pre_comma)
+        if eol or "#" not in post_comma:
+            return True
+    return not has_comma
+
+
+def _item_breaks_before_comma(item: CommaItem) -> bool:
+    """Return whether the row break and any EOL comment precede the comma."""
+    return item.has_comma and "\n" in item.trailing
+
+
+def item_eol_on_trailing(item: CommaItem) -> bool:
+    """Whether ``trailing`` (rather than ``post_comma_trivia``) owns the EOL."""
+    return _eol_on_pre_comma(
+        item.trailing,
+        item.post_comma_trivia,
+        breaks_before_comma=_item_breaks_before_comma(item),
+        has_comma=item.has_comma,
+    )
+
+
+def item_eol_channel(item: CommaItem) -> str:
+    """The trivia run that owns the item's row-attached EOL section."""
+    return item.trailing if item_eol_on_trailing(item) else item.post_comma_trivia
+
+
+def set_item_eol_channel(item: CommaItem, text: str) -> None:
+    """Write back the run that :func:`item_eol_channel` reads."""
+    if item_eol_on_trailing(item):
+        item.trailing = text
+    else:
+        item.post_comma_trivia = text
+
+
+def _inter_item_separator(items: Sequence[CommaItem]) -> str:
+    """Structural-pad portion of ``items[1].leading``; ``" "`` if ``len < 2``.
+
+    Excludes any above-item comment block, which belongs to the item's
+    leading rather than to the separator.
+    """
+    if len(items) >= 2:
+        head, _above, tail = split_item_above(items[1].leading)
+        return head + tail
+    return " "
 
 
 def _take_eol(item: CommaItem) -> str:
@@ -214,17 +275,21 @@ class Boundary:
 
         ``before`` is the predecessor's ``trailing``, ``after`` its
         ``post_comma_trivia``; ``None`` means no EOL is present at all.
-        The channel choice mirrors `tomlrt._values.item_eol_on_trailing`
-        -- see there for why the rule is spelled out in both places.
         """
         before = self.before.join()
-        if self.break_before_comma:
-            eol, _rest = split_eol_section(before)
-            if eol or "#" not in self.after:
-                return ("before" if eol else None), eol
-        channel = self.after if self.has_comma else before
+        if _eol_on_pre_comma(
+            before,
+            self.after,
+            breaks_before_comma=self.break_before_comma,
+            has_comma=self.has_comma,
+        ):
+            lane: _EolLane = "before"
+            channel = before
+        else:
+            lane = "after"
+            channel = self.after
         eol, _rest = split_eol_section(channel)
-        return ("after" if self.has_comma else "before") if eol else None, eol
+        return (lane if eol else None), eol
 
     @property
     def eol(self) -> str:
@@ -580,8 +645,8 @@ def detect_style(value: CommaValue[_CV_ItemT]) -> CommaStyle:
     """
     items = value.items
     is_multiline = value.is_multiline()
-    inter_sep = inter_item_separator(items)
-    leader = items[0] if items and item_breaks_before_comma(items[0]) else None
+    inter_sep = _inter_item_separator(items)
+    leader = items[0] if items and _item_breaks_before_comma(items[0]) else None
     if is_multiline and leader is None and "\n" not in inter_sep:
         inter_sep = _canonical_separator(value)
     trailing_comma = items[-1].has_comma if items else is_multiline
@@ -956,8 +1021,11 @@ __all__ = [
     "CommaStyle",
     "boundary_break_holder",
     "detect_style",
+    "item_eol_channel",
+    "item_eol_on_trailing",
     "reindent_as_leader",
     "reorder_owned",
+    "set_item_eol_channel",
     "shift_breaks",
     "splice_in",
     "splice_insert",
