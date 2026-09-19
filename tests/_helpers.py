@@ -16,10 +16,15 @@
   raises, so a CI failure is reproducible.
 * :func:`fuzz_seeds` — the fuzzers' seed source, honouring
   ``TOMLRT_FUZZ_SEED`` so a reported seed can be replayed.
+* :func:`check_slot_chain` / :func:`check_view_caches` — structural
+  oracles over a document's physical slot stream and the projections
+  of it that every container caches. A corrupt projection renders
+  perfectly, so the model oracles cannot see one; these can.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 import os
 import secrets
@@ -29,8 +34,15 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
+from tomlrt import AoT
+from tomlrt._container import _is_section
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from tomlrt._container import Container, Document
+    from tomlrt._slots import Slot
 
 
 def td(src: str) -> str:
@@ -113,3 +125,121 @@ def fuzz_seeds(count: int) -> Iterator[int]:
         return
     for _ in range(count):
         yield secrets.randbits(64)
+
+
+def _chain(doc: Document) -> list[Slot]:
+    """The document's slots, walked forward from its head."""
+    out: list[Slot] = []
+    seen: set[int] = set()
+    cur = doc._head  # noqa: SLF001
+    while cur is not None:
+        assert id(cur) not in seen, "cycle in slot chain"
+        seen.add(id(cur))
+        out.append(cur)
+        cur = cur._next  # noqa: SLF001
+    return out
+
+
+def check_slot_chain(doc: Document, ctx: str) -> None:
+    """Assert the document's physical slot stream is well formed.
+
+    Cheap enough to run after every fuzz step. These are the checks
+    whose violation has been seen to render correctly and only fail
+    later, on an unrelated operation:
+
+    * the chain is acyclic and its links are symmetric;
+    * ``_head`` / ``_tail`` really are its ends;
+    * the order keys that place refs in doc order increase along it.
+    """
+    slots = _chain(doc)
+
+    if slots:
+        assert doc._tail is slots[-1], f"{ctx}: _tail is not the chain end"  # noqa: SLF001
+        assert slots[0]._prev is None, f"{ctx}: head has a predecessor"  # noqa: SLF001
+    else:
+        assert doc._tail is None, f"{ctx}: empty chain with a _tail"  # noqa: SLF001
+
+    for a, b in itertools.pairwise(slots):
+        assert b._prev is a, f"{ctx}: broken back-link"  # noqa: SLF001
+        assert a._order < b._order, f"{ctx}: order keys are not increasing"  # noqa: SLF001
+
+
+def _containers(doc: Document) -> list[Container]:
+    """Every section-backed container reachable from ``doc``."""
+    out: list[Container] = []
+
+    def visit(c: Container) -> None:
+        out.append(c)
+        for child in c.values():
+            if _is_section(child):
+                visit(child)
+            elif isinstance(child, AoT):
+                for entry in child:
+                    visit(entry)
+
+    visit(doc)
+    return out
+
+
+def _expected_body_tail(c: Container) -> Slot | None:
+    """The body tail ``_layout_ops._recompute_body_tail`` would derive."""
+    owner = c._owner_aot_entry  # noqa: SLF001
+    for ref in reversed(c._refs):  # noqa: SLF001
+        slot = ref.slot
+        if isinstance(slot, KVSlot) and slot.owner_aot_entry is owner:
+            return slot
+    return c._header_ref.slot if c._header_ref is not None else None  # noqa: SLF001
+
+
+def check_view_caches(doc: Document, ctx: str) -> None:
+    """Assert every container's projections of the slot stream agree with it.
+
+    ``_refs``, ``_index`` and ``_body_tail`` are caches over the one
+    source of physical order, the doc-stream linked list. A mutation
+    that files a ref out of order, or leaves a bucket naming a slot the
+    walk no longer reaches, still renders correctly -- the renderer
+    walks the stream, not the caches -- and only fails later, when an
+    insertion consults a cache to decide where a slot belongs.
+    """
+    pos = {id(s): i for i, s in enumerate(_chain(doc))}
+    for c in _containers(doc):
+        where = f"{ctx}: {c._path}"  # noqa: SLF001
+        for ref in c._refs:  # noqa: SLF001
+            assert id(ref.slot) in pos, f"{where}: ref names a slot off the chain"
+        order = [pos[id(ref.slot)] for ref in c._refs]  # noqa: SLF001
+        assert order == sorted(order), f"{where}: _refs is not in doc order"
+
+        # `_body_tail` is maintained incrementally on every append and
+        # only fully recomputed on a body-affecting delete, so what is
+        # caught here is the incremental path drifting from the
+        # recomputation that is meant to agree with it.
+        want = _expected_body_tail(c)
+        assert c._body_tail is want, (  # noqa: SLF001
+            f"{where}: _body_tail is stale (got {c._body_tail!r}, want {want!r})"  # noqa: SLF001
+        )
+
+        for ref in c._refs:  # noqa: SLF001
+            assert ref.container is c, f"{where}: ref is owned by another container"
+            assert any(back is ref for back in ref.slot._refs), (  # noqa: SLF001
+                f"{where}: slot does not back-point to this ref"
+            )
+        header_ref = c._header_ref  # noqa: SLF001
+        if header_ref is not None:
+            own_header = header_ref.slot
+            own_path = c._path  # noqa: SLF001
+            assert isinstance(own_header, StructuralHeaderSlot), (
+                f"{where}: _header_ref does not name a header"
+            )
+            assert own_header.path == own_path, f"{where}: _header_ref path mismatch"
+
+        for key, bucket in c._index.items():  # noqa: SLF001
+            expected = [ref for ref in c._refs if ref.local_key == key]  # noqa: SLF001
+            assert bucket == expected, f"{where}: _index[{key!r}] is not its projection"
+        for ref in c._refs:  # noqa: SLF001
+            local = ref.local_key
+            if local is None:
+                # The one ref with no local key is the container's own
+                # header, which lives in `_header_ref`, not `_index`.
+                assert c._header_ref is ref, f"{where}: keyless ref is not the header"  # noqa: SLF001
+                continue
+            assert ref in c._index.get(local, []), f"{where}: ref missing from _index"  # noqa: SLF001

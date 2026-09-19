@@ -52,7 +52,13 @@ import pytest
 import tomli
 
 import tomlrt
-from _helpers import deep_equal, fuzz_context, fuzz_seeds
+from _helpers import (
+    check_slot_chain,
+    check_view_caches,
+    deep_equal,
+    fuzz_context,
+    fuzz_seeds,
+)
 from tomlrt import AoT, Array
 from tomlrt._container import Container, Table
 
@@ -293,8 +299,16 @@ def _run_fuzz_programs(
         rng = random.Random(seed)  # noqa: S311
         with fuzz_context(f"{ctx_label} seed={seed}"):
             doc = tomlrt.loads(src)
-            for _ in range(rng.randint(1, 15)):
+            check_slot_chain(doc, "after load")
+            check_view_caches(doc, "after load")
+            for step in range(rng.randint(1, 15)):
                 _mutate(doc, rng, foreign_pool)
+                # A corrupt projection still renders correctly, so the
+                # model oracles below cannot see one; these can, and they
+                # name the step that caused it rather than a later one
+                # that merely tripped over it.
+                check_slot_chain(doc, f"step {step}")
+                check_view_caches(doc, f"step {step}")
             out = tomlrt.dumps(doc)
             # Valid TOML and a fixed point of dump -> load -> dump.
             tomli.loads(out)
