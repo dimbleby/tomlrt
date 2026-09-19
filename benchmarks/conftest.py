@@ -7,6 +7,7 @@ not collect them; ``make bench`` runs them explicitly.
 from __future__ import annotations
 
 import math
+import os
 import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,28 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _pin_to_one_cpu() -> None:
+    """Keep the whole run on a single CPU, where the OS offers that.
+
+    Migrating between cores is what makes a saved baseline
+    incomparable: the arriving core has none of the run's cache, and
+    under a hypervisor the vCPU may land on a different physical core
+    each time. Measured here, ``test_dotted_key`` repeated in fresh
+    processes spans 56% unpinned and 1% pinned, which is the difference
+    between a comparison that can resolve a few percent and one that
+    cannot.
+
+    Every available CPU timed the same, so the choice among them only
+    has to be consistent; CPU 0 is skipped because it tends to serve
+    interrupts.
+    """
+    if not hasattr(os, "sched_setaffinity"):  # pragma: no cover -- not Linux
+        return
+    available = sorted(os.sched_getaffinity(0))
+    if len(available) > 1:
+        os.sched_setaffinity(0, {available[len(available) // 2]})
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Settings the suite is wrong without.
 
@@ -33,6 +56,7 @@ def pytest_configure(config: pytest.Config) -> None:
     """
     config.option.benchmark_disable_gc = True
     config.option.benchmark_quiet = True
+    _pin_to_one_cpu()
 
 
 def _format_time(seconds: float) -> str:

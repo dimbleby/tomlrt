@@ -568,11 +568,17 @@ so a plain `pytest` run does not collect them. `make bench` runs them.
   dominates — a 10k-line fixture costs ~60ms to parse to time ~1ms of
   work — so a needlessly large `rounds` buys nothing but wall time.
   Watch `+/-` rather than guessing.
-- **Nothing single-process can see machine-level noise.** A loaded
-  machine moves every case together by 15% or more, and two `make bench`
-  runs ten minutes apart have disagreed by 50% on this hardware. Compare
-  against a saved baseline, or measure two implementations interleaved
-  in one process.
+- **The suite pins itself to one CPU, and needs to.** Left to migrate,
+  a case repeated in fresh processes spanned 56% here — enough to
+  invent a 37% regression between two runs of identical code — against
+  1% pinned. `benchmarks/conftest.py` sets the affinity; a comparison
+  made without it is measuring the scheduler.
+- **A saved baseline is still a different process at a different
+  time.** Pinning leaves a few percent, and more for a
+  `pedantic` case whose setup churns the cache between rounds. Treat a
+  move under ~5% as unresolved: re-run the baseline arm against itself,
+  and believe only what the control does not also show. To resolve less
+  than that, measure two implementations interleaved in one process.
 
 ## Documentation
 
