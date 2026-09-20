@@ -47,7 +47,8 @@ or readable code. The goal is the cleanest design, not merely the smallest diff.
      the established layout operations.
    - `_refs`, `_index`, `_body_tail`, order keys, slot back-pointers, AoT
      ownership, and view attachment state remain synchronized.
-   - `SlotRef.local_key` remains derived.
+   - `slot_local_key(slot, container)` remains derived; slot back-pointers
+     compare containers by identity, not dict equality.
    - Comma-value boundary ownership is handled by `Boundary` and shared comma
      operations, not duplicated in flavour-specific code.
    - Input validation remains at public boundaries without repeated internal

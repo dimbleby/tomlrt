@@ -174,8 +174,8 @@ them. Read roughly in this order:
     collector nothing) that every slot kind has, `_prev` / `_next`
     intrusive linked-list pointers, the `_order` doc-stream order
     key, `owner_aot_entry`, and a
-    `_refs` back-pointer list (every `SlotRef` that targets the
-    slot — bounded by path depth, used for O(depth) ref scrub on
+    `_containers` back-pointer list (every container indexing the
+    slot — bounded by path depth, used for O(depth) membership scrub on
     AoT removal).
   - `KVSlot` — one `key = value` line (`host_path`, `key_parts`,
     `key_seps`, `value`); `key` is derived from `key_parts`.
@@ -184,10 +184,9 @@ them. Read roughly in this order:
     `kind` are derived, from `key_parts` and `entry` respectively.
   - `AoTEntry` — ownership marker for an `[[a]]` entry, retaining only
     its own header; slot membership and ordering come from the linked stream.
-  - `SlotRef` — a per-container *occurrence* of a slot.
-    `local_key` is a derived `@property` of `(slot, container)`
-    geometry — never store it. Registers itself on the target
-    slot's `_refs` list at construction; `unfile_ref` unregisters.
+  - `slot_local_key(slot, container)` derives the key under which
+    a slot is indexed from their paths. Containers index slots directly;
+    there is no per-membership record.
 
 ### Parser
 
@@ -229,8 +228,8 @@ them. Read roughly in this order:
     `_recompute_body_tail`, for the one question the caches cannot
     answer: recomputing an invalidated `_body_tail`. Everything else
     reads the cache through `_last_body_kv`. Don't add a second walk.
-  - **Ordered ref filing** goes through `record_ref`, which places a
-    ref by its slot's order key and, for a body KV that lands past the
+  - **Ordered slot filing** goes through `record_slot`, which places a
+    slot by its order key and, for a body KV that lands past the
     cached tail, advances `_body_tail` with it — filing is the only
     thing that moves the tail forward, so the two cannot disagree; a
     physical change to a region of the
@@ -315,10 +314,10 @@ them. Read roughly in this order:
 - **`_container.py`** — `Container` (the abstract base, a `dict`
   subclass), `Document`, and `Table`. Holds `_refs`, `_index`,
   `_path`, `_host`, `_layout_root`, `_owner_aot_entry`,
-  `_body_tail`, `_value`, `_header_ref`, `_inline`. Exposes
+  `_body_tail`, `_value`, `_header`, `_inline`. Exposes
   `_wire(layout_root=, parent=, path=, owner=)` — every container
   construction site goes through it for the four common attachment
-  fields; flavour-specific bits (`_inline`, `_value`, `_header_ref`,
+  fields; flavour-specific bits (`_inline`, `_value`, `_header`,
   `_body_tail`) stay explicit at the call site so the table's kind
   is visible. `_doc_newline` is the canonical "newline of the
   owning document, or `\n` if detached" accessor — prefer it over
@@ -408,32 +407,30 @@ wrong.
   than a walk. Keys are laid out with gaps, a whole run at a time,
   and a local window is relabelled when a seam runs out of room;
   they are arbitrary and meaningless for an unlinked slot.
-- **`SlotRef.local_key` is derived** from `(slot, container)` —
-  never assigned, never stored. The property asserts the
-  geometric invariant on every read; an out-of-place ref fails
-  fast at the property boundary rather than corrupting an
-  `_index` bucket.
-- **`Container._index[k]`** is the in-order list of refs in
-  `_refs` whose `local_key == k`. Both it and `_refs` are sorted by
-  `Slot._order`: file refs through `record_ref`, and make physical
+- **`slot_local_key(slot, container)` is derived** from their paths —
+  never store a second copy of that key.
+- **`Container._index[k]`** is the in-order list of slots in
+  `_refs` whose `slot_local_key(slot, container) == k`. Both it and
+  `_refs` are sorted by `Slot._order`: file slots through `record_slot`,
+  and make physical
   changes to a region inside `_refile_region_refs`, which re-files
   the region's contiguous run in each projection.
 - **`Container._body_tail`** ≡ "the most recent slot in `_refs`
   belonging to the body region" (KV with matching owner; or, for
   a header-bearing container with no body, the header itself).
-  Maintained by `record_ref`, which advances it whenever it files a
+  Maintained by `record_slot`, which advances it whenever it files a
   body KV past the current tail, and recomputed by
   `_recompute_body_tail` on body-affecting deletes. Every header-
-  filing path establishes it, so a container with a `_header_ref`
+  filing path establishes it, so a container with a `_header`
   always has a `_body_tail`: insertion anchors read the tail alone
   and need no header fallback of their own.
 - **`Slot.owner_aot_entry`** lives on the base `Slot`, not on the
   subclasses. Use direct attribute access — never `getattr(slot,
   "owner_aot_entry", None)`.
-- **`Slot._refs`** is the back-pointer list from a slot to every
-  `SlotRef` that targets it. Bounded by path depth + 1. Maintained
-  by `SlotRef.__init__` (registers) and `unfile_ref`
-  (unregisters). AoT removal uses it to scrub refs in O(depth) per
+- **`Slot._containers`** is the back-pointer list of containers that
+  index a slot. Bounded by path depth + 1. Maintained by `record_slot`
+  and `unfile_slot`. Compare containers by **identity**, never dict
+  equality. AoT removal uses it to scrub memberships in O(depth) per
   slot instead of O(siblings) per container — don't bypass it
   with ad-hoc walks of ancestor `_index` buckets.
 - **AoT entry membership and order live only in the linked stream.**
@@ -444,7 +441,7 @@ wrong.
   `_kind.py` and surfaced as `Container._kind`. The six kinds —
   `DOCUMENT`, `SECTION`, `IMPLICIT_SECTION`, `INLINE_ROOT`,
   `INLINE_FACTORY`, `INLINE_DOTTED_INNER` — pick out the
-  combinations of `_inline` / `_value` / `_host` / `_header_ref`
+  combinations of `_inline` / `_value` / `_host` / `_header`
   that previously had to be re-derived at every
   call site. In particular, `INLINE_FACTORY` (a detached
   `Table.inline()` not yet assigned anywhere) and
@@ -608,9 +605,8 @@ of any public API.
 - Reaching into `_slots` / the doc-stream linked list from
   user-facing code instead of going through `_layout_ops` /
   `_inline_ops`.
-- Storing data on a `SlotRef` other than `slot` and `container` —
-  `local_key` is derived; if you need another piece of state,
-  derive it too or push it onto the slot itself.
+- Adding per-membership records or storing a slot's local key —
+  the slot and its indexing container already determine that key.
 - Adding a second ad-hoc reverse-walk of `c._refs` instead of reading
   the `_body_tail` cache through `_last_body_kv`.
 - "Fixing" formatting differences in the writer's output without

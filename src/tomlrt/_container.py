@@ -2,7 +2,7 @@
 
 `Container(dict)` backs `Document` and `Table`. Dict storage follows
 doc-stream first-occurrence order; mutations update the slot stream
-through `_index`, `_refs`, `_header_ref`, and `_body_tail`.
+through `_index`, `_refs`, `_header`, and `_body_tail`.
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ if TYPE_CHECKING:
 
     from tomlrt._format import FormatOptions
     from tomlrt._scalar import Scalar
-    from tomlrt._slots import AoTEntry, Slot, SlotRef
+    from tomlrt._slots import AoTEntry, Slot
     from tomlrt._values import Value
 
 
@@ -110,14 +110,14 @@ class Container(_View, dict[str, Any]):
     """Dict-typed base for `Document` and `Table` views.
 
     Reads are pure dict operations. Section mutations use the
-    per-container cache (`_index`, `_refs`, `_header_ref`,
+    per-container cache (`_index`, `_refs`, `_header`,
     `_body_tail`). Inline tables keep those caches empty and mutate
     the backing `InlineTableValue` in `_value`.
     """
 
     __slots__ = (
         "_body_tail",
-        "_header_ref",
+        "_header",
         "_host",
         "_index",
         "_inline",
@@ -146,9 +146,9 @@ class Container(_View, dict[str, Any]):
         self._inline = False
         self._host: Array | AoT | Container | None = None
         self._owner_aot_entry: AoTEntry | None = None
-        self._index: dict[str, list[SlotRef]] = {}
-        self._refs: list[SlotRef] = []
-        self._header_ref: SlotRef | None = None
+        self._index: dict[str, list[Slot]] = {}
+        self._refs: list[Slot] = []
+        self._header: StructuralHeaderSlot | None = None
         self._body_tail: Slot | None = None
         self._value: InlineTableValue | None = None
 
@@ -174,7 +174,7 @@ class Container(_View, dict[str, Any]):
             if self._host is None:
                 return _Kind.INLINE_FACTORY
             return _Kind.INLINE_DOTTED_INNER
-        if self._header_ref is not None:
+        if self._header is not None:
             return _Kind.SECTION
         return _Kind.IMPLICIT_SECTION
 
@@ -393,7 +393,7 @@ class Container(_View, dict[str, Any]):
         while pending:
             for child in pending.pop().values():
                 if _is_section(child):
-                    if child._header_ref is None:  # noqa: SLF001
+                    if child._header is None:  # noqa: SLF001
                         pending.append(child)
                     else:
                         yield _layout_ops.owned_slots(child), True
@@ -424,7 +424,7 @@ class Container(_View, dict[str, Any]):
         """Set the four common attachment fields shared by every Container.
 
         Inline-specific bits (``_inline``, ``_value``) and section-specific
-        bits (``_header_ref``, ``_body_tail``) are not touched — callers
+        bits (``_header``, ``_body_tail``) are not touched — callers
         set them explicitly so the table's flavour is visible at the call
         site.
         """
@@ -730,12 +730,12 @@ class Container(_View, dict[str, Any]):
         elif _can_adopt_from(src_root, self._attached_doc):
             assert value._refs, "a private section owns slots"
             emptied = value._parent
-            if value._header_ref is not None:
+            if value._header is not None:
                 _layout_ops.adopt_private_section(self, key, value)
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
             _layout_ops.synthesise_header_for_emptied(emptied)
-        elif value._header_ref is not None or isinstance(value, Document):
+        elif value._header is not None or isinstance(value, Document):
             _layout_ops.clone_section(self, key, value)
         else:
             _layout_ops.clone_implicit_section(self, key, value)
@@ -744,7 +744,7 @@ class Container(_View, dict[str, Any]):
         """Replace a scalar while preserving its existing KV slot."""
         refs = self._index.get(key)
         assert refs is not None, "scalar value must have a slot"
-        slot = refs[0].slot
+        slot = refs[0]
         assert isinstance(slot, KVSlot), "scalar value must have a KV slot"
         slot.value = coerce_scalar(value)
         dict.__setitem__(self, key, value)
@@ -762,8 +762,7 @@ class Container(_View, dict[str, Any]):
         refs = self._index.get(key)
         assert refs is not None, "inline value must have a slot"
         assert len(refs) == 1, "inline value must be backed by exactly one slot"
-        primary = refs[0]
-        slot = primary.slot
+        slot = refs[0]
         assert isinstance(slot, KVSlot), "inline value must be backed by a KV slot"
         old = dict.__getitem__(self, key)
         cst, decoded = self._synth_local_value(key, value)
@@ -883,11 +882,11 @@ class Container(_View, dict[str, Any]):
             for k in current:
                 has_leaf = False
                 has_header = False
-                for ref in self._index.get(k, ()):
-                    if isinstance(ref.slot, KVSlot):
+                for slot in self._index.get(k, ()):
+                    if isinstance(slot, KVSlot):
                         has_leaf = True
                     else:
-                        assert isinstance(ref.slot, StructuralHeaderSlot)
+                        assert isinstance(slot, StructuralHeaderSlot)
                         has_header = True
                     if has_leaf and has_header:
                         break
@@ -922,8 +921,8 @@ class Container(_View, dict[str, Any]):
         refs = self._index.get(key, ())
         # A plain loop measurably beats any()+generator here; sort()
         # calls this once per key, so it's hot for wide containers.
-        for r in refs:  # noqa: SIM110
-            if isinstance(r.slot, StructuralHeaderSlot):
+        for slot in refs:  # noqa: SIM110
+            if isinstance(slot, StructuralHeaderSlot):
                 return True
         return False
 
@@ -1112,10 +1111,8 @@ class Container(_View, dict[str, Any]):
         result = dict.__getitem__(self, key)
         assert isinstance(result, Table)
         _layout_ops.populate_promoted_inline_entries(result, entries)
-        header_ref = result._header_ref  # noqa: SLF001
-        assert header_ref is not None
-        new_header = header_ref.slot
-        assert isinstance(new_header, StructuralHeaderSlot)
+        new_header = result._header  # noqa: SLF001
+        assert new_header is not None
         _layout_ops.restore_captured_leading(new_header, saved_leading, from_kv=True)
         new_header.eol = saved_eol
         return result
@@ -1663,7 +1660,7 @@ def _snapshot_for_overlapping_install(
         return value
     dest_path = (*parent._path, key)  # noqa: SLF001
     value_path = value._path  # noqa: SLF001
-    headerless_value = not isinstance(value, AoT) and value._header_ref is None  # noqa: SLF001
+    headerless_value = not isinstance(value, AoT) and value._header is None  # noqa: SLF001
     descendant_overlap = (
         headerless_value
         and len(value_path) - len(dest_path) >= 2

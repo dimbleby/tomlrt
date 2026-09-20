@@ -2,8 +2,8 @@
 
 A document is an intrusive doubly linked list of physical slots:
 ``KVSlot`` for ``key = value`` lines and ``StructuralHeaderSlot`` for
-``[a.b]`` / ``[[a.b]]`` headers. `SlotRef` records a slot's occurrence
-in one container.
+``[a.b]`` / ``[[a.b]]`` headers. Containers index slots directly;
+each slot keeps back-pointers to the containers that index it.
 """
 
 from __future__ import annotations
@@ -77,16 +77,16 @@ class Slot:
 
     Constructor fields are positional and required — a slot is built once
     per line and keyword binding roughly doubles that cost. ``_prev`` /
-    ``_next`` / ``_order`` / ``_refs`` are runtime wiring, initialized
+    ``_next`` / ``_order`` / ``_containers`` are runtime wiring, initialized
     independently for every new slot. Concrete constructors initialize
     inherited fields directly to avoid a base-initializer call per line.
     """
 
     __slots__ = (
+        "_containers",
         "_next",
         "_order",
         "_prev",
-        "_refs",
         "eol",
         "leading",
         "owner_aot_entry",
@@ -115,11 +115,11 @@ class Slot:
     Maintained by `stitch_run`; meaningless for an unlinked slot, which
     is stamped afresh when spliced back in.
     """
-    _refs: list[SlotRef]
-    """Back-pointers from this slot to every `SlotRef` that references it.
+    _containers: list[Container]
+    """Containers that index this slot, compared by identity.
 
     Bounded length (≤ path depth + 1). AoT removal uses this to scrub
-    refs in O(depth) per slot instead of O(siblings) per container.
+    memberships in O(depth) per slot instead of O(siblings) per container.
     """
 
     def __deepcopy__(self, memo: dict[int, object]) -> Slot:
@@ -210,7 +210,7 @@ class KVSlot(Slot):
         self._prev = None
         self._next = None
         self._order = 0
-        self._refs = []
+        self._containers = []
         self.host_path = host_path
         self.key_parts = key_parts
         self.key_seps = key_seps
@@ -279,7 +279,7 @@ class StructuralHeaderSlot(Slot):
         self._prev = None
         self._next = None
         self._order = 0
-        self._refs = []
+        self._containers = []
         self.key_parts = key_parts
         self.key_seps = key_seps
         self.inner_pre = inner_pre
@@ -439,42 +439,22 @@ def _respread(left: Slot, right: Slot, count: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# SlotRef (per-container occurrence)
+# Per-container slot geometry
 # ---------------------------------------------------------------------------
 
 
-class SlotRef:
-    """A per-container occurrence of a slot.
+def slot_local_key(slot: Slot, container: Container) -> str | None:
+    """Derive a slot's key in ``container._index`` from their paths.
 
-    `local_key` derives the key under which the ref is filed in
-    `container._index` from `(slot, container)` geometry.
+    The container's own header has no local key; it lives in ``_refs``
+    and ``_header``, not ``_index``.
     """
-
-    __slots__ = ("container", "slot")
-
-    def __init__(self, slot: Slot, container: Container) -> None:
-        self.slot = slot
-        self.container = container
-        # Back-pointers let AoT removal scrub doomed slots without
-        # scanning ancestor containers.
-        slot._refs.append(self)  # noqa: SLF001
-
-    @property
-    def local_key(self) -> str | None:
-        """Key under which this ref is filed in ``container._index``.
-
-        ``None`` for the container's own header ref (which lives in
-        ``_refs`` + ``_header_ref``, not ``_index``); otherwise a single
-        path component derived from the slot path and container depth.
-        """
-        slot = self.slot
-        c_path = self.container._path  # noqa: SLF001
-        if isinstance(slot, KVSlot):
-            return slot.key_parts[len(c_path) - len(slot.host_path)].value
-        assert isinstance(slot, StructuralHeaderSlot)
-        parts = slot.key_parts
-        depth = len(c_path)
-        return parts[depth].value if len(parts) > depth else None
+    depth = len(container._path)  # noqa: SLF001
+    if isinstance(slot, KVSlot):
+        return slot.key_parts[depth - len(slot.host_path)].value
+    assert isinstance(slot, StructuralHeaderSlot)
+    parts = slot.key_parts
+    return parts[depth].value if len(parts) > depth else None
 
 
 def ensure_terminator(slot: Slot, nl: str) -> None:
@@ -504,9 +484,9 @@ __all__ = [
     "AoTEntry",
     "KVSlot",
     "Slot",
-    "SlotRef",
     "StructuralHeaderSlot",
     "ensure_terminator",
     "retarget_slot_newlines",
+    "slot_local_key",
     "stitch_run",
 ]
