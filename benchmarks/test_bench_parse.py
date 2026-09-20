@@ -125,3 +125,11 @@ def test_dotted_key(benchmark: BenchmarkFixture, record_throughput: Throughput) 
     src = ".".join(f"k{i}" for i in range(512)) + " = 1\n"
     benchmark(tomlrt.loads, src)
     record_throughput(benchmark, len(src.encode()))
+
+
+def test_shared_dotted_prefix(
+    benchmark: BenchmarkFixture, record_throughput: Throughput
+) -> None:
+    src = "".join(f"tool.package.value{i} = {i}\n" for i in range(1000))
+    benchmark(tomlrt.loads, src)
+    record_throughput(benchmark, len(src.encode()))
