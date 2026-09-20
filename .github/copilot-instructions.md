@@ -201,7 +201,9 @@ them. Read roughly in this order:
   keys cannot extend an explicitly defined table / AoT, inline-
   table local key rules). Table-local namespaces hold declaration
   kinds; each new AoT entry clears its namespace and gets a fresh
-  ownership token. Owned and invoked by `_parser.py`.
+  ownership token. Valid key declarations traverse their path once;
+  only a forbidden dotted prefix needs a suffix lookup to preserve
+  terminal-conflict diagnostic precedence. Owned and invoked by `_parser.py`.
   Separate from `_typecheck.py`, which is the runtime
   input-validation layer for the public mutation API.
 

@@ -39,7 +39,7 @@ class _Scope:
 
 
 def _lookup(scope: _Scope, path: tuple[str, ...]) -> _Scope | Literal["value"] | None:
-    """Look up a nonempty path without enforcing declaration kinds."""
+    """Look up a diagnostic's remaining path without enforcing declaration kinds."""
     for name in path[:-1]:
         child = scope.children.get(name)
         if not isinstance(child, _Scope):
@@ -142,43 +142,53 @@ class _Validator:
         recording the complete value here closes all its descendants.
         """
         section = self.current_section
-        # Terminal conflicts take precedence over invalid dotted prefixes.
-        existing = _lookup(self._current, key_path)
-        if existing == "value":
-            msg = f"duplicate key {'.'.join(section + key_path)!r}"
-            raise self._error(msg, at=at)
-        if existing is not None:
-            msg = f"key {'.'.join(section + key_path)!r} already defined as a table"
-            raise self._error(msg, at=at)
         scope = self._current
         if len(key_path) > 1:
             for i, name in enumerate(key_path[:-1], start=1):
                 child = scope.children.get(name)
-                if child == "value":
+                if child is None:
+                    child = _Scope("dotted")
+                    scope.children[name] = child
+                elif child == "value":
                     msg = (
                         f"key {'.'.join(section + key_path[:i])!r} "
                         "already defined as a value"
                     )
                     raise self._error(msg, at=at)
-                if child is None:
-                    child = _Scope("dotted")
-                    scope.children[name] = child
-                elif child.kind == "explicit":
-                    msg = (
-                        "cannot extend explicitly-defined table "
-                        f"{'.'.join(section + key_path[:i])!r} via dotted keys"
-                    )
-                    raise self._error(msg, at=at)
-                elif isinstance(child.kind, AoTEntry):
-                    msg = (
-                        "cannot extend array-of-tables "
-                        f"{'.'.join(section + key_path[:i])!r} via dotted keys"
-                    )
-                    raise self._error(msg, at=at)
+                elif child.kind == "explicit" or isinstance(child.kind, AoTEntry):
+                    raise self._dotted_conflict(child, key_path, i, at=at)
                 else:
                     child.kind = "dotted"
                 scope = child
+        existing = scope.children.get(key_path[-1])
+        if existing is not None:
+            raise self._key_conflict(existing, key_path, at=at)
         scope.children[key_path[-1]] = "value"
+
+    def _key_conflict(
+        self, existing: _Scope | Literal["value"], key_path: tuple[str, ...], *, at: int
+    ) -> TOMLParseError:
+        joined = ".".join(self.current_section + key_path)
+        if existing == "value":
+            msg = f"duplicate key {joined!r}"
+        else:
+            msg = f"key {joined!r} already defined as a table"
+        return self._error(msg, at=at)
+
+    def _dotted_conflict(
+        self, child: _Scope, key_path: tuple[str, ...], depth: int, *, at: int
+    ) -> TOMLParseError:
+        """A terminal conflict outranks the first forbidden dotted prefix."""
+        existing = _lookup(child, key_path[depth:])
+        if existing is not None:
+            return self._key_conflict(existing, key_path, at=at)
+        what = (
+            "explicitly-defined table"
+            if child.kind == "explicit"
+            else "array-of-tables"
+        )
+        joined = ".".join(self.current_section + key_path[:depth])
+        return self._error(f"cannot extend {what} {joined!r} via dotted keys", at=at)
 
     def check_inline_key_conflict(
         self,
