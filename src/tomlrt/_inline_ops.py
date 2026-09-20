@@ -140,9 +140,9 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         "",
         make_keyparts(key_path),
         (".",) * (len(key_path) - 1),
+        key_path,
         eq_pre,
         eq_post,
-        key_path,
     )
     style = detect_style(iv)
     splice_in(iv, new_entry, style, root._doc_newline)  # noqa: SLF001

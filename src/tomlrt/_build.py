@@ -53,7 +53,7 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
     current_host = root
     for slot in slots:
         if isinstance(slot, StructuralHeaderSlot):
-            path = slot.path
+            path = slot.key_path
             if path == root._path:  # noqa: SLF001
                 assert root._header is None  # noqa: SLF001
                 file_own_header(root, slot)
@@ -207,17 +207,17 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
     threaded from the most recent header; decoded value attachment
     cascades through ``host._layout_root``.
     """
-    parts = slot.key_parts
+    path = slot.key_path
     target = host
     record_slot(target, slot)
-    for part in parts[:-1]:
+    for name in path[:-1]:
         target = _resolve_table_child(
             target,
-            part.value,
+            name,
             owner=slot.owner_aot_entry,
         )
         record_slot(target, slot)
-    name = parts[-1].value
+    name = path[-1]
     assert name not in target, (
         f"duplicate key {name!r} reached builder under {target._path}; "  # noqa: SLF001
         "validator drift"

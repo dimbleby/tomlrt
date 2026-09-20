@@ -22,7 +22,6 @@ from tomlrt._values import (
     DateTimeValue,
     FloatValue,
     IntegerValue,
-    KeyPart,
     StringValue,
 )
 
@@ -470,21 +469,17 @@ class _Scanner:
 
     def scan_key(
         self,
-    ) -> tuple[tuple[KeyPart, ...], tuple[str, ...], str, tuple[str, ...]]:
-        """Scan a dotted key; return parts, separators, trailing ws, path.
+    ) -> tuple[tuple[str, ...], tuple[str, ...], str, tuple[str, ...]]:
+        """Return raw parts, separators, trailing whitespace and decoded path.
 
         Each part is bare, basic-quoted or literal-quoted; each
         separator is the literal ``ws "." ws`` between two parts. The
         whitespace after the last part is consumed too, and can be used
         directly as ``pre_eq`` / ``inner_post``.
-
-        The decoded path is accumulated here, rather than derived from
-        ``parts`` separately by each caller, because every caller needs
-        it to hand to the validator.
         """
         src = self.src
         end = self.end
-        parts: list[KeyPart] = []
+        parts: list[str] = []
         seps: list[str] = []
         path: list[str] = []
         while True:
@@ -492,7 +487,7 @@ class _Scanner:
             ch = src[start] if start < end else ""
             if ch == '"' or ch == "'":
                 quoted = self.scan_string(allow_multiline=False)
-                parts.append(KeyPart(quoted.lexeme, quoted.value))
+                raw = quoted.lexeme
                 path.append(quoted.value)
                 ws = self.scan_inline_ws_text()
             else:
@@ -502,14 +497,15 @@ class _Scanner:
                     raise self.error(msg)
                 raw = m[1]
                 ws = m[2]
-                parts.append(KeyPart(raw, raw))
                 path.append(raw)
                 self.pos = m.end()
+            parts.append(raw)
             pos = self.pos
             if pos >= end or src[pos] != ".":
-                return tuple(parts), tuple(seps), ws, tuple(path)
-            # The separator runs from the end of the part just scanned,
-            # which is where the whitespace already consumed began.
+                key_path = tuple(path)
+                key_parts = key_path if parts == path else tuple(parts)
+                return key_parts, tuple(seps), ws, key_path
+            # The separator starts where the already-consumed whitespace began.
             sep_start = pos - len(ws)
             self.pos = pos + 1
             self.scan_inline_ws_text()

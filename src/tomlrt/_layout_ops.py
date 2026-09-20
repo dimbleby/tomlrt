@@ -55,6 +55,7 @@ from tomlrt._values import (
     EmptyAoTValue,
     InlineTableValue,
     make_keyparts,
+    respell_key_prefix,
 )
 from tomlrt._view import _View, is_inline_value
 
@@ -64,7 +65,7 @@ if TYPE_CHECKING:
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table, TomlInput
     from tomlrt._slots import Slot
-    from tomlrt._values import InlineTableEntry, KeyPart, Value
+    from tomlrt._values import InlineTableEntry, Value
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +135,7 @@ def _effective_header_path_before(anchor: Slot | None) -> tuple[str, ...] | None
     cur = anchor
     while cur is not None:
         if isinstance(cur, StructuralHeaderSlot):
-            return cur.path
+            return cur.key_path
         cur = cur._prev  # noqa: SLF001
     return None
 
@@ -696,8 +697,8 @@ def append_direct_kv(
     value: Value,
     *,
     reinstall_as_dotted: bool = False,
-    key_parts: Sequence[KeyPart] | None = None,
-    key_seps: Sequence[str] | None = None,
+    key_parts: tuple[str, ...] | None = None,
+    key_seps: tuple[str, ...] | None = None,
 ) -> None:
     """Append a fresh direct (non-dotted) KV to ``c``.
 
@@ -1300,21 +1301,21 @@ def _new_kv_slot(
     doc: Document,
     owner: AoTEntry | None,
     leading: str,
-    key_parts: Sequence[KeyPart] | None = None,
-    key_seps: Sequence[str] | None = None,
+    key_parts: tuple[str, ...] | None = None,
+    key_seps: tuple[str, ...] | None = None,
 ) -> KVSlot:
     """Synthesise a fresh KV slot (recorded when spliced, not here).
 
-    Keys use canonical spelling unless the caller supplies source
-    ``key_parts`` and ``key_seps``, as inline promotion does.
+    Keys use canonical spelling unless supplied, as inline promotion does.
     """
     return KVSlot(
         leading,
         owner,
         _default_eol(doc),
         host_path,
-        make_keyparts(key) if key_parts is None else tuple(key_parts),
-        (".",) * (len(key) - 1) if key_seps is None else tuple(key_seps),
+        make_keyparts(key) if key_parts is None else key_parts,
+        (".",) * (len(key) - 1) if key_seps is None else key_seps,
+        key,
         " ",
         " ",
         value,
@@ -1327,8 +1328,8 @@ def _build_kv_slot(
     value: Value,
     doc: Document,
     *,
-    key_parts: Sequence[KeyPart] | None = None,
-    key_seps: Sequence[str] | None = None,
+    key_parts: tuple[str, ...] | None = None,
+    key_seps: tuple[str, ...] | None = None,
 ) -> KVSlot:
     """Synthesise a new ``KVSlot`` carrying default trivia + style."""
     return _new_kv_slot(
@@ -1349,8 +1350,8 @@ def install_dotted_kv_slot(
     value: Value,
     *,
     leaf_parent: Container,
-    key_parts: Sequence[KeyPart] | None = None,
-    key_seps: Sequence[str] | None = None,
+    key_parts: tuple[str, ...] | None = None,
+    key_seps: tuple[str, ...] | None = None,
 ) -> None:
     """Insert a single dotted-KV slot hosted by ``host``.
 
@@ -1517,6 +1518,7 @@ def _new_section_header(
         _default_eol(doc),
         make_keyparts(path),
         (".",) * (len(path) - 1),
+        path,
         "",
         "",
         entry,
@@ -1549,7 +1551,7 @@ def _belongs_to_parent_extent(
         path = slot.host_path
     else:
         assert isinstance(slot, StructuralHeaderSlot)
-        path = slot.path
+        path = slot.key_path
     n = len(base_path)
     if path[:n] != base_path:
         return False
@@ -1993,7 +1995,7 @@ def owned_slots(view: Container | AoT) -> list[Slot]:
     for slot in view._refs:  # noqa: SLF001
         owned.append(slot)
         if isinstance(slot, StructuralHeaderSlot) and slot is not own_header:
-            host_path = slot.path
+            host_path = slot.key_path
             body = slot._next  # noqa: SLF001
             while isinstance(body, KVSlot) and body.host_path == host_path:
                 owned.append(body)
@@ -2033,7 +2035,7 @@ def _hoist_own_slots_first(slots: list[Slot], root_path: tuple[str, ...]) -> lis
         return (
             s.host_path == root_path
             if isinstance(s, KVSlot)
-            else isinstance(s, StructuralHeaderSlot) and s.path == root_path
+            else isinstance(s, StructuralHeaderSlot) and s.key_path == root_path
         )
 
     own = [s for s in slots if is_own(s)]
@@ -2392,11 +2394,11 @@ def _retarget_slot_paths(
         return
     # `KVSlot` and `StructuralHeaderSlot` are the only concrete slots.
     assert isinstance(s, StructuralHeaderSlot)
-    assert s.path[: len(src_prefix)] == src_prefix, (
+    assert s.key_path[: len(src_prefix)] == src_prefix, (
         "a header in a rebased block is spelled from the source prefix down"
     )
-    s.key_parts, s.key_seps = respell_key_prefix(
-        s.key_parts, s.key_seps, len(src_prefix), target_prefix
+    s.key_parts, s.key_seps, s.key_path = respell_key_prefix(
+        s.key_parts, s.key_seps, s.key_path, len(src_prefix), target_prefix
     )
 
 
@@ -2633,12 +2635,16 @@ def _rebase_implicit_slot_in_place(
     """
     if isinstance(s, KVSlot) and s.host_path[: len(old_prefix)] != old_prefix:
         retarget_slot_newlines(s, nl)
-        within = (*s.host_path, *s.key)[len(old_prefix) :]
+        within = (*s.host_path, *s.key_path)[len(old_prefix) :]
         new_key = (*new_prefix, *within)[len(host_path) :]
         head_n = len(new_key) - len(within)
         s.host_path = host_path
-        s.key_parts, s.key_seps = respell_key_prefix(
-            s.key_parts, s.key_seps, len(s.key_parts) - len(within), new_key[:head_n]
+        s.key_parts, s.key_seps, s.key_path = respell_key_prefix(
+            s.key_parts,
+            s.key_seps,
+            s.key_path,
+            len(s.key_path) - len(within),
+            new_key[:head_n],
         )
     else:
         _retarget_slot_paths(s, old_prefix, new_prefix, nl)
@@ -2752,30 +2758,6 @@ def _clone_entry_slots(
             cloned_head = c
 
     return cloned, cloned_head
-
-
-def respell_key_prefix(
-    parts: tuple[KeyPart, ...],
-    seps: tuple[str, ...],
-    drop: int,
-    prefix: tuple[str, ...],
-) -> tuple[tuple[KeyPart, ...], tuple[str, ...]]:
-    """Replace a key prefix, retaining the spelling of its unchanged suffix."""
-    shared = 0
-    while (
-        shared < min(drop, len(prefix))
-        and parts[drop - shared - 1].value == prefix[-shared - 1]
-    ):
-        shared += 1
-    if shared:
-        drop -= shared
-        prefix = prefix[:-shared]
-    if not drop and not prefix:
-        return parts, seps
-    tail = parts[drop:]
-    head = make_keyparts(prefix)
-    joins = len(head) - 1 + bool(head and tail)
-    return head + tail, (".",) * max(joins, 0) + seps[drop:]
 
 
 def _rebase_path(
@@ -3631,9 +3613,9 @@ def _splice_blocks_in_order(
 def _slot_binding_root(slot: Slot) -> tuple[str, ...]:
     """Return the direct binding path represented by ``slot``."""
     if isinstance(slot, StructuralHeaderSlot):
-        return slot.path
+        return slot.key_path
     assert isinstance(slot, KVSlot)
-    return (*slot.host_path, slot.key_parts[0].value)
+    return (*slot.host_path, slot.key_path[0])
 
 
 def _binding_run_neighbours(
@@ -3720,10 +3702,10 @@ def _owned_child_key(slot: Slot, depth: int) -> str | None:
         host_depth = len(host)
         if host_depth > depth:
             return host[depth]
-        return slot.key_parts[depth - host_depth].value
+        return slot.key_path[depth - host_depth]
     assert isinstance(slot, StructuralHeaderSlot)
-    parts = slot.key_parts
-    return parts[depth].value if len(parts) > depth else None
+    path = slot.key_path
+    return path[depth] if len(path) > depth else None
 
 
 def reorder_container(c: Container, new_key_order: list[str]) -> None:

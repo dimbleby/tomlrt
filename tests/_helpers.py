@@ -234,7 +234,7 @@ def check_view_caches(doc: Document, ctx: str) -> None:
             assert isinstance(own_header, StructuralHeaderSlot), (
                 f"{where}: _header does not name a header"
             )
-            assert own_header.path == own_path, f"{where}: _header path mismatch"
+            assert own_header.key_path == own_path, f"{where}: _header path mismatch"
 
         for key, bucket in c._index.items():  # noqa: SLF001
             expected = [s for s in c._refs if slot_local_key(s, c) == key]  # noqa: SLF001

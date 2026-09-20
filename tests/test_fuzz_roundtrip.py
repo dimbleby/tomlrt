@@ -46,6 +46,57 @@ def _quoted(s: str) -> str:
     return '"' + s + '"'
 
 
+@settings(max_examples=500, deadline=None)
+@given(
+    parts=st.lists(
+        st.one_of(
+            _BARE_KEY,
+            st.sampled_from(
+                [
+                    '""',
+                    "''",
+                    "'a.b'",
+                    "' spaced . key '",
+                    r'"quote\".key"',
+                    r'"slash\\.key"',
+                    r'"slash\\\".quote"',
+                    r'"\u0061.\U0001F600"',
+                    r'"\t\x00"',
+                ]
+            ),
+        ),
+        min_size=1,
+        max_size=6,
+    ),
+    separator=st.sampled_from([".", " . ", "\t.\t", " .\t "]),
+)
+def test_key_spelling_survives_grafting_extraction_and_formatting(
+    parts: list[str], separator: str
+) -> None:
+    spelling = separator.join(parts)
+    source_text = f'"old.dot" . {spelling} = 1\n'
+    source = tomlrt.loads(source_text)
+    destination = Document()
+    destination["new"] = source.table(("old.dot",))
+    assert tomlrt.dumps(destination) == f"new.{spelling} = 1\n"
+    destination.format()
+    expected = f"new.{'.'.join(parts)} = 1\n"
+    assert tomlrt.dumps(destination) == expected
+    assert deep_equal(tomli.loads(expected), destination.to_dict())
+    assert tomlrt.dumps(source) == source_text
+
+    inline_text = f'outer = {{ "old.dot" . {spelling} = 1 }}\n'
+    inline = tomlrt.loads(inline_text)
+    extracted = Document()
+    extracted["copy"] = inline.table("outer").table(("old.dot",))
+    assert tomlrt.dumps(extracted) == f"copy = {{ {spelling} = 1 }}\n"
+    extracted.format()
+    expected = f"copy = {{ {'.'.join(parts)} = 1 }}\n"
+    assert tomlrt.dumps(extracted) == expected
+    assert deep_equal(tomli.loads(expected), extracted.to_dict())
+    assert tomlrt.dumps(inline) == inline_text
+
+
 _STRINGS = _BASIC_STR_CHARS.map(_quoted)
 _INTS = st.integers(min_value=-(2**31), max_value=2**31 - 1).map(str)
 _BOOLS = st.sampled_from(["true", "false"])

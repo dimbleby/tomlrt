@@ -65,7 +65,6 @@ from tomlrt._values import (
     InlineTableEntry,
     InlineTableValue,
     is_shareable_scalar,
-    make_keypart,
     make_keyparts,
     retarget_value_newlines,
 )
@@ -350,6 +349,7 @@ def _inline_value(
         table = InlineTableValue()
         last = len(items) - 1
         for i, (child_key, sub) in enumerate(items):
+            key_path = (child_key,)
             table.items.append(
                 InlineTableEntry(
                     "" if i == 0 else " ",
@@ -357,11 +357,11 @@ def _inline_value(
                     "",
                     i != last,
                     "",
-                    (make_keypart(child_key),),
+                    make_keyparts(key_path),
                     (),
+                    key_path,
                     " ",
                     " ",
-                    (child_key,),
                 )
             )
         if items:
@@ -398,14 +398,16 @@ def _emit(
             continue
         value = node.value
         assert value is not None, "a value node has no synthesised value"
+        key_path = (node.key,)
         out.append(
             KVSlot(
                 "",
                 owner,
                 nl,
                 path,
-                (make_keypart(node.key),),
+                make_keyparts(key_path),
                 (),
+                key_path,
                 " ",
                 " ",
                 value,
@@ -458,6 +460,7 @@ def _header_slot(
         nl,
         make_keyparts(path),
         (".",) * (len(path) - 1),
+        path,
         "",
         "",
         entry,

@@ -128,6 +128,7 @@ class _Parser:
             eol,
             key_parts,
             key_seps,
+            path,
             inner_pre,
             inner_post,
             new_entry,
@@ -166,6 +167,7 @@ class _Parser:
             host_path,
             key_parts,
             key_seps,
+            key_path,
             pre_eq,
             post_eq,
             value,
@@ -284,9 +286,9 @@ class _Parser:
                 post_comma,
                 key_parts,
                 key_seps,
+                key_path,
                 pre_eq,
                 post_eq,
-                key_path,
             )
             entries.append(entry)
             if sc.pos < end and src[sc.pos] == "}":
