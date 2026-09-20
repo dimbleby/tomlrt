@@ -178,10 +178,10 @@ them. Read roughly in this order:
     slot — bounded by path depth, used for O(depth) membership scrub on
     AoT removal).
   - `KVSlot` — one `key = value` line (`host_path`, `key_parts`,
-    `key_seps`, `value`); `key` is derived from `key_parts`.
+    `key_seps`, `key_path`, `value`).
   - `StructuralHeaderSlot` — one `[a.b]` / `[[a.b]]` header
-    (`key_parts`, `key_seps`, `entry`, `synthetic`); `path` and
-    `kind` are derived, from `key_parts` and `entry` respectively.
+    (`key_parts`, `key_seps`, `key_path`, `entry`, `synthetic`);
+    `kind` is derived from `entry`.
   - `AoTEntry` — ownership marker for an `[[a]]` entry, retaining only
     its own header; slot membership and ordering come from the linked stream.
   - `slot_local_key(slot, container)` derives the key under which
@@ -409,6 +409,11 @@ wrong.
   they are arbitrary and meaningless for an unlinked slot.
 - **`slot_local_key(slot, container)` is derived** from their paths —
   never store a second copy of that key.
+- **Key layout uses parallel tuples**, shared by KV slots, headers and
+  inline entries: `key_parts` contains raw strings, `key_path` their decoded
+  names, and `key_seps` the intervening text. Rebase all three together;
+  formatting changes only separators. Bare keys may share the parts/path
+  tuple, but no behavior depends on that identity.
 - **`Container._index[k]`** is the in-order list of slots in
   `_refs` whose `slot_local_key(slot, container) == k`. Both it and
   `_refs` are sorted by `Slot._order`: file slots through `record_slot`,

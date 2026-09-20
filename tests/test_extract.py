@@ -43,6 +43,30 @@ def test_document_of_table_matches_dumps() -> None:
     assert tomlrt.dumps(Document(t)) == tomlrt.dumps(t)
 
 
+def test_graft_preserves_shared_quoted_prefix_and_dotted_component() -> None:
+    source = tomlrt.loads(
+        td("""
+        [old.'same' . "a.b"]
+        value = 1
+        """)
+    )
+    destination = Document()
+    destination.install(("new", "same"), source.table(("old", "same")))
+    assert tomlrt.dumps(destination) == td("""
+        [new.'same' . "a.b"]
+        value = 1
+        """)
+    destination.format()
+    assert tomlrt.dumps(destination) == td("""
+        [new.'same'."a.b"]
+        value = 1
+        """)
+    assert tomlrt.dumps(source) == td("""
+        [old.'same' . "a.b"]
+        value = 1
+        """)
+
+
 def test_extracted_section_keeps_empty_aot_kind() -> None:
     source = tomlrt.loads("[section]\nplain = []\n")
     source.table("section")["pending"] = tomlrt.AoT()

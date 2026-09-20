@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomlrt._container import Container
-    from tomlrt._values import KeyPart, Value
+    from tomlrt._values import Value
 
 import sys
 
@@ -145,6 +145,7 @@ class Slot:
                 self.host_path,
                 self.key_parts,
                 self.key_seps,
+                self.key_path,
                 self.pre_eq,
                 self.post_eq,
                 value,
@@ -157,6 +158,7 @@ class Slot:
                 self.eol,
                 self.key_parts,
                 self.key_seps,
+                self.key_path,
                 self.inner_pre,
                 self.inner_post,
                 None,
@@ -170,23 +172,29 @@ class Slot:
 
 
 class KVSlot(Slot):
-    """A single ``key = value`` line."""
+    """A single ``key = value`` line.
 
-    __slots__ = ("host_path", "key_parts", "key_seps", "post_eq", "pre_eq", "value")
+    ``key_parts`` holds verbatim spellings aligned with ``key_path``'s
+    decoded names; ``key_seps`` has one separator between each pair.
+    All three tuples are replaced together when rebasing a key.
+    """
+
+    __slots__ = (
+        "host_path",
+        "key_parts",
+        "key_path",
+        "key_seps",
+        "post_eq",
+        "pre_eq",
+        "value",
+    )
 
     host_path: tuple[str, ...]
     """Full path of the table body this KV physically belongs to."""
 
-    key_parts: tuple[KeyPart, ...]
-    """The dotted-key parts as written. ``len >= 1``."""
-
+    key_parts: tuple[str, ...]
     key_seps: tuple[str, ...]
-    """Whitespace + ``.`` between parts. Length ``len(key_parts) - 1``.
-
-    A tuple, not a list: it is always replaced wholesale, never mutated
-    in place, and the empty tuple every non-dotted key gets is a shared
-    singleton rather than a per-slot allocation.
-    """
+    key_path: tuple[str, ...]
 
     pre_eq: str
     post_eq: str
@@ -198,8 +206,9 @@ class KVSlot(Slot):
         owner_aot_entry: AoTEntry | None,
         eol: str,
         host_path: tuple[str, ...],
-        key_parts: tuple[KeyPart, ...],
+        key_parts: tuple[str, ...],
         key_seps: tuple[str, ...],
+        key_path: tuple[str, ...],
         pre_eq: str,
         post_eq: str,
         value: Value,
@@ -214,16 +223,10 @@ class KVSlot(Slot):
         self.host_path = host_path
         self.key_parts = key_parts
         self.key_seps = key_seps
+        self.key_path = key_path
         self.pre_eq = pre_eq
         self.post_eq = post_eq
         self.value = value
-
-    @property
-    def key(self) -> tuple[str, ...]:
-        """Decoded dotted-key path, derived from ``key_parts``."""
-        # A list comprehension, not a generator: `tuple` can size the
-        # result up front, and these are read on the build hot path.
-        return tuple([p.value for p in self.key_parts])
 
     @override
     def render(self) -> str:
@@ -246,12 +249,14 @@ class StructuralHeaderSlot(Slot):
         "inner_post",
         "inner_pre",
         "key_parts",
+        "key_path",
         "key_seps",
         "synthetic",
     )
 
-    key_parts: tuple[KeyPart, ...]
+    key_parts: tuple[str, ...]
     key_seps: tuple[str, ...]
+    key_path: tuple[str, ...]
     inner_pre: str
     inner_post: str
 
@@ -266,8 +271,9 @@ class StructuralHeaderSlot(Slot):
         leading: str,
         owner_aot_entry: AoTEntry | None,
         eol: str,
-        key_parts: tuple[KeyPart, ...],
+        key_parts: tuple[str, ...],
         key_seps: tuple[str, ...],
+        key_path: tuple[str, ...],
         inner_pre: str,
         inner_post: str,
         entry: AoTEntry | None,
@@ -282,15 +288,11 @@ class StructuralHeaderSlot(Slot):
         self._containers = []
         self.key_parts = key_parts
         self.key_seps = key_seps
+        self.key_path = key_path
         self.inner_pre = inner_pre
         self.inner_post = inner_post
         self.entry = entry
         self.synthetic = synthetic
-
-    @property
-    def path(self) -> tuple[str, ...]:
-        """Full decoded path of the section / AoT entry, from ``key_parts``."""
-        return tuple([p.value for p in self.key_parts])
 
     @property
     def kind(self) -> Literal["table", "aot-entry"]:
@@ -451,10 +453,10 @@ def slot_local_key(slot: Slot, container: Container) -> str | None:
     """
     depth = len(container._path)  # noqa: SLF001
     if isinstance(slot, KVSlot):
-        return slot.key_parts[depth - len(slot.host_path)].value
+        return slot.key_path[depth - len(slot.host_path)]
     assert isinstance(slot, StructuralHeaderSlot)
-    parts = slot.key_parts
-    return parts[depth].value if len(parts) > depth else None
+    path = slot.key_path
+    return path[depth] if len(path) > depth else None
 
 
 def ensure_terminator(slot: Slot, nl: str) -> None:

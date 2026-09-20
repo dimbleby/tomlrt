@@ -1947,7 +1947,7 @@ def test_host_kv_slot_resolves_a_top_level_array() -> None:
     )
     slot = _host_kv_slot(doc.array("b"))
     assert isinstance(slot, KVSlot)
-    assert slot.key == ("b",)
+    assert slot.key_path == ("b",)
 
 
 def test_host_kv_slot_resolves_a_nested_inline_table() -> None:
@@ -1957,7 +1957,7 @@ def test_host_kv_slot_resolves_a_nested_inline_table() -> None:
     for view in (doc.table("a").table("c"), doc.table("a").array("b")):
         slot = _host_kv_slot(view)
         assert isinstance(slot, KVSlot)
-        assert slot.key == ("a",)
+        assert slot.key_path == ("a",)
 
 
 def test_host_kv_slot_resolves_a_dotted_key_array() -> None:
@@ -1969,7 +1969,7 @@ def test_host_kv_slot_resolves_a_dotted_key_array() -> None:
     )
     slot = _host_kv_slot(doc.table("s").array("a"))
     assert isinstance(slot, KVSlot)
-    assert slot.key == ("a",)
+    assert slot.key_path == ("a",)
     assert slot.host_path == ("s",)
 
 
@@ -1987,7 +1987,7 @@ def test_host_kv_slot_resolves_an_inline_array_element() -> None:
     for view in (element, nested):
         slot = _host_kv_slot(view)
         assert isinstance(slot, KVSlot)
-        assert slot.key == ("outer",)
+        assert slot.key_path == ("outer",)
 
 
 def test_scoped_set_multiline_visits_only_the_host_slot(

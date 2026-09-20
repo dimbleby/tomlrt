@@ -84,7 +84,7 @@ from tomlrt._values import (
     InlineTableEntry,
     InlineTableValue,
     is_shareable_scalar,
-    make_keypart,
+    make_keyparts,
     retarget_value_newlines,
 )
 from tomlrt._view import _View, is_inline_value
@@ -2088,17 +2088,18 @@ def _populate_inline_table(
             name=k,
             owner=owner,
         )
+        key_path = (k,)
         entry = InlineTableEntry(
             "" if i == 0 else " ",
             sub_cst,
             "",
             i != last,
             "",
-            (make_keypart(k),),
+            make_keyparts(key_path),
             (),
+            key_path,
             " ",
             " ",
-            (k,),
         )
         val.items.append(entry)
         dict.__setitem__(table, k, sub_dec)

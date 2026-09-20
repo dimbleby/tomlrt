@@ -51,7 +51,7 @@ def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
         return None
     target = (*c._path, key)  # noqa: SLF001
     for slot in refs:
-        if isinstance(slot, KVSlot) and slot.host_path + slot.key == target:
+        if isinstance(slot, KVSlot) and slot.host_path + slot.key_path == target:
             return slot
     return None
 
