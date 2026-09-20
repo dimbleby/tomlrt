@@ -214,6 +214,11 @@ them. Read roughly in this order:
   `Table` / `Array` / `AoT` views, populating dict storage in
   doc-stream-first-occurrence order. The *one* place that derives
   implicit containers from slot paths.
+- **`_synth.py`** — plans Python mappings in input order, then emits
+  body-before-subsection layout. Plans hold the eventual KV slots,
+  section/AoT subplans, and deferred source-layout grafts. KV key spelling
+  and graft copying stay in emission, after input validation; pending
+  slots remain private and unlinked until their spelling is complete.
 - **`_layout_ops.py`** — section-side mutation primitives: insert
   / delete / sort on the doc-stream linked list; `_index` and `_refs`
   bookkeeping; KV / section / AoT-entry append; subtree rehome.

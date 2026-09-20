@@ -1,10 +1,9 @@
-"""Build-throughput benchmarks for ``Document(mapping)``.
+"""Construction and serialization benchmarks for plain Python mappings.
 
-Times construction of a document from plain Python data -- the path that
-turns nested mappings into ``[section]`` blocks, lists of mappings into
-``[[aot]]`` blocks and everything else into key-value lines. It shares
-almost nothing with parsing, so the parse benchmarks say nothing about
-it.
+Times the path that turns nested mappings into ``[section]`` blocks,
+lists of mappings into ``[[aot]]`` blocks and everything else into
+key-value lines. ``Document(mapping)`` also constructs logical views;
+``dumps(mapping)`` serializes without them. Neither path parses input.
 
 The cases are the document *shapes* the build path treats differently,
 sized so each round is worth timing. ``Document`` snapshot-copies plain
@@ -61,3 +60,9 @@ def test_build_pyproject(
     benchmark: BenchmarkFixture, pyproject_data: dict[str, Any]
 ) -> None:
     benchmark(tomlrt.Document, pyproject_data)
+
+
+def test_dump_pyproject_mapping(
+    benchmark: BenchmarkFixture, pyproject_data: dict[str, Any]
+) -> None:
+    benchmark(tomlrt.dumps, pyproject_data)
