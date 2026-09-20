@@ -2933,13 +2933,12 @@ def _unfile_ordered_many(refs: list[Slot], removed: Sequence[Slot]) -> None:
 
 
 def _unfile_container(slot: Slot, c: Container) -> None:
-    """Remove a back-pointer by identity, never by dict equality."""
-    for i, container in enumerate(slot._containers):  # noqa: SLF001
-        if container is c:
-            del slot._containers[i]  # noqa: SLF001
-            return
-    msg = "slot must back-point to its indexing container"
-    raise AssertionError(msg)
+    """Remove an existing back-pointer by identity, never by dict equality."""
+    containers = slot._containers  # noqa: SLF001
+    i = 0
+    while containers[i] is not c:
+        i += 1
+    del containers[i]
 
 
 def unfile_slot(c: Container, slot: Slot) -> None:

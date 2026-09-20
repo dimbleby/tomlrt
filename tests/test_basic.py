@@ -521,6 +521,7 @@ def test_parse_error_is_value_error() -> None:
         ),
         (
             td("""
+                [a.b]
                 [a.b.c]
                 x = 1
                 [a]
