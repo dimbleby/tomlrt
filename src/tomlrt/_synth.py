@@ -142,42 +142,56 @@ def _aot_entries(v: list[object]) -> list[Mapping[Any, object]] | None:
 # ---------------------------------------------------------------------------
 
 
-class _Node:
-    """One planned key: its spelling, and what to make of its value."""
+class _Graft:
+    """A source-layout copy deferred until input validation has completed."""
 
-    __slots__ = (
-        "blocks",
-        "body",
-        "entries",
-        "graft",
-        "key",
-        "raw",
-        "table",
-        "value",
-    )
+    __slots__ = ("blocks", "body", "key", "source")
 
-    def __init__(self, key: str, raw: object) -> None:
+    def __init__(self, key: str, source: Container | AoT) -> None:
         self.key = key
-        self.raw = raw
-        self.table: _Plan | None = None
-        self.entries: list[_Plan | Container] | None = None
-        self.value: Value | None = None
-        self.graft = False
-        # A graft's cloned slots, split into the two regions they are
-        # written to; `_emit` fills both in.
+        self.source = source
         self.body: list[Slot] = []
         self.blocks: list[Slot] = []
 
 
+class _AoTPlan:
+    """The planned or source-layout entries of one array-of-tables."""
+
+    __slots__ = ("entries", "path")
+
+    def __init__(self, path: tuple[str, ...], entries: list[_Plan | Container]) -> None:
+        self.path = path
+        self.entries = entries
+
+    @property
+    def key(self) -> str:
+        return self.path[-1]
+
+
 class _Plan:
-    """A section's planned contents: its own keys, then its subsections."""
+    """A section's prepared slots, then its subsections.
 
-    __slots__ = ("any_grafts", "grafts", "in_order", "keys", "structural", "values")
+    Own KV slots are private and unlinked; emission completes their key
+    spelling after every input has been validated.
+    """
 
-    def __init__(self) -> None:
-        self.values: list[_Node] = []
-        self.structural: list[_Node] = []
-        self.grafts: list[_Node] = []
+    __slots__ = (
+        "any_grafts",
+        "grafts",
+        "in_order",
+        "keys",
+        "owner",
+        "path",
+        "structural",
+        "values",
+    )
+
+    def __init__(self, path: tuple[str, ...], owner: AoTEntry | None) -> None:
+        self.path = path
+        self.owner = owner
+        self.values: list[KVSlot | _Graft] = []
+        self.structural: list[_Plan | _AoTPlan | _Graft] = []
+        self.grafts: list[_Graft] = []
         self.keys: list[str] = []
         # Whether this section or anything under it has a graft.
         self.any_grafts = False
@@ -186,7 +200,11 @@ class _Plan:
         # is re-filed as it installs.
         self.in_order = True
 
-    def add_value(self, node: _Node) -> None:
+    @property
+    def key(self) -> str:
+        return self.path[-1]
+
+    def add_value(self, node: KVSlot | _Graft) -> None:
         """Record a key held by a KV of the section's own body."""
         if self.structural:
             # The body is written before any subsection, so this key
@@ -194,14 +212,16 @@ class _Plan:
             self.in_order = False
         self.values.append(node)
 
-    def add_graft(self, node: _Node, regions: tuple[bool, bool]) -> None:
+    def add_graft(
+        self, key: str, source: Container | AoT, regions: tuple[bool, bool]
+    ) -> None:
         """Record a key whose block is cloned in from another document.
 
         Its slots are written where the mapping asks for them, so it
         occupies the same two regions any other key does -- and a
         header-less section occupies both.
         """
-        node.graft = True
+        node = _Graft(key, source)
         self.grafts.append(node)
         self.any_grafts = True
         body, blocks = regions
@@ -222,73 +242,63 @@ class _Plan:
 
 
 def _plan(
-    mapping: Mapping[_KeyT, object], nl: str, scalar_memo: dict[int, object] | None
+    mapping: Mapping[_KeyT, object],
+    nl: str,
+    scalar_memo: dict[int, object] | None,
+    path: tuple[str, ...],
+    owner: AoTEntry | None,
 ) -> _Plan:
     """Check and classify ``mapping``, keeping its own order.
 
     Anything TOML cannot hold raises the error the caller should see;
-    a view holding source layout is set aside for `_settle`.
+    a view holding source layout is set aside for `_emit`.
     """
-    plan = _Plan()
+    plan = _Plan(path, owner)
     for raw_key, raw in _mapping_items(mapping):
         key = _validate_key(raw_key)
-        node = _Node(key, raw)
         plan.keys.append(key)
         # Dispatch on the value's shape, so each arm is asked only
         # what it alone can answer. A list is a list, whatever else it
         # may also claim to be.
         if isinstance(raw, list):
-            _plan_list(plan, node, nl, scalar_memo)
+            entries = _aot_entries(raw)
+            if entries is None:
+                value = _inline_value(raw, nl, scalar_memo, key=key)
+            elif not entries:
+                value = EmptyAoTValue()
+            elif (regions := _graft_regions(raw)) is not None:
+                assert isinstance(raw, AoT)
+                plan.add_graft(key, raw, regions)
+                continue
+            else:
+                entry_path = (*path, key)
+                entry_plans: list[_Plan | Container] = [
+                    entry
+                    if _is_section(entry) and entry._layout_root is not None  # noqa: SLF001
+                    else _plan(entry, nl, scalar_memo, entry_path, AoTEntry())
+                    for entry in entries
+                ]
+                plan.any_grafts |= any(
+                    isinstance(entry, Container) or entry.any_grafts
+                    for entry in entry_plans
+                )
+                plan.structural.append(_AoTPlan(entry_path, entry_plans))
+                continue
         elif _wants_section(raw):
-            _plan_section(plan, node, nl, scalar_memo)
+            if (regions := _graft_regions(raw)) is not None:
+                assert isinstance(raw, Container)
+                plan.add_graft(key, raw, regions)
+            else:
+                assert isinstance(raw, Mapping)
+                child = _plan(raw, nl, scalar_memo, (*path, key), owner)
+                plan.any_grafts |= child.any_grafts
+                plan.structural.append(child)
+            continue
         else:
-            node.value = _inline_value(raw, nl, scalar_memo, key=key)
-            plan.add_value(node)
+            value = _inline_value(raw, nl, scalar_memo, key=key)
+        # Key spelling stays in emission: it can invoke str-subclass hooks.
+        plan.add_value(KVSlot("", owner, nl, path, (), (), (key,), " ", " ", value))
     return plan
-
-
-def _plan_list(
-    plan: _Plan, node: _Node, nl: str, scalar_memo: dict[int, object] | None
-) -> None:
-    """Plan a list: an array-of-tables if that is what it holds."""
-    raw = node.raw
-    assert isinstance(raw, list)
-    entries = _aot_entries(raw)
-    if entries is None:
-        node.value = _inline_value(raw, nl, scalar_memo, key=node.key)
-        plan.add_value(node)
-    elif not entries:
-        # No entries, so no headers: the key is held by an empty array,
-        # which is what a mutation parks there too.
-        node.value = EmptyAoTValue()
-        plan.add_value(node)
-    elif (regions := _graft_regions(raw)) is not None:
-        plan.add_graft(node, regions)
-    else:
-        node.entries = [
-            entry
-            if _is_section(entry) and entry._layout_root is not None  # noqa: SLF001
-            else _plan(entry, nl, scalar_memo)
-            for entry in entries
-        ]
-        plan.any_grafts |= any(
-            isinstance(entry, Container) or entry.any_grafts for entry in node.entries
-        )
-        plan.structural.append(node)
-
-
-def _plan_section(
-    plan: _Plan, node: _Node, nl: str, scalar_memo: dict[int, object] | None
-) -> None:
-    """Plan a mapping that becomes a ``[section]``."""
-    raw = node.raw
-    if (regions := _graft_regions(raw)) is not None:
-        plan.add_graft(node, regions)
-        return
-    assert isinstance(raw, Mapping)
-    node.table = _plan(raw, nl, scalar_memo)
-    plan.any_grafts |= node.table.any_grafts
-    plan.structural.append(node)
 
 
 def _inline_value(
@@ -378,62 +388,50 @@ def _inline_value(
 
 def _emit(
     plan: _Plan,
-    path: tuple[str, ...],
-    owner: AoTEntry | None,
     out: list[Slot],
     nl: str,
     *,
     header: bool,
 ) -> None:
     """Write ``plan``'s slots, in document order, onto ``out``."""
+    path, owner = plan.path, plan.owner
     if header and plan.needs_header:
         out.append(_header_slot(path, "" if not out else nl, owner, None, nl))
 
-    for node in plan.grafts:
-        node.body, node.blocks = _graft_segments(node, path, owner, nl)
+    for graft in plan.grafts:
+        graft.body, graft.blocks = _graft_segments(graft, path, owner, nl)
 
-    for node in plan.values:
-        if node.graft:
-            out.extend(node.body)
-            continue
-        value = node.value
-        assert value is not None, "a value node has no synthesised value"
-        key_path = (node.key,)
-        out.append(
-            KVSlot(
-                "",
-                owner,
-                nl,
-                path,
-                make_keyparts(key_path),
-                (),
-                key_path,
-                " ",
-                " ",
-                value,
-            )
-        )
+    for value in plan.values:
+        if isinstance(value, _Graft):
+            out.extend(value.body)
+        else:
+            assert not value.key_parts, "a planned key is spelled only once"
+            value.key_parts = make_keyparts(value.key_path)
+            out.append(value)
 
     for node in plan.structural:
-        if node.graft:
+        if isinstance(node, _Graft):
             # The clone brings its own comments; only the blank line
             # that positions it here is the destination's to say.
             _retarget_separator(node.blocks[0], "" if not out else nl)
             out.extend(node.blocks)
             continue
-        sub = (*path, node.key)
-        if node.table is not None:
-            _emit(node.table, sub, owner, out, nl, header=True)
+        if isinstance(node, _Plan):
+            _emit(node, out, nl, header=True)
             continue
-        assert node.entries, "a structural node is a table or a non-empty AoT"
+        sub = node.path
         for entry in node.entries:
-            entry_owner = AoTEntry()
+            entry_owner: AoTEntry | None
             entry_header = None
             body = None
             if isinstance(entry, Container):
+                entry_owner = AoTEntry()
                 entry_header, body = clone_aot_entry_layout(
                     entry, path=sub, owner=entry_owner, nl=nl
                 )
+            else:
+                entry_owner = entry.owner
+                assert entry_owner is not None
             if entry_header is None:
                 entry_header = _header_slot(sub, "", entry_owner, entry_owner, nl)
                 entry_owner.bind_header(entry_header)
@@ -441,7 +439,7 @@ def _emit(
             out.append(entry_header)
             if body is None:
                 assert isinstance(entry, _Plan)
-                _emit(entry, sub, entry_owner, out, nl, header=False)
+                _emit(entry, out, nl, header=False)
             else:
                 out.extend(body)
 
@@ -469,15 +467,14 @@ def _header_slot(
 
 
 def _graft_segments(
-    node: _Node, path: tuple[str, ...], owner: AoTEntry | None, nl: str
+    node: _Graft, path: tuple[str, ...], owner: AoTEntry | None, nl: str
 ) -> tuple[list[Slot], list[Slot]]:
     """``node``'s block, cloned under its key and split into its regions.
 
     A whole document has no header of its own, and takes one
     synthesised for the key it is bound to.
     """
-    view = node.raw
-    assert isinstance(view, (Container, AoT)), "only a view is grafted"
+    view = node.source
     target = (*path, node.key)
     cloned = clone_graft_slots(
         view, target_path=target, host_path=path, owner=owner, nl=nl
@@ -505,14 +502,13 @@ def _reorder(container: Container, plan: _Plan) -> None:
     if not plan.in_order:
         _reorder_dict_storage(container, plan.keys)
     for node in plan.structural:
-        if node.graft:
+        if isinstance(node, _Graft):
             continue
         child = dict.__getitem__(container, node.key)
-        if node.table is not None:
+        if isinstance(node, _Plan):
             assert isinstance(child, Container)
-            _reorder(child, node.table)
+            _reorder(child, node)
             continue
-        assert node.entries, "a structural node is a table or a non-empty AoT"
         assert isinstance(child, AoT)
         for entry_plan, entry_table in zip(node.entries, child, strict=True):
             if isinstance(entry_plan, Container):
@@ -537,9 +533,9 @@ def _slot_run(
     made of it afterwards -- views, or just text -- is the caller's.
     """
     _require_mapping(data, label="Document data argument")
-    plan = _plan(data, nl, scalar_memo)
+    plan = _plan(data, nl, scalar_memo, (), None)
     slots: list[Slot] = []
-    _emit(plan, (), None, slots, nl, header=False)
+    _emit(plan, slots, nl, header=False)
     if plan.any_grafts:
         # A synthesised slot always ends its line, but a cloned one
         # taken from the end of its source file need not, and anything
