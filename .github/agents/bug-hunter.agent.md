@@ -25,7 +25,8 @@ representations consistent:
 - Slot order comes from the linked stream and strictly increasing `_order`
   keys. All splices go through the established layout primitives.
 - `Container._refs` and each `_index` bucket are ordered projections of that
-  stream. `SlotRef.local_key` is derived, never stored.
+  stream. `slot_local_key(slot, container)` is derived, never stored;
+  slot back-pointers compare containers by identity, not dict equality.
 - `Container._body_tail`, slot back-pointers, AoT ownership, and live-view
   attachment state must remain correct after inserts, deletes, moves, copies,
   and rehoming.

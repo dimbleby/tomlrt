@@ -34,14 +34,14 @@ from tomlrt._comment_text import (
 )
 from tomlrt._errors import TOMLError
 from tomlrt._kind import _Kind
-from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
+from tomlrt._slots import KVSlot, ensure_terminator
 from tomlrt._trivia import split_line, split_lines
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from tomlrt._container import Container, Document
-    from tomlrt._slots import Slot
+    from tomlrt._slots import Slot, StructuralHeaderSlot
 
 
 def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
@@ -50,8 +50,7 @@ def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
     if not refs:
         return None
     target = (*c._path, key)  # noqa: SLF001
-    for ref in refs:
-        slot = ref.slot
+    for slot in refs:
         if isinstance(slot, KVSlot) and slot.host_path + slot.key == target:
             return slot
     return None
@@ -240,10 +239,8 @@ def _header_slot(c: Container) -> StructuralHeaderSlot | None:
         raise TOMLError(msg)
     if c._kind is not _Kind.SECTION:  # noqa: SLF001
         return None
-    hr = c._header_ref  # noqa: SLF001
-    assert hr is not None  # implied by SECTION
-    slot = hr.slot
-    assert isinstance(slot, StructuralHeaderSlot)
+    slot = c._header  # noqa: SLF001
+    assert slot is not None  # implied by SECTION
     return slot
 
 

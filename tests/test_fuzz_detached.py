@@ -145,10 +145,10 @@ def foreign_refs(doc: Document) -> list[tuple[tuple[str, ...], Slot]]:
     """
     in_chain = {id(s) for s in _chain(doc)}
     return [
-        (c._path, ref.slot)  # noqa: SLF001
+        (c._path, slot)  # noqa: SLF001
         for c in _containers(doc)
-        for ref in c._refs  # noqa: SLF001
-        if id(ref.slot) not in in_chain
+        for slot in c._refs  # noqa: SLF001
+        if id(slot) not in in_chain
     ]
 
 

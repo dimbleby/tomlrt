@@ -36,7 +36,7 @@ import tomli
 
 from tomlrt import AoT
 from tomlrt._container import _is_section
-from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._slots import KVSlot, StructuralHeaderSlot, slot_local_key
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -184,11 +184,10 @@ def _containers(doc: Document) -> list[Container]:
 def _expected_body_tail(c: Container) -> Slot | None:
     """The body tail ``_layout_ops._recompute_body_tail`` would derive."""
     owner = c._owner_aot_entry  # noqa: SLF001
-    for ref in reversed(c._refs):  # noqa: SLF001
-        slot = ref.slot
+    for slot in reversed(c._refs):  # noqa: SLF001
         if isinstance(slot, KVSlot) and slot.owner_aot_entry is owner:
             return slot
-    return c._header_ref.slot if c._header_ref is not None else None  # noqa: SLF001
+    return c._header  # noqa: SLF001
 
 
 def check_view_caches(doc: Document, ctx: str) -> None:
@@ -204,9 +203,12 @@ def check_view_caches(doc: Document, ctx: str) -> None:
     pos = {id(s): i for i, s in enumerate(_chain(doc))}
     for c in _containers(doc):
         where = f"{ctx}: {c._path}"  # noqa: SLF001
-        for ref in c._refs:  # noqa: SLF001
-            assert id(ref.slot) in pos, f"{where}: ref names a slot off the chain"
-        order = [pos[id(ref.slot)] for ref in c._refs]  # noqa: SLF001
+        assert len({id(s) for s in c._refs}) == len(c._refs), (  # noqa: SLF001
+            f"{where}: slot is indexed more than once"
+        )
+        for slot in c._refs:  # noqa: SLF001
+            assert id(slot) in pos, f"{where}: ref names a slot off the chain"
+        order = [pos[id(slot)] for slot in c._refs]  # noqa: SLF001
         assert order == sorted(order), f"{where}: _refs is not in doc order"
 
         # `_body_tail` is maintained incrementally on every append and
@@ -218,28 +220,30 @@ def check_view_caches(doc: Document, ctx: str) -> None:
             f"{where}: _body_tail is stale (got {c._body_tail!r}, want {want!r})"  # noqa: SLF001
         )
 
-        for ref in c._refs:  # noqa: SLF001
-            assert ref.container is c, f"{where}: ref is owned by another container"
-            assert any(back is ref for back in ref.slot._refs), (  # noqa: SLF001
-                f"{where}: slot does not back-point to this ref"
+        for slot in c._refs:  # noqa: SLF001
+            owners = slot._containers  # noqa: SLF001
+            assert len({id(owner) for owner in owners}) == len(owners), (
+                f"{where}: duplicate container back-pointer"
             )
-        header_ref = c._header_ref  # noqa: SLF001
-        if header_ref is not None:
-            own_header = header_ref.slot
+            assert any(back is c for back in slot._containers), (  # noqa: SLF001
+                f"{where}: slot does not back-point to this container"
+            )
+        own_header = c._header  # noqa: SLF001
+        if own_header is not None:
             own_path = c._path  # noqa: SLF001
             assert isinstance(own_header, StructuralHeaderSlot), (
-                f"{where}: _header_ref does not name a header"
+                f"{where}: _header does not name a header"
             )
-            assert own_header.path == own_path, f"{where}: _header_ref path mismatch"
+            assert own_header.path == own_path, f"{where}: _header path mismatch"
 
         for key, bucket in c._index.items():  # noqa: SLF001
-            expected = [ref for ref in c._refs if ref.local_key == key]  # noqa: SLF001
+            expected = [s for s in c._refs if slot_local_key(s, c) == key]  # noqa: SLF001
             assert bucket == expected, f"{where}: _index[{key!r}] is not its projection"
-        for ref in c._refs:  # noqa: SLF001
-            local = ref.local_key
+        for slot in c._refs:  # noqa: SLF001
+            local = slot_local_key(slot, c)
             if local is None:
                 # The one ref with no local key is the container's own
-                # header, which lives in `_header_ref`, not `_index`.
-                assert c._header_ref is ref, f"{where}: keyless ref is not the header"  # noqa: SLF001
+                # header, which lives in `_header`, not `_index`.
+                assert c._header is slot, f"{where}: keyless ref is not the header"  # noqa: SLF001
                 continue
-            assert ref in c._index.get(local, []), f"{where}: ref missing from _index"  # noqa: SLF001
+            assert slot in c._index.get(local, []), f"{where}: ref missing from _index"  # noqa: SLF001

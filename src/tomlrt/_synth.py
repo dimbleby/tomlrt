@@ -95,8 +95,8 @@ def _graft_regions(v: object) -> tuple[bool, bool] | None:
         return False, True
     depth = len(v._path)  # noqa: SLF001
     body = blocks = False
-    for ref in v._refs:  # noqa: SLF001
-        if _spells_own_key(ref.slot, depth):
+    for slot in v._refs:  # noqa: SLF001
+        if _spells_own_key(slot, depth):
             body = True
         else:
             blocks = True
