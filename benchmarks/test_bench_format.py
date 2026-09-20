@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
-
 import tomlrt
 
 if TYPE_CHECKING:
@@ -33,15 +31,8 @@ def test_format_deep_implicit(benchmark: BenchmarkFixture) -> None:
 
 
 def test_format_headered_dotted_keys(benchmark: BenchmarkFixture) -> None:
-    path = ".".join(["nested"] * 24)
+    path = " . ".join(["nested"] * 23 + ['"quoted.part"'])
     source = "[a]\n" + "".join(f"{path}.k{i}  ={i}\n" for i in range(200))
-    benchmark.pedantic(tomlrt.Table.format, setup=_prepared(source), rounds=100)
-
-
-@pytest.mark.parametrize("component", ["nested", '"nested . with space"'])
-def test_format_padded_dotted_keys(benchmark: BenchmarkFixture, component: str) -> None:
-    path = " \t. \t".join([component] * 24)
-    source = "[a]\n" + "".join(f"{path} . k{i}  ={i}\n" for i in range(200))
     benchmark.pedantic(tomlrt.Table.format, setup=_prepared(source), rounds=100)
 
 
