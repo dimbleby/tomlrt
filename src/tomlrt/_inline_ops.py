@@ -83,13 +83,18 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
 
 
 def copy_dotted_table(table: Container) -> InlineTableValue:
-    """Extract a navigator's entries without copying its owner's framing comments."""
+    """Clone a navigator's layout without copying unrelated value subtrees."""
     root = _outermost_inline(table)
     source = root._value  # noqa: SLF001
     assert source is not None
     prefix = table._path[len(root._path) :]  # noqa: SLF001
     depth = len(prefix)
-    value = copy.deepcopy(source)
+    # Splicing only rebinds discarded entries' layout, not their values.
+    # Keep originals alive until their memo entries are no longer needed.
+    discarded = [entry for entry in source.items if entry.key_path[:depth] != prefix]
+    memo = {id(entry): copy.copy(entry) for entry in discarded}
+    value = copy.deepcopy(source, memo)
+    del memo, discarded
     multiline = source.is_multiline()
     newline = _value_newline(source) if multiline else table._doc_newline  # noqa: SLF001
     removed = [

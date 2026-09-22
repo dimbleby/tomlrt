@@ -1727,6 +1727,28 @@ def test_copy_dotted_inline_view_preserves_multiline_shape() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+def test_copy_dotted_inline_view_leaves_discarded_tail_comments_untouched() -> None:
+    src = td("""
+        cfg = {
+          group.items = [ 1 ],
+          # unrelated tail
+          other = [{ x = [2] }],
+        }
+        """)
+    source = tomlrt.loads(src)
+    target = tomlrt.Document()
+    target["picked"] = copy(source.table("cfg.group"))
+    target.table("picked").array("items").append(3)
+    expected = td("""
+        picked = {
+          items = [ 1, 3 ],
+        }
+        """)
+    assert tomlrt.dumps(target) == expected
+    assert reparses(expected) == target.to_dict()
+    assert tomlrt.dumps(source) == src
+
+
 @pytest.mark.parametrize("operation", ["copy", "assign", "construct"])
 def test_dotted_inline_extraction_keeps_nested_values_independent(
     operation: str,
