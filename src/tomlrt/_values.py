@@ -223,22 +223,7 @@ def render_dotted(parts: tuple[str, ...], seps: tuple[str, ...]) -> str:
 # ---------------------------------------------------------------------------
 
 
-class _CommaNode:
-    """Copy comma records without generic pickle-state reconstruction."""
-
-    __slots__ = ()
-
-    _copy_fields: ClassVar[tuple[str, ...]]
-
-    def __deepcopy__(self, memo: dict[int, object]) -> Self:
-        new = object.__new__(type(self))
-        memo[id(self)] = new
-        for attr in self._copy_fields:
-            setattr(new, attr, copy.deepcopy(getattr(self, attr), memo))
-        return new
-
-
-class CommaItem(_CommaNode):
+class CommaItem:
     """One slot inside a comma-separated value.
 
     Layout: ``leading value trailing [comma post_comma_trivia]``.
@@ -249,8 +234,6 @@ class CommaItem(_CommaNode):
     """
 
     __slots__ = ("has_comma", "leading", "post_comma_trivia", "trailing", "value")
-
-    _copy_fields: ClassVar[tuple[str, ...]] = __slots__
 
     def __init__(
         self,
@@ -265,6 +248,16 @@ class CommaItem(_CommaNode):
         self.trailing = trailing
         self.has_comma = has_comma
         self.post_comma_trivia = post_comma_trivia
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        new.has_comma = copy.deepcopy(self.has_comma, memo)
+        new.leading = copy.deepcopy(self.leading, memo)
+        new.post_comma_trivia = copy.deepcopy(self.post_comma_trivia, memo)
+        new.trailing = copy.deepcopy(self.trailing, memo)
+        new.value = copy.deepcopy(self.value, memo)
+        return new
 
     def render_tail(self) -> str:
         """Everything the item renders after its value."""
@@ -290,8 +283,6 @@ class InlineTableEntry(CommaItem):
     """
 
     __slots__ = ("key_parts", "key_path", "key_seps", "post_eq", "pre_eq")
-
-    _copy_fields: ClassVar[tuple[str, ...]] = CommaItem._copy_fields + __slots__  # noqa: SLF001
 
     key_parts: tuple[str, ...]
     key_seps: tuple[str, ...]
@@ -324,6 +315,16 @@ class InlineTableEntry(CommaItem):
         self.post_eq = post_eq
 
     @override
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        new = super().__deepcopy__(memo)
+        new.key_parts = copy.deepcopy(self.key_parts, memo)
+        new.key_path = copy.deepcopy(self.key_path, memo)
+        new.key_seps = copy.deepcopy(self.key_seps, memo)
+        new.post_eq = copy.deepcopy(self.post_eq, memo)
+        new.pre_eq = copy.deepcopy(self.pre_eq, memo)
+        return new
+
+    @override
     def render(self) -> str:
         return (
             f"{self.leading}{render_dotted(self.key_parts, self.key_seps)}"
@@ -335,7 +336,7 @@ class InlineTableEntry(CommaItem):
 _ItemT = TypeVar("_ItemT", bound=CommaItem)
 
 
-class CommaValue(_CommaNode, Generic[_ItemT]):
+class CommaValue(Generic[_ItemT]):
     """Shared backbone of `ArrayValue` and `InlineTableValue`.
 
     Canonical trivia ownership:
@@ -353,8 +354,6 @@ class CommaValue(_CommaNode, Generic[_ItemT]):
     """
 
     __slots__ = ("_ml_cache", "final_trivia", "header_trivia", "items")
-
-    _copy_fields: ClassVar[tuple[str, ...]] = __slots__
 
     # Memoised `is_multiline()` result; None means "not computed". Mutations
     # that preserve multi-line shape (append/insert/sort/reorder) leave it
@@ -379,6 +378,15 @@ class CommaValue(_CommaNode, Generic[_ItemT]):
         self.header_trivia = header_trivia
         self.final_trivia = final_trivia
         self._ml_cache = None
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        new._ml_cache = copy.deepcopy(self._ml_cache, memo)  # noqa: SLF001
+        new.final_trivia = copy.deepcopy(self.final_trivia, memo)
+        new.header_trivia = copy.deepcopy(self.header_trivia, memo)
+        new.items = copy.deepcopy(self.items, memo)
+        return new
 
     def render(self) -> str:
         body = "".join([it.render() for it in self.items])
