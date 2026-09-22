@@ -161,10 +161,9 @@ them. Read roughly in this order:
   concrete leaf when the code is flavour-specific —
   `ArrayValue.items: list[ArrayItem]` narrows away
   `InlineTableEntry` at the type level.
-  Comma records share `_CommaNode.__deepcopy__`: `_copy_fields` is
-  derived from `__slots__` and extended for inherited storage. Register
-  the clone in the memo before copying children; do not reintroduce
-  dataclass field reflection.
+  Comma records copy their fields explicitly in `__deepcopy__`, avoiding
+  per-field reflection. Keep these methods in sync with their slots and
+  register each clone in the memo before copying children.
 - **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:
