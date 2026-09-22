@@ -946,7 +946,11 @@ def splice_out(
     if is_multiline:
         for pos, boundary in seams:
             _shift_carried_boundary(cv, pos, nl, old=boundaries_before[boundary])
-    indent = _value_indent(cv)
+    indent = (
+        _value_indent(cv)
+        if any(boundary.above for boundary in boundaries_before.values())
+        else ""
+    )
     if first_survivor is not None:
         _replace_above(cv, 0, boundaries_before[first_survivor], nl, indent)
     for pos, boundary in seams:
