@@ -2682,7 +2682,7 @@ def _clone_entry_slots(
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
     dst_newline: str | None,
-    head: Slot | None = None,
+    head: StructuralHeaderSlot | None = None,
     host_path: tuple[str, ...] | None = None,
 ) -> tuple[list[Slot], StructuralHeaderSlot | None]:
     r"""Deep-clone an entry's slot list with path/owner rebasing.
@@ -2718,17 +2718,6 @@ def _clone_entry_slots(
     if host_path is None:
         host_path = target_prefix
     nested_entry_map: dict[AoTEntry, AoTEntry] = {}
-    if head is not None and new_entry is not None:
-        assert isinstance(head, StructuralHeaderSlot)
-        if head.entry is not None:
-            nested_entry_map[head.entry] = new_entry
-    for s in src_slots:
-        if s is head or not isinstance(s, StructuralHeaderSlot) or s.entry is None:
-            continue
-        # Each AoT entry is introduced by exactly one ``[[path]]`` header.
-        assert s.entry not in nested_entry_map
-        nested_entry_map[s.entry] = AoTEntry()
-
     cloned: list[Slot] = []
     cloned_head: StructuralHeaderSlot | None = None
     memo: dict[int, object] = {}
@@ -2738,24 +2727,28 @@ def _clone_entry_slots(
             _rebase_implicit_slot_in_place(
                 c, src_prefix, target_prefix, host_path, dst_newline
             )
-        src_owner = s.owner_aot_entry
-        mapped = nested_entry_map.get(src_owner) if src_owner else None
-        owner_for_slot = mapped if mapped is not None else body_owner
-        c.owner_aot_entry = owner_for_slot
         if isinstance(c, StructuralHeaderSlot):
             assert isinstance(s, StructuralHeaderSlot)
             if s is head:
                 # head's kind always comes from new_entry, not from
                 # source-entry lookup (which is None for a plain table).
                 c.entry = new_entry
+                cloned_head = c
             elif s.entry is not None:
-                c.entry = nested_entry_map.get(s.entry)
+                c.entry = AoTEntry()
             if c.entry is not None:
+                if s.entry is not None:
+                    assert s.entry not in nested_entry_map
+                    nested_entry_map[s.entry] = c.entry
                 c.entry.bind_header(c)
+        # An AoT header introduces its own owner before any of its body slots.
+        src_owner = s.owner_aot_entry
+        c.owner_aot_entry = (
+            nested_entry_map.get(src_owner, body_owner)
+            if src_owner is not None
+            else body_owner
+        )
         cloned.append(c)
-        if s is head:
-            assert isinstance(c, StructuralHeaderSlot)
-            cloned_head = c
 
     return cloned, cloned_head
 
