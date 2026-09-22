@@ -667,42 +667,47 @@ def set_comma_value_multiline(
     value.reset_multiline_cache()
 
 
-def _extend_row(row: str, text: str) -> str:
-    """Append ``text`` to ``row``, keeping only the row it ends on."""
-    return (row + text).rsplit("\n", 1)[-1]
+def _advance_row_prefix(prefix: str, text: str) -> str:
+    """Keep the row's leading whitespace and at most its first nonblank character."""
+    newline = text.rfind("\n")
+    if newline >= 0:
+        prefix, text = "", text[newline + 1 :]
+    elif prefix and prefix[-1] not in " \t":
+        return prefix
+    return prefix + text[: len(leading_ws(text)) + 1]
 
 
 def _scan_rows(
-    v: Value, target: ArrayValue | InlineTableValue, row: str
+    v: Value, target: ArrayValue | InlineTableValue, prefix: str
 ) -> tuple[str, str | None]:
-    """Advance ``row`` across ``v``'s rendering, spotting ``target`` on the way.
+    """Track row indentation across ``v``'s rendering, locating ``target``.
 
-    ``row`` is the text of the physical row rendered so far. Returns the
-    row ``v`` ends on, paired with the row ``target`` starts on once
-    seen; the first result is meaningless from then on, since every
-    caller stops on the second.
+    ``prefix`` holds only leading whitespace and the first nonblank character.
+    Return the ending prefix and, once found, the prefix at ``target``.
 
     An inline-table entry's ``key =`` prefix is skipped: it carries no
     row break, and a value always renders at least one non-blank
     character, so the row's own indent is unaffected either way.
     """
     if v is target:
-        return row, row
+        return prefix, prefix
     if not isinstance(v, (ArrayValue, InlineTableValue)):
-        return _extend_row(row, v.render()), None
-    row = _extend_row(row, v._open + v.header_trivia)  # noqa: SLF001
+        return _advance_row_prefix(prefix, v.render()), None
+    prefix = _advance_row_prefix(prefix, v._open + v.header_trivia)  # noqa: SLF001
     for it in v.items:
-        row, found = _scan_rows(it.value, target, _extend_row(row, it.leading))
+        prefix, found = _scan_rows(
+            it.value, target, _advance_row_prefix(prefix, it.leading)
+        )
         if found is not None:
-            return row, found
-        row = _extend_row(row, it.render_tail())
-    return _extend_row(row, v.final_trivia + v._close), None  # noqa: SLF001
+            return prefix, found
+        prefix = _advance_row_prefix(prefix, it.render_tail())
+    return _advance_row_prefix(prefix, v.final_trivia + v._close), None  # noqa: SLF001
 
 
 def _value_row_in_slot(
     slot: KVSlot, value: ArrayValue | InlineTableValue
 ) -> str | None:
-    """The physical row ``value`` starts on within ``slot``, or ``None``.
+    """The indentation prefix of ``value``'s starting row within ``slot``.
 
     ``None`` when ``value`` does not appear in ``slot``'s value subtree.
     """
