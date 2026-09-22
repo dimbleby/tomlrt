@@ -305,13 +305,19 @@ def test_append_nested_list_to_inline_array(benchmark: BenchmarkFixture) -> None
     benchmark.pedantic(work, setup=_parsed("items = []\n"), rounds=2_000)
 
 
-def test_delete_from_inline_array(benchmark: BenchmarkFixture) -> None:
+@pytest.mark.parametrize("layout", ["single", "multiline"])
+def test_delete_from_inline_array(benchmark: BenchmarkFixture, layout: str) -> None:
     def work(doc: Document) -> None:
         arr = doc.array("items")
         for _ in range(150):
             del arr[0]
 
-    benchmark.pedantic(work, setup=_parsed(_inline_array(500)), rounds=100)
+    src = (
+        _inline_array(500)
+        if layout == "multiline"
+        else "items = [" + ", ".join(str(i) for i in range(500)) + "]\n"
+    )
+    benchmark.pedantic(work, setup=_parsed(src), rounds=100)
 
 
 @pytest.mark.parametrize(("layout", "step"), [("single", 1), ("multiline", 2)])
