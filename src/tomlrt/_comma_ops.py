@@ -460,6 +460,13 @@ class Boundary:
             self.after = target
         return self
 
+    def needs_carried_repair(self, old: Boundary) -> bool:
+        """Unchanged row/comma state also leaves the structural break unchanged."""
+        return (
+            self.row_closed != old.row_closed
+            or self.break_before_comma != old.break_before_comma
+        )
+
     def shift_carried_from(
         self,
         old: Boundary,
@@ -469,17 +476,14 @@ class Boundary:
         is_terminal: bool,
     ) -> None:
         """Repair this boundary's structural break after its left item moves."""
+        if not self.needs_carried_repair(old):
+            return
         row_closed = self.row_closed
         break_before_comma = self.break_before_comma
         current_structural = (
             False if row_closed else old.row_closed or old.following_break_is_structural
         )
         delta = int(current_structural) - int(old.following_break_is_structural)
-        facts_changed = (
-            row_closed != old.row_closed or break_before_comma != old.break_before_comma
-        )
-        if not delta and not facts_changed:
-            return
         holder = self.following.join()
         if delta:
             holder = shift_breaks(holder, delta, nl)
@@ -546,6 +550,8 @@ def _shift_carried_boundary(
 ) -> None:
     """Repair a carried boundary after its predecessor changes."""
     current = Boundary.capture(cv, b)
+    if not current.needs_carried_repair(old):
+        return
     current.shift_carried_from(
         old,
         nl,
