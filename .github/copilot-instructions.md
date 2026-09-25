@@ -203,8 +203,8 @@ them. Read roughly in this order:
   table, `[H]` cannot redefine an already-opened table, dotted
   keys cannot extend an explicitly defined table / AoT, inline-
   table local key rules). Table-local namespaces hold declaration
-  kinds; each new AoT entry clears its namespace and gets a fresh
-  ownership token. Valid key declarations traverse their path once;
+  kinds; each new AoT entry clears its namespace and uses the parser's
+  fresh ownership token. Valid key declarations traverse their path once;
   only a forbidden dotted prefix needs a suffix lookup to preserve
   terminal-conflict diagnostic precedence. Owned and invoked by `_parser.py`.
   Separate from `_typecheck.py`, which is the runtime
