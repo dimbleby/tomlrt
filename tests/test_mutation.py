@@ -2570,6 +2570,28 @@ def test_aot_delitem_slice_removes_range() -> None:
     assert _reparses(out) == {"pkg": [{"name": "a", "dep": {"x": 1}}]}
 
 
+def test_aot_bulk_removal_preserves_held_entry_header_spacing() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+
+        # removed
+        [[items]]
+
+        # survivor
+        [[items]]
+        """)
+    )
+    items = doc.aot("items")
+    held = items[1]
+    del items[:2]
+    assert held.header_leading_block == (None, "removed")
+    assert tomlrt.dumps(doc) == td("""
+        # survivor
+        [[items]]
+        """)
+
+
 def test_aot_delitem_slice_with_step() -> None:
     doc = tomlrt.loads(
         td("""
