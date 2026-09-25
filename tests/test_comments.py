@@ -2367,6 +2367,44 @@ def test_array_leading_comments_clear_after_prior_eol() -> None:
         """)
 
 
+def test_section_comment_clear_keeps_header_and_values() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [section] # header
+        a = 1 # aye
+        plain = 0
+        b = 2 # bee
+        """)
+    )
+    doc.table("section").comments.clear()
+    assert tomlrt.dumps(doc) == td("""
+        [section] # header
+        a = 1
+        plain = 0
+        b = 2
+        """)
+
+
+def test_clear_eol_comments_before_and_after_a_comma() -> None:
+    doc = tomlrt.loads(
+        td("""
+        items = [
+          1 # before
+          , # after
+          2
+        ]
+        """)
+    )
+    doc.array("items").comments.clear()
+    assert tomlrt.dumps(doc) == td("""
+        items = [
+          1
+          ,
+          2
+        ]
+        """)
+
+
 def test_array_eol_comment_del_on_last_no_comma_item() -> None:
     """Deleting an EOL on a trailing item without a comma needs no NL restore."""
     src = td("""
