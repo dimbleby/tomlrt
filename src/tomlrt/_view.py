@@ -59,6 +59,16 @@ class _View:
         return lr is not None and not lr._is_private  # noqa: SLF001
 
     @property
+    def _attached_doc(self) -> Document:
+        """The backing document, including private orphan roots.
+
+        Slot-stream mutations need a document, not a detached factory.
+        """
+        lr = self._layout_root
+        assert lr is not None, "view is not attached to a document"
+        return lr
+
+    @property
     def _doc_newline(self) -> str:
         r"""The active newline of the owning document, or ``"\n"`` if detached."""
         lr = self._layout_root

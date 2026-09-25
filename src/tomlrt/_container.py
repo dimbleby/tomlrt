@@ -401,18 +401,6 @@ class Container(_View, dict[str, Any]):
                     for entry in child:
                         yield _layout_ops.owned_slots(entry), True
 
-    @property
-    def _attached_doc(self) -> Document:
-        """The owning ``Document``, asserting the container is attached.
-
-        Most ``_layout_ops`` primitives require an attached target
-        because they mutate the doc-stream linked list. This accessor
-        narrows ``_layout_root`` from ``Document | None``.
-        """
-        lr = self._layout_root
-        assert lr is not None, "container is not attached to a document"
-        return lr
-
     def _wire(
         self,
         *,
