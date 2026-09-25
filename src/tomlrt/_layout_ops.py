@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 from tomlrt import _array, _container
 from tomlrt._kind import _Kind
 from tomlrt._list_ops import delete_runs, index_runs
-from tomlrt._scalar import SCALAR_TYPES, is_scalar
+from tomlrt._scalar import SCALAR_TYPES
 from tomlrt._slots import (
     AoTEntry,
     KVSlot,
@@ -2775,10 +2775,10 @@ def attach_section_at(
     """Synthesise ``[parent_path.sub_path]`` (multi-component) at end-of-doc.
 
     Intermediate components in ``sub_path[:-1]`` become implicit tables;
-    the deepest component gets the explicit header. ``source`` (always an
-    unattached `Table`) is rehomed in place.
+    the deepest component gets the explicit header. ``source`` is a validated,
+    unattached `Table`, rehomed in place.
     """
-    from tomlrt._container import _is_synth_inline  # noqa: PLC0415
+    from tomlrt._container import _is_inline_input  # noqa: PLC0415
 
     sub = tuple(sub_path)
     assert sub, "attach_section_at requires a non-empty sub_path"
@@ -2838,7 +2838,7 @@ def attach_section_at(
     scalars: list[tuple[str, TomlInput]] = []
     structurals: list[tuple[str, TomlInput]] = []
     for k, v in pending:
-        if is_scalar(v) or _is_synth_inline(v):
+        if _is_inline_input(v):
             scalars.append((k, v))
         else:
             structurals.append((k, v))
