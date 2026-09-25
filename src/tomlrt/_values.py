@@ -10,7 +10,9 @@ at import time. Fieldless leaves inherit their storage and constructors.
 
 from __future__ import annotations
 
+import bisect
 import copy
+import operator
 import re
 import sys
 from datetime import date, datetime, time, timedelta, timezone
@@ -279,10 +281,10 @@ class InlineTableEntry(CommaItem):
     """One ``key = value`` slot inside an inline table.
 
     The shared trivia/comma machinery lives on `CommaItem`; this leaf
-    adds only the key-prefix fields and keyed rendering.
+    adds the key prefix and an order label for locating its current position.
     """
 
-    __slots__ = ("key_parts", "key_path", "key_seps", "post_eq", "pre_eq")
+    __slots__ = ("_order", "key_parts", "key_path", "key_seps", "post_eq", "pre_eq")
 
     key_parts: tuple[str, ...]
     key_seps: tuple[str, ...]
@@ -313,6 +315,7 @@ class InlineTableEntry(CommaItem):
         self.key_path = key_path
         self.pre_eq = pre_eq
         self.post_eq = post_eq
+        self._order = 0
 
     @override
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
@@ -322,6 +325,7 @@ class InlineTableEntry(CommaItem):
         new.key_seps = copy.deepcopy(self.key_seps, memo)
         new.post_eq = copy.deepcopy(self.post_eq, memo)
         new.pre_eq = copy.deepcopy(self.pre_eq, memo)
+        new._order = self._order  # noqa: SLF001
         return new
 
     @override
@@ -450,14 +454,61 @@ class EmptyAoTValue(ArrayValue):
     __slots__ = ()
 
 
-class InlineTableValue(CommaValue[InlineTableEntry]):
-    """Inline table literal (``{ ... }``)."""
+_entry_order = operator.attrgetter("_order")
 
-    __slots__ = ()
+
+class InlineTableValue(CommaValue[InlineTableEntry]):
+    """Inline table literal with direct key bindings and ordered entries.
+
+    Order labels increase along ``items``. Deletion leaves labels intact;
+    copying, reordering and key rebasing rebuild the index and labels.
+    """
+
+    __slots__ = ("_key_index",)
 
     _open: ClassVar[str] = "{"
     _close: ClassVar[str] = "}"
     _single_line_pad: ClassVar[str] = " "
+    _key_index: dict[tuple[str, ...], InlineTableEntry]
+
+    def __init__(
+        self,
+        items: list[InlineTableEntry] | None = None,
+        header_trivia: str = "",
+        final_trivia: str = "",
+    ) -> None:
+        self.items = [] if items is None else items
+        self.header_trivia = header_trivia
+        self.final_trivia = final_trivia
+        self._ml_cache = None
+        self.reindex()
+
+    @override
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        new = super().__deepcopy__(memo)
+        new.reindex()
+        return new
+
+    def find_entry(self, path: tuple[str, ...]) -> tuple[int, InlineTableEntry] | None:
+        """Resolve a key and locate its entry in physical order."""
+        entry = self._key_index.get(path)
+        if entry is None:
+            return None
+        position = bisect.bisect_left(self.items, entry._order, key=_entry_order)  # noqa: SLF001
+        assert self.items[position] is entry, "inline entry index is stale"
+        return position, entry
+
+    def record_entry(self, entry: InlineTableEntry) -> None:
+        """Index an entry just appended to ``items``."""
+        entry._order = self.items[-2]._order + 1 if len(self.items) > 1 else 0  # noqa: SLF001
+        self._key_index[entry.key_path] = entry
+
+    def reindex(self) -> None:
+        """Rebuild key bindings and physical order after copying or reordering."""
+        self._key_index = {}
+        for position, entry in enumerate(self.items):
+            entry._order = position  # noqa: SLF001
+            self._key_index[entry.key_path] = entry
 
 
 Value = (

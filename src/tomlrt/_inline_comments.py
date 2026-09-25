@@ -24,7 +24,6 @@ from tomlrt._comma_comments import (
 )
 from tomlrt._inline_ops import (
     _entry_key_path,
-    _find_entry,
     _outermost_inline,
     ensure_inline_multiline,
 )
@@ -38,11 +37,10 @@ if TYPE_CHECKING:
 
 
 class _InlineAdapter(CommaCommentAdapter[str, InlineTableEntry]):
-    __slots__ = ("_c", "_indices")
+    __slots__ = ("_c",)
 
     def __init__(self, container: Container) -> None:
         self._c = container
-        self._indices: dict[str, int] = {}
 
     @override
     def value(self) -> InlineTableValue:
@@ -56,20 +54,8 @@ class _InlineAdapter(CommaCommentAdapter[str, InlineTableEntry]):
             return None
         iv = self.value()
         key_path = _entry_key_path(self._c, key)
-        cached = self._indices.get(key)
-        if (
-            cached is not None
-            and cached < len(iv.items)
-            and iv.items[cached].key_path == key_path
-        ):
-            return cached
-        found = _find_entry(iv, key_path)
-        if found is None:
-            self._indices.pop(key, None)
-            return None
-        idx, _entry = found
-        self._indices[key] = idx
-        return idx
+        found = iv.find_entry(key_path)
+        return None if found is None else found[0]
 
     @override
     def ensure_value(self, key: str, *, materialize: bool) -> bool:
@@ -91,17 +77,11 @@ class _InlineAdapter(CommaCommentAdapter[str, InlineTableEntry]):
         root = _outermost_inline(self._c)
         prefix = self._c._path[len(root._path) :]  # noqa: SLF001
         plen = len(prefix)
-        self._indices.clear()
-        seen: set[str] = set()
         for i, e in enumerate(iv.items):
             kp = e.key_path
             if len(kp) != plen + 1 or kp[:plen] != prefix:
                 continue
-            leaf = kp[plen]
-            assert leaf not in seen, "inline table cannot contain duplicate leaves"
-            seen.add(leaf)
-            self._indices[leaf] = i
-            yield leaf, i
+            yield kp[plen], i
 
 
 __all__ = ["_InlineAdapter"]
