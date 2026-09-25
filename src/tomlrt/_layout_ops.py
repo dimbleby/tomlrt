@@ -1175,28 +1175,20 @@ def _walk_views(vals: Iterable[_View]) -> Iterator[_View]:
             pending.pop()
 
 
-def _detach_materialised_inline(root: Container | Array) -> None:
-    """Free one CST-owning root while preserving its internal bindings."""
-    root._host = None  # noqa: SLF001
-    for node in _walk_views((root,)):
-        node._reset_displaced()  # noqa: SLF001
-
-
-def _detach_inline_factory(root: Container) -> None:
-    """Detach a CST-less navigator and free each child CST component."""
-    root._host = None  # noqa: SLF001
-    root._reset_displaced()  # noqa: SLF001
-    for child in root.values():
-        if is_inline_value(child):
-            _detach_displaced_inline(child)
-
-
 def _detach_displaced_inline(root: Container | Array) -> None:
-    """Detach ``root`` at the natural boundary of its owned CST."""
-    if isinstance(root, _array.Array) or root._value is not None:  # noqa: SLF001
-        _detach_materialised_inline(root)
-    else:
-        _detach_inline_factory(root)
+    """Free CST components, keeping the bindings inside each component intact."""
+    pending: list[Container | Array] = [root]
+    while pending:
+        current = pending.pop()
+        current._host = None  # noqa: SLF001
+        if isinstance(current, _array.Array) or current._value is not None:  # noqa: SLF001
+            for node in _walk_views((current,)):
+                node._reset_displaced()  # noqa: SLF001
+        else:
+            current._reset_displaced()  # noqa: SLF001
+            pending.extend(
+                child for child in current.values() if is_inline_value(child)
+            )
 
 
 def reset_displaced_views(*vals: object) -> None:
