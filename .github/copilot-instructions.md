@@ -233,6 +233,8 @@ them. Read roughly in this order:
   Removal separates physical slot discovery (`owned_slots` plus binding
   refs) from logical traversal. Collect every retained `_View` once,
   including inline descendants, and pass that list to orphan transplantation.
+  `_walk_views` yields views in iterative preorder; callers handle each
+  view before traversal descends into its children.
   Key and AoT removal share `_detach_departing_slots` for ref cleanup and
   reverse-order unlinking; logical deletion and orphan shape stay in the callers.
   By far the largest file. Internal hot-path conventions:

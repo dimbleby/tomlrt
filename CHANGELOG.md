@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bulk array appends now keep the same spacing as repeated `append()` calls.
 - Removing multiple array-of-tables entries preserves their header whitespace.
+- Deleting deeply nested section subtrees no longer raises `RecursionError`.
 
 ## [2.2.13] - 2026-09-20
 
