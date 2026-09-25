@@ -302,6 +302,13 @@ class _CommaView(
         return sum(1 for _ in self)
 
     @override
+    def clear(self) -> None:
+        # Deleting an EOL may reveal another on the same item.
+        for _key, idx in self._a.indexed_candidates():
+            while self._get(idx) is not None:
+                self._clear(idx)
+
+    @override
     def __getitem__(self, key: _KeyT) -> _ValueT:
         v = self._get(self._idx(key))
         if v is None:

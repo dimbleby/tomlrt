@@ -132,6 +132,12 @@ class _SlotKeyedView(MutableMapping[str, _T]):
     def __len__(self) -> int:
         return sum(1 for _ in self)
 
+    @override
+    def clear(self) -> None:
+        # Removing comments leaves the underlying keys intact.
+        for key in self:
+            del self[key]
+
 
 class EolCommentView(_SlotKeyedView[str]):
     __slots__ = ()
