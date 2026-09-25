@@ -1914,6 +1914,26 @@ def test_inline_delete_detaches_dotted_navigator() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_delete_deep_inline_navigator_releases_its_array_component() -> None:
+    path = ("group", *("child",) * 1500)
+    source = td(f"""
+        t = {{ {".".join(path)}.leaf = [ 1 ], keep = 2 }}
+        """)
+    doc = tomlrt.loads(source)
+    assert tomlrt.dumps(doc) == source
+    navigator = doc.table(("t", *path))
+    leaf = navigator.array("leaf")
+    del doc.table("t")["group"]
+    navigator["added"] = 4
+    leaf.append(3)
+    destination = tomlrt.Document()
+    destination["saved"] = leaf
+    assert navigator["added"] == 4
+    assert destination.array("saved") is leaf
+    assert tomlrt.dumps(destination) == "saved = [ 1, 3 ]\n"
+    assert tomlrt.dumps(doc) == "t = { keep = 2 }\n"
+
+
 def test_inline_overwrite_detaches_displaced_array() -> None:
     """Replacing an inline entry detaches a displaced array too.
 
