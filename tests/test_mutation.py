@@ -6596,6 +6596,21 @@ def test_promote_inline_installs_dotted_entries_into_empty_section() -> None:
     assert _reparses(out)["s"] == {"z": 3, "a": {"b": {"c": 1, "d": 2}}}
 
 
+def test_delete_deep_dotted_subtree_keeps_held_leaf_usable() -> None:
+    path = ("root", *("child",) * 1500)
+    source = td(f"""
+        {".".join(path)}.value = 1
+        keep = 2
+        """)
+    doc = tomlrt.loads(source)
+    assert tomlrt.dumps(doc) == source
+    leaf = doc.table(path)
+    del doc["root"]
+    leaf["value"] = 3
+    assert leaf["value"] == 3
+    assert tomlrt.dumps(doc) == "keep = 2\n"
+
+
 def test_clear_doc_with_sections_drops_all_and_keeps_doc_empty() -> None:
     src = td("""
         [a]

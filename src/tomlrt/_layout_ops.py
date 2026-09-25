@@ -60,7 +60,7 @@ from tomlrt._values import (
 from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
 
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table, TomlInput
@@ -1058,10 +1058,11 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         mat_primary = c._index[key][0]  # noqa: SLF001
 
     owned = set(c._index.get(key, ()))  # noqa: SLF001
-    views: list[_View] = []
     if _container._is_section(val) or isinstance(val, _array.AoT):  # noqa: SLF001
         owned.update(owned_slots(val))
-        _walk_view_tree((val,), views.append)
+        views = list(_walk_views((val,)))
+    else:
+        views = []
     slots = sorted(owned, key=operator.attrgetter("_order"))
     del owned  # The removal step builds its own membership set.
 
@@ -1157,32 +1158,28 @@ def _transplant_to_orphan(
     _root_orphan_subtree(orphan, val, slots)
 
 
-def _walk_view_tree(vals: Iterable[_View], visit: Callable[[_View], None]) -> None:
-    """Visit every view node in the given subtrees.
+def _walk_views(vals: Iterable[_View]) -> Iterator[_View]:
+    """Yield subtree views in preorder without recursive calls.
 
-    Each caller supplies the per-node action. Descent is delegated to
-    `_View._view_children`, so this needs no knowledge of, or deferred
-    import of, the concrete view classes. Scalars are inert.
+    Resume each parent's child iterator after its child's whole subtree.
+    Scalars are skipped, and the pending stack grows only with depth.
     """
-
-    def walk(node: _View) -> None:
-        visit(node)
-        for child in node._view_children():  # noqa: SLF001
-            if isinstance(child, _View):
-                walk(child)
-
-    for val in vals:
-        walk(val)
-
-
-def _reset_view(node: _View) -> None:
-    node._reset_displaced()  # noqa: SLF001
+    pending: list[Iterator[object]] = [iter(vals)]
+    while pending:
+        for node in pending[-1]:
+            if isinstance(node, _View):
+                yield node
+                pending.append(iter(node._view_children()))  # noqa: SLF001
+                break
+        else:
+            pending.pop()
 
 
 def _detach_materialised_inline(root: Container | Array) -> None:
     """Free one CST-owning root while preserving its internal bindings."""
     root._host = None  # noqa: SLF001
-    _walk_view_tree((root,), _reset_view)
+    for node in _walk_views((root,)):
+        node._reset_displaced()  # noqa: SLF001
 
 
 def _detach_inline_factory(root: Container) -> None:
@@ -2399,8 +2396,8 @@ def _rehome_view_tree(
     parallel. Views owned by ``stale_owner`` transfer to the destination
     entry; nested AoT entries retain their own owners.
     """
-
-    def visit(node: _View) -> None:
+    root._host = dest_host  # noqa: SLF001
+    for node in _walk_views((root,)):
         # Narrows for the assignments below; `_View` has no other subclass.
         assert isinstance(node, (_container.Container, _array.AoT, _array.Array))
         node._layout_root = doc  # noqa: SLF001
@@ -2411,9 +2408,6 @@ def _rehome_view_tree(
                 and node._owner_aot_entry is stale_owner  # noqa: SLF001
             ):
                 node._owner_aot_entry = new_owner  # noqa: SLF001
-
-    root._host = dest_host  # noqa: SLF001
-    _walk_view_tree((root,), visit)
 
 
 def _detach_from_source_doc(value: Container | AoT, slots: list[Slot]) -> None:
@@ -3030,8 +3024,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
 
     # The entries themselves keep their internal caches: they are moving
     # to a document of their own, not being taken apart.
-    views: list[_View] = []
-    _walk_view_tree(popped_entries, views.append)
+    views = list(_walk_views(popped_entries))
 
     _detach_departing_slots(parent, union_owned_ordered, views)
 
