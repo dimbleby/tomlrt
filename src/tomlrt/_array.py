@@ -44,7 +44,14 @@ from tomlrt._values import (
 from tomlrt._view import _View
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
+    from collections.abc import (
+        Callable,
+        Iterable,
+        Iterator,
+        Mapping,
+        MutableMapping,
+        Sequence,
+    )
 
     from _typeshed import SupportsRichComparison
 
@@ -329,14 +336,18 @@ class Array(_View, list[Any]):
     def _append_with_style(
         self, cst: Value, decoded: object, style: CommaStyle
     ) -> None:
-        """Append ``cst`` / ``decoded`` using a precomputed ``style``.
-
-        Precomputing avoids re-deriving style from array state that
-        mutation has already changed (e.g. mid-``__imul__``).
-        """
+        """Append an already-synthesised item with the sampled layout."""
         new_item = _make_item(cst, has_comma=False)
         splice_in(self._value, new_item, style, self._doc_newline)
         list.append(self, decoded)
+
+    def _extend_prepared(self, prepared: Iterable[tuple[Value, object]]) -> None:
+        """Append a batch; the first two items establish bracket pad and separator."""
+        style = self._style()
+        for cst, decoded in prepared:
+            self._append_with_style(cst, decoded, style)
+            if len(self) <= 2:
+                style = self._style()
 
     @override
     def extend(self, values: Iterable[Any]) -> None:
@@ -345,11 +356,7 @@ class Array(_View, list[Any]):
         if not snapshot:
             return
         prepared = self._prepare_values(snapshot)
-        # Reuse one style for every item: re-deriving it per item is O(n)
-        # for a single-line array, so doing it n times would be quadratic.
-        style = self._style()
-        for cst, decoded in prepared:
-            self._append_with_style(cst, decoded, style)
+        self._extend_prepared(prepared)
 
     @override
     def clear(self) -> None:
@@ -464,15 +471,15 @@ class Array(_View, list[Any]):
                 return
             # Reuse delete/insert boundary handling for contiguous slices.
             del self[start:stop]
-            if start == len(self):
-                for cst, decoded in prepared:
-                    self._append_with_style(cst, decoded, self._style())
-            elif prepared:
-                new_items = [_make_item(cst, has_comma=True) for cst, _ in prepared]
-                splice_insert(self._value, new_items, start, self._doc_newline)
-                list.__setitem__(
-                    self, slice(start, start), [decoded for _, decoded in prepared]
-                )
+            if prepared:
+                if start == len(self):
+                    self._extend_prepared(prepared)
+                else:
+                    new_items = [_make_item(cst, has_comma=True) for cst, _ in prepared]
+                    splice_insert(self._value, new_items, start, self._doc_newline)
+                    list.__setitem__(
+                        self, slice(start, start), [decoded for _, decoded in prepared]
+                    )
             return
         # int index: reject before synthesising or mutating any CST, to
         # match the IndexError ``list.__setitem__`` raises for a bad index.
@@ -514,18 +521,22 @@ class Array(_View, list[Any]):
             return self
         if n == 1:
             return self
-        # Snapshot style and items before appending: `_append_with_style`
-        # flips the previous last comma, and decoded inline views must be
-        # re-built from cloned CST so they stay wired to their own nodes.
+        # Snapshot the source list before appending grows it; each copy needs
+        # its own decoded views.
         from tomlrt._build import _decode_value  # noqa: PLC0415
 
-        style = self._style()
         src_items = list(self._value.items)
-        for _ in range(n - 1):
-            for src in src_items:
-                cst = deepcopy(src.value)
-                decoded = _decode_value(cst, self._layout_root, None, None, None, self)
-                self._append_with_style(cst, decoded, style)
+
+        def copies() -> Iterator[tuple[Value, object]]:
+            for _ in range(n - 1):
+                for src in src_items:
+                    cst = deepcopy(src.value)
+                    yield (
+                        cst,
+                        _decode_value(cst, self._layout_root, None, None, None, self),
+                    )
+
+        self._extend_prepared(copies())
         return self
 
 

@@ -1446,9 +1446,6 @@ def test_array_extend_iadd() -> None:
 
 
 def test_array_extend_multiline_lays_one_item_per_line() -> None:
-    # extend snapshots the layout style once and reuses it, so a multi-line
-    # array still gets each appended item on its own line (matching repeated
-    # append) rather than collapsing onto a single row.
     doc = tomlrt.loads(
         td("""
         xs = [
@@ -1457,6 +1454,18 @@ def test_array_extend_multiline_lays_one_item_per_line() -> None:
         """),
     )
     doc["xs"].extend([2, 3])
+    assert tomlrt.dumps(doc) == td("""
+        xs = [
+            1,
+            2,
+            3,
+        ]
+        """)
+
+
+def test_array_extend_empty_multiline_uses_consistent_indentation() -> None:
+    doc = tomlrt.loads("xs = [\n]\n")
+    doc.array("xs").extend([1, 2, 3])
     assert tomlrt.dumps(doc) == td("""
         xs = [
             1,
@@ -4868,6 +4877,32 @@ def test_array_imul_preserves_multiline_no_trailing_comma() -> None:
     xs *= 2
     out = tomlrt.dumps(doc)
     assert out == "xs = [\n  1,\n  2,\n  3,\n  1,\n  2,\n  3\n]\n"
+
+
+def test_array_imul_resamples_separator_after_rehoming_closing_comments() -> None:
+    doc = tomlrt.loads(
+        td("""
+        xs = [
+          1
+          # before
+          ,
+          # after
+        ]
+        """)
+    )
+    xs = doc.array("xs")
+    xs *= 3
+    assert tomlrt.dumps(doc) == td("""
+        xs = [
+          1
+          # before
+          ,
+          # after
+          1
+          ,
+          1,
+        ]
+        """)
 
 
 def test_array_imul_inline_table_copies_render_mutations() -> None:
