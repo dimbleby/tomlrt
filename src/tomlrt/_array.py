@@ -610,13 +610,6 @@ class AoT(_View, list["Table"]):
         self._host = None
         self._path = ()
 
-    @property
-    def _attached_doc(self) -> Document:
-        """The owning ``Document``, asserting this AoT is attached."""
-        lr = self._layout_root
-        assert lr is not None, "AoT is not attached to a document"
-        return lr
-
     def to_list(self) -> list[dict[str, Any]]:
         """Materialise independent plain-Python dictionaries (recursive)."""
         out = _container._to_python(self)  # noqa: SLF001
