@@ -2025,33 +2025,6 @@ def _gather_headered_subtree_slots(
     return head, src_slots
 
 
-def _hoist_own_slots_first(slots: list[Slot], root_path: tuple[str, ...]) -> list[Slot]:
-    """Stable-partition ``slots`` so ``root_path``'s own slots precede nested ones.
-
-    A plain table's own header and direct/dotted keys may legally be
-    interleaved with a forward-declared nested descendant's block (see
-    :func:`owned_slots`) — a table can always be reopened. An
-    array-of-tables entry can never be reopened this way (a later plain
-    ``[..]`` for an already-``[[..]]``-opened path is invalid TOML), so
-    preparing an AoT entry must gather all of the root's own slots to
-    the front, ahead of any nested descendant's content, unlike a
-    plain-section install which keeps true doc-stream order.
-    """
-
-    def is_own(s: Slot) -> bool:
-        return (
-            s.host_path == root_path
-            if isinstance(s, KVSlot)
-            else isinstance(s, StructuralHeaderSlot) and s.key_path == root_path
-        )
-
-    own = [s for s in slots if is_own(s)]
-    if own == slots[: len(own)]:
-        return slots
-    nested = [s for s in slots if not is_own(s)]
-    return own + nested
-
-
 def _hoist_root_level_kvs(run: list[Slot], doc: Document) -> list[Slot]:
     """Move the document root's own keys ahead of any header in ``run``.
 
@@ -2060,17 +2033,11 @@ def _hoist_root_level_kvs(run: list[Slot], doc: Document) -> list[Slot]:
     leaves one after one. The seam that opens was never a boundary in
     the source, so it takes the document's section spacing.
     """
-
-    def is_root_level(s: Slot) -> bool:
-        return isinstance(s, KVSlot) and not s.host_path
-
-    own = [s for s in run if is_root_level(s)]
-    if own == run[: len(own)]:
+    body, blocks = split_subtree_slots(run, 1)
+    if body == run[: len(body)]:
         return run
-    hoisted = own + [s for s in run if not is_root_level(s)]
-    seam = hoisted[len(own)]
-    _retarget_separator(seam, _build_section_leading(doc))
-    return hoisted
+    _retarget_separator(blocks[0], _build_section_leading(doc))
+    return body + blocks
 
 
 def _promoted_header_comments(head: StructuralHeaderSlot, nl: str) -> str:
@@ -2375,8 +2342,15 @@ def adopt_private_entry(
     _append_entry_run(
         aot, header, slots, preserve_source_separator=preserve_source_separator
     )
-    ordered = _hoist_own_slots_first(slots, path)
-    if ordered is not slots:
+    # Rebasing has placed every KV at this entry's path or below it.
+    body, blocks = split_subtree_slots(
+        (slot for slot in slots if slot is not header), len(path) + 1
+    )
+    ordered = [header, *body, *blocks]
+    del body, blocks  # Release scratch lists before refiling the ordered run.
+    if ordered == slots:
+        ordered = slots
+    else:
         predecessor, successor = slots[0]._prev, slots[-1]._next  # noqa: SLF001
         with _refile_region_refs(doc, predecessor, successor):
             _link_run_between(predecessor, ordered, successor, doc)
@@ -3279,10 +3253,11 @@ def clone_aot_entry_layout(
         dst_newline=nl,
         head=head,
     )
-    body = [
-        slot for slot in _hoist_own_slots_first(cloned, path) if slot is not cloned_head
-    ]
-    return cloned_head, body
+    # Rebasing has placed every KV at this entry's path or below it.
+    body, blocks = split_subtree_slots(
+        (slot for slot in cloned if slot is not cloned_head), len(path) + 1
+    )
+    return cloned_head, body + blocks
 
 
 def _prepare_entry(
