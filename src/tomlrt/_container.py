@@ -613,11 +613,7 @@ class Container(_View, dict[str, Any]):
         # Single-direct-KV-slot current → any synth-able value
         # (scalar or inline). The slot's `value` field is swapped
         # in place; ordering, comments, key spelling are preserved.
-        if (
-            is_scalar(current)
-            or _is_inline_table(current)
-            or isinstance(current, Array)
-        ) and (is_scalar(value) or _is_synth_inline(value)):
+        if _is_inline_input(current) and _is_inline_input(value):
             self._inline_typed_replace(key, value)
             return
         # Structural overwrite keeps the doc-stream anchor but detaches
@@ -648,7 +644,7 @@ class Container(_View, dict[str, Any]):
             )
             dict.__setitem__(self, key, value)
             return
-        if _is_synth_inline(value):
+        if _is_inline_input(value):
             _layout_ops.append_synth_kv(
                 self,
                 key,
@@ -1769,28 +1765,9 @@ the value is assigned.
 # ---------------------------------------------------------------------------
 
 
-def _is_synth_inline(v: object) -> bool:
-    """True iff ``v`` is a value we can synthesise to an inline TOML value.
-
-    Accepts any ``Mapping``, inline ``Container``, ``list``, or
-    ``Array`` (deep-copy semantics); rejects everything else (tuple,
-    bytes, sets, AoT, section Container, …) so the caller can route to
-    a stronger error.
-    """
-    if isinstance(v, AoT):
-        return False
-    if isinstance(v, Container):
-        # Section containers need real live-attach; only inline ones
-        # round-trip through value-synthesis safely.
-        return v._inline  # noqa: SLF001
-    if isinstance(v, Array):
-        return True
-    if isinstance(v, Mapping):
-        return True
-    # `list` (or subclass) only — `tuple` is intentionally not accepted
-    # (TOML has no tuple, and accepting it would mask user typos). Array,
-    # a list subclass, was already accepted above.
-    return isinstance(v, list)
+def _is_inline_input(v: TomlInput) -> bool:
+    """Classify already-validated input; only section and AoT views are structural."""
+    return not isinstance(v, _View) or v._inline  # noqa: SLF001
 
 
 def _validate_input(
