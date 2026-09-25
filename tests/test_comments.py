@@ -573,6 +573,13 @@ def test_retained_inline_comment_view_tracks_structural_mutations() -> None:
     t["b"] = 4
     comments["b"] = "new b"
     assert dict(comments) == {"c": "a c", "a": "an a", "b": "new b"}
+    assert tomlrt.dumps(doc) == td("""
+        t = {
+            c = 3, # a c
+            a = 1, # an a
+            b = 4, # new b
+        }
+        """)
 
 
 def test_inline_table_header_comment_get_raises() -> None:

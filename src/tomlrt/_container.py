@@ -2102,6 +2102,7 @@ def _populate_inline_table(
             " ",
         )
         val.items.append(entry)
+        val.record_entry(entry)
         dict.__setitem__(table, k, sub_dec)
     if items:
         val.header_trivia = val._single_line_pad  # noqa: SLF001

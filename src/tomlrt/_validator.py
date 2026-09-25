@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 from tomlrt._slots import AoTEntry
 
 if TYPE_CHECKING:
+    from collections.abc import Container
     from typing import Protocol
 
     from tomlrt._errors import TOMLParseError
@@ -193,7 +194,7 @@ class _Validator:
     def check_inline_key_conflict(
         self,
         path: tuple[str, ...],
-        seen_values: set[tuple[str, ...]],
+        seen_values: Container[tuple[str, ...]],
         seen_prefixes: set[tuple[str, ...]],
         *,
         at: int,

@@ -374,6 +374,7 @@ def _inline_value(
                     " ",
                 )
             )
+            table.record_entry(table.items[-1])
         if items:
             table.header_trivia = table._single_line_pad  # noqa: SLF001
             table.final_trivia = table._single_line_pad  # noqa: SLF001

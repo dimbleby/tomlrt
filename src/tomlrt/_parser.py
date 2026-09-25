@@ -251,16 +251,17 @@ class _Parser:
             return node
         node.header_trivia = head
         leading = ""  # entries[0].leading is always empty
-        seen_values: set[tuple[str, ...]] = set()
         seen_prefixes: set[tuple[str, ...]] = set()
         entries = node.items
         while True:
             key_at = sc.pos
             key_parts, key_seps, pre_eq, key_path = sc.scan_key()
             self._validator.check_inline_key_conflict(
-                key_path, seen_values, seen_prefixes, at=key_at
+                key_path,
+                node._key_index,  # noqa: SLF001
+                seen_prefixes,
+                at=key_at,
             )
-            seen_values.add(key_path)
             ch = src[sc.pos] if sc.pos < end else ""
             if ch != "=":
                 msg = f"expected '=' in inline table, got {ch!r}"
@@ -291,6 +292,7 @@ class _Parser:
                 post_eq,
             )
             entries.append(entry)
+            node.record_entry(entry)
             if sc.pos < end and src[sc.pos] == "}":
                 if entry.has_comma:
                     node.final_trivia = next_leading

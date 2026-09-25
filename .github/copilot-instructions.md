@@ -164,6 +164,10 @@ them. Read roughly in this order:
   Comma records copy their fields explicitly in `__deepcopy__`, avoiding
   per-field reflection. Keep these methods in sync with their slots and
   register each clone in the memo before copying children.
+  `InlineTableValue` indexes keys directly to entries. Entry order labels
+  locate their positions without renumbering on deletion. File appended
+  entries through `record_entry`; copying, reordering and key rebasing
+  call `reindex`. Arrays carry no key index or entry order labels.
 - **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:
