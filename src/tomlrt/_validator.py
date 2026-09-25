@@ -25,7 +25,6 @@ if TYPE_CHECKING:
         def __call__(self, message: str, *, at: int) -> TOMLParseError: ...
 
 
-_HeaderKind = Literal["table", "aot-entry"]
 _ScopeKind = Literal["dotted", "explicit", "implicit"] | AoTEntry
 
 
@@ -66,11 +65,11 @@ class _Validator:
         self.current_owner_aot_entry: AoTEntry | None = None
 
     def enter_header(
-        self, path: tuple[str, ...], kind: _HeaderKind, *, at: int
-    ) -> AoTEntry | None:
+        self, path: tuple[str, ...], new_entry: AoTEntry | None, *, at: int
+    ) -> None:
         """Validate a ``[H]`` / ``[[H]]`` header.
 
-        Returns the opened ``AoTEntry`` for ``[[H]]``, otherwise ``None``.
+        The parser supplies the entry it will bind, or ``None`` for a plain table.
         """
         parent = self._root
         owner: AoTEntry | None = None
@@ -100,9 +99,8 @@ class _Validator:
             )
             raise self._error(msg, at=at)
 
-        new_entry: AoTEntry | None = None
         next_kind: _ScopeKind
-        if kind == "table":
+        if new_entry is None:
             if current_kind == "explicit":
                 msg = f"redefinition of table {'.'.join(path)!r}"
                 raise self._error(msg, at=at)
@@ -121,7 +119,6 @@ class _Validator:
                     "already used as an implicit table"
                 )
                 raise self._error(msg, at=at)
-            new_entry = AoTEntry()
             next_kind = owner = new_entry
 
         if current is None:
@@ -134,7 +131,6 @@ class _Validator:
         self._current = current
         self.current_section = path
         self.current_owner_aot_entry = owner
-        return new_entry
 
     def record_keyvalue(self, key_path: tuple[str, ...], *, at: int) -> None:
         """Bind a value, sealing its path against subsequent extension.

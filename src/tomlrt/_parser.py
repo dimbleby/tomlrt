@@ -7,15 +7,13 @@ inline-table keys.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from tomlrt._scanner import _Scanner
-from tomlrt._slots import KVSlot, StructuralHeaderSlot, stitch_run
+from tomlrt._slots import AoTEntry, KVSlot, StructuralHeaderSlot, stitch_run
 from tomlrt._trivia import leading_has_blank_line, split_eol_section
 from tomlrt._validator import _Validator
 from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
-
-_HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
     from tomlrt._slots import Slot
@@ -100,14 +98,14 @@ class _Parser:
         sc = self._sc
         src = sc.src
         header_at = sc.pos
-        kind: _HeaderKind
+        new_entry: AoTEntry | None
         if src.startswith("[[", sc.pos):
             sc.pos += 2
-            kind = "aot-entry"
+            new_entry = AoTEntry()
             closer, what = "]]", "array-of-tables"
         else:
             sc.pos += 1
-            kind = "table"
+            new_entry = None
             closer, what = "]", "table"
 
         inner_pre = sc.scan_inline_ws_text()
@@ -119,7 +117,7 @@ class _Parser:
         sc.pos += len(closer)
 
         eol = sc.scan_eol()
-        new_entry = self._validator.enter_header(path, kind, at=header_at)
+        self._validator.enter_header(path, new_entry, at=header_at)
         owner = self._validator.current_owner_aot_entry
 
         slot = StructuralHeaderSlot(
