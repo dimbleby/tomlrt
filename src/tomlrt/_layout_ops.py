@@ -1649,7 +1649,7 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     header = parent._header  # noqa: SLF001
     if header is None:
         return
-    if not header.synthetic or header.kind != "table":
+    if not header.synthetic or header.entry is not None:
         return
     # A placeholder that ends the document keeps its header: demotion
     # hands its leading trivia to the successor, and with none there is
@@ -3695,7 +3695,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     # Keep headers that demotion would preserve, so their body KVs cannot
     # move ahead of all headers and rebind to the document root.
     if header is not None and (
-        header.kind != "table"
+        header.entry is not None
         or not header.synthetic
         or isinstance(header._next, KVSlot)  # noqa: SLF001
     ):

@@ -184,7 +184,7 @@ them. Read roughly in this order:
     `key_seps`, `key_path`, `value`).
   - `StructuralHeaderSlot` — one `[a.b]` / `[[a.b]]` header
     (`key_parts`, `key_seps`, `key_path`, `entry`, `synthetic`);
-    `kind` is derived from `entry`.
+    `entry` is the discriminator: `None` for a plain table header.
   - `AoTEntry` — ownership marker for an `[[a]]` entry, retaining only
     its own header; slot membership and ordering come from the linked stream.
   - `slot_local_key(slot, container)` derives the key under which

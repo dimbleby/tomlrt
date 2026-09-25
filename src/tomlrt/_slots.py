@@ -9,7 +9,7 @@ each slot keeps back-pointers to the containers that index it.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -240,8 +240,7 @@ class StructuralHeaderSlot(Slot):
     """One ``[a.b]`` or ``[[a.b]]`` header line.
 
     ``entry`` is the discriminator: AoT-entry headers carry an
-    :class:`AoTEntry`, plain table headers carry ``None``. :attr:`kind`
-    is derived from ``entry`` so the two cannot drift.
+    :class:`AoTEntry`, plain table headers carry ``None``.
     """
 
     __slots__ = (
@@ -293,11 +292,6 @@ class StructuralHeaderSlot(Slot):
         self.inner_post = inner_post
         self.entry = entry
         self.synthetic = synthetic
-
-    @property
-    def kind(self) -> Literal["table", "aot-entry"]:
-        """See ``entry`` for the derivation."""
-        return "aot-entry" if self.entry is not None else "table"
 
     @override
     def render(self) -> str:
