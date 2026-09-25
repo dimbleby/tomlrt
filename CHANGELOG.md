@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.14] - 2026-09-25
+
 ### Fixed
 
 - Bulk array appends now keep the same spacing as repeated `append()` calls.
