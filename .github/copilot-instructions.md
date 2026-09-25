@@ -233,6 +233,8 @@ them. Read roughly in this order:
   Removal separates physical slot discovery (`owned_slots` plus binding
   refs) from logical traversal. Collect every retained `_View` once,
   including inline descendants, and pass that list to orphan transplantation.
+  Key and AoT removal share `_detach_departing_slots` for ref cleanup and
+  reverse-order unlinking; logical deletion and orphan shape stay in the callers.
   By far the largest file. Internal hot-path conventions:
   - **Reverse-walks of `c._refs`** happen in exactly one place,
     `_recompute_body_tail`, for the one question the caches cannot

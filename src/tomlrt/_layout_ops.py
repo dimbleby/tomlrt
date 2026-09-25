@@ -1063,6 +1063,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         owned.update(owned_slots(val))
         _walk_view_tree((val,), views.append)
     slots = sorted(owned, key=operator.attrgetter("_order"))
+    del owned  # The removal step builds its own membership set.
 
     # Synthesise the now-empty section's physical presence while the
     # descendant's primary slot is still linked, so the replacement takes
@@ -1077,31 +1078,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         else:
             _materialise_empty_section_header(c, mat_primary, doc)
 
-    # Scrub via back-pointers, *skipping* subtree containers: those move
-    # to a fresh Document and keep their internal caches.
-    skip_ids = frozenset(
-        id(view)
-        for view in views
-        if not view._inline and isinstance(view, _container.Container)  # noqa: SLF001
-    )
-    _scrub_owned_slots_via_backptrs(slots, skip_container_ids=skip_ids)
-
-    min_owned_depth = len(c._path)  # noqa: SLF001
-    for s in slots:
-        d = len(s.host_path) if isinstance(s, KVSlot) else 0
-        if d < min_owned_depth:
-            min_owned_depth = d
-    _invalidate_body_tail_chain(c, owned, min_depth=min_owned_depth, departing=True)
-
-    # Unlink in *reverse* doc-stream order (see remove_aot_entry for the
-    # same idiom): unlinking a doc-stream-first owned slot promotes its
-    # successor to the new doc head, stripping that successor's leading
-    # blank line. If that successor is itself about to be unlinked too,
-    # the strip is wasted and the *actually* surviving new head never
-    # gets stripped. Working back-to-front lands any head-promotion
-    # strip on the true surviving successor.
-    for slot in reversed(slots):
-        unlink_slot(slot, doc)
+    _detach_departing_slots(c, slots, views)
 
     if views:
         assert isinstance(val, (_container.Container, _array.AoT))
@@ -1117,6 +1094,36 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
         reset_displaced_views(val)
 
     dict.__delitem__(c, key)
+
+
+def _detach_departing_slots(
+    start: Container, slots: list[Slot], views: list[_View]
+) -> None:
+    """Remove doc-ordered slots, keeping retained views' internal refs.
+
+    ``views`` includes every retained descendant, including inline values.
+    """
+    doc = start._attached_doc  # noqa: SLF001
+    owned = set(slots)
+    assert len(owned) == len(slots), "departing slots must be distinct"
+    skip_ids = frozenset(
+        id(view)
+        for view in views
+        if not view._inline and isinstance(view, _container.Container)  # noqa: SLF001
+    )
+    _scrub_owned_slots_via_backptrs(slots, skip_container_ids=skip_ids)
+    min_depth = len(start._path)  # noqa: SLF001
+    for slot in slots:
+        if not min_depth:
+            break
+        depth = len(slot.host_path) if isinstance(slot, KVSlot) else 0
+        if depth < min_depth:
+            min_depth = depth
+    _invalidate_body_tail_chain(start, owned, min_depth=min_depth, departing=True)
+    # Unlinking the document head strips leading blanks from its successor.
+    # Work backwards so only a surviving slot can be promoted and changed.
+    for slot in reversed(slots):
+        unlink_slot(slot, doc)
 
 
 def _transplant_to_orphan(
@@ -3039,45 +3046,20 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     # Collect each entry's whole subtree in doc-stream order and capture
     # the entry table itself for return. Distinct entries own
     # disjoint subtrees, so concatenating is already a union.
-    owned_per_entry: list[list[Slot]] = []
     popped_entries: list[Table] = []
     union_owned_ordered: list[Slot] = []  # in doc-stream order
 
     for i in idx_list:
         entry_table = aot[i]
-        owned_ordered = owned_slots(entry_table)
-        union_owned_ordered.extend(owned_ordered)
-        owned_per_entry.append(owned_ordered)
+        union_owned_ordered.extend(owned_slots(entry_table))
         popped_entries.append(entry_table)
-    union_owned: set[Slot] = set(union_owned_ordered)
-    assert len(union_owned) == len(union_owned_ordered)
 
     # The entries themselves keep their internal caches: they are moving
     # to a document of their own, not being taken apart.
     views: list[_View] = []
     _walk_view_tree(popped_entries, views.append)
 
-    _scrub_owned_slots_via_backptrs(
-        union_owned_ordered,
-        skip_container_ids=frozenset(
-            id(view)
-            for view in views
-            if not view._inline and isinstance(view, _container.Container)  # noqa: SLF001
-        ),
-    )
-
-    # Body-tail invalidation on the parent chain, walking all the way to
-    # the doc root: the popped slots' min bottom-depth is 0 (every popped
-    # AoT entry includes a header), and a binding ref to an AoT entry
-    # header lives at every prefix container.
-    _invalidate_body_tail_chain(parent, union_owned, departing=True)
-
-    for owned in owned_per_entry:
-        # Unlink in reverse order so the entry's leftmost slot (the
-        # ``[[a]]`` header) goes last — see remove_aot_entry's
-        # original comment for the trivia-promotion hazard.
-        for slot in reversed(owned):
-            unlink_slot(slot, doc)
+    _detach_departing_slots(parent, union_owned_ordered, views)
 
     delete_runs(aot, index_runs(idx_list))
 
