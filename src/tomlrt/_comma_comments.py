@@ -75,28 +75,22 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
       a trailing comma).
     """
     item = value.items[idx]
-    # Sampled before the write: the row the comment is about to open
-    # would otherwise be the first row this value appears to have.
-    indent = _value_indent(value)
     existing_eol, rest = split_eol_section(item_eol_channel(item))
-    stripped = False
-    if not existing_eol and rest.startswith(("\n", "\r\n")):
-        rest = rest[2:] if rest[0] == "\r" else rest[1:]
-        stripped = True
+    if not existing_eol:
+        if rest.startswith(("\n", "\r\n")):
+            rest = rest[2:] if rest[0] == "\r" else rest[1:]
+        else:
+            nxt = boundary_break_holder(value, idx + 1)
+            if leading_break(nxt):
+                # Replace the following row break, including its leading padding.
+                nxt = shift_breaks(nxt, -1, nl)
+            else:
+                # Reindent the shared-row follower using the original rows.
+                # Sample before either write changes them.
+                indent = _value_indent(value)
+                nxt = reindent_as_leader(nxt, indent)
+            set_boundary_break_holder(value, idx + 1, nxt)
     set_item_eol_channel(item, f" {raw_text}{nl}{rest}")
-    if existing_eol or stripped:
-        return
-    nxt = boundary_break_holder(value, idx + 1)
-    if leading_break(nxt):
-        # The next item already starts a fresh line; the comment's own
-        # newline replaces that break (a carried -1 boundary shift), along
-        # with any stray trailing whitespace (``1,  \n``) that preceded it.
-        nxt = shift_breaks(nxt, -1, nl)
-    else:
-        # The next item shared this row: the comment forces a break, so
-        # promote it to a row leader at the value indent.
-        nxt = reindent_as_leader(nxt, indent)
-    set_boundary_break_holder(value, idx + 1, nxt)
 
 
 def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> None:
