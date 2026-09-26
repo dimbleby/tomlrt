@@ -13,6 +13,7 @@ semver-stable API:
 | `dumps`, `dump`                     | function   |
 | `Document`, `Table`, `Array`, `AoT` | class      |
 | `FormatOptions`                     | class      |
+| `QuoteStyle`                        | enum       |
 | `TomlInput`                         | type alias |
 | `TOMLError`, `TOMLParseError`       | exception  |
 
@@ -29,6 +30,8 @@ code.
 
 ## Formatting
 
+::: tomlrt.QuoteStyle
+
 ::: tomlrt.FormatOptions
     options:
       members:
@@ -36,6 +39,7 @@ code.
         - indent
         - eol_comment_spaces
         - multiline_trailing_comma
+        - quote_style
 
 ## Containers
 

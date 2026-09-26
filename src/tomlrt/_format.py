@@ -29,11 +29,14 @@ in place. Blank-line runs collapse to one; comment text is rewritten to
 
 from __future__ import annotations
 
+import re
 import warnings
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import Boundary, set_item_eol_channel
 from tomlrt._errors import TOMLError
+from tomlrt._scalar import _STRING_ESCAPES
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
     leading_ws,
@@ -48,6 +51,7 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
+    StringValue,
     item_has_any_comment,
 )
 
@@ -59,6 +63,37 @@ if TYPE_CHECKING:
         CommaItem,
         Value,
     )
+
+
+class QuoteStyle(Enum):
+    """Preferred string and quoted-key spelling for ``format()``."""
+
+    PRESERVE = "preserve"
+    DOUBLE = "double"
+    SINGLE = "single"
+
+
+_PHYSICAL_NEWLINES = re.compile(r"\r\n|\n")
+_LINE_CONTINUATION = re.compile(
+    r"""
+    (?<!\\)      # start of a backslash run
+    (?:\\\\)*    # any number of escaped pairs
+    \\           # one unescaped backslash
+    [ \t]*       # optional trailing whitespace
+    (?:\r\n|\n)  # physical newline
+    """,
+    re.VERBOSE,
+)
+_BASIC_ESCAPES = re.compile(r'["\\\x00-\x08\x0a-\x1f\x7f]')
+_ML_BASIC_ESCAPES = re.compile(
+    r"""
+    "{3,}                              # three quotes would close the string
+    | \\                               # backslash
+    | [\x00-\x08\x0b\x0c\x0e-\x1f\x7f] # controls except tab and newlines
+    | \r(?!\n)                         # CR outside a CRLF newline
+    """,
+    re.VERBOSE,
+)
 
 
 def _validate_non_negative(value: int, name: str) -> None:
@@ -88,6 +123,10 @@ class FormatOptions:
 
     ``multiline_trailing_comma`` controls whether the final item in a multiline
     array or inline table has a comma.
+
+    ``quote_style`` prefers single or double quotes for strings and quoted
+    keys when neither form requires more escapes. `QuoteStyle.PRESERVE`
+    leaves the original spelling unchanged.
     """
 
     __slots__ = (
@@ -95,6 +134,7 @@ class FormatOptions:
         "indent",
         "multiline_trailing_comma",
         "normalize_comments",
+        "quote_style",
     )
 
     def __init__(
@@ -104,6 +144,7 @@ class FormatOptions:
         indent: int = 2,
         eol_comment_spaces: int = 1,
         multiline_trailing_comma: bool = True,
+        quote_style: QuoteStyle = QuoteStyle.PRESERVE,
     ) -> None:
         _validate_non_negative(indent, "indent")
         _validate_non_negative(eol_comment_spaces, "eol_comment_spaces")
@@ -111,6 +152,7 @@ class FormatOptions:
         self.indent = indent
         self.eol_comment_spaces = eol_comment_spaces
         self.multiline_trailing_comma = multiline_trailing_comma
+        self.quote_style = quote_style
 
 
 _DEFAULT_FORMAT_OPTIONS = FormatOptions()
@@ -273,8 +315,77 @@ def _canon_eol(eol: str, *, nl: str, options: FormatOptions) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _canon_key_equals(node: KVSlot | InlineTableEntry) -> None:
+def _literal_eligible(value: str, *, multiline: bool) -> bool:
+    if ("'''" if multiline else "'") in value:
+        return False
+    for i, ch in enumerate(value):
+        if ch == "\t" or (ord(ch) >= 0x20 and ch != "\x7f"):
+            continue
+        if multiline and (ch == "\n" or (ch == "\r" and value[i : i + 2] == "\r\n")):
+            continue
+        return False
+    return True
+
+
+def _escape_basic_match(match: re.Match[str]) -> str:
+    text = match.group()
+    if text.startswith('"""'):
+        # Break runs of three before they can close the multiline string.
+        return '""\\"' * (len(text) // 3) + '"' * (len(text) % 3)
+    return text.translate(_STRING_ESCAPES)
+
+
+def _basic_body(value: str, *, multiline: bool) -> str:
+    pattern = _ML_BASIC_ESCAPES if multiline else _BASIC_ESCAPES
+    return pattern.sub(_escape_basic_match, value)
+
+
+def _quote_lexeme(lexeme: str, value: str, *, style: QuoteStyle) -> str:
+    """Change quote style without changing the value or physical newlines."""
+    multiline = lexeme.startswith(lexeme[0] * 3)
+    if multiline and lexeme[0] == '"' and _LINE_CONTINUATION.search(lexeme):
+        return lexeme
+    can_be_literal = _literal_eligible(value, multiline=multiline)
+    basic_body = _basic_body(value, multiline=multiline)
+    # Use the preferred style only when neither form requires escapes.
+    use_literal = can_be_literal and (basic_body != value or style is QuoteStyle.SINGLE)
+    quote = "'" if use_literal else '"'
+    if lexeme[0] == quote:
+        return lexeme
+    delim = quote * (3 if multiline else 1)
+    opening_newline = ""
+    if multiline:
+        if lexeme.startswith("\r\n", 3):
+            opening_newline = "\r\n"
+        elif lexeme.startswith("\n", 3):
+            opening_newline = "\n"
+    candidate = delim + opening_newline + (value if use_literal else basic_body) + delim
+    # An escaped newline or a line continuation must not change physical rows.
+    if multiline and (
+        _PHYSICAL_NEWLINES.findall(candidate) != _PHYSICAL_NEWLINES.findall(lexeme)
+    ):
+        return lexeme
+    return candidate
+
+
+def _canon_key_parts(
+    node: KVSlot | InlineTableEntry | StructuralHeaderSlot, *, options: FormatOptions
+) -> None:
+    if options.quote_style is QuoteStyle.PRESERVE:
+        return
+    node.key_parts = tuple(
+        _quote_lexeme(part, name, style=options.quote_style)
+        if part.startswith(("'", '"'))
+        else part
+        for part, name in zip(node.key_parts, node.key_path, strict=True)
+    )
+
+
+def _canon_key_equals(
+    node: KVSlot | InlineTableEntry, *, options: FormatOptions
+) -> None:
     """Canonicalise the key / ``=`` body of a KV slot or inline-table entry."""
+    _canon_key_parts(node, options=options)
     node.pre_eq = " "
     node.post_eq = " "
     node.key_seps = (".",) * (len(node.key_parts) - 1)
@@ -299,10 +410,11 @@ def _canon_slot(
     (``target_blanks`` / ``max_preserved_blanks``) has the final say.
     """
     if isinstance(slot, KVSlot):
-        _canon_key_equals(slot)
-        _canon_value(slot.value, nl=nl, options=options)
+        _canon_key_equals(slot, options=options)
+        slot.value = _canon_value(slot.value, nl=nl, options=options)
     else:
         assert isinstance(slot, StructuralHeaderSlot), "unknown slot type"
+        _canon_key_parts(slot, options=options)
         slot.inner_pre = ""
         slot.inner_post = ""
         slot.key_seps = (".",) * (len(slot.key_parts) - 1)
@@ -335,8 +447,10 @@ def _canon_inline_value(
 
     for it in items:
         if isinstance(it, InlineTableEntry):
-            _canon_key_equals(it)
-        _canon_value(it.value, nl=nl, options=options, parent_indent=item_indent)
+            _canon_key_equals(it, options=options)
+        it.value = _canon_value(
+            it.value, nl=nl, options=options, parent_indent=item_indent
+        )
 
     if not multi:
         _canon_single_line_inline(v)
@@ -612,10 +726,15 @@ def _canon_value(
     nl: str,
     options: FormatOptions,
     parent_indent: str = "",
-) -> None:
+) -> Value:
+    if isinstance(v, StringValue):
+        if options.quote_style is QuoteStyle.PRESERVE:
+            return v
+        lexeme = _quote_lexeme(v.lexeme, v.value, style=options.quote_style)
+        return v if lexeme == v.lexeme else StringValue(lexeme, v.value)
     if isinstance(v, (ArrayValue, InlineTableValue)):
         _canon_inline_value(v, nl=nl, options=options, parent_indent=parent_indent)
-    # Other value kinds carry no formattable trivia.
+    return v
 
 
 def set_comma_value_multiline(
@@ -819,6 +938,7 @@ def format_document_trailing(
 
 __all__ = [
     "FormatOptions",
+    "QuoteStyle",
     "_canon_inline_value",
     "_closing_indent",
     "_prepare_indent",

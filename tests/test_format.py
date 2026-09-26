@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from copy import copy
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, TypedDict
 
@@ -1082,6 +1083,240 @@ def test_scalar_text_does_not_determine_outer_shape() -> None:
     doc.format()
     assert tomlrt.dumps(doc) == src
     assert reparses(src) == doc.to_dict()
+
+
+@pytest.mark.parametrize(
+    ("style", "expected"),
+    [
+        (
+            tomlrt.QuoteStyle.PRESERVE,
+            td(r"""
+                'key' = 'hello'
+                "spaced key" = "say \"hi\""
+                plain = "it's"
+                path = 'C:\Users'
+                line = "line\nbreak"
+
+                [section.'child']
+                value = '''
+                multi
+                line'''
+            """),
+        ),
+        (
+            tomlrt.QuoteStyle.DOUBLE,
+            td(r'''
+                "key" = "hello"
+                "spaced key" = 'say "hi"'
+                plain = "it's"
+                path = 'C:\Users'
+                line = "line\nbreak"
+
+                [section."child"]
+                value = """
+                multi
+                line"""
+            '''),
+        ),
+        (
+            tomlrt.QuoteStyle.SINGLE,
+            td(r"""
+                'key' = 'hello'
+                'spaced key' = 'say "hi"'
+                plain = "it's"
+                path = 'C:\Users'
+                line = "line\nbreak"
+
+                [section.'child']
+                value = '''
+                multi
+                line'''
+            """),
+        ),
+    ],
+)
+def test_quote_style_formats_values_and_keys(
+    style: tomlrt.QuoteStyle, expected: str
+) -> None:
+    source = td(r"""
+        'key'='hello'
+        "spaced key"="say \"hi\""
+        plain="it's"
+        path='C:\Users'
+        line="line\nbreak"
+        [section.'child']
+        value = '''
+        multi
+        line'''
+    """)
+    doc = tomlrt.loads(source)
+    before = doc.to_dict()
+    options = tomlrt.FormatOptions(quote_style=style)
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == before
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_quote_style_formats_dotted_and_inline_keys_and_nested_values() -> None:
+    source = td(r"""
+        'outer'.'k' = 'v'
+        "a\"b" = "say \"hi\""
+        data = { "inner".'name' = ["hello", "it's"] }
+        [section."head"]
+        "child" = 'x'
+    """)
+    expected = td(r"""
+        'outer'.'k' = 'v'
+        'a"b' = 'say "hi"'
+        data = { 'inner'.'name' = ['hello', "it's"] }
+
+        [section.'head']
+        'child' = 'x'
+    """)
+    doc = tomlrt.loads(source)
+    before = doc.to_dict()
+    doc.format(options=tomlrt.FormatOptions(quote_style=tomlrt.QuoteStyle.SINGLE))
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == before
+
+
+def test_quote_style_keeps_escape_spellings_when_quotes_do_not_change() -> None:
+    tab = "\t"
+    source = td(r"""
+        "unicode" = "\u0041"
+        "mixed" = "a'b\"c"
+        "tab" = "a\tb"
+    """)
+    expected = td(rf"""
+        'unicode' = 'A'
+        'mixed' = "a'b\"c"
+        'tab' = 'a{tab}b'
+    """)
+    doc = tomlrt.loads(source)
+    before = doc.to_dict()
+    doc.format(options=tomlrt.FormatOptions(quote_style=tomlrt.QuoteStyle.SINGLE))
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == before
+    doc.format(options=tomlrt.FormatOptions(quote_style=tomlrt.QuoteStyle.DOUBLE))
+    assert tomlrt.dumps(doc) == td(rf"""
+        "unicode" = "A"
+        "mixed" = "a'b\"c"
+        "tab" = "a{tab}b"
+    """)
+
+
+@pytest.mark.parametrize(
+    ("source", "style", "expected"),
+    [
+        (
+            """a = '''say "hi"'''\n""",
+            tomlrt.QuoteStyle.DOUBLE,
+            '''a = """say "hi""""\n''',
+        ),
+        (
+            '''a = """it's"""\n''',
+            tomlrt.QuoteStyle.SINGLE,
+            "a = '''it's'''\n",
+        ),
+        (
+            '''a = """a''b"""\n''',
+            tomlrt.QuoteStyle.SINGLE,
+            "a = '''a''b'''\n",
+        ),
+        (
+            '''a = """a''' + "'''b" + '"""\n',
+            tomlrt.QuoteStyle.SINGLE,
+            '''a = """a''' + "'''b" + '"""\n',
+        ),
+        (
+            'a = """a""\\"b"""\n',
+            tomlrt.QuoteStyle.DOUBLE,
+            "a = '''a\"\"\"b'''\n",
+        ),
+        (
+            'a = """ends""""\n',
+            tomlrt.QuoteStyle.SINGLE,
+            """a = '''ends"'''\n""",
+        ),
+        (
+            "a = '''ends''''\n",
+            tomlrt.QuoteStyle.DOUBLE,
+            '''a = """ends'"""\n''',
+        ),
+        (
+            "a = '''C:\\Users'''\n",
+            tomlrt.QuoteStyle.DOUBLE,
+            "a = '''C:\\Users'''\n",
+        ),
+        (
+            'a = """first \\\n  second"""\n',
+            tomlrt.QuoteStyle.SINGLE,
+            'a = """first \\\n  second"""\n',
+        ),
+        (
+            'a = """first\\nsecond"""\n',
+            tomlrt.QuoteStyle.SINGLE,
+            'a = """first\\nsecond"""\n',
+        ),
+        (
+            'a = """\\n\\\n  """\n',
+            tomlrt.QuoteStyle.SINGLE,
+            'a = """\\n\\\n  """\n',
+        ),
+        (
+            'a = """a\\n\\\n  b"""\n',
+            tomlrt.QuoteStyle.SINGLE,
+            'a = """a\\n\\\n  b"""\n',
+        ),
+    ],
+)
+def test_quote_style_multiline_boundaries(
+    source: str, style: tomlrt.QuoteStyle, expected: str
+) -> None:
+    doc = tomlrt.loads(source)
+    before = doc.to_dict()
+    options = tomlrt.FormatOptions(quote_style=style)
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
+    assert reparses(expected) == before
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "style", "expected"),
+    [
+        (
+            "a = '''\r\n\r\nhi\r\nthere'''\r\n",
+            tomlrt.QuoteStyle.DOUBLE,
+            'a = """\r\n\r\nhi\r\nthere"""\r\n',
+        ),
+        (
+            'a = """\\r\\n\\\r\n  """\r\n',
+            tomlrt.QuoteStyle.SINGLE,
+            'a = """\\r\\n\\\r\n  """\r\n',
+        ),
+    ],
+)
+def test_quote_style_preserves_multiline_opening_and_crlf(
+    source: str, style: tomlrt.QuoteStyle, expected: str
+) -> None:
+    doc = tomlrt.loads(source)
+    before = doc.to_dict()
+    doc.format(options=tomlrt.FormatOptions(quote_style=style))
+    assert tomlrt.dumps(doc) == expected
+    assert tomlrt.loads(expected).to_dict() == before
+
+
+def test_quote_style_does_not_change_a_copy_source() -> None:
+    source = "a = 'hello'\n"
+    original = tomlrt.loads(source)
+    cloned = copy(original)
+    cloned.format(options=tomlrt.FormatOptions(quote_style=tomlrt.QuoteStyle.DOUBLE))
+    assert tomlrt.dumps(cloned) == 'a = "hello"\n'
+    assert tomlrt.dumps(original) == source
 
 
 @pytest.mark.parametrize(
