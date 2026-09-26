@@ -291,6 +291,7 @@ _FORMAT_OPTIONS = st.builds(
     indent=st.integers(min_value=0, max_value=4),
     eol_comment_spaces=st.integers(min_value=0, max_value=3),
     multiline_trailing_comma=st.booleans(),
+    quote_style=st.sampled_from(list(tomlrt.QuoteStyle)),
 )
 
 
@@ -347,6 +348,30 @@ def test_format_options_preserve_data_and_are_idempotent(
     doc.format(options=options)
     assert tomlrt.dumps(doc) == once
     assert tomlrt.dumps(tomlrt.loads(once)) == once
+
+
+@pytest.mark.parametrize("style", list(tomlrt.QuoteStyle))
+@given(
+    value=st.text(
+        alphabet=st.sampled_from(
+            ["a", "b", "'", '"', "\\", "\t", "\n", "\r", "\x00", "\x7f", "\u00e9"]
+        ),
+        max_size=30,
+    )
+)
+@settings(max_examples=200, deadline=None, database=None)
+def test_quote_style_preserves_value_and_is_idempotent(
+    style: tomlrt.QuoteStyle, value: str
+) -> None:
+    src = tomlrt.dumps(Document({"k": value}))
+    doc = tomlrt.loads(src)
+    options = FormatOptions(quote_style=style)
+    doc.format(options=options)
+    once = tomlrt.dumps(doc)
+    assert tomli.loads(once) == {"k": value}
+    assert tomlrt.dumps(tomlrt.loads(once)) == once
+    doc.format(options=options)
+    assert tomlrt.dumps(doc) == once
 
 
 # ---------------------------------------------------------------------------

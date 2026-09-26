@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `FormatOptions.quote_style` can reformat strings and quoted keys.
+
 ### Removed
 
 - Remove the deprecated `format(comments=...)` keyword. Use
