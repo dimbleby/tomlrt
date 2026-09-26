@@ -131,15 +131,14 @@ class _Scanner:
         line, col = self.line_col(offset)
         return TOMLParseError(message, line=line, col=col, offset=offset)
 
-    def scan_comment(self) -> str:
+    def scan_comment(self) -> None:
         """Consume a comment from `#` to (but not including) the newline.
 
         The cursor must be on `#`. Raises if the comment body contains
         a control character other than tab.
         """
         src = self.src
-        start = self.pos
-        m = _RE_COMMENT_BODY.match(src, start + 1)
+        m = _RE_COMMENT_BODY.match(src, self.pos + 1)
         assert m is not None  # pattern is unbounded above (*).
         end_pos = m.end()
         if end_pos < self.end:
@@ -150,7 +149,6 @@ class _Scanner:
                 msg = f"invalid control character U+{cp:04X} in comment"
                 raise self.error(msg)
         self.pos = end_pos
-        return src[start:end_pos]
 
     def scan_doc_trivia(self) -> str:
         """Consume whitespace, blank lines and comments up to the next token."""
