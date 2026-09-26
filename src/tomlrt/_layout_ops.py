@@ -2295,7 +2295,6 @@ def _move_private_subtree(
     _rehome_view_tree(
         value,
         dest_host,
-        old_prefix,
         new_prefix,
         doc,
         stale_owner=stale_owner,
@@ -2375,26 +2374,35 @@ def _retarget_slot_paths(
 def _rehome_view_tree(
     root: Container,
     dest_host: Container | AoT,
-    old_prefix: tuple[str, ...],
     new_prefix: tuple[str, ...],
     doc: Document,
     *,
     stale_owner: AoTEntry | None,
     new_owner: AoTEntry | None,
 ) -> None:
-    """Re-point ``root``'s existing view subtree at ``doc`` with rebased paths.
+    """Re-point ``root``'s subtree at ``doc``, deriving paths from its owners.
 
     Slot-backed caches remain valid because their slots are rebased in
     parallel. Views owned by ``stale_owner`` transfer to the destination
-    entry; nested AoT entries retain their own owners.
+    entry; nested AoT entries retain their own owners. Array elements
+    start relative paths, even when their keys resemble the moved section.
     """
     root._host = dest_host  # noqa: SLF001
+    root._path = new_prefix  # noqa: SLF001
     for node in _walk_views((root,)):
         # Narrows for the assignments below; `_View` has no other subclass.
         assert isinstance(node, (_container.Container, _array.AoT, _array.Array))
         node._layout_root = doc  # noqa: SLF001
         if isinstance(node, (_container.Container, _array.AoT)):
-            node._path = _rebase_path(node._path, old_prefix, new_prefix)  # noqa: SLF001
+            if node is not root:
+                host = node._host  # noqa: SLF001
+                if isinstance(host, _array.AoT):
+                    node._path = host._path  # noqa: SLF001
+                elif isinstance(host, _container.Container):
+                    node._path = (*host._path, node._path[-1])  # noqa: SLF001
+                else:
+                    assert isinstance(host, _array.Array), "rehomed view has no owner"
+                    node._path = ()  # noqa: SLF001
             if (
                 isinstance(node, _container.Container)
                 and node._owner_aot_entry is stale_owner  # noqa: SLF001
@@ -2725,14 +2733,7 @@ def _rebase_path(
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
 ) -> tuple[str, ...]:
-    """Replace a leading ``src_prefix`` in ``p`` with ``target_prefix``.
-
-    A slot host/header path or a key-hosted view ``_path`` at or below
-    the root starts with ``src_prefix`` and is rebased. An array
-    element's inline-table view carries an empty ``_path`` (it has no key
-    of its own) and derives its host from its array, so it does not match
-    and is returned unchanged.
-    """
+    """Replace the document-rooted prefix of a slot's host path."""
     if src_prefix == target_prefix or p[: len(src_prefix)] != src_prefix:
         return p
     return target_prefix + p[len(src_prefix) :]

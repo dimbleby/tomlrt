@@ -398,6 +398,8 @@ wrong.
   `_parent`. Factory storage can merely reference independently owned
   views, so it does not establish ownership. `_file_host` stamps inline
   bindings at the tail of the `_decode_value` / `_synth_value` funnels.
+  Structural moves derive descendant paths from their owners as well; inline
+  tables inside arrays start relative paths, not document-rooted ones.
   Whole-AoT transfers clear entry hosts after bulk ancestor scrubbing;
   source roots and slots remain available until each entry is adopted.
   The enclosing transfer repairs the old parent after each adoption.

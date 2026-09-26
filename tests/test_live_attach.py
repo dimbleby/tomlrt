@@ -1832,6 +1832,31 @@ def test_displaced_nested_inline_tables_reattach_with_identity() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_moved_section_preserves_array_relative_dotted_keys() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        items = [{ a.b = 1 }]
+        """)
+    )
+    doc["z"] = doc.pop("a")
+    items = doc.table("z").array("items")
+    inner = items.table(0).table("a")
+    inner["c"] = 2
+    assert tomlrt.dumps(doc) == td("""
+        [z]
+        items = [{ a.b = 1, a.c = 2 }]
+        """)
+    doc.table("z").pop("items")
+    destination = tomlrt.Document()
+    destination["saved"] = items
+    inner["d"] = 3
+    assert destination.array("saved").table(0).table("a") is inner
+    assert tomlrt.dumps(destination) == "saved = [{ a.b = 1, a.c = 2, a.d = 3 }]\n"
+    assert _reparses(tomlrt.dumps(destination)) == destination.to_dict()
+    assert tomlrt.dumps(doc) == "[z]\n"
+
+
 def test_inline_overwrite_with_inline_detaches_nested_view() -> None:
     """Detaching happens when the replacement is itself an inline table."""
     doc = tomlrt.loads("x = { a.c = 1, a.b = 2 }\n")

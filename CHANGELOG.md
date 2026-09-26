@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Moving a section preserves dotted-key paths inside arrays.
+
 ## [2.2.14] - 2026-09-25
 
 ### Fixed
