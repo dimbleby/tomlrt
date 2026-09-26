@@ -31,6 +31,43 @@ _OPAQUE: Any = object()
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("shape", ["scalar", "array", "table"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        td("""
+            [target] # keep
+            x = 0x1
+
+            [after]
+            y = 2
+            """),
+        "target.x = 0x1 # keep\n",
+        td("""
+            [[target]] # keep
+            x = 0x1
+            """),
+    ],
+)
+def test_failed_inline_conversion_keeps_structural_binding(
+    source: str, shape: str
+) -> None:
+    class UnserializableInt(int):
+        @override
+        def __str__(self) -> str:
+            msg = "conversion failed"
+            raise ValueError(msg)
+
+    bad = UnserializableInt(2)
+    value = {"scalar": bad, "array": [bad], "table": {"x": bad}}[shape]
+    doc = tomlrt.loads(source)
+    held = doc["target"]
+    with pytest.raises(ValueError, match="conversion failed"):
+        doc["target"] = value
+    assert doc["target"] is held
+    assert tomlrt.dumps(doc) == source
+
+
 def test_replace_scalar_preserves_surrounding_format() -> None:
     src = td("""
         # header comment

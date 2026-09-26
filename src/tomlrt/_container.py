@@ -610,47 +610,30 @@ class Container(_View, dict[str, Any]):
         if is_scalar(current) and is_scalar(value):
             self._replace_scalar(key, value)
             return
-        # Single-direct-KV-slot current → any synth-able value
-        # (scalar or inline). The slot's `value` field is swapped
-        # in place; ordering, comments, key spelling are preserved.
-        if _is_inline_input(current) and _is_inline_input(value):
-            self._inline_typed_replace(key, value)
+        if _is_inline_input(value):
+            self._replace_with_inline(key, value)
             return
         # Structural overwrite keeps the doc-stream anchor but detaches
         # old user references from the live doc: every value
         # `_validate_input` accepts and the branches above declined is
         # structural.
+        assert isinstance(value, (Container, AoT))
         value = _snapshot_for_overlapping_install(self, key, value)
-        _layout_ops.reposition_install(self, key, value)
+        with _layout_ops.reposition_install(self, key):
+            self._insert_new(key, value)
 
-    def _insert_new(
-        self,
-        key: str,
-        value: TomlInput,
-        *,
-        reinstall_as_dotted: bool = False,
-    ) -> None:
+    def _insert_new(self, key: str, value: TomlInput) -> None:
         """Bind ``key`` for the first time at the document tail."""
         if is_scalar(value):
             # Deliberately not routed through `append_synth_kv`: that
             # costs three extra call frames and a duplicated `is_scalar`
             # test, measured at +6.5% on a scalar insert — the commonest
             # mutation there is.
-            _layout_ops.append_direct_kv(
-                self,
-                key,
-                coerce_scalar(value),
-                reinstall_as_dotted=reinstall_as_dotted,
-            )
+            _layout_ops.append_direct_kv(self, key, coerce_scalar(value))
             dict.__setitem__(self, key, value)
             return
         if _is_inline_input(value):
-            _layout_ops.append_synth_kv(
-                self,
-                key,
-                value,
-                reinstall_as_dotted=reinstall_as_dotted,
-            )
+            _layout_ops.append_synth_kv(self, key, value)
             return
         if isinstance(value, AoT):
             self._attach_aot(key, value)
@@ -733,28 +716,26 @@ class Container(_View, dict[str, Any]):
         slot.value = coerce_scalar(value)
         dict.__setitem__(self, key, value)
 
-    def _inline_typed_replace(self, key: str, value: TomlInput) -> None:
-        """Swap an existing direct-KV slot's value to a synthesised inline value.
+    def _replace_with_inline(self, key: str, value: TomlInput) -> None:
+        """Prepare an inline value before replacing its current binding.
 
-        Works for any existing scalar / inline-table / inline-array
-        binding backed by a single direct-KV slot (dotted or not).
-
-        If the displaced value is itself a typed view (inline Table,
-        Array), its attachment state is cleared so a later assignment
-        elsewhere re-attaches live instead of cloning.
+        Existing inline bindings keep their KV slot; structural bindings
+        are removed and the new KV positioned at their old anchor when safe.
         """
+        cst, decoded = self._synth_local_value(key, value)
+        old = dict.__getitem__(self, key)
+        if not _is_inline_input(old):
+            with _layout_ops.reposition_install(self, key) as dotted:
+                _layout_ops.append_direct_kv(self, key, cst, reinstall_as_dotted=dotted)
+                dict.__setitem__(self, key, decoded)
+            return
         refs = self._index.get(key)
         assert refs is not None, "inline value must have a slot"
         assert len(refs) == 1, "inline value must be backed by exactly one slot"
         slot = refs[0]
         assert isinstance(slot, KVSlot), "inline value must be backed by a KV slot"
-        old = dict.__getitem__(self, key)
-        cst, decoded = self._synth_local_value(key, value)
         slot.value = cst
         dict.__setitem__(self, key, decoded)
-        # Free the displaced root while preserving any CST-owning subtree
-        # beneath it. Safe because `_setitem_validated` has already
-        # returned if the new value *is* the old one.
         _layout_ops.reset_displaced_views(old)
 
     @override
@@ -1624,8 +1605,8 @@ def _is_inline_table(v: object) -> TypeGuard[Container]:
 
 
 def _snapshot_for_overlapping_install(
-    parent: Container, key: str, value: TomlInput
-) -> TomlInput:
+    parent: Container, key: str, value: Container | AoT
+) -> Container | AoT:
     """Snapshot ``value`` if an overlapping install cannot safely read it.
 
     A source the write site lives in would grow while it is read.
@@ -1637,8 +1618,6 @@ def _snapshot_for_overlapping_install(
     The snapshot is the same view in a byte-exact copy of the document,
     so it is read exactly as the source would have been.
     """
-    if not isinstance(value, (Container, AoT)):
-        return value
     root = parent._layout_root  # noqa: SLF001
     if root is None or value._layout_root is not root:  # noqa: SLF001
         return value

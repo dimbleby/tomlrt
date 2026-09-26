@@ -140,11 +140,14 @@ def _effective_header_path_before(anchor: Slot | None) -> tuple[str, ...] | None
     return None
 
 
-def reposition_install(parent: Container, key: str, value: TomlInput) -> None:
+@contextlib.contextmanager
+def reposition_install(parent: Container, key: str) -> Iterator[bool]:
     """Replace ``parent[key]`` while preserving its physical position.
 
-    The binding is deleted, reinstalled via ``parent[key] = value``,
-    captured with ``_record_install``, then moved back to the saved anchor.
+    Delete an existing binding, then capture the caller's installation and move
+    it back to the saved anchor. Yield whether the old primary slot was a KV.
+    Value preparation belongs to the caller; a failed installation is not
+    rolled back.
 
     Reinstalling at the tail is what keeps `_insert_new` and the
     attach paths under it anchor-free: a ``[a]`` header claims each
@@ -186,11 +189,7 @@ def reposition_install(parent: Container, key: str, value: TomlInput) -> None:
     delete_key(parent, key)
     doc = parent._attached_doc  # noqa: SLF001
     with _record_install(doc) as (new_slots, displaced):
-        parent._insert_new(  # noqa: SLF001
-            key,
-            value,
-            reinstall_as_dotted=old_is_kv,
-        )
+        yield old_is_kv
     # Header demotion during reinstall can invalidate the saved anchor.
     if saved_anchor_prev is not None and not _slot_is_linked(saved_anchor_prev, doc):
         return
@@ -753,12 +752,10 @@ def append_synth_kv(
     c: Container,
     key: str,
     v: TomlInput,
-    *,
-    reinstall_as_dotted: bool = False,
 ) -> None:
     """Append ``key = v`` to ``c`` as a freshly synthesised KV line."""
     cst, dec = c._synth_local_value(key, v)  # noqa: SLF001
-    append_direct_kv(c, key, cst, reinstall_as_dotted=reinstall_as_dotted)
+    append_direct_kv(c, key, cst)
     dict.__setitem__(c, key, dec)
 
 

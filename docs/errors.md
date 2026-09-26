@@ -2,6 +2,10 @@
 
 tomlrt raises a small exception hierarchy.
 
+Exceptions from custom value conversion propagate to the caller. Scalar and
+inline replacements are converted before the old binding is removed; this
+does not make all mutations transactional.
+
 ## `TOMLError`
 
 Base class for tomlrt's own errors — operations that are invalid for a
