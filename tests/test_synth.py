@@ -401,11 +401,7 @@ def test_dumps_rejects_a_non_mapping() -> None:
 
 
 def test_dumps_of_an_attached_table_keeps_its_layout() -> None:
-    """A table that owns section layout is cloned, not rebuilt.
-
-    It has comments and spacing a mapping cannot describe, so `dumps`
-    builds the document that knows how to carry them across.
-    """
+    """A table's comments and spacing come from cloned slots, not its mapping."""
     src = tomlrt.loads(
         td("""
         # above a
