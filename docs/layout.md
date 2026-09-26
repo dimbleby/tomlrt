@@ -113,6 +113,7 @@ canonical formatting consistently at any scope.
 | `indent` | `2` | Spaces added per nested multiline inline value. |
 | `eol_comment_spaces` | `1` | Spaces before supported EOL comments. |
 | `multiline_trailing_comma` | `True` | Emit a final comma in multiline arrays and inline tables. |
+| `quote_style` | `QuoteStyle.PRESERVE` | Leave quotes untouched, or choose `QuoteStyle.DOUBLE` / `QuoteStyle.SINGLE` when neither requires more escapes. |
 
 For example, `doc.format(options=tomlrt.FormatOptions(indent=4))` uses a
 four-space step at every nested multiline level.
@@ -149,7 +150,7 @@ x = { a = 1, b = 2 }
 
 - **Whitespace around `=`**: collapsed to one space on each side.
 - **Dotted keys**: separators become bare `.` (no surrounding whitespace).
-  The user's bare-vs-quoted spelling for each key segment is preserved.
+  Bare keys stay bare; quoted segments use `quote_style`.
 - **Header brackets**: `[  a . b  ]` → `[a.b]`.
 - **Inline arrays and inline tables**: spacing collapses to the
   canonical form (`[1, 2, 3]`, `{ x = 1, y = 2 }`). The overall
@@ -173,8 +174,32 @@ x = { a = 1, b = 2 }
 - Each key's **attached comment block** (the comments immediately
   above the key, with no intervening blank line) stays attached.
 - Multi-line inline values keep their multi-line shape.
+- With the default `quote_style=QuoteStyle.PRESERVE`, string and quoted-key
+  spellings (including escapes) are left untouched.
 - Slots outside the receiver's subtree are not touched: calling
   `format()` on a single section leaves sibling sections alone.
+
+### Quote style
+
+`QuoteStyle.DOUBLE` and `QuoteStyle.SINGLE` are readability preferences, not
+strict quoting rules. The formatter avoids escapes **required by a quote
+form**; when neither form requires them, it uses your preferred style. For
+example, with `FormatOptions(quote_style=tomlrt.QuoteStyle.DOUBLE)`:
+
+| Before | After |
+|--------|-------|
+| `plain = 'hello'` | `plain = "hello"` |
+| `greeting = "say \"hi\""` | `greeting = 'say "hi"'` |
+| `path = 'C:\Users'` | `path = 'C:\Users'` |
+
+The escaped greeting becomes easier to read with literal quotes, and the
+Windows path stays literal rather than gaining escaped backslashes. A quote
+form that cannot express the value is never chosen. This rule also applies to
+already-quoted key segments, including headers and inline tables; bare keys
+remain bare. Single-line and multi-line strings retain their shape, and a
+multi-line string keeps its original quotes if switching would change its
+physical line breaks. `QuoteStyle.PRESERVE` (the default) leaves each original
+spelling, including escapes, untouched.
 
 ### Comment normalization
 
