@@ -1,9 +1,8 @@
 """Extracting a section-backed table as a document of its own.
 
-``tomlrt.dumps(table)`` wraps the table in a `Document`, which re-roots
-the table's subtree: sub-tables lose the parent's path prefix, and the
-layout the table holds — its own comments and spacing as much as its
-children's — travels with it.
+``tomlrt.dumps(table)`` and ``Document(table)`` re-root the table's subtree:
+sub-tables lose the parent's path prefix, and the layout the table holds
+— its own comments and spacing as much as its children's — travels with it.
 """
 
 from __future__ import annotations
@@ -238,6 +237,24 @@ def test_crlf_and_missing_final_newline_survive() -> None:
 def test_empty_section_extracts_to_an_empty_document() -> None:
     t = tomlrt.loads("[t]\n").table("t")
     assert tomlrt.dumps(t) == ""
+    assert tomlrt.dumps(Document(t)) == ""
+
+
+def test_header_only_section_keeps_its_comments() -> None:
+    source = td("""
+        # about t
+        [t] # note
+        """)
+    doc = tomlrt.loads(source)
+    table = doc.table("t")
+    expected = td("""
+        # about t
+        # note
+
+        """)
+    assert tomlrt.dumps(table) == expected
+    assert tomlrt.dumps(Document(table)) == expected
+    assert tomlrt.dumps(doc) == source
 
 
 def test_extraction_leaves_the_source_alone() -> None:

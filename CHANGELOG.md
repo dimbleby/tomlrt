@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Speed up serialization of section-backed tables.
 - Moving a section preserves dotted-key paths inside arrays.
 - `AoT()` can snapshot deeply nested section views without a recursion error.
 

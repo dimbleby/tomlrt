@@ -46,6 +46,7 @@ from tomlrt._layout_ops import (
     _spells_own_key,
     clone_aot_entry_layout,
     clone_graft_slots,
+    extract_subtree_slots,
     split_subtree_slots,
 )
 from tomlrt._render import render_run
@@ -570,18 +571,18 @@ def render_mapping(data: Mapping[str, object]) -> str:
     run comes from the same `_slot_run` a `Document` is built from, so
     there is one synthesiser and one rendering walk, not two of either.
 
-    A `Table` that owns section layout is the exception. `Document`
-    clones and re-roots its slots rather than rebuilding them from its
-    data, which keeps the comments and spacing they carry, so that one
-    is built and rendered.
+    A section-backed `Table` contributes an extracted slot run instead,
+    preserving its layout without rebuilding its logical views.
     """
     if _has_extractable_layout(data):
-        return Document(data).render()
-    _unused, slots = _slot_run(data, DEFAULT_NEWLINE)
+        slots, preamble = extract_subtree_slots(data)
+    else:
+        _unused, slots = _slot_run(data, DEFAULT_NEWLINE)
+        preamble = ""
     # The preamble split `_assemble_document` performs is byte-neutral:
     # it only decides which side of the join the opening comments are
     # rendered from.
-    return render_run("", "", slots[0] if slots else None, "")
+    return render_run("", preamble, slots[0] if slots else None, "")
 
 
 __all__ = ["populate", "render_mapping"]
