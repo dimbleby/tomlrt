@@ -1983,38 +1983,21 @@ def _attach_inline_view(
     layout_root: Document | None,
     owner: AoTEntry | None,
 ) -> None:
-    """Record document attachment throughout a materialised inline tree."""
-    if isinstance(value, Array):
-        value._layout_root = layout_root  # noqa: SLF001
-        for child in value:
-            if is_inline_value(child):
-                _file_inline_child(child, value, None)
-                _attach_inline_view(child, layout_root, owner)
-    else:
-        value._layout_root = layout_root  # noqa: SLF001
-        value._owner_aot_entry = owner  # noqa: SLF001
-        for key, child in value.items():
-            if is_inline_value(child):
-                _file_inline_child(child, value, key)
-                _attach_inline_view(child, layout_root, owner)
+    """Reattach an inline tree whose internal hosts and local names are preserved.
 
-
-def _file_inline_child(
-    child: Array | Container,
-    host: Array | Container,
-    name: str | None,
-) -> None:
-    """Rebuild one child binding inside a preserved inline CST tree."""
-    if isinstance(child, Array):
-        child._host = host  # noqa: SLF001
-        child._name = name or ""  # noqa: SLF001
-    else:
-        child._host = host  # noqa: SLF001
-        if isinstance(host, Array):
-            child._path = ()  # noqa: SLF001
+    The root is still hostless; `_synth_value` files its new host afterward.
+    Preorder rebases each parent before its keyed descendants.
+    """
+    for node in _layout_ops._walk_views((value,)):  # noqa: SLF001
+        if isinstance(node, Container):
+            node._layout_root = layout_root  # noqa: SLF001
+            node._owner_aot_entry = owner  # noqa: SLF001
+            host = node._host  # noqa: SLF001
+            if isinstance(host, Container):
+                node._path = (*host._path, node._path[-1])  # noqa: SLF001
         else:
-            assert name is not None, "table-hosted child requires a key"
-            child._path = (*host._path, name)  # noqa: SLF001
+            assert isinstance(node, Array)
+            node._layout_root = layout_root  # noqa: SLF001
 
 
 def _populate_inline_table(

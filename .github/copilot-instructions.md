@@ -398,6 +398,8 @@ wrong.
   `_parent`. Factory storage can merely reference independently owned
   views, so it does not establish ownership. `_file_host` stamps inline
   bindings at the tail of the `_decode_value` / `_synth_value` funnels.
+  Reattaching materialized inline trees preserves child hosts and local names;
+  only document ownership and keyed table paths need refreshing, in preorder.
   Structural moves derive descendant paths from their owners as well; inline
   tables inside arrays start relative paths, not document-rooted ones.
   Whole-AoT transfers clear entry hosts after bulk ancestor scrubbing;
