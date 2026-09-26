@@ -2678,7 +2678,8 @@ def _clone_entry_slots(
     cloned_head: StructuralHeaderSlot | None = None
     memo: dict[int, object] = {}
     for s in src_slots:
-        c: Slot = copy.deepcopy(s, memo)
+        # The unique source slots stay alive in this snapshot.
+        c = s.__deepcopy__(memo)
         if dst_newline is not None:
             _rebase_slot(c, src_prefix, target_prefix, host_path, dst_newline)
         if isinstance(c, StructuralHeaderSlot):

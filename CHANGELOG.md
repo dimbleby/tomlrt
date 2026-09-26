@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Failed scalar or inline conversion leaves the replaced section or AoT intact.
+- Speed up copying section-backed layouts.
 - Speed up serialization of section-backed tables.
 - Moving a section preserves dotted-key paths inside arrays.
 - `AoT()` can snapshot deeply nested section views without a recursion error.
