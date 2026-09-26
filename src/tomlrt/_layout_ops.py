@@ -2284,7 +2284,7 @@ def _move_private_subtree(
     if host_path is None:
         host_path = new_prefix
     for slot in slots:
-        _rebase_implicit_slot_in_place(
+        _rebase_slot(
             slot,
             old_prefix,
             new_prefix,
@@ -2348,27 +2348,6 @@ def adopt_private_entry(
     _extend_header_bindings_to_root(parent, ordered)
     list.append(aot, value)
     _maybe_demote_synthetic_empty_header(parent)
-
-
-def _retarget_slot_paths(
-    s: Slot, src_prefix: tuple[str, ...], target_prefix: tuple[str, ...], nl: str
-) -> None:
-    """Rebase a slot's host / header paths + header render keys, retarget newlines.
-
-    Owner / AoT-entry handling differs by caller and stays there.
-    """
-    retarget_slot_newlines(s, nl)
-    if isinstance(s, KVSlot):
-        s.host_path = _rebase_path(s.host_path, src_prefix, target_prefix)
-        return
-    # `KVSlot` and `StructuralHeaderSlot` are the only concrete slots.
-    assert isinstance(s, StructuralHeaderSlot)
-    assert s.key_path[: len(src_prefix)] == src_prefix, (
-        "a header in a rebased block is spelled from the source prefix down"
-    )
-    s.key_parts, s.key_seps, s.key_path = respell_key_prefix(
-        s.key_parts, s.key_seps, s.key_path, len(src_prefix), target_prefix
-    )
 
 
 def _rehome_view_tree(
@@ -2593,36 +2572,41 @@ def _splice_implicit_run(
     return body + blocks
 
 
-def _rebase_implicit_slot_in_place(
+def _rebase_slot(
     s: Slot,
     old_prefix: tuple[str, ...],
     new_prefix: tuple[str, ...],
     host_path: tuple[str, ...],
     nl: str,
 ) -> None:
-    """Rebase a header-less section's slot in place.
+    """Rebase a slot and its trivia to the destination subtree.
 
-    A dotted KV hosted *above* the section (its ``host_path`` does not
-    start with the section prefix) is re-hosted at ``host_path`` with its
-    dotted-key prefix rebased; the within-section key parts keep their
-    spelling. KVs under a nested sub-header and nested headers rebase by
-    path, exactly as for a header-bearing section.
+    In-subtree KVs replace their host prefix; headers replace their spelled prefix.
+    Dotted KVs hosted above the source subtree instead move to ``host_path``,
+    keeping the spelling of key components within the subtree.
     """
-    if isinstance(s, KVSlot) and s.host_path[: len(old_prefix)] != old_prefix:
-        retarget_slot_newlines(s, nl)
-        within = (*s.host_path, *s.key_path)[len(old_prefix) :]
-        new_key = (*new_prefix, *within)[len(host_path) :]
-        head_n = len(new_key) - len(within)
-        s.host_path = host_path
-        s.key_parts, s.key_seps, s.key_path = respell_key_prefix(
-            s.key_parts,
-            s.key_seps,
-            s.key_path,
-            len(s.key_path) - len(within),
-            new_key[:head_n],
-        )
-    else:
-        _retarget_slot_paths(s, old_prefix, new_prefix, nl)
+    retarget_slot_newlines(s, nl)
+    if isinstance(s, KVSlot):
+        if s.host_path[: len(old_prefix)] == old_prefix:
+            if old_prefix != new_prefix:
+                s.host_path = new_prefix + s.host_path[len(old_prefix) :]
+        else:
+            within = (*s.host_path, *s.key_path)[len(old_prefix) :]
+            new_key = (*new_prefix, *within)[len(host_path) :]
+            head_n = len(new_key) - len(within)
+            s.host_path = host_path
+            s.key_parts, s.key_seps, s.key_path = respell_key_prefix(
+                s.key_parts,
+                s.key_seps,
+                s.key_path,
+                len(s.key_path) - len(within),
+                new_key[:head_n],
+            )
+        return
+    assert isinstance(s, StructuralHeaderSlot)
+    s.key_parts, s.key_seps, s.key_path = respell_key_prefix(
+        s.key_parts, s.key_seps, s.key_path, len(old_prefix), new_prefix
+    )
 
 
 def clone_aot(
@@ -2699,9 +2683,7 @@ def _clone_entry_slots(
     for s in src_slots:
         c: Slot = copy.deepcopy(s, memo)
         if dst_newline is not None:
-            _rebase_implicit_slot_in_place(
-                c, src_prefix, target_prefix, host_path, dst_newline
-            )
+            _rebase_slot(c, src_prefix, target_prefix, host_path, dst_newline)
         if isinstance(c, StructuralHeaderSlot):
             assert isinstance(s, StructuralHeaderSlot)
             if s is head:
@@ -2726,17 +2708,6 @@ def _clone_entry_slots(
         cloned.append(c)
 
     return cloned, cloned_head
-
-
-def _rebase_path(
-    p: tuple[str, ...],
-    src_prefix: tuple[str, ...],
-    target_prefix: tuple[str, ...],
-) -> tuple[str, ...]:
-    """Replace the document-rooted prefix of a slot's host path."""
-    if src_prefix == target_prefix or p[: len(src_prefix)] != src_prefix:
-        return p
-    return target_prefix + p[len(src_prefix) :]
 
 
 def _populate_entry_views(
