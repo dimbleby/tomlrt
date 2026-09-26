@@ -132,6 +132,8 @@ class Slot:
         Values follow their own sharing policy: even a scalar can hold
         a mutable Python payload. Trivia, paths and key parts can be
         shared. Constructors supply independent links and ref lists.
+        The clone registers itself in ``memo``; slot-run copying calls
+        this method directly.
         """
         new: Slot
         if type(self) is KVSlot:
