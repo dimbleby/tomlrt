@@ -531,6 +531,16 @@ def test_parse_error_is_value_error() -> None:
         ),
         (
             td("""
+                [a.b]
+                [[a.b.c]]
+                x = 1
+                [a]
+                b.c.x = 2
+                """),
+            r"duplicate key 'a\.b\.c\.x'",
+        ),
+        (
+            td("""
                 [a.b.c]
                 [a]
                 b.c.missing.x = 2
