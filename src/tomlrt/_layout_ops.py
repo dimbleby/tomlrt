@@ -303,19 +303,6 @@ _slot_order = operator.attrgetter("_order")
 """The sort key of every container's slot projection."""
 
 
-def _ordered_projections(c: Container, slot: Slot) -> tuple[list[Slot], ...]:
-    """``c``'s doc-ordered slot lists: ``_refs`` + the local key's bucket.
-
-    The container's own header has no local key and so lives in
-    ``_refs`` alone; every other ref is also filed in its ``_index``
-    bucket.
-    """
-    local_key = slot_local_key(slot, c)
-    if local_key is None:
-        return (c._refs,)  # noqa: SLF001
-    return c._refs, c._index.setdefault(local_key, [])  # noqa: SLF001
-
-
 def _ordered_index(refs: list[Slot], order: int) -> int:
     """Index at which order key ``order`` sits, or belongs, in ``refs``.
 
@@ -338,39 +325,27 @@ def record_slot(c: Container, slot: Slot) -> None:
     Filing is also where ``c._body_tail`` advances. The tail is the
     latest body slot among ``c``'s refs, so a ref filed past it is
     exactly what moves it; deciding that here is what stops the two
-    from disagreeing.
+    from disagreeing. A KV can be filed through a differently owned
+    container; only matching owners advance its body tail.
     """
     slot._containers.append(c)  # noqa: SLF001
     order = slot._order  # noqa: SLF001
-    for refs in _ordered_projections(c, slot):
-        if not refs or refs[-1]._order < order:  # noqa: SLF001
-            # Filing in doc order — the builder's whole-document pass,
-            # every sequential body append — lands at the tail.
-            refs.append(slot)
-        else:
-            refs.insert(_ordered_index(refs, order), slot)
-    _maybe_advance_body_tail(c, slot, order)
-
-
-def _maybe_advance_body_tail(c: Container, slot: Slot, order: int) -> None:
-    """Advance ``c._body_tail`` to ``slot`` if it is a later body slot.
-
-    Owners can differ from ``c``'s: a KV owned by no AoT entry can be
-    moved into a container owned by one, and then sits inside ``c``
-    without belonging to its body.
-
-    Filing runs in doc order only for an append, so the order test
-    carries weight: a replacement spliced in ahead of the slot it
-    supersedes, as `_materialise_empty_inline_table` does, files a body
-    KV that sits before a tail which has to survive.
-    """
-    if not isinstance(slot, KVSlot):
-        return
-    if slot.owner_aot_entry is not c._owner_aot_entry:  # noqa: SLF001
-        return
-    tail = c._body_tail  # noqa: SLF001
-    if tail is None or tail._order < order:  # noqa: SLF001
-        c._body_tail = slot  # noqa: SLF001
+    key = slot_local_key(slot, c)
+    bucket = c._index.setdefault(key, []) if key is not None else None  # noqa: SLF001
+    refs = c._refs  # noqa: SLF001
+    if not refs or refs[-1]._order < order:  # noqa: SLF001
+        # Each key bucket is an ordered subset of refs.
+        refs.append(slot)
+        if bucket is not None:
+            bucket.append(slot)
+    else:
+        refs.insert(_ordered_index(refs, order), slot)
+        if bucket is not None:
+            bucket.insert(_ordered_index(bucket, order), slot)
+    if isinstance(slot, KVSlot) and slot.owner_aot_entry is c._owner_aot_entry:  # noqa: SLF001
+        tail = c._body_tail  # noqa: SLF001
+        if tail is None or tail._order < order:  # noqa: SLF001
+            c._body_tail = slot  # noqa: SLF001
 
 
 @contextlib.contextmanager
@@ -400,7 +375,9 @@ def _refile_slot_refs(slots: Iterable[Slot]) -> Iterator[None]:
     runs: dict[int, tuple[list[Slot], list[Slot]]] = {}
     for slot in slots:
         for c in slot._containers:  # noqa: SLF001
-            for refs in _ordered_projections(c, slot):
+            key = slot_local_key(slot, c)
+            projections = (c._refs,) if key is None else (c._refs, c._index[key])  # noqa: SLF001
+            for refs in projections:
                 # A projection holding this ref alone has nothing to
                 # reorder and nowhere else to sit.
                 if len(refs) > 1:
