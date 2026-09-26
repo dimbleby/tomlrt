@@ -402,6 +402,9 @@ wrong.
   only document ownership and keyed table paths need refreshing, in preorder.
   Structural moves derive descendant paths from their owners as well; inline
   tables inside arrays start relative paths, not document-rooted ones.
+  Factory materialization keeps pending inputs outside the rooted view's storage.
+  Source protection can therefore capture a materialized subtree's root once;
+  plain wrappers and rootless factories are still walked for borrowed views.
   Whole-AoT transfers clear entry hosts after bulk ancestor scrubbing;
   source roots and slots remain available until each entry is adopted.
   The enclosing transfer repairs the old parent after each adoption.

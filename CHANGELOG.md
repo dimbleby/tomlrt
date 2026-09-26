@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Moving a section preserves dotted-key paths inside arrays.
+- `AoT()` can snapshot deeply nested section views without a recursion error.
 
 ## [2.2.14] - 2026-09-25
 

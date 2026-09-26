@@ -200,8 +200,8 @@ class Array(_View, list[Any]):
         return v
 
     @override
-    def _view_children(self) -> Iterable[object]:
-        return self
+    def _view_children(self) -> Iterator[object]:
+        return list.__iter__(self)
 
     @override
     def _reset_displaced(self) -> None:
@@ -587,8 +587,8 @@ class AoT(_View, list["Table"]):
     _inline = False
 
     @override
-    def _view_children(self) -> Iterable[object]:
-        return self
+    def _view_children(self) -> Iterator[object]:
+        return list.__iter__(self)
 
     def __init__(self, entries: Iterable[Mapping[str, TomlInput]] = ()) -> None:
         """Construct a standalone array-of-tables."""

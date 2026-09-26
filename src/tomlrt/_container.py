@@ -129,8 +129,8 @@ class Container(_View, dict[str, Any]):
     )
 
     @override
-    def _view_children(self) -> Iterable[object]:
-        return self.values()
+    def _view_children(self) -> Iterator[object]:
+        return iter(dict.values(self))
 
     @override
     def _reset_displaced(self) -> None:
@@ -1656,22 +1656,18 @@ def _snapshot_for_overlapping_install(
 
 
 def _collect_private_roots(value: object, found: dict[int, Document]) -> None:
-    """Record the private documents any view within ``value`` belongs to.
+    """Record private documents reachable through input wrappers and factories.
 
-    A source can be reached through plain mappings and lists that are
-    only wrappers, so the whole shape is walked rather than its top
-    level: those wrappers are rebuilt on the way in, but the views
-    inside them are installed as they are.
-
-    Not only the popped subtree, which the top level finds anyway:
-    popping re-roots its inline descendants onto the orphan too, so an
-    `Array` or inline `Table` taken out of one is privately rooted and
-    can sit inside an ordinary list or dict.
+    A rooted view's materialized subtree belongs to that one document.
+    Plain containers and rootless factories can borrow views from other
+    documents, including inline descendants of a removed section.
     """
     if isinstance(value, _View):
         root = value._layout_root  # noqa: SLF001
-        if root is not None and root._is_private:  # noqa: SLF001
-            found[id(root)] = root
+        if root is not None:
+            if root._is_private:  # noqa: SLF001
+                found[id(root)] = root
+            return
     if isinstance(value, Mapping):
         for _, sub in _mapping_items(value):
             _collect_private_roots(sub, found)
@@ -2021,6 +2017,8 @@ def _populate_inline_table(
         assert name is not None, "name is required whenever parent is given"
         path = (*parent._path, name)  # noqa: SLF001
     val = InlineTableValue()
+    # Pending inputs are held by ``items``; publish only synthesized children.
+    dict.clear(table)
     table._wire(  # noqa: SLF001
         layout_root=layout_root, parent=parent, path=path, owner=owner
     )

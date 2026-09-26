@@ -1428,6 +1428,21 @@ def test_copied_aot_keeps_nested_empty_aots_in_their_entries() -> None:
         """)
 
 
+def test_aot_factory_copies_a_deep_private_section() -> None:
+    path = ("child",) * 1500
+    body = f"{'.'.join(path)}.value = 1\n"
+    doc = tomlrt.loads(f"root.{body}")
+    source = doc.pop("root")
+    assert isinstance(source, Table)
+    rows = AoT([source])
+    assert rows[0] is not source
+    copied = Document(rows[0])
+    copied.table(path)["value"] = 2
+    assert tomlrt.dumps(copied) == body.replace(" = 1", " = 2")
+    assert tomlrt.dumps(Document(source)) == body
+    assert tomlrt.dumps(doc) == ""
+
+
 def test_document_construction_keeps_empty_aot_kind() -> None:
     doc = Document({"pending": AoT(), "plain": []})
     assert doc.array("plain") == []

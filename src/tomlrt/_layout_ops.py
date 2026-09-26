@@ -1169,7 +1169,7 @@ def _walk_views(vals: Iterable[_View]) -> Iterator[_View]:
         for node in pending[-1]:
             if isinstance(node, _View):
                 yield node
-                pending.append(iter(node._view_children()))  # noqa: SLF001
+                pending.append(node._view_children())  # noqa: SLF001
                 break
         else:
             pending.pop()
