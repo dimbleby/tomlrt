@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Speed up `dumps()` for plain dictionaries, especially wide ones.
 - Reject a leading UTF-8 BOM instead of preserving it.
 - Failed scalar or inline conversion leaves the replaced section or AoT intact.
 - Speed up copying section-backed layouts.

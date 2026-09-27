@@ -49,7 +49,6 @@ from tomlrt._layout_ops import (
     extract_subtree_slots,
     split_subtree_slots,
 )
-from tomlrt._render import render_run
 from tomlrt._scalar import coerce_scalar, is_scalar
 from tomlrt._slots import (
     AoTEntry,
@@ -529,9 +528,9 @@ def _slot_run(
     nl: str,
     scalar_memo: dict[int, object] | None = None,
 ) -> tuple[_Plan, list[Slot]]:
-    """Validate ``data`` and emit its layout as a linked run of slots.
+    """Validate ``data`` and emit its layout as an ordered list of slots.
 
-    Callers can build document views over the run or render it directly.
+    Callers can link the slots into a document or render them directly.
     """
     _require_mapping(data, label="Document data argument")
     plan = _plan(data, nl, scalar_memo, (), None)
@@ -543,7 +542,6 @@ def _slot_run(
         # written after it would run into it.
         for slot in slots[:-1]:
             ensure_terminator(slot, nl)
-    stitch_run(None, slots, None)
     return plan, slots
 
 
@@ -551,6 +549,7 @@ def populate(doc: Document, data: Mapping[str, object]) -> None:
     """Populate ``doc`` from ``data``."""
     nl = doc._newline  # noqa: SLF001
     plan, slots = _slot_run(data, nl, {})
+    stitch_run(None, slots, None)
     _assemble_document(
         doc,
         slots,
@@ -562,25 +561,17 @@ def populate(doc: Document, data: Mapping[str, object]) -> None:
 
 
 def render_mapping(data: Mapping[str, object]) -> str:
-    """The text `Document` would render ``data`` as, without its views.
+    """Render synthesized slots without building document views.
 
-    Asked for text, `dumps` needs the slots and nothing built on top of
-    them: no `Table` / `Array` / `AoT`, no refs, no dict storage. The
-    run comes from the same `_slot_run` a `Document` is built from, so
-    there is one synthesiser and one rendering walk, not two of either.
-
-    A section-backed `Table` contributes an extracted slot run instead,
-    preserving its layout without rebuilding its logical views.
+    A section-backed `Table` supplies extracted source slots so its
+    layout is preserved.
     """
     if _has_extractable_layout(data):
         slots, preamble = extract_subtree_slots(data)
     else:
         _unused, slots = _slot_run(data, DEFAULT_NEWLINE)
         preamble = ""
-    # The preamble split `_assemble_document` performs is byte-neutral:
-    # it only decides which side of the join the opening comments are
-    # rendered from.
-    return render_run(preamble, slots[0] if slots else None, "")
+    return preamble + "".join(slot.render() for slot in slots)
 
 
 __all__ = ["populate", "render_mapping"]
