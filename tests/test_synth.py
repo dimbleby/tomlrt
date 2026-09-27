@@ -458,7 +458,7 @@ _TREE = st.recursive(
 def test_property_round_trips_and_matches_assignment(data: dict[str, Any]) -> None:
     out = tomlrt.dumps(tomlrt.Document(data))
     assert deep_equal(tomlrt.loads(out).to_dict(), data)
-    assert out == _assigned(data)
+    assert tomlrt.dumps(data) == out == _assigned(data)
 
 
 def test_array_of_tables_inside_an_inline_value_is_rejected() -> None:

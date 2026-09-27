@@ -41,6 +41,10 @@ def test_build_flat(benchmark: BenchmarkFixture) -> None:
     benchmark(tomlrt.Document, _row(2_000))
 
 
+def test_dump_flat(benchmark: BenchmarkFixture) -> None:
+    benchmark(tomlrt.dumps, _row(2_000))
+
+
 def test_build_nested_sections(benchmark: BenchmarkFixture) -> None:
     data = {f"s{i}": {"mid": {"leaf": _row(5)}} for i in range(250)}
     benchmark(tomlrt.Document, data)
