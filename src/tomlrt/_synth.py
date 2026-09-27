@@ -529,10 +529,9 @@ def _slot_run(
     nl: str,
     scalar_memo: dict[int, object] | None = None,
 ) -> tuple[_Plan, list[Slot]]:
-    """Check ``data`` and write it out as a linked run of slots.
+    """Validate ``data`` and emit its layout as a linked run of slots.
 
-    Everything a document built from a mapping physically is. What is
-    made of it afterwards -- views, or just text -- is the caller's.
+    Callers can build document views over the run or render it directly.
     """
     _require_mapping(data, label="Document data argument")
     plan = _plan(data, nl, scalar_memo, (), None)
