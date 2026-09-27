@@ -356,11 +356,11 @@ def _inline_value(
         return array
     if isinstance(v, Mapping):
         items = [(_validate_key(raw_key), sub) for raw_key, sub in _mapping_items(v)]
-        table = InlineTableValue()
+        entries: list[InlineTableEntry] = []
         last = len(items) - 1
         for i, (child_key, sub) in enumerate(items):
             key_path = (child_key,)
-            table.items.append(
+            entries.append(
                 InlineTableEntry(
                     "" if i == 0 else " ",
                     _inline_value(sub, nl, scalar_memo, key=child_key),
@@ -374,11 +374,8 @@ def _inline_value(
                     " ",
                 )
             )
-            table.record_entry(table.items[-1])
-        if items:
-            table.header_trivia = table._single_line_pad  # noqa: SLF001
-            table.final_trivia = table._single_line_pad  # noqa: SLF001
-        return table
+        pad = InlineTableValue._single_line_pad if items else ""  # noqa: SLF001
+        return InlineTableValue(entries, pad, pad)
     raise TypeError(_unrepresentable_message(v, key))
 
 
