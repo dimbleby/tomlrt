@@ -1459,7 +1459,8 @@ def test_document_construction_keeps_empty_aot_kind() -> None:
 
 
 def test_whole_document_copy_keeps_bytes_and_empty_aot_kind() -> None:
-    text = "\ufeff" + td("""
+    text = (
+        td("""
         # title
 
         pending = []
@@ -1469,7 +1470,10 @@ def test_whole_document_copy_keeps_bytes_and_empty_aot_kind() -> None:
         plain = []
 
         # ending
-        """).replace("\n", "\r\n", 2).rstrip("\n")
+        """)
+        .replace("\n", "\r\n", 2)
+        .rstrip("\n")
+    )
     source = tomlrt.loads(text)
     source["pending"] = AoT()
     assert tomlrt.dumps(source) == text

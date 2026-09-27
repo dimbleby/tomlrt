@@ -1359,7 +1359,6 @@ class Document(Container):
         "_is_private",
         "_newline",
         "_preamble",
-        "_prelude",
         "_protected_source_roots",
         "_section_blank_separated",
         "_tail",
@@ -1395,7 +1394,6 @@ class Document(Container):
         self._trailing: str = ""
         self._preamble: str = ""
         self._newline: str = DEFAULT_NEWLINE
-        self._prelude: str = ""
         self._is_private: bool = False
         self._protected_source_roots: dict[int, Document] | None = None
         self._install_recorders: (

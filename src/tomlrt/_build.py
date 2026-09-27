@@ -349,7 +349,6 @@ def build_from_parse(result: ParseResult) -> Document:
         result.slots,
         trailing=result.trailing,
         newline=result.newline,
-        prelude=result.prelude,
         section_blank_separated=result.section_blank_separated,
     )
 
@@ -370,7 +369,6 @@ def populate_extracted_document(doc: Document, src_table: Container) -> None:
         slots,
         trailing="" if slots else promoted,
         newline=root._newline,  # noqa: SLF001
-        prelude="",
         section_blank_separated=root._section_blank_separated,  # noqa: SLF001
     )
 
@@ -391,7 +389,6 @@ def populate_cloned_document(doc: Document, source: Document) -> None:
         slots,
         trailing=source._trailing,  # noqa: SLF001
         newline=source._newline,  # noqa: SLF001
-        prelude=source._prelude,  # noqa: SLF001
         section_blank_separated=source._section_blank_separated,  # noqa: SLF001
         preamble=source._preamble,  # noqa: SLF001
     )
@@ -406,7 +403,6 @@ def _assemble_document(
     *,
     trailing: str,
     newline: str,
-    prelude: str,
     section_blank_separated: bool,
     preamble: str | None = None,
 ) -> Document:
@@ -415,7 +411,6 @@ def _assemble_document(
     doc._tail = slots[-1] if slots else None  # noqa: SLF001
     doc._trailing = trailing  # noqa: SLF001
     doc._newline = newline  # noqa: SLF001
-    doc._prelude = prelude  # noqa: SLF001
     doc._section_blank_separated = section_blank_separated  # noqa: SLF001
     if preamble is not None:
         doc._preamble = preamble  # noqa: SLF001

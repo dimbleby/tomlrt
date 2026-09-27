@@ -557,7 +557,6 @@ def populate(doc: Document, data: Mapping[str, object]) -> None:
         slots,
         trailing="",
         newline=nl,
-        prelude="",
         section_blank_separated=doc._section_blank_separated,  # noqa: SLF001
     )
     _reorder(doc, plan)
@@ -582,7 +581,7 @@ def render_mapping(data: Mapping[str, object]) -> str:
     # The preamble split `_assemble_document` performs is byte-neutral:
     # it only decides which side of the join the opening comments are
     # rendered from.
-    return render_run("", preamble, slots[0] if slots else None, "")
+    return render_run(preamble, slots[0] if slots else None, "")
 
 
 __all__ = ["populate", "render_mapping"]
