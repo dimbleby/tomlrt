@@ -27,13 +27,12 @@ class ParseResult:
     `newline` is the scanner-detected document-wide line ending.
     """
 
-    __slots__ = ("newline", "prelude", "section_blank_separated", "slots", "trailing")
+    __slots__ = ("newline", "section_blank_separated", "slots", "trailing")
 
     def __init__(self) -> None:
         self.slots: list[Slot] = []
         self.trailing = ""
         self.newline = "\n"
-        self.prelude = ""
         self.section_blank_separated = True
 
 
@@ -57,13 +56,6 @@ class _Parser:
         # and classify it once at the end rather than at every header.
         latest_section_gap: str | None = None
         seen_header = False
-
-        # TOML 1.1 permits a leading UTF-8 BOM only at document start.
-        # Store it as Document prelude so slot/trivia mutations cannot
-        # silently drop or duplicate it.
-        if sc.pos < end and src[sc.pos] == "\ufeff":
-            result.prelude = "\ufeff"
-            sc.pos += 1
 
         while sc.pos < end:
             leading = sc.scan_doc_trivia()
