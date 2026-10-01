@@ -91,9 +91,9 @@ from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, MutableMapping, Sequence
+    from typing import Self
 
     from _typeshed import SupportsKeysAndGetItem, SupportsRichComparison
-    from typing_extensions import Self
 
     from tomlrt._format import FormatOptions
     from tomlrt._scalar import Scalar
