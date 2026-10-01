@@ -98,9 +98,9 @@ if TYPE_CHECKING:
         MutableMapping,
         Sequence,
     )
+    from typing import Self
 
     from _typeshed import SupportsKeysAndGetItem, SupportsRichComparison
-    from typing_extensions import Self
 
     from tomlrt._format import FormatOptions
     from tomlrt._scalar import Scalar

@@ -52,23 +52,18 @@ if TYPE_CHECKING:
         MutableMapping,
         Sequence,
     )
+    from typing import Self
 
     from _typeshed import SupportsRichComparison
 
     from tomlrt._comma_ops import (
         CommaStyle,
     )
+    from tomlrt._container import Container, Document, Table, TomlInput
     from tomlrt._format import FormatOptions
     from tomlrt._values import (
         Value,
     )
-
-    if sys.version_info >= (3, 11):
-        from typing import Self
-    else:
-        from typing_extensions import Self
-
-    from tomlrt._container import Container, Document, Table, TomlInput
 
 
 _T = TypeVar("_T")
