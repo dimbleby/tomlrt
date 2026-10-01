@@ -87,7 +87,7 @@ to `status: blocked` with the reason and do not leave partial source changes.
 
 ## Conventions to enforce
 
-- Python 3.10-3.14, `from __future__ import annotations`, strict `mypy`, and
+- Python 3.11-3.15, `from __future__ import annotations`, strict `mypy`, and
   `ruff` with `select = ["ALL"]`.
 - No new runtime dependency without an exceptional, explicit reason.
 - No unnecessary `cast()` or broad exception handling.

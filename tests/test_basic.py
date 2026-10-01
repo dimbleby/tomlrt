@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from textwrap import dedent
 
 import pytest
 
 import tomlrt
 from _helpers import reparses, td
-
-UTC = timezone.utc
 
 # ---------------------------------------------------------------------------
 # Round-trip corpus: dumps(parse(s)) == s, byte-for-byte.

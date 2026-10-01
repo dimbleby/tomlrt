@@ -13,7 +13,7 @@ import math
 import sys
 from collections.abc import Mapping
 from copy import copy
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -70,7 +70,7 @@ SHAPES: dict[str, dict[str, Any]] = {
     "dates": {
         "d": date(2020, 1, 2),
         "t": time(3, 4, 5),
-        "dt": datetime(2020, 1, 2, 3, 4, tzinfo=timezone.utc),
+        "dt": datetime(2020, 1, 2, 3, 4, tzinfo=UTC),
     },
     "special floats": {"inf": math.inf, "ninf": -math.inf},
     "section": {"a": {"x": 1}},
@@ -266,7 +266,7 @@ def test_attached_view_keeps_its_comments_and_spacing() -> None:
         ({1: "x"}, TypeError, "TOML keys must be str"),
         ({"a": {2: "x"}}, TypeError, "TOML keys must be str"),
         ({"a": [{"b": object()}]}, TypeError, "cannot convert object"),
-        ({"a": time(1, 2, tzinfo=timezone.utc)}, ValueError, "cannot represent"),
+        ({"a": time(1, 2, tzinfo=UTC)}, ValueError, "cannot represent"),
     ],
 )
 def test_rejected_input_is_reported(
@@ -283,7 +283,7 @@ def test_first_bad_value_is_reported_whichever_kind_it_is() -> None:
     mapping's own order, so the report does not depend on where a value
     ends up in the document.
     """
-    data = {"a": {"inner": object()}, "z": time(1, 2, tzinfo=timezone.utc)}
+    data = {"a": {"inner": object()}, "z": time(1, 2, tzinfo=UTC)}
     with pytest.raises(TypeError, match="cannot convert object"):
         tomlrt.Document(data)
 

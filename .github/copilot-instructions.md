@@ -22,7 +22,7 @@ If a change you are about to make could break that, stop and rethink.
   introduce `pip`, `poetry`, `pipenv`, `tox`, `nox`, `setuptools`, or
   `requirements.txt`.
 - Build backend is **`hatchling`**.
-- Supported Python versions: **3.10 – 3.14**.
+- Supported Python versions: **3.11 – 3.15**.
 
 ## Common commands
 
@@ -45,7 +45,7 @@ fuzz`, `make coverage`, `make lint`, `make docs`, `make docs-serve`,
 
 All five checks (`pytest`, `mypy`, `ty check`, `ruff check`, `ruff
 format --check`) must pass before any commit. CI runs the same set on
-Python 3.10–3.14. `ty` is a second, independent type-checker (run via
+Python 3.11–3.15. `ty` is a second, independent type-checker (run via
 `uvx`; it is not a declared dev dependency) — it sometimes flags things
 `mypy` does not, so keep both green.
 

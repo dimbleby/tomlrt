@@ -12,7 +12,7 @@ import io
 import math
 import sys
 from copy import copy, deepcopy
-from datetime import date, datetime, time, timedelta, timezone, tzinfo
+from datetime import UTC, date, datetime, time, timedelta, timezone, tzinfo
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -31,8 +31,7 @@ from tomlrt._values import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    from typing_extensions import Self
+    from typing import Self
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -353,12 +352,12 @@ def test_assign_offset_datetime() -> None:
 
 def test_assign_datetime_utc_offset() -> None:
     doc = tomlrt.loads("x = 0\n")
-    doc["x"] = datetime(2024, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+    doc["x"] = datetime(2024, 7, 4, 12, 0, 0, tzinfo=UTC)
     out = tomlrt.dumps(doc)
     assert out == "x = 2024-07-04T12:00:00+00:00\n"
     re_value = tomlrt.loads(out)["x"]
     assert isinstance(re_value, datetime)
-    assert re_value == datetime(2024, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+    assert re_value == datetime(2024, 7, 4, 12, 0, 0, tzinfo=UTC)
 
 
 def test_assign_datetime_seconds_offset_rejected() -> None:
@@ -844,7 +843,7 @@ def test_cloned_comma_values_preserve_nested_layout(newline: str) -> None:
         ("true", False, "false"),
         (
             "1979-05-27T07:32:00Z",
-            datetime(2000, 1, 2, tzinfo=timezone.utc),
+            datetime(2000, 1, 2, tzinfo=UTC),
             "2000-01-02T00:00:00+00:00",
         ),
         ("1979-05-27", date(2000, 1, 2), "2000-01-02"),
