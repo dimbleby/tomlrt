@@ -12,13 +12,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypeGuard
 
 if TYPE_CHECKING:
-    import sys
     from collections.abc import Iterator
-
-    if sys.version_info >= (3, 11):
-        from typing import Self
-    else:
-        from typing_extensions import Self
+    from typing import Self
 
     from tomlrt._array import Array
     from tomlrt._container import Container, Document

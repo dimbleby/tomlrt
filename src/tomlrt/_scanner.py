@@ -13,7 +13,7 @@ raw lexeme while preserving the decoded value.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Final
 
 from tomlrt._errors import TOMLParseError
@@ -792,7 +792,7 @@ class _Scanner:
     @staticmethod
     def _parse_offset(text: str) -> timezone:
         if text in ("Z", "z"):
-            return timezone.utc
+            return UTC
         if len(text) != 6 or text[0] not in "+-" or text[3] != ":":
             msg = f"bad timezone offset: {text!r}"
             raise ValueError(msg)

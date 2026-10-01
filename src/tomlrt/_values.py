@@ -15,7 +15,7 @@ import copy
 import operator
 import re
 import sys
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 if sys.version_info >= (3, 12):
@@ -27,9 +27,7 @@ from tomlrt._trivia import retarget_newlines
 
 if TYPE_CHECKING:
     from datetime import tzinfo
-    from typing import TypeGuard
-
-    from typing_extensions import Self
+    from typing import Self, TypeGuard
 
 
 _ScalarT = TypeVar("_ScalarT")
@@ -44,7 +42,7 @@ def _tzinfo_is_shareable(tz: tzinfo | None) -> bool:
     Everything the parser produces -- naive, ``timezone.utc``, or
     ``timezone(timedelta(...))`` -- passes.
     """
-    if tz is None or tz is timezone.utc:
+    if tz is None or tz is UTC:
         # Redundant with the checks below, but a naive or UTC value is
         # much the commonest shape and answering it costs a third.
         return True
