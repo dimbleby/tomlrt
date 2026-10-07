@@ -234,6 +234,8 @@ them. Read roughly in this order:
   callers to preserve their callback-visible order.
   `reposition_install` gathers the completed replacement's owned slots once,
   then restores its position when its footprint is contiguous and scope-safe.
+  Those slots are already in document order; supporting headers are inserted
+  by their order keys, and physical adjacency alone establishes contiguity.
   Source repairs inside that binding belong to it; repairs outside it do not.
   A caller reports destination-parent promotion through `PromotedHeader`,
   since that supporting header and its displaced trivia are outside the new
