@@ -1686,20 +1686,17 @@ def _build_section_leading(doc: Document) -> str:
     return doc._newline if doc._section_blank_separated else ""  # noqa: SLF001
 
 
-def attach_empty_aot(
-    parent: Container, key: str, source_aot: AoT
-) -> PromotedHeader | None:
-    """Bind an empty AoT under ``parent[key]``.
+def attach_aot(parent: Container, key: str, source_aot: AoT) -> PromotedHeader | None:
+    """Bind an AoT under ``parent[key]`` before installing its entries.
 
-    The AoT has no entries, so its physical presence is a single
-    ``key = []`` placeholder KVSlot (an empty inline array) filed in
-    ``parent``'s body. The first ``aot.add(...)`` consumes that
-    placeholder and materialises the first ``[[path]]`` header in its
-    stead. The ``source_aot`` is rehomed in place (identity preserved).
+    Only a genuinely empty source needs a ``key = []`` placeholder.
+    Populated sources receive their physical layout from their entries.
+    The ``source_aot`` is rehomed in place (identity preserved).
     """
-    assert len(source_aot) == 0, "non-empty AoT live-attach has its own routing"
     _bind_aot(parent, key, source_aot)
-    return _materialise_empty_aot(source_aot)
+    if not source_aot:
+        return _materialise_empty_aot(source_aot)
+    return None
 
 
 def _bind_aot(parent: Container, key: str, aot: AoT) -> None:
@@ -1752,9 +1749,9 @@ def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     """Drop the ``key = []`` placeholder before the AoT's first entry lands.
 
     No-op past entry 0 or when the AoT carries no placeholder (the
-    fresh-AoT clone path). The first ``[[path]]`` header takes the AoT's
-    structural position (after the parent body), not the placeholder's
-    in-body position, which a re-parse could otherwise misattribute.
+    populated-source attach or clone path). The first ``[[path]]`` header
+    takes the AoT's structural position (after the parent body), not the
+    placeholder's in-body position, which a re-parse could otherwise misattribute.
     Runs before the append anchor is computed and before any synthetic
     parent header is demoted.
     """
@@ -2786,8 +2783,9 @@ def _aot_append_anchor(aot: AoT) -> Slot | None:
     """Return the anchor for a newly-appended ``[[path]]`` entry.
 
     Non-empty AoTs anchor after the last entry's complete subtree,
-    including nested AoTs. Empty AoTs anchor in their nearest
-    header-bearing host rather than at an unrelated document tail.
+    including nested AoTs. A first entry anchors after its parent's
+    local subtree and any following bare KVs, avoiding both unrelated
+    sections and the capture of another container's body.
     """
     if aot:
         last = aot[-1]
@@ -2795,8 +2793,7 @@ def _aot_append_anchor(aot: AoT) -> Slot | None:
         return _parent_subtree_tail(last)
     parent = aot._host  # noqa: SLF001
     assert parent is not None, "attached AoT must have a parent"
-    # A document-tail anchor could place the first entry under a later sibling.
-    return _nearest_header_host_tail(parent)
+    return _child_header_anchor(parent)
 
 
 def _unfile_ordered(refs: list[Slot], slot: Slot) -> None:
@@ -3751,7 +3748,7 @@ __all__ = [
     "append_direct_kv",
     "append_synth_kv",
     "assign_aot_entries",
-    "attach_empty_aot",
+    "attach_aot",
     "attach_section_at",
     "delete_key",
     "hosts_site",

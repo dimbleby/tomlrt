@@ -666,8 +666,8 @@ class Container(_View, dict[str, Any]):
         emptied = value._host  # noqa: SLF001
         existing_entries: list[Table] = list(value)
         _layout_ops.detach_aot_from_orphan(value)
+        promotion = _layout_ops.attach_aot(self, key, value)
         list.clear(value)
-        promotion = _layout_ops.attach_empty_aot(self, key, value)
         dict.__setitem__(self, key, value)
         for entry_table in existing_entries:
             source_doc = entry_table._layout_root  # noqa: SLF001
