@@ -774,10 +774,18 @@ def test_aot_cross_document_assignment_clones() -> None:
     d1 = tomlrt.loads("")
     aot = tomlrt.AoT([{"name": "a"}])
     d1["servers"] = aot
-    d2 = tomlrt.loads("")
-    d2["servers"] = d1["servers"]
+    d2 = tomlrt.loads(
+        td("""
+            [target.settings]
+            x = 1
+
+            [other]
+            y = 2
+            """)
+    )
+    d2.table("target")["servers"] = d1["servers"]
     assert d1["servers"] is aot
-    assert d2["servers"] is not d1["servers"]
+    assert d2.aot("target.servers") is not d1["servers"]
     aot.append({"name": "b"})
     out1 = tomlrt.dumps(d1)
     out2 = tomlrt.dumps(d2)
@@ -789,13 +797,19 @@ def test_aot_cross_document_assignment_clones() -> None:
         name = "b"
         """)
     assert out2 == td("""
-        [[servers]]
+        [target.settings]
+        x = 1
+
+        [[target.servers]]
         name = "a"
+
+        [other]
+        y = 2
         """)
     assert _reparses(out1) == {
         "servers": [{"name": "a"}, {"name": "b"}],
     }
-    assert _reparses(out2) == {"servers": [{"name": "a"}]}
+    assert _reparses(out2) == d2.to_dict()
 
 
 def test_aot_intra_document_assignment_clones() -> None:
@@ -900,6 +914,32 @@ def test_whole_aot_transfer_preserves_emptied_parent_header_block() -> None:
         """)
     assert _reparses(out) == target.to_dict()
     assert tomlrt.dumps(source) == ""
+
+
+def test_populated_aot_stays_with_implicit_parent() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [a.mid.sub]
+            x = 1
+
+            [a.later]
+            y = 2
+            """)
+    )
+    doc.table("a.mid")["rows"] = AoT([{"z": 3}])
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a.mid.sub]
+        x = 1
+
+        [[a.mid.rows]]
+        z = 3
+
+        [a.later]
+        y = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_detached_aot_reattach_with_kv_before_nested_section() -> None:

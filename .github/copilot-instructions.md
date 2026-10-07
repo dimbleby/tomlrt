@@ -240,6 +240,10 @@ them. Read roughly in this order:
   A caller reports destination-parent promotion through `PromotedHeader`,
   since that supporting header and its displaced trivia are outside the new
   binding's ownership. Splices do not record ambient installation state.
+  Populated AoTs install their entries directly, without an intermediate
+  `key = []` placeholder or parent promotion. First entries use the same
+  local, scope-safe child anchor as section children; only genuinely empty
+  AoTs materialise a placeholder.
   Inline replacements prepare their value before entering the replacement
   context, so conversion precedes deletion.
   Removal separates physical slot discovery (`owned_slots` plus binding
