@@ -232,8 +232,14 @@ them. Read roughly in this order:
   splice, building copied views afterward while retaining adopted views
   and refs. Dictionary binding and parent-header demotion stay in the
   callers to preserve their callback-visible order.
-  `reposition_install` brackets caller-owned installation. Inline replacements
-  prepare their value before entering it, so conversion precedes deletion.
+  `reposition_install` gathers the completed replacement's owned slots once,
+  then restores its position when its footprint is contiguous and scope-safe.
+  Source repairs inside that binding belong to it; repairs outside it do not.
+  A caller reports destination-parent promotion through `PromotedHeader`,
+  since that supporting header and its displaced trivia are outside the new
+  binding's ownership. Splices do not record ambient installation state.
+  Inline replacements prepare their value before entering the replacement
+  context, so conversion precedes deletion.
   Removal separates physical slot discovery (`owned_slots` plus binding
   refs) from logical traversal. Collect every retained `_View` once,
   including inline descendants, and pass that list to orphan transplantation.
