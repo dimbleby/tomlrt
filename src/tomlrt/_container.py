@@ -90,7 +90,14 @@ from tomlrt._values import (
 from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, MutableMapping, Sequence
+    from collections.abc import (
+        Callable,
+        Generator,
+        Iterable,
+        Iterator,
+        MutableMapping,
+        Sequence,
+    )
 
     from _typeshed import SupportsKeysAndGetItem, SupportsRichComparison
     from typing_extensions import Self
@@ -1662,7 +1669,7 @@ def _can_adopt_from(source: Document, destination: Document) -> bool:
 @contextlib.contextmanager
 def _sources_kept_intact(
     destination: Document | None, values: Iterable[object]
-) -> Iterator[None]:
+) -> Generator[None]:
     """Protect initial source roots during writes to this destination.
 
     Newly orphaned roots remain adoptable. Strong references keep the

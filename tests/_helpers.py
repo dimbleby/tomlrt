@@ -39,7 +39,7 @@ from tomlrt._container import _is_section
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, slot_local_key
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
     from tomlrt._container import Container, Document
     from tomlrt._slots import Slot
@@ -93,7 +93,7 @@ def deep_equal(a: object, b: object) -> bool:
 
 
 @contextmanager
-def fuzz_context(ctx: str) -> Iterator[None]:
+def fuzz_context(ctx: str) -> Generator[None]:
     """Re-raise whatever the block raises with ``ctx`` prefixed to it.
 
     A seed-driven fuzzer only earns its keep if a failure says which

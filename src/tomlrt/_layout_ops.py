@@ -60,7 +60,7 @@ from tomlrt._values import (
 from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Generator, Iterable, Iterator, Sequence
 
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table, TomlInput
@@ -76,7 +76,7 @@ if TYPE_CHECKING:
 @contextlib.contextmanager
 def _record_install(
     doc: Document,
-) -> Iterator[tuple[list[Slot], list[tuple[Slot, str, Slot | None]]]]:
+) -> Generator[tuple[list[Slot], list[tuple[Slot, str, Slot | None]]]]:
     """Record slots installed and existing slots displaced by the transaction.
 
     :func:`_insert_run_between` records newly linked slots in the first
@@ -99,7 +99,7 @@ def _record_install(
 
 
 @contextlib.contextmanager
-def _suspend_install_recording(doc: Document) -> Iterator[None]:
+def _suspend_install_recording(doc: Document) -> Generator[None]:
     """Hide slots linked inside from any open install transaction.
 
     A repair made while an install is in flight is not part of the
@@ -141,7 +141,7 @@ def _effective_header_path_before(anchor: Slot | None) -> tuple[str, ...] | None
 
 
 @contextlib.contextmanager
-def reposition_install(parent: Container, key: str) -> Iterator[bool]:
+def reposition_install(parent: Container, key: str) -> Generator[bool]:
     """Replace ``parent[key]`` while preserving its physical position.
 
     Delete an existing binding, then capture the caller's installation and move
@@ -353,7 +353,7 @@ def _refile_region_refs(
     doc: Document,
     predecessor: Slot | None,
     successor: Slot | None,
-) -> Iterator[None]:
+) -> Generator[None]:
     """Re-file the refs of a doc-stream region around a physical change to it.
 
     The region is the open interval between two slots that stay put.
@@ -370,7 +370,7 @@ def _refile_region_refs(
 
 
 @contextlib.contextmanager
-def _refile_slot_refs(slots: Iterable[Slot]) -> Iterator[None]:
+def _refile_slot_refs(slots: Iterable[Slot]) -> Generator[None]:
     """Keep retained projections ordered while a slot run is moved or split."""
     runs: dict[int, tuple[list[Slot], list[Slot]]] = {}
     for slot in slots:
