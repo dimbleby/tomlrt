@@ -179,9 +179,10 @@ def reposition_install(parent: Container, key: str) -> Generator[Replacement]:
         return
     new_slots = _binding_slots(parent, key)
     promotion = replacement.promotion
-    if promotion is not None:
-        new_slots.append(promotion.header)
-    installed = _installed_span(new_slots, doc)
+    if promotion is not None and _slot_is_linked(promotion.header, doc):
+        header = promotion.header
+        new_slots.insert(_ordered_index(new_slots, header._order), header)  # noqa: SLF001
+    installed = _installed_span(new_slots)
     if installed is None:
         return
     if not _anchor_accepts_install(
@@ -204,7 +205,7 @@ def reposition_install(parent: Container, key: str) -> Generator[Replacement]:
 
 
 def _binding_slots(parent: Container, key: str) -> list[Slot]:
-    """Gather the actual installed binding, including its completed descendants."""
+    """Gather the completed binding's linked slots in document order."""
     value = dict.__getitem__(parent, key)
     if (
         isinstance(value, _container.Container) and not value._inline  # noqa: SLF001
@@ -213,21 +214,17 @@ def _binding_slots(parent: Container, key: str) -> list[Slot]:
     return list(parent._index[key])  # noqa: SLF001
 
 
-def _installed_span(slots: list[Slot], doc: Document) -> list[Slot] | None:
-    """Return the linked footprint in physical order if it forms one run.
+def _installed_span(slots: list[Slot]) -> list[Slot] | None:
+    """Return the ordered footprint if its linked slots form one physical run.
 
-    A supporting header may have been demoted during installation. Foreign
-    slots between the binding's runs must not travel with it, so scattered
-    bindings stay where they were installed.
+    Ownership supplies order and membership. Foreign slots between the
+    binding's runs must not travel with it, so scattered bindings stay put.
     """
-    span = {slot for slot in slots if _slot_is_linked(slot, doc)}
-    assert span, "a successful install must emit slots"
-    ordered: list[Slot] = []
-    cur: Slot | None = min(span, key=operator.attrgetter("_order"))
-    while cur is not None and cur in span:
-        ordered.append(cur)
-        cur = cur._next  # noqa: SLF001
-    return ordered if len(ordered) == len(span) else None
+    assert slots, "a successful install must emit slots"
+    for prev, slot in itertools.pairwise(slots):
+        if prev._next is not slot:  # noqa: SLF001
+            return None
+    return slots
 
 
 def _anchor_accepts_install(
