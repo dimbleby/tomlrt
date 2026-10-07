@@ -73,45 +73,28 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-@contextlib.contextmanager
-def _record_install(
-    doc: Document,
-) -> Generator[tuple[list[Slot], list[tuple[Slot, str, Slot | None]]]]:
-    """Record slots installed and existing slots displaced by the transaction.
+class PromotedHeader:
+    """External support created when an inline binding promotes its parent."""
 
-    :func:`_insert_run_between` records newly linked slots in the first
-    yielded list, whether installed individually or as a block. The
-    second captures existing slots whose leading trivia was rewritten
-    by synthetic-header insertion. Slots are normally freshly materialised,
-    but adopting a subtree from the same private document relinks existing
-    slots — and so can record the very slot the
-    reposition anchor names. Nested contexts stack; only the innermost
-    is active.
-    """
-    prev = doc._install_recorders  # noqa: SLF001
-    installed: list[Slot] = []
-    displaced: list[tuple[Slot, str, Slot | None]] = []
-    doc._install_recorders = (installed, displaced)  # noqa: SLF001
-    try:
-        yield installed, displaced
-    finally:
-        doc._install_recorders = prev  # noqa: SLF001
+    __slots__ = ("displaced", "header")
+
+    def __init__(
+        self,
+        header: StructuralHeaderSlot,
+        displaced: tuple[Slot, str, Slot | None] | None,
+    ) -> None:
+        self.header = header
+        self.displaced = displaced
 
 
-@contextlib.contextmanager
-def _suspend_install_recording(doc: Document) -> Generator[None]:
-    """Hide slots linked inside from any open install transaction.
+class Replacement:
+    """Placement information the caller cannot derive from the new binding."""
 
-    A repair made while an install is in flight is not part of the
-    installed block; recording it would put it in the span
-    :func:`reposition_install` moves to the saved anchor.
-    """
-    prev = doc._install_recorders  # noqa: SLF001
-    doc._install_recorders = None  # noqa: SLF001
-    try:
-        yield
-    finally:
-        doc._install_recorders = prev  # noqa: SLF001
+    __slots__ = ("dotted", "promotion")
+
+    def __init__(self, *, dotted: bool) -> None:
+        self.dotted = dotted
+        self.promotion: PromotedHeader | None = None
 
 
 def _slot_is_linked(slot: Slot, doc: Document) -> bool:
@@ -141,11 +124,12 @@ def _effective_header_path_before(anchor: Slot | None) -> tuple[str, ...] | None
 
 
 @contextlib.contextmanager
-def reposition_install(parent: Container, key: str) -> Generator[bool]:
+def reposition_install(parent: Container, key: str) -> Generator[Replacement]:
     """Replace ``parent[key]`` while preserving its physical position.
 
-    Delete an existing binding, then capture the caller's installation and move
-    it back to the saved anchor. Yield whether the old primary slot was a KV.
+    Delete an existing binding, then gather its replacement's completed layout
+    and move it back to the saved anchor. The caller reports any promotion of
+    the destination parent, whose header lies outside the binding's own layout.
     Value preparation belongs to the caller; a failed installation is not
     rolled back.
 
@@ -188,12 +172,16 @@ def reposition_install(parent: Container, key: str) -> Generator[bool]:
     old_is_kv = isinstance(old_primary, KVSlot)
     delete_key(parent, key)
     doc = parent._attached_doc  # noqa: SLF001
-    with _record_install(doc) as (new_slots, displaced):
-        yield old_is_kv
+    replacement = Replacement(dotted=old_is_kv)
+    yield replacement
     # Header demotion during reinstall can invalidate the saved anchor.
     if saved_anchor_prev is not None and not _slot_is_linked(saved_anchor_prev, doc):
         return
-    installed = _recorded_install_span(new_slots, doc)
+    new_slots = _binding_slots(parent, key)
+    promotion = replacement.promotion
+    if promotion is not None:
+        new_slots.append(promotion.header)
+    installed = _installed_span(new_slots, doc)
     if installed is None:
         return
     if not _anchor_accepts_install(
@@ -205,7 +193,9 @@ def reposition_install(parent: Container, key: str) -> Generator[bool]:
     )
     # Restore each perturbed neighbour's pre-op leading iff the move left
     # it directly after the predecessor that makes that leading correct.
-    restores: list[tuple[Slot, str, Slot | None]] = list(displaced)
+    restores: list[tuple[Slot, str, Slot | None]] = []
+    if promotion is not None and promotion.displaced is not None:
+        restores.append(promotion.displaced)
     if successor_slot is not None and successor_leading is not None:
         restores.append((successor_slot, successor_leading, installed[-1]))
     for slot, original, expected_pred in restores:
@@ -213,15 +203,24 @@ def reposition_install(parent: Container, key: str) -> Generator[bool]:
             slot.leading = original
 
 
-def _recorded_install_span(recorded: list[Slot], doc: Document) -> list[Slot] | None:
-    """Return the recorded survivors in physical order if they form one run.
+def _binding_slots(parent: Container, key: str) -> list[Slot]:
+    """Gather the actual installed binding, including its completed descendants."""
+    value = dict.__getitem__(parent, key)
+    if (
+        isinstance(value, _container.Container) and not value._inline  # noqa: SLF001
+    ) or (isinstance(value, _array.AoT) and value):
+        return owned_slots(value)
+    return list(parent._index[key])  # noqa: SLF001
 
-    Ignore slots unlinked again during the transaction, such as demoted
-    synthetic headers. Repairing an emptied source parent can insert an
-    unrecorded header between later factory children. A move must not
-    carry that repair along, so a split run stays where it was installed.
+
+def _installed_span(slots: list[Slot], doc: Document) -> list[Slot] | None:
+    """Return the linked footprint in physical order if it forms one run.
+
+    A supporting header may have been demoted during installation. Foreign
+    slots between the binding's runs must not travel with it, so scattered
+    bindings stay where they were installed.
     """
-    span = {slot for slot in recorded if _slot_is_linked(slot, doc)}
+    span = {slot for slot in slots if _slot_is_linked(slot, doc)}
     assert span, "a successful install must emit slots"
     ordered: list[Slot] = []
     cur: Slot | None = min(span, key=operator.attrgetter("_order"))
@@ -241,7 +240,7 @@ def _anchor_accepts_install(
     """Return whether ``slots`` may be moved to sit after ``anchor``.
 
     ``slots`` is the nonempty, ordered, contiguous run verified by
-    `_recorded_install_span`.
+    `_installed_span`.
 
     False either because the anchor is inside the block itself, or
     because the move would change the block's TOML scope.
@@ -532,24 +531,12 @@ def _link_run_between(
         doc._tail = run[-1] if run else prev  # noqa: SLF001
 
 
-def _insert_run_between(
-    prev: Slot | None, slots: Sequence[Slot], nxt: Slot | None, doc: Document
-) -> None:
-    """Splice newly installed ``slots`` and record the whole run at once."""
-    _link_run_between(prev, slots, nxt, doc)
-    recorder = doc._install_recorders  # noqa: SLF001
-    if recorder is not None:
-        recorder[0].extend(slots)
-
-
 def _relink_run_after(
     anchor: Slot | None, slots: Sequence[Slot], doc: Document
 ) -> None:
     """Link an unlinked run of slots back into ``doc``, in order, after ``anchor``.
 
-    The shared re-splice of the two block-permutation paths. The slots
-    already belong to the document, so this is a relink rather than an
-    install and nothing is recorded against an install in flight.
+    The shared re-splice of the two block-permutation paths.
     """
     nxt = anchor._next if anchor is not None else doc._head  # noqa: SLF001
     _link_run_between(anchor, slots, nxt, doc)
@@ -557,12 +544,12 @@ def _relink_run_after(
 
 def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
     """Splice ``new_slot`` immediately after ``anchor`` in ``doc``."""
-    _insert_run_between(anchor, (new_slot,), anchor._next, doc)  # noqa: SLF001
+    _link_run_between(anchor, (new_slot,), anchor._next, doc)  # noqa: SLF001
 
 
 def insert_before(anchor: Slot, new_slot: Slot, doc: Document) -> None:
     """Splice ``new_slot`` immediately before ``anchor`` in ``doc``."""
-    _insert_run_between(anchor._prev, (new_slot,), anchor, doc)  # noqa: SLF001
+    _link_run_between(anchor._prev, (new_slot,), anchor, doc)  # noqa: SLF001
 
 
 def insert_before_head(new_slot: Slot, doc: Document) -> None:
@@ -574,7 +561,7 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
     :attr:`Document.preamble` or parsed from a comment-only source)
     should follow up with :func:`_promote_trailing_to_preamble`.
     """
-    _insert_run_between(None, (new_slot,), doc._head, doc)  # noqa: SLF001
+    _link_run_between(None, (new_slot,), doc._head, doc)  # noqa: SLF001
 
 
 def _promote_trailing_to_preamble(doc: Document) -> None:
@@ -675,7 +662,7 @@ def append_direct_kv(
     reinstall_as_dotted: bool = False,
     key_parts: tuple[str, ...] | None = None,
     key_seps: tuple[str, ...] | None = None,
-) -> None:
+) -> PromotedHeader | None:
     """Append a fresh direct (non-dotted) KV to ``c``.
 
     Updates ``c._refs`` / ``_index`` / ``_body_tail`` and dict storage.
@@ -694,8 +681,7 @@ def append_direct_kv(
             # as a fresh header when fully empty. Exception: a structural
             # overwrite replacing a dotted binding keeps the dotted form
             # (see ``reposition_install``).
-            _synthesise_header_then_insert_kv(c, key, value)
-            return
+            return _synthesise_header_then_insert_kv(c, key, value)
         host = _nearest_header_host(c)
         install_dotted_kv_slot(
             host,
@@ -703,7 +689,7 @@ def append_direct_kv(
             value,
             leaf_parent=c,
         )
-        return
+        return None
     doc = c._attached_doc  # noqa: SLF001
     # Capture the anchor *before* mutating any cache.
     body_tail = c._body_tail  # noqa: SLF001
@@ -723,17 +709,19 @@ def append_direct_kv(
         doc=doc,
     )
     record_slot(c, new_slot)
+    return None
 
 
 def append_synth_kv(
     c: Container,
     key: str,
     v: TomlInput,
-) -> None:
+) -> PromotedHeader | None:
     """Append ``key = v`` to ``c`` as a freshly synthesised KV line."""
     cst, dec = c._synth_local_value(key, v)  # noqa: SLF001
-    append_direct_kv(c, key, cst)
+    layout = append_direct_kv(c, key, cst)
     dict.__setitem__(c, key, dec)
+    return layout
 
 
 def _invalidate_body_tail_chain(
@@ -1274,7 +1262,7 @@ def _new_kv_slot(
     key_parts: tuple[str, ...] | None = None,
     key_seps: tuple[str, ...] | None = None,
 ) -> KVSlot:
-    """Synthesise a fresh KV slot (recorded when spliced, not here).
+    """Synthesise a fresh KV slot, leaving linking and ref filing to the caller.
 
     Keys use canonical spelling unless supplied, as inline promotion does.
     """
@@ -1365,7 +1353,9 @@ def install_dotted_kv_slot(
         assert slot_local_key(new_slot, anc) == leaf_keypath[i]
 
 
-def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
+def _synthesise_header_then_insert_kv(
+    c: Container, key: str, value: Value
+) -> PromotedHeader:
     """Promote a purely-implicit container ``c`` to an explicit section.
 
     When ``c`` has a descendant, inserts ``[c._path]`` immediately before
@@ -1378,6 +1368,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     doc = c._attached_doc  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
     anchor_slot = c._refs[0] if c._refs else None  # noqa: SLF001
+    displaced: tuple[Slot, str, Slot | None] | None = None
 
     if anchor_slot is not None:
         adopted_leading = anchor_slot.leading
@@ -1385,9 +1376,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         new_descendant_leading = _build_section_leading(doc)
         header_slot = _new_owned_section_header(c, leading=adopted_leading, doc=doc)
         insert_before(anchor_slot, header_slot, doc)
-        recorder = doc._install_recorders  # noqa: SLF001
-        if recorder is not None:
-            recorder[1].append((anchor_slot, anchor_slot.leading, original_pred))
+        displaced = (anchor_slot, anchor_slot.leading, original_pred)
         anchor_slot.leading = new_descendant_leading
     else:
         host_tail = _nearest_header_host_tail(c)
@@ -1412,6 +1401,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         doc=doc,
         owner=owner,
     )
+    return PromotedHeader(header_slot, displaced)
 
 
 def _terminate_unless_tail(slot: Slot, doc: Document) -> None:
@@ -1593,7 +1583,7 @@ def _splice_block_after(slots: list[Slot], anchor: Slot | None, doc: Document) -
     if tail is not None:
         ensure_terminator(tail, doc._newline)  # noqa: SLF001
     nxt = tail._next if tail is not None else doc._head  # noqa: SLF001
-    _insert_run_between(tail, slots, nxt, doc)
+    _link_run_between(tail, slots, nxt, doc)
     for slot in slots:
         _terminate_unless_tail(slot, doc)
     if tail is None:
@@ -1699,7 +1689,9 @@ def _build_section_leading(doc: Document) -> str:
     return doc._newline if doc._section_blank_separated else ""  # noqa: SLF001
 
 
-def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
+def attach_empty_aot(
+    parent: Container, key: str, source_aot: AoT
+) -> PromotedHeader | None:
     """Bind an empty AoT under ``parent[key]``.
 
     The AoT has no entries, so its physical presence is a single
@@ -1710,8 +1702,7 @@ def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
     """
     assert len(source_aot) == 0, "non-empty AoT live-attach has its own routing"
     _bind_aot(parent, key, source_aot)
-    _materialise_empty_aot(source_aot)
-    return source_aot
+    return _materialise_empty_aot(source_aot)
 
 
 def _bind_aot(parent: Container, key: str, aot: AoT) -> None:
@@ -1721,7 +1712,7 @@ def _bind_aot(parent: Container, key: str, aot: AoT) -> None:
     aot._host = parent  # noqa: SLF001
 
 
-def _materialise_empty_aot(aot: AoT) -> None:
+def _materialise_empty_aot(aot: AoT) -> PromotedHeader | None:
     """Splice a ``key = []`` placeholder for a now-empty attached AoT.
 
     The placeholder is a normal direct KV (an ``EmptyAoTValue``) under
@@ -1734,7 +1725,7 @@ def _materialise_empty_aot(aot: AoT) -> None:
     assert parent is not None
     assert len(aot) == 0
     key = aot._path[-1]  # noqa: SLF001
-    append_direct_kv(parent, key, EmptyAoTValue())
+    return append_direct_kv(parent, key, EmptyAoTValue())
 
 
 def _empty_aot_placeholder_slot(aot: AoT) -> KVSlot | None:
@@ -2409,9 +2400,7 @@ def synthesise_header_for_emptied(parent: Container | None) -> None:
     header = _new_owned_section_header(
         parent, leading=_build_section_leading(doc), doc=doc
     )
-    # The repair is not part of whatever install is in flight above it.
-    with _suspend_install_recording(doc):
-        _splice_block_after([header], tail, doc)
+    _splice_block_after([header], tail, doc)
     _bind_own_section_header(parent, header)
 
 
@@ -2587,7 +2576,7 @@ def clone_aot(
     parent: Container,
     key: str,
     src_aot: AoT,
-) -> AoT:
+) -> PromotedHeader | None:
     """Install ``src_aot`` (an attached AoT) under ``parent[key]``.
 
     Each entry is deep-cloned with path-rebasing so any nested
@@ -2603,8 +2592,8 @@ def clone_aot(
             preserve_source_separator=True,
         )
     if len(new_aot) == 0:
-        _materialise_empty_aot(new_aot)
-    return new_aot
+        return _materialise_empty_aot(new_aot)
+    return None
 
 
 def _clone_entry_slots(
@@ -3552,7 +3541,7 @@ def _move_slots_to_anchor(
     new doc position and repairs the cached body tails the move can have
     invalidated.
 
-    :func:`_recorded_install_span` supplies nonempty slots in contiguous
+    :func:`_installed_span` supplies nonempty slots in contiguous
     doc-stream order; its caller leaves scattered installations in place.
     """
     doc = parent._layout_root  # noqa: SLF001

@@ -12287,7 +12287,10 @@ def test_implicit_clone_keeps_its_aot_block_with_its_body() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_source_parent_repair_can_split_a_recorded_factory_install() -> None:
+@pytest.mark.parametrize("sibling", [False, True])
+def test_factory_replacement_includes_repaired_borrowed_parent(
+    *, sibling: bool
+) -> None:
     old_doc = tomlrt.loads(
         td("""
         [old.child]
@@ -12297,12 +12300,16 @@ def test_source_parent_repair_can_split_a_recorded_factory_install() -> None:
     old = old_doc.table("old")
     child = old.table("child")
     old_doc.pop("old")
-    dest_doc = tomlrt.loads(
-        td("""
+    dest_source = td("""
         [dest]
         a=0
         """)
-    )
+    if sibling:
+        dest_source += "\n" + td("""
+            [dest.keep]
+            marker = 9
+            """)
+    dest_doc = tomlrt.loads(dest_source)
     dest = dest_doc.table("dest")
     dest_doc.pop("dest")
     third = Table.section({"z": 2})
@@ -12328,6 +12335,11 @@ def test_source_parent_repair_can_split_a_recorded_factory_install() -> None:
         [result.a.third]
         z = 2
         """)
+    if sibling:
+        expected += "\n" + td("""
+            [result.keep]
+            marker = 9
+            """)
     assert tomlrt.dumps(doc) == expected
     assert _reparses(expected) == doc.to_dict()
     old["y"] = 3
@@ -12345,10 +12357,59 @@ def test_source_parent_repair_can_split_a_recorded_factory_install() -> None:
         [result.a.third]
         z = 5
         """)
+    if sibling:
+        expected += "\n" + td("""
+            [result.keep]
+            marker = 9
+            """)
     assert tomlrt.dumps(doc) == expected
     assert _reparses(expected) == doc.to_dict()
     assert tomlrt.dumps(old_doc) == ""
     assert tomlrt.dumps(dest_doc) == ""
+
+
+def test_mixed_factory_replacement_does_not_move_a_foreign_section() -> None:
+    source = tomlrt.loads("dotted.x = 2\n")
+    section = Table.section({"x": 1})
+    factory = Table.section({"section": section, "dotted": source.table("dotted")})
+    doc = tomlrt.loads(
+        td("""
+        [target]
+        value = 0
+
+        [keep]
+        y = 3
+        """)
+    )
+
+    doc["target"] = factory
+
+    expected = td("""
+        target.dotted.x = 2
+
+        [keep]
+        y = 3
+
+        [target.section]
+        x = 1
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert doc.table("target") is factory
+    assert factory.table("section") is section
+    section["x"] = 4
+    doc.table("keep")["y"] = 5
+    expected = td("""
+        target.dotted.x = 2
+
+        [keep]
+        y = 5
+
+        [target.section]
+        x = 4
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
 
 
 def test_repeated_overlapping_installs_keep_the_source_header_less() -> None:

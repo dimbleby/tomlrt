@@ -626,30 +626,31 @@ class Container(_View, dict[str, Any]):
         # structural.
         assert isinstance(value, (Container, AoT))
         value = _snapshot_for_overlapping_install(self, key, value)
-        with _layout_ops.reposition_install(self, key):
-            self._insert_new(key, value)
+        with _layout_ops.reposition_install(self, key) as replacement:
+            replacement.promotion = self._insert_new(key, value)
 
-    def _insert_new(self, key: str, value: TomlInput) -> None:
+    def _insert_new(
+        self, key: str, value: TomlInput
+    ) -> _layout_ops.PromotedHeader | None:
         """Bind ``key`` for the first time at the document tail."""
         if is_scalar(value):
             # Deliberately not routed through `append_synth_kv`: that
             # costs three extra call frames and a duplicated `is_scalar`
             # test, measured at +6.5% on a scalar insert — the commonest
             # mutation there is.
-            _layout_ops.append_direct_kv(self, key, coerce_scalar(value))
+            promotion = _layout_ops.append_direct_kv(self, key, coerce_scalar(value))
             dict.__setitem__(self, key, value)
-            return
+            return promotion
         if _is_inline_input(value):
-            _layout_ops.append_synth_kv(self, key, value)
-            return
+            return _layout_ops.append_synth_kv(self, key, value)
         if isinstance(value, AoT):
-            self._attach_aot(key, value)
-            return
+            return self._attach_aot(key, value)
         # `_validate_input` leaves only a section table for this branch.
         assert isinstance(value, Container)
         self._attach_section(key, value)
+        return None
 
-    def _attach_aot(self, key: str, value: AoT) -> None:
+    def _attach_aot(self, key: str, value: AoT) -> _layout_ops.PromotedHeader | None:
         """Install ``value`` (an AoT) under ``key``.
 
         Public sources are copied. Private layout moves with its live
@@ -657,19 +658,17 @@ class Container(_View, dict[str, Any]):
         """
         src_root = value._layout_root  # noqa: SLF001
         if src_root is not None and not _can_adopt_from(src_root, self._attached_doc):
-            _layout_ops.clone_aot(self, key, value)
-            return
+            return _layout_ops.clone_aot(self, key, value)
         snapshot = _snapshot_for_overlapping_install(self, key, value)
         if snapshot is not value:
             assert isinstance(snapshot, AoT)
-            _layout_ops.clone_aot(self, key, snapshot)
-            return
+            return _layout_ops.clone_aot(self, key, snapshot)
         emptied = value._host  # noqa: SLF001
         existing_entries: list[Table] = list(value)
         _layout_ops.detach_aot_from_orphan(value)
         list.clear(value)
-        attached = _layout_ops.attach_empty_aot(self, key, value)
-        dict.__setitem__(self, key, attached)
+        promotion = _layout_ops.attach_empty_aot(self, key, value)
+        dict.__setitem__(self, key, value)
         for entry_table in existing_entries:
             source_doc = entry_table._layout_root  # noqa: SLF001
             if source_doc is None:
@@ -687,6 +686,7 @@ class Container(_View, dict[str, Any]):
             else:
                 _layout_ops.add_aot_entry(value, entry_table)
         _layout_ops.synthesise_header_for_emptied(emptied)
+        return promotion
 
     def _attach_section(self, key: str, source: Container) -> None:
         """Install ``source`` (a section-flavoured Table) under ``key``.
@@ -732,8 +732,10 @@ class Container(_View, dict[str, Any]):
         cst, decoded = self._synth_local_value(key, value)
         old = dict.__getitem__(self, key)
         if not _is_inline_input(old):
-            with _layout_ops.reposition_install(self, key) as dotted:
-                _layout_ops.append_direct_kv(self, key, cst, reinstall_as_dotted=dotted)
+            with _layout_ops.reposition_install(self, key) as replacement:
+                replacement.promotion = _layout_ops.append_direct_kv(
+                    self, key, cst, reinstall_as_dotted=replacement.dotted
+                )
                 dict.__setitem__(self, key, decoded)
             return
         refs = self._index.get(key)
@@ -1362,7 +1364,6 @@ class Document(Container):
 
     __slots__ = (
         "_head",
-        "_install_recorders",
         "_is_private",
         "_newline",
         "_preamble",
@@ -1403,13 +1404,6 @@ class Document(Container):
         self._newline: str = DEFAULT_NEWLINE
         self._is_private: bool = False
         self._protected_source_roots: dict[int, Document] | None = None
-        self._install_recorders: (
-            tuple[
-                list[Slot],
-                list[tuple[Slot, str, Slot | None]],
-            ]
-            | None
-        ) = None
         self._section_blank_separated = True
         self._layout_root = self
         if data is None:
