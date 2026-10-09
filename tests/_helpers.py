@@ -182,7 +182,7 @@ def _containers(doc: Document) -> list[Container]:
 
 
 def _expected_body_tail(c: Container) -> Slot | None:
-    """The body tail ``_layout_ops._recompute_body_tail`` would derive."""
+    """Derive the body tail independently from the complete refs."""
     owner = c._owner_aot_entry  # noqa: SLF001
     for slot in reversed(c._refs):  # noqa: SLF001
         if isinstance(slot, KVSlot) and slot.owner_aot_entry is owner:
@@ -211,10 +211,6 @@ def check_view_caches(doc: Document, ctx: str) -> None:
         order = [pos[id(slot)] for slot in c._refs]  # noqa: SLF001
         assert order == sorted(order), f"{where}: _refs is not in doc order"
 
-        # `_body_tail` is maintained incrementally on every append and
-        # only fully recomputed on a body-affecting delete, so what is
-        # caught here is the incremental path drifting from the
-        # recomputation that is meant to agree with it.
         want = _expected_body_tail(c)
         assert c._body_tail is want, (  # noqa: SLF001
             f"{where}: _body_tail is stale (got {c._body_tail!r}, want {want!r})"  # noqa: SLF001

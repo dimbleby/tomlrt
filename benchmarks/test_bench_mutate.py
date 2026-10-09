@@ -387,8 +387,7 @@ def test_build_section_1000_new_keys(benchmark: BenchmarkFixture) -> None:
 def test_delete_root_kvs_tail_first(benchmark: BenchmarkFixture) -> None:
     """Delete the root body backwards, under a pile of section headers.
 
-    Only a delete of the *current* body tail invalidates the cache, so
-    going backwards invalidates on every key. The document root also
+    Every deletion changes the body anchor. The document root also
     holds a ref per section header, and those sit past the body.
     """
 
