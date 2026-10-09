@@ -372,7 +372,7 @@ class CommaValue(Generic[_ItemT]):
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
         new = object.__new__(type(self))
         memo[id(self)] = new
-        new._ml_cache = copy.deepcopy(self._ml_cache, memo)  # noqa: SLF001
+        new._ml_cache = copy.deepcopy(self._ml_cache, memo)
         new.opening = copy.deepcopy(self.opening, memo)
         new.items = copy.deepcopy(self.items, memo)
         return new
