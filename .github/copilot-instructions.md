@@ -74,10 +74,11 @@ Python 3.10–3.14. `ty` is a second, independent type-checker (run via
 - **Construct hot-path records positionally.** `Slot`, `CommaItem`
   and the internal layout records (`CommaStyle`, `Boundary`,
   `_ReorderUnit`) are built once per line, item, sorted
-  block or inline edit. A constructor call carrying *any* keyword falls off CPython's
-  alloc-and-enter-init specialisation and costs roughly twice as much,
-  measurably: `test_sort_wide_section` is ~6% faster for this alone,
-  and `test_insert_into_inline_array` ~13%. Both are in `benchmarks/`,
+  block or inline edit. A constructor call carrying *any* keyword falls
+  off CPython's alloc-and-enter-init specialisation and costs roughly
+  twice as much, measurably: `test_sort_wide_section` is ~6% faster
+  for this alone, and `test_insert_into_inline_array` ~13%. Both are
+  in `benchmarks/`,
   so the claim stays checkable. Keywords are fine anywhere else —
   an ordinary function call loses only a few ns to them, well below what
   any benchmark here can resolve. At call sites, ruff `FBT003` rejects
@@ -122,8 +123,8 @@ them. Read roughly in this order:
   rather than silently fall back to `dict` / `list` copying, which
   would drag the whole source document along. It imports nothing, so a
   traversal in `_layout_ops` can recognise and walk a view without a
-  deferred import of the three concrete classes. `_unbind_from_document` is **not** here — only
-  `AoT` needs it.
+  deferred import of the three concrete classes. `_unbind_from_document`
+  is **not** here — only `AoT` needs it.
 - **`_paths.py`** — key-path argument parsing and validation
   (the `t["a", "b"]` / `t[("a", "b")]` shapes used by the public
   API).
@@ -148,13 +149,13 @@ them. Read roughly in this order:
   (scalar, `ArrayValue`, `InlineTableValue`) carries enough source
   text to re-emit byte-exactly. Pure data; no slot-stream awareness.
   `ArrayValue` and `InlineTableValue` share a generic `CommaValue`
-  base that owns the `items` list plus a pair of bracket-pad
-  anchors — `header_trivia` (gap immediately after `[` / `{`) and
-  `final_trivia` (gap before the closing bracket) — so that the
-  above-item region of item 0 and the post-comma trivia of item -1
-  have a single canonical owner; per-item `leading` only owns the
-  region above items 1..n-1. Each item is one of two sibling
-  concrete leaves of a `CommaItem` base: `ArrayItem` (bare value,
+  base that owns `items` and an `opening` string. Each item carries its
+  payload plus one complete outgoing gap: `before` (pre-comma text),
+  `has_comma`, `after` (post-comma EOL text), and `following` (downstream
+  pad / above-block, or the last item's closing pad). `opening` owns
+  the gap before item zero, or all interior trivia when empty. There
+  are no separate seam records or parallel lists. Each item is one of
+  two sibling concrete leaves of a `CommaItem` base: `ArrayItem` (bare value,
   used by `ArrayValue`) or `InlineTableEntry` (with a ``key = ``
   prefix, used by `InlineTableValue`). Annotate with `CommaItem`
   when working polymorphically over both flavours and with the
@@ -252,7 +253,8 @@ them. Read roughly in this order:
   `_walk_views` yields views in iterative preorder; callers handle each
   view before traversal descends into its children.
   Key and AoT removal share `_detach_departing_slots` for ref cleanup and
-  reverse-order unlinking; logical deletion and orphan shape stay in the callers.
+  reverse-order unlinking; logical deletion and orphan shape stay in
+  the callers.
   By far the largest file. Internal hot-path conventions:
   - **Reverse-walks of `c._refs`** happen in exactly one place,
     `_recompute_body_tail`, for the one question the caches cannot
@@ -295,14 +297,15 @@ them. Read roughly in this order:
 - **`_comma_ops.py`** — structural mutation primitives shared by
   inline arrays (`Array`) and inline tables (`_inline_ops`).
   Owns the canonical layout invariants for any `CommaValue`:
-  per-item trivia ownership, the single-row-break rule, EOL
+  seam trivia ownership, the single-row-break rule, EOL
   section attachment, and trailing-comma policy. `Boundary` is the
-  canonical capture / compose / restore model for trivia spanning
-  adjacent items. The cross-module
+  lossless ephemeral capture / compose / restore model over one complete gap.
+  It reads and writes the predecessor alone, or `opening` at the head.
+  Its split `_Lane` records are not persistent storage. The cross-module
   surface is intentionally small — a few `splice_*` / `reorder_owned`
   entry points consumed by `Array` / `_inline_ops`, plus the
-  row-break primitives (`shift_breaks`, `boundary_break_holder`) and
-  the per-item EOL-channel accessors (`item_eol_channel` and friends)
+  row-break primitives (`shift_breaks`, `reindent_as_leader`) and
+  the outgoing-seam EOL-channel accessors (`seam_eol_channel` and friends)
   shared with `_comma_comments` / `_format`; the boundary-flip
   helpers stay module-private. Above-item comment
   blocks are re-anchored through `Boundary` itself, so an insertion
@@ -325,12 +328,12 @@ them. Read roughly in this order:
   above-blocks through `Boundary`, but **composes** its pads itself
   (`_compose_pad` / `_format_above`): `Boundary.replace_lane` preserves
   an existing tail where the canonicaliser must force the canonical
-  indent, and an empty value keeps all its trivia in `final_trivia`,
-  which `Boundary` does not model. The two share one ~2-line decision
+  indent, and an empty value's `opening` text combines bracket-EOL
+  framing with its closing pad. The two share one ~2-line decision
   ("break unless the row is already closed"); folding them together
   would push a `force_indent` flag into the mutation core and needs
-  `Boundary` to model empty values first. Investigated and declined.
-  Re-uses `Boundary` and `set_item_eol_channel` from `_comma_ops` for
+  more framing policy in the boundary model. Keep the composers separate.
+  Re-uses `Boundary` and `set_seam_eol_channel` from `_comma_ops` for
   the bits that touch the comma-value boundary. Also owns
   `set_comma_value_multiline` — the shared single ↔ multi-line
   expand / collapse for any `CommaValue`, used by both
@@ -418,17 +421,22 @@ wrong.
   only document ownership and keyed table paths need refreshing, in preorder.
   Structural moves derive descendant paths from their owners as well; inline
   tables inside arrays start relative paths, not document-rooted ones.
-  Factory materialization keeps pending inputs outside the rooted view's storage.
+  Factory materialization keeps pending inputs outside the rooted
+  view's storage.
   Source protection can therefore capture a materialized subtree's root once;
   plain wrappers and rootless factories are still walked for borrowed views.
   Whole-AoT transfers clear entry hosts after bulk ancestor scrubbing;
   source roots and slots remain available until each entry is adopted.
   The enclosing transfer repairs the old parent after each adoption.
-- **Comma-value boundaries** may span predecessor `trailing`,
-  predecessor `post_comma_trivia`, and successor `leading`. EOL
+- **Comma-value boundaries** live in exactly one predecessor record (or
+  in `opening` at the head). Its `before`,
+  `after`, and `following` channels retain the raw comma location. EOL
   payload belongs to the left item; comment-containing above blocks
   belong to the right item; blank-only regions stay positional.
   `leading_block` hides exactly one structural row break.
+  Structural edits splice one item list. Removing runs rehomes their
+  departing `following` text to the retained predecessor before `delete_runs`;
+  head removal composes surviving above-blocks into `opening`.
 - **`Boundary` transforms mutate with copy-on-write.** Call `copy()`
   before transforming a snapshot that remains a source. Reorders
   capture affected seams before moving items, compose each final

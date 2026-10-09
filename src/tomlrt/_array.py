@@ -34,7 +34,7 @@ from tomlrt._format import (
     set_comma_value_multiline,
 )
 from tomlrt._trivia import (
-    strip_trailing_indent,
+    emptied_bracket_pad,
 )
 from tomlrt._typecheck import _require_mapping, _validate_mapping
 from tomlrt._values import (
@@ -337,7 +337,7 @@ class Array(_View, list[Any]):
         self, cst: Value, decoded: object, style: CommaStyle
     ) -> None:
         """Append an already-synthesised item with the sampled layout."""
-        new_item = _make_item(cst, has_comma=False)
+        new_item = ArrayItem(cst)
         splice_in(self._value, new_item, style, self._doc_newline)
         list.append(self, decoded)
 
@@ -360,12 +360,13 @@ class Array(_View, list[Any]):
 
     @override
     def clear(self) -> None:
+        if not self:
+            return
         _layout_ops.reset_displaced_views(*self)
-        self._value.items.clear()
-        # Drop inter-item trivia; preserve bracket leading in final_trivia.
-        self._value.header_trivia, self._value.final_trivia = strip_trailing_indent(
-            self._value.header_trivia, self._value.final_trivia
+        self._value.opening = emptied_bracket_pad(
+            self._value.opening, self._value.items[-1].following
         )
+        self._value.items.clear()
         list.clear(self)
         self._value.reset_multiline_cache()
 
@@ -387,7 +388,7 @@ class Array(_View, list[Any]):
         if i == len(self):
             self._append_with_style(cst, decoded, self._style())
             return
-        new_item = _make_item(cst, has_comma=True)
+        new_item = ArrayItem(cst)
         splice_insert(self._value, (new_item,), i, self._doc_newline)
         list.insert(self, i, decoded)
 
@@ -475,7 +476,7 @@ class Array(_View, list[Any]):
                 if start == len(self):
                     self._extend_prepared(prepared)
                 else:
-                    new_items = [_make_item(cst, has_comma=True) for cst, _ in prepared]
+                    new_items = [ArrayItem(cst) for cst, _ in prepared]
                     splice_insert(self._value, new_items, start, self._doc_newline)
                     list.__setitem__(
                         self, slice(start, start), [decoded for _, decoded in prepared]
@@ -568,11 +569,6 @@ def _norm_index(index: SupportsIndex, n: int, action: str) -> int:
         msg = f"{action} index out of range"
         raise IndexError(msg)
     return i
-
-
-def _make_item(cst: Value, *, has_comma: bool) -> ArrayItem:
-    """Build a fresh ``ArrayItem`` with empty trivia."""
-    return ArrayItem("", cst, "", has_comma, "")
 
 
 class AoT(_View, list["Table"]):

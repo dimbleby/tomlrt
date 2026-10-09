@@ -2014,23 +2014,22 @@ def _populate_inline_table(
         )
         key_path = (k,)
         entry = InlineTableEntry(
-            "" if i == 0 else " ",
             sub_cst,
-            "",
-            i != last,
-            "",
             make_keyparts(key_path),
             (),
             key_path,
             " ",
+            " ",
+            "",
+            i != last,
+            "",
             " ",
         )
         val.items.append(entry)
         val.record_entry(entry)
         dict.__setitem__(table, k, sub_dec)
     if items:
-        val.header_trivia = val._single_line_pad  # noqa: SLF001
-        val.final_trivia = val._single_line_pad  # noqa: SLF001
+        val.opening = val._single_line_pad  # noqa: SLF001
     return val, table
 
 
@@ -2057,16 +2056,7 @@ def _fill_inline_array(
             owner=owner,
             array_host=arr,
         )
-        # Under the canonical model, inter-item separators live in the
-        # NEXT item's leading; items[0].leading is always empty;
-        # post_comma_trivia carries only EOL sections (empty here).
-        item = ArrayItem(
-            "" if i == 0 else " ",
-            sub_cst,
-            "",
-            i != last,
-            "",
-        )
+        item = ArrayItem(sub_cst, "", i != last, "", " " if i != last else "")
         val.items.append(item)
         list.append(arr, sub_dec)
 

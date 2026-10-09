@@ -226,49 +226,46 @@ def render_dotted(parts: tuple[str, ...], seps: tuple[str, ...]) -> str:
 
 
 class CommaItem:
-    """One slot inside a comma-separated value.
+    """One payload and its complete outgoing physical gap.
 
-    Layout: ``leading value trailing [comma post_comma_trivia]``.
-    Shared base of sibling leaves `ArrayItem` and `InlineTableEntry`;
-    use `CommaItem` only at polymorphic call sites. Fields are
-    positional, for the reason given on `Slot`. Field-adding subclasses
-    initialize inherited fields directly to avoid an extra call per item.
+    ``value before [comma after] following`` retains the authored comma
+    location. EOL text belongs to this payload, above-blocks to the next
+    payload, and blank-only text stays positional.
     """
 
-    __slots__ = ("has_comma", "leading", "post_comma_trivia", "trailing", "value")
+    __slots__ = ("after", "before", "following", "has_comma", "value")
 
     def __init__(
         self,
-        leading: str,
         value: Value,
-        trailing: str,
-        has_comma: bool,  # noqa: FBT001
-        post_comma_trivia: str,
+        before: str = "",
+        has_comma: bool = False,  # noqa: FBT001, FBT002
+        after: str = "",
+        following: str = "",
     ) -> None:
-        self.leading = leading
         self.value = value
-        self.trailing = trailing
+        self.before = before
         self.has_comma = has_comma
-        self.post_comma_trivia = post_comma_trivia
+        self.after = after
+        self.following = following
 
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
         new = object.__new__(type(self))
         memo[id(self)] = new
-        new.has_comma = copy.deepcopy(self.has_comma, memo)
-        new.leading = copy.deepcopy(self.leading, memo)
-        new.post_comma_trivia = copy.deepcopy(self.post_comma_trivia, memo)
-        new.trailing = copy.deepcopy(self.trailing, memo)
         new.value = copy.deepcopy(self.value, memo)
+        new.before = copy.deepcopy(self.before, memo)
+        new.has_comma = copy.deepcopy(self.has_comma, memo)
+        new.after = copy.deepcopy(self.after, memo)
+        new.following = copy.deepcopy(self.following, memo)
         return new
 
     def render_tail(self) -> str:
-        """Everything the item renders after its value."""
-        if not self.has_comma:
-            return self.trailing
-        return f"{self.trailing},{self.post_comma_trivia}"
+        if self.has_comma:
+            return f"{self.before},{self.after}{self.following}"
+        return f"{self.before}{self.following}"
 
     def render(self) -> str:
-        return f"{self.leading}{self.value.render()}{self.render_tail()}"
+        return f"{self.value.render()}{self.render_tail()}"
 
 
 class ArrayItem(CommaItem):
@@ -280,8 +277,7 @@ class ArrayItem(CommaItem):
 class InlineTableEntry(CommaItem):
     """One ``key = value`` slot inside an inline table.
 
-    The shared trivia/comma machinery lives on `CommaItem`; this leaf
-    adds the key prefix and an order label for locating its current position.
+    Adds the key prefix and an order label for locating its current position.
     """
 
     __slots__ = ("_order", "key_parts", "key_path", "key_seps", "post_eq", "pre_eq")
@@ -294,22 +290,22 @@ class InlineTableEntry(CommaItem):
 
     def __init__(
         self,
-        leading: str,
         value: Value,
-        trailing: str,
-        has_comma: bool,  # noqa: FBT001
-        post_comma_trivia: str,
         key_parts: tuple[str, ...],
         key_seps: tuple[str, ...],
         key_path: tuple[str, ...],
         pre_eq: str,
         post_eq: str,
+        before: str = "",
+        has_comma: bool = False,  # noqa: FBT001, FBT002
+        after: str = "",
+        following: str = "",
     ) -> None:
-        self.leading = leading
         self.value = value
-        self.trailing = trailing
+        self.before = before
         self.has_comma = has_comma
-        self.post_comma_trivia = post_comma_trivia
+        self.after = after
+        self.following = following
         self.key_parts = key_parts
         self.key_seps = key_seps
         self.key_path = key_path
@@ -331,7 +327,7 @@ class InlineTableEntry(CommaItem):
     @override
     def render(self) -> str:
         return (
-            f"{self.leading}{render_dotted(self.key_parts, self.key_seps)}"
+            f"{render_dotted(self.key_parts, self.key_seps)}"
             f"{self.pre_eq}={self.post_eq}"
             f"{self.value.render()}{self.render_tail()}"
         )
@@ -343,21 +339,13 @@ _ItemT = TypeVar("_ItemT", bound=CommaItem)
 class CommaValue(Generic[_ItemT]):
     """Shared backbone of `ArrayValue` and `InlineTableValue`.
 
-    Canonical trivia ownership:
-      - ``header_trivia`` owns the gap after the opening bracket and
-        before item 0: bracket pad, leading newline, indent, comments.
-      - ``items[0].leading`` is always empty.
-      - ``items[k].leading`` (k >= 1) owns the physical gap before
-        item k, including structural newline, indent, and above-block.
-      - ``items[k].post_comma_trivia`` carries only the row-attached
-        EOL section: same-line whitespace, comment, and row newline.
-      - ``final_trivia`` owns the gap before the closing bracket
-        and is the only interior owner for an empty value.
-
+    ``opening`` owns the gap before item zero, or all interior trivia when
+    empty. Each item owns one complete outgoing gap, including the final
+    item's closing pad. No gap is split across neighboring records.
     Concrete subclasses bind ``_ItemT`` and set the bracket ClassVars.
     """
 
-    __slots__ = ("_ml_cache", "final_trivia", "header_trivia", "items")
+    __slots__ = ("_ml_cache", "items", "opening")
 
     # Memoised `is_multiline()` result; None means "not computed". Mutations
     # that preserve multi-line shape (append/insert/sort/reorder) leave it
@@ -375,26 +363,23 @@ class CommaValue(Generic[_ItemT]):
     def __init__(
         self,
         items: list[_ItemT] | None = None,
-        header_trivia: str = "",
-        final_trivia: str = "",
+        opening: str = "",
     ) -> None:
         self.items = [] if items is None else items
-        self.header_trivia = header_trivia
-        self.final_trivia = final_trivia
+        self.opening = opening
         self._ml_cache = None
 
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
         new = object.__new__(type(self))
         memo[id(self)] = new
         new._ml_cache = copy.deepcopy(self._ml_cache, memo)  # noqa: SLF001
-        new.final_trivia = copy.deepcopy(self.final_trivia, memo)
-        new.header_trivia = copy.deepcopy(self.header_trivia, memo)
+        new.opening = copy.deepcopy(self.opening, memo)
         new.items = copy.deepcopy(self.items, memo)
         return new
 
     def render(self) -> str:
-        body = "".join([it.render() for it in self.items])
-        return f"{self._open}{self.header_trivia}{body}{self.final_trivia}{self._close}"
+        body = "".join([item.render() for item in self.items])
+        return f"{self._open}{self.opening}{body}{self._close}"
 
     def is_multiline(self) -> bool:
         """Whether this value's own trivia contains a row break.
@@ -416,13 +401,13 @@ class CommaValue(Generic[_ItemT]):
 
     def _own_trivia_contains(self, needle: str) -> bool:
         """Search own-level trivia, excluding nested values and scalar lexemes."""
-        if needle in self.header_trivia or needle in self.final_trivia:
+        if needle in self.opening:
             return True
-        for it in self.items:
+        for item in self.items:
             if (
-                needle in it.leading
-                or needle in it.post_comma_trivia
-                or needle in it.trailing
+                needle in item.following
+                or needle in item.after
+                or needle in item.before
             ):
                 return True
         return False
@@ -474,12 +459,10 @@ class InlineTableValue(CommaValue[InlineTableEntry]):
     def __init__(
         self,
         items: list[InlineTableEntry] | None = None,
-        header_trivia: str = "",
-        final_trivia: str = "",
+        opening: str = "",
     ) -> None:
         self.items = [] if items is None else items
-        self.header_trivia = header_trivia
-        self.final_trivia = final_trivia
+        self.opening = opening
         self._ml_cache = None
         self.reindex()
 
@@ -526,16 +509,9 @@ def value_has_any_comment(v: Value) -> bool:
     """Whether any comment appears anywhere within ``v`` (recursively)."""
     if not isinstance(v, CommaValue):
         return False
-    if "#" in v.header_trivia or "#" in v.final_trivia:
+    if v.has_own_comment():
         return True
-    return any(item_has_any_comment(it) for it in v.items)
-
-
-def item_has_any_comment(item: CommaItem) -> bool:
-    """Whether ``item`` carries a comment in its trivia or nested value."""
-    if "#" in item.leading or "#" in item.trailing or "#" in item.post_comma_trivia:
-        return True
-    return value_has_any_comment(item.value)
+    return any(value_has_any_comment(it.value) for it in v.items)
 
 
 def retarget_value_newlines(v: Value, target: str) -> None:
@@ -547,12 +523,11 @@ def retarget_value_newlines(v: Value, target: str) -> None:
     """
     if not isinstance(v, CommaValue):
         return
-    v.header_trivia = retarget_newlines(v.header_trivia, target)
-    v.final_trivia = retarget_newlines(v.final_trivia, target)
+    v.opening = retarget_newlines(v.opening, target)
     for it in v.items:
-        it.leading = retarget_newlines(it.leading, target)
-        it.trailing = retarget_newlines(it.trailing, target)
-        it.post_comma_trivia = retarget_newlines(it.post_comma_trivia, target)
+        it.following = retarget_newlines(it.following, target)
+        it.before = retarget_newlines(it.before, target)
+        it.after = retarget_newlines(it.after, target)
         retarget_value_newlines(it.value, target)
 
 
@@ -569,6 +544,5 @@ __all__ = [
     "IntegerValue",
     "StringValue",
     "Value",
-    "item_has_any_comment",
     "retarget_value_newlines",
 ]

@@ -130,11 +130,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         eq_pre = " "
         eq_post = " "
     new_entry = InlineTableEntry(
-        "",
         new_value,
-        "",
-        False,  # noqa: FBT003
-        "",
         make_keyparts(key_path),
         (".",) * (len(key_path) - 1),
         key_path,
@@ -161,11 +157,11 @@ def overwrite_entry(t: Container, key: str, new_value: Value) -> None:
     if entry is not None:
         entry.value = new_value
         return
-    keep_pad = None if iv.is_multiline() else (iv.header_trivia, iv.final_trivia)
+    keep_pad = None if iv.is_multiline() else (iv.opening, iv.items[-1].following)
     _remove_entries(iv, _find_prefix_entries(iv, full_path), root._doc_newline)  # noqa: SLF001
     append_entry(t, key, new_value)
     if keep_pad is not None:
-        iv.header_trivia, iv.final_trivia = keep_pad
+        iv.opening, iv.items[-1].following = keep_pad
 
 
 def delete_entry(t: Container, key: str) -> None:

@@ -32,7 +32,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
-from tomlrt._comma_ops import Boundary, set_item_eol_channel
+from tomlrt._comma_ops import Boundary, set_seam_eol_channel
 from tomlrt._errors import TOMLError
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
@@ -48,7 +48,7 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
-    item_has_any_comment,
+    value_has_any_comment,
 )
 
 if TYPE_CHECKING:
@@ -381,9 +381,9 @@ def _canon_multiline_shape(
         options=options,
     )
     if items:
-        head_eol, _ = split_eol_section(v.header_trivia)
+        head_eol, _ = split_eol_section(v.opening)
         head_above = above_blocks[0]
-        v.header_trivia = _compose_pad(
+        v.opening = _compose_pad(
             head_eol=head_eol,
             above=head_above,
             nl=nl,
@@ -391,14 +391,14 @@ def _canon_multiline_shape(
             comment_indent=item_indent,
             options=options,
         )
-        # Unlike ``header_trivia``, ``final_trivia`` has no bracket-EOL first
+        # Unlike the opening pad, the closing pad has no bracket-EOL first
         # line, so split it as an item boundary rather than treating its
         # leading comment as bracket framing.
         final_above = _format_above(
-            v.final_trivia,
+            items[-1].following,
             row_already_closed=last_row_closed,
         )
-        v.final_trivia = _compose_pad(
+        items[-1].following = _compose_pad(
             head_eol="",
             above=final_above,
             nl=nl,
@@ -409,12 +409,10 @@ def _canon_multiline_shape(
         )
     else:
         # An empty multi-line value carries all of its trivia
-        # (bracket-EOL + above-block + closing pad) in final_trivia;
-        # header_trivia is empty by construction.
-        final_eol, _ = split_eol_section(v.final_trivia)
-        _, final_above = split_above_block(v.final_trivia)
-        v.header_trivia = ""
-        v.final_trivia = _compose_pad(
+        # (bracket-EOL + above-block + closing pad) in its opening text.
+        final_eol, _ = split_eol_section(v.opening)
+        _, final_above = split_above_block(v.opening)
+        v.opening = _compose_pad(
             head_eol=final_eol,
             above=final_above,
             nl=nl,
@@ -480,15 +478,13 @@ def _inner_space(v: ArrayValue | InlineTableValue) -> str:
 
 
 def _canon_single_line_inline(v: ArrayValue | InlineTableValue) -> None:
-    v.header_trivia = _inner_space(v)
-    v.final_trivia = _inner_space(v)
-    items = v.items
-    n = len(items)
-    for k, it in enumerate(items):
-        it.leading = "" if k == 0 else " "
-        it.trailing = ""
-        it.post_comma_trivia = ""
-        it.has_comma = k < n - 1
+    n = len(v.items)
+    v.opening = _inner_space(v)
+    for k, seam in enumerate(v.items, 1):
+        seam.following = " " if k < n else _inner_space(v)
+        seam.before = ""
+        seam.after = ""
+        seam.has_comma = k < n
 
 
 def _canon_multi_line_items(
@@ -502,18 +498,18 @@ def _canon_multi_line_items(
     r"""Canonicalise per-item trivia for a multi-line inline value.
 
     Returns whether the last item's EOL channel closed its row, so the
-    caller can avoid adding a duplicate ``final_trivia`` newline.
+    caller can avoid adding a duplicate closing-pad newline.
 
-    Item 0's structural pad lives in ``header_trivia``, so its leading
-    is empty. Later items keep their above-item comment block but get
+    Item 0's structural pad lives in the opening seam.
+    Later items keep their above-item comment block but get
     canonical newline+indent, suppressed when the previous item's
     upstream EOL channel already closed the row.
 
     ``above_blocks`` is already filtered to the blocks worth keeping,
     so an entry is empty unless it carries a comment.
     """
-    previous_row_closed = False
-    last_index = len(items) - 1
+    row_closed = False
+    count = len(items)
     trailing_comma = options.multiline_trailing_comma
     # A row with no above-block always wants the same pad, so ask for
     # both of its answers once rather than rebuilding them per item.
@@ -534,33 +530,17 @@ def _canon_multi_line_items(
         options=options,
         row_already_closed=True,
     )
-    for k, it in enumerate(items):
-        if k == 0:
-            it.leading = ""
-        else:
-            above = above_blocks[k]
-            if above:
-                it.leading = _compose_pad(
-                    head_eol="",
-                    above=above,
-                    nl=nl,
-                    trailing_indent=indent,
-                    comment_indent=indent,
-                    options=options,
-                    row_already_closed=previous_row_closed,
-                )
-            else:
-                it.leading = closed_pad if previous_row_closed else open_pad
-        # Changing comma state may shift comments between ``trailing``
-        # and ``post_comma_trivia``; read both before clearing them.
-        trailing, post_comma = it.trailing, it.post_comma_trivia
-        it.has_comma = k < last_index or trailing_comma
-        previous_row_closed = False
+    for k, seam in enumerate(items, 1):
+        # Changing comma state may shift comments across the comma;
+        # read both channels before clearing them.
+        trailing, post_comma = seam.before, seam.after
+        seam.has_comma = k < count or trailing_comma
+        row_closed = False
         if trailing or post_comma:
-            it.trailing = it.post_comma_trivia = ""
+            seam.before = seam.after = ""
             if "#" in trailing or "#" in post_comma:
                 _write_item_eol(
-                    it,
+                    seam,
                     [
                         comment
                         for trivia in (trailing, post_comma)
@@ -571,8 +551,22 @@ def _canon_multi_line_items(
                     options=options,
                     indent=indent,
                 )
-                previous_row_closed = True
-    return previous_row_closed
+                row_closed = True
+        if k < count:
+            above = above_blocks[k]
+            if above:
+                seam.following = _compose_pad(
+                    head_eol="",
+                    above=above,
+                    nl=nl,
+                    trailing_indent=indent,
+                    comment_indent=indent,
+                    options=options,
+                    row_already_closed=row_closed,
+                )
+            else:
+                seam.following = closed_pad if row_closed else open_pad
+    return row_closed
 
 
 def _write_item_eol(
@@ -592,7 +586,7 @@ def _write_item_eol(
     separator = " " * options.eol_comment_spaces
     if options.normalize_comments:
         comments = [_canon_comment_text(c) for c in comments]
-    set_item_eol_channel(
+    set_seam_eol_channel(
         item,
         "".join(
             f"{separator if k == 0 else indent}{comment}{nl}"
@@ -648,14 +642,19 @@ def set_comma_value_multiline(
             outer_indent=_closing_indent(value, host=host),
         )
     else:
-        for it in value.items:
-            if item_has_any_comment(it):
+        for i, it in enumerate(value.items):
+            if (
+                value_has_any_comment(it.value)
+                or "#" in it.before
+                or "#" in it.after
+                or (i > 0 and "#" in value.items[i - 1].following)
+            ):
                 msg = (
                     "cannot collapse to single line: "
                     "items contain EOL or leading comments"
                 )
                 raise TOMLError(msg)
-        if "#" in value.header_trivia or "#" in value.final_trivia:
+        if "#" in value.opening or (value.items and "#" in value.items[-1].following):
             msg = (
                 "cannot collapse to single line: "
                 "header or trailing trivia contains comments"
@@ -693,15 +692,13 @@ def _scan_rows(
         return prefix, prefix
     if not isinstance(v, (ArrayValue, InlineTableValue)):
         return _advance_row_prefix(prefix, v.render()), None
-    prefix = _advance_row_prefix(prefix, v._open + v.header_trivia)  # noqa: SLF001
+    prefix = _advance_row_prefix(prefix, v._open + v.opening)  # noqa: SLF001
     for it in v.items:
-        prefix, found = _scan_rows(
-            it.value, target, _advance_row_prefix(prefix, it.leading)
-        )
+        prefix, found = _scan_rows(it.value, target, prefix)
         if found is not None:
             return prefix, found
         prefix = _advance_row_prefix(prefix, it.render_tail())
-    return _advance_row_prefix(prefix, v.final_trivia + v._close), None  # noqa: SLF001
+    return _advance_row_prefix(prefix, v._close), None  # noqa: SLF001
 
 
 def _value_row_in_slot(

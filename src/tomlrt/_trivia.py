@@ -159,9 +159,8 @@ def indent_from_trivia(t: str) -> str:
 def restamp_bracket_pad_for_first(ft: str) -> tuple[str, str]:
     r"""Reframe an empty bracket pad ahead of inserting the first item.
 
-    For an empty value ``final_trivia`` owns everything between the
-    brackets; return the ``(header_trivia, final_trivia)`` pair that
-    ownership should become once an item sits between them.
+    An empty value has a single seam; return the opening and closing
+    pads that ownership should become once an item sits between them.
     """
     if not ft:
         return "", ""
@@ -174,24 +173,24 @@ def restamp_bracket_pad_for_first(ft: str) -> tuple[str, str]:
     return head + value_indent, newline
 
 
-def strip_trailing_indent(header_trivia: str, final_trivia: str) -> tuple[str, str]:
+def emptied_bracket_pad(opening: str, closing: str) -> str:
     r"""Normalise an emptied bracket pad to canonical empty form.
 
-    After deleting the last item, ``header_trivia`` may still hold the
+    After deleting the last item, the opening pad may still hold the
     removed item's indent or a bracket-EOL comment. Without comments,
-    drop the trailing whitespace run so ``final_trivia`` owns the
-    canonical empty ``[\n]`` / ``{\n}`` newline. With one, migrate the
-    surviving block into ``final_trivia``, matching how ``[ # tail\n]``
+    drop the trailing whitespace run so the closing pad supplies the
+    canonical empty ``[\n]`` / ``{\n}`` newline. With one, retain the
+    surviving block in the sole seam, matching how ``[ # tail\n]``
     parses when empty so the next append can re-stamp it.
     """
-    if "#" not in header_trivia:
-        return header_trivia.rstrip(" \t\r\n"), final_trivia
-    header_trivia = strip_trailing_ws(header_trivia)
-    # Drop final_trivia's leading newline if the comment's terminator
+    if "#" not in opening:
+        return opening.rstrip(" \t\r\n") + closing
+    opening = strip_trailing_ws(opening)
+    # Drop the closing pad's leading newline if the comment's terminator
     # newline already produces a line break before `]` / `}`.
-    if header_trivia.endswith("\n") and final_trivia.startswith(("\n", "\r\n")):
-        final_trivia = final_trivia[2:] if final_trivia[0] == "\r" else final_trivia[1:]
-    return "", header_trivia + final_trivia
+    if opening.endswith("\n") and closing.startswith(("\n", "\r\n")):
+        closing = closing[2:] if closing[0] == "\r" else closing[1:]
+    return opening + closing
 
 
 def split_item_above(t: str) -> tuple[str, str, str]:
@@ -200,7 +199,7 @@ def split_item_above(t: str) -> tuple[str, str, str]:
     ``head_pad`` is the leading newline, ``tail_pad`` the trailing
     value-indent, ``above`` the comment block between them.
 
-    Unlike :func:`split_above_block` this is for ``items[i].leading``
+    Unlike :func:`split_above_block` this is for ``seams[i].following``
     (i >= 1), where there is no bracket and the leading newline may have
     been hoisted onto item ``i-1``'s EOL section.
     """
@@ -230,6 +229,7 @@ def split_eol_section(t: str) -> tuple[str, str]:
 
 
 __all__ = [
+    "emptied_bracket_pad",
     "indent_from_trivia",
     "leading_break",
     "leading_has_blank_line",
@@ -242,7 +242,6 @@ __all__ = [
     "split_item_above",
     "split_line",
     "split_lines",
-    "strip_trailing_indent",
     "strip_trailing_ws",
     "trailing_ws",
 ]

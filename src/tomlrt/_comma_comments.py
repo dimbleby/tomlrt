@@ -21,12 +21,10 @@ else:  # pragma: no cover -- backport for Python < 3.12
 from tomlrt._comma_ops import (
     Boundary,
     _value_indent,
-    boundary_break_holder,
-    item_eol_channel,
-    item_eol_on_trailing,
     reindent_as_leader,
-    set_boundary_break_holder,
-    set_item_eol_channel,
+    seam_eol_channel,
+    seam_eol_on_before,
+    set_seam_eol_channel,
     shift_breaks,
 )
 from tomlrt._comment_text import (
@@ -58,7 +56,7 @@ _ValueT = TypeVar("_ValueT")
 
 def _item_eol(item: CommaItem) -> str | None:
     """Decoded EOL comment on ``item``, or None."""
-    eol, _rest = split_eol_section(item_eol_channel(item))
+    eol, _rest = split_eol_section(seam_eol_channel(item))
     return _line_to_comment(eol) if eol else None
 
 
@@ -70,17 +68,15 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
     be removed to avoid duplication. Depending on layout, it lives:
 
     * inside ``target`` — handled by the ``rest`` strip below;
-    * on the next item's ``leading`` — has-comma, non-tail item;
-    * in the value's ``final_trivia`` — tail item (with or without
-      a trailing comma).
+    * in the outgoing seam's ``following`` channel.
     """
     item = value.items[idx]
-    existing_eol, rest = split_eol_section(item_eol_channel(item))
+    existing_eol, rest = split_eol_section(seam_eol_channel(item))
     if not existing_eol:
         if rest.startswith(("\n", "\r\n")):
             rest = rest[2:] if rest[0] == "\r" else rest[1:]
         else:
-            nxt = boundary_break_holder(value, idx + 1)
+            nxt = item.following
             if leading_break(nxt):
                 # Replace the following row break, including its leading padding.
                 nxt = shift_breaks(nxt, -1, nl)
@@ -89,20 +85,20 @@ def _set_eol_raw(value: CommaValue[_ItemT], idx: int, raw_text: str, nl: str) ->
                 # Sample before either write changes them.
                 indent = _value_indent(value)
                 nxt = reindent_as_leader(nxt, indent)
-            set_boundary_break_holder(value, idx + 1, nxt)
-    set_item_eol_channel(item, f" {raw_text}{nl}{rest}")
+            item.following = nxt
+    set_seam_eol_channel(item, f" {raw_text}{nl}{rest}")
 
 
 def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> None:
     """Remove the EOL comment on item ``idx``, which is known to have one."""
     item = value.items[idx]
-    eol, rest = split_eol_section(item_eol_channel(item))
+    eol, rest = split_eol_section(seam_eol_channel(item))
     assert eol, "caller checks for an EOL comment first"
-    if item.has_comma and item_eol_on_trailing(item):
+    if item.has_comma and seam_eol_on_before(item):
         # The eol section's terminating newline is this row's break and
         # the comma follows it. Keep the break (drop only whitespace +
         # comment) and leave the next item alone.
-        item.trailing = nl + rest
+        item.before = nl + rest
         return
     # Non-comma-first: the row break lived inside the eol section. Drop the
     # whole section and re-home the break (plus any structural rest) onto the
@@ -110,9 +106,8 @@ def _del_eol(value: CommaValue[_ItemT], idx: int, nl: str) -> None:
     # in the item's own channel renders identically but desyncs from a fresh
     # parse: reorder_owned treats that channel as positional and would orphan
     # a later item's EOL comment onto its own line.
-    set_item_eol_channel(item, "")
-    nxt = boundary_break_holder(value, idx + 1)
-    set_boundary_break_holder(value, idx + 1, nl + rest + nxt)
+    set_seam_eol_channel(item, "")
+    item.following = nl + rest + item.following
 
 
 # ---------------------------------------------------------------------------
