@@ -6086,12 +6086,82 @@ def test_aot_slice_assign_before_value_equal_entry() -> None:
     assert tomlrt.dumps(doc) == src
 
 
+def test_aot_middle_insert_keeps_interleaved_section_and_attached_comments() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        x = 1
+
+        [other]
+        y = 9
+
+        # second entry
+        [[a]]
+        x = 2
+        """)
+    )
+    entries = doc.aot("a")
+    held = entries[1]
+    entries.insert(1, {"x": 3})
+    expected = td("""
+        [[a]]
+        x = 1
+
+        [other]
+        y = 9
+
+        [[a]]
+        x = 3
+
+        # second entry
+        [[a]]
+        x = 2
+        """)
+    assert entries[2] is held
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_aot_batch_insert_keeps_interleaved_section_in_place() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        x = 1
+
+        [other]
+        y = 9
+
+        [[a]]
+        x = 2
+        """)
+    )
+    entries = doc.aot("a")
+    entries[1:1] = [{"x": 3}, {"x": 4}]
+    expected = td("""
+        [[a]]
+        x = 1
+
+        [other]
+        y = 9
+
+        [[a]]
+        x = 3
+
+        [[a]]
+        x = 4
+
+        [[a]]
+        x = 2
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
 def test_aot_tail_insert_leaves_interleaved_section_alone() -> None:
     """An insert at the tail must not renormalise the AoT's layout.
 
-    Entries need not be physically contiguous; reordering gathers them
-    together and pushes intervening sections after them. An insert that
-    needs no reordering must not trigger that.
+    Entries need not be physically contiguous. Insertion preserves
+    their layout rather than gathering the array as reordering does.
     """
     src = td("""
         [[a]]
