@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, TypedDict
 
@@ -1185,31 +1184,23 @@ def test_all_format_options_interact_without_changing_data() -> None:
     assert tomlrt.dumps(doc) == expected
 
 
-def test_legacy_comments_warns_at_caller_for_each_receiver() -> None:
-    doc = tomlrt.loads(
-        td("""
+def test_format_rejects_removed_comments_keyword_without_mutating() -> None:
+    src = td("""
         a = { x=1 }
         b = [1,2 ]
+        [section]
+        c   =3
     """)
-    )
-    receivers = (doc, doc.table("a"), doc.array("b"))
-    for receiver in receivers:
-        with pytest.warns(
-            DeprecationWarning, match="comments= is deprecated"
-        ) as caught:
-            receiver.format(comments=False)
-        assert caught[0].filename == __file__
-
-
-def test_format_rejects_options_with_legacy_comments_without_mutating() -> None:
-    src = "a   =1\n"
     doc = tomlrt.loads(src)
-    with pytest.raises(ValueError, match="cannot specify both"):
-        doc.format(options=tomlrt.FormatOptions(), comments=False)
-    assert tomlrt.dumps(doc) == src
+    receivers = (doc, doc.table("a"), doc.array("b"), doc.table("section"))
+    kwargs: dict[str, None] = {"comments": None}
+    for receiver in receivers:
+        with pytest.raises(TypeError, match="unexpected keyword argument 'comments'"):
+            receiver.format(**kwargs)
+        assert tomlrt.dumps(doc) == src
 
 
-def test_recursive_format_with_options_emits_no_deprecation_warning() -> None:
+def test_recursive_format_with_options() -> None:
     doc = tomlrt.loads(
         td("""
         a.x   =1
@@ -1217,10 +1208,7 @@ def test_recursive_format_with_options_emits_no_deprecation_warning() -> None:
         y=2
     """)
     )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        doc.table("a").format(options=tomlrt.FormatOptions())
-    assert caught == []
+    doc.table("a").format(options=tomlrt.FormatOptions())
     assert tomlrt.dumps(doc) == td("""
         a.x = 1
         [a.b]

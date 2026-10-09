@@ -318,7 +318,6 @@ class Container(_View, dict[str, Any]):
         self,
         *,
         options: FormatOptions | None = None,
-        comments: bool | None = None,
     ) -> None:
         """Canonicalise this container's formatting in place.
 
@@ -335,15 +334,14 @@ class Container(_View, dict[str, Any]):
           the row it starts on.
         * Newlines use the owning document's style.
 
-        ``comments=`` is deprecated; use
-        ``FormatOptions(normalize_comments=...)`` instead. Supplying both
-        arguments raises ``ValueError``.
+        Use ``FormatOptions(normalize_comments=False)`` to leave comment
+        text untouched.
 
         Factory-style containers without layout yet (``Table.section()`` /
         ``Table.inline()``) and inline dotted
         navigators are unsupported and raise `TOMLError`.
         """
-        resolved = _resolve_format_options(options=options, comments=comments)
+        resolved = _resolve_format_options(options=options)
         kind = self._kind
         nl = self._doc_newline
         if kind is _Kind.INLINE_ROOT:

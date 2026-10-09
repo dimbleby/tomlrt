@@ -239,7 +239,6 @@ class Array(_View, list[Any]):
         self,
         *,
         options: FormatOptions | None = None,
-        comments: bool | None = None,
     ) -> None:
         """Canonicalise this array's formatting in place.
 
@@ -248,11 +247,10 @@ class Array(_View, list[Any]):
         stays multi-line) and orphan comment text. A multi-line array's
         closing bracket lines up with the row the array starts on.
 
-        ``comments=`` is deprecated; use
-        ``FormatOptions(normalize_comments=...)`` instead. Supplying both
-        arguments raises ``ValueError``.
+        Use ``FormatOptions(normalize_comments=False)`` to leave comment
+        text untouched.
         """
-        resolved = _resolve_format_options(options=options, comments=comments)
+        resolved = _resolve_format_options(options=options)
         from tomlrt._container import _host_kv_slot  # noqa: PLC0415
 
         format_inline_root(

@@ -29,7 +29,6 @@ in place. Blank-line runs collapse to one; comment text is rewritten to
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING
 
 from tomlrt._comma_ops import Boundary, set_seam_eol_channel
@@ -124,20 +123,8 @@ _SHAPE_ONLY_OPTIONS = FormatOptions(normalize_comments=False)
 def _resolve_format_options(
     *,
     options: FormatOptions | None,
-    comments: bool | None,
 ) -> FormatOptions:
-    """Resolve public formatting arguments and warn for ``comments=``."""
-    if options is not None and comments is not None:
-        msg = "cannot specify both options and deprecated comments"
-        raise ValueError(msg)
-    if comments is not None:
-        warnings.warn(
-            "comments= is deprecated; use "
-            "FormatOptions(normalize_comments=...) instead",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        return FormatOptions(normalize_comments=comments)
+    """Use the default formatting options when none are supplied."""
     if options is None:
         return _DEFAULT_FORMAT_OPTIONS
     return options
