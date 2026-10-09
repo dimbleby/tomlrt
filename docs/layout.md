@@ -190,8 +190,6 @@ the comment is stripped:
 | <code style="white-space: pre">#</code> (empty) | <code style="white-space: pre">#</code> |
 
 Pass `FormatOptions(normalize_comments=False)` to leave comment text untouched.
-The former `comments=` keyword remains available for compatibility but is
-deprecated; do not pass it together with `options=`.
 
 `eol_comment_spaces` applies to key/value, section-header, array-item, and
 inline-table-entry comments. Opening-bracket comment spacing remains authored.

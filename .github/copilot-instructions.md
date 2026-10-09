@@ -318,8 +318,8 @@ them. Read roughly in this order:
   subtree of slots / values and rewrites trivia to a canonical
   shape (KV `key = value` spacing, header inner-pad, sibling-
   spacing rules, single-line vs multi-line inline shape, EOL
-  comment placement), configured by the public `FormatOptions` (the
-  old `comments=` argument is deprecated). `FormatOptions` is an
+  comment placement), configured by the public `FormatOptions`.
+  `FormatOptions` is an
   ordinary mutable slotted settings object. Numeric validation belongs
   in its constructor, not on each use; dataclass compatibility and
   freezing are not part of its interface. Shape-preserving for

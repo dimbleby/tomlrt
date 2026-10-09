@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Remove the deprecated `format(comments=...)` keyword. Use
+  `format(options=FormatOptions(normalize_comments=...))` instead.
+
 ### Fixed
 
 - Speed up `dumps()` for plain dictionaries, especially wide ones.
