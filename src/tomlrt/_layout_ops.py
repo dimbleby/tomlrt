@@ -1152,16 +1152,23 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     """Prefer a preceding AoT sibling's body, then the nearest following one.
 
     Used to inherit indent when ``c`` is an AoT entry root with no body
-    KV of its own yet.
+    KV of its own yet. The entry is already published in its AoT.
     """
     aot = c._host  # noqa: SLF001
     if not isinstance(aot, _array.AoT):
         return None
-    position = next(index for index in range(len(aot) - 1, -1, -1) if aot[index] is c)
-    for index in itertools.chain(
-        range(position - 1, -1, -1), range(position + 1, len(aot))
-    ):
-        sib = _last_body_kv(aot[index])
+    siblings = reversed(aot)
+    while next(siblings) is not c:
+        pass
+    for entry_table in siblings:
+        sib = _last_body_kv(entry_table)
+        if sib is not None:
+            return sib
+    following = iter(aot)
+    while next(following) is not c:
+        pass
+    for entry_table in following:
+        sib = _last_body_kv(entry_table)
         if sib is not None:
             return sib
     return None
