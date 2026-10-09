@@ -2234,21 +2234,13 @@ def adopt_private_entry(
         header.entry = owner
         owner.bind_header(header)
 
-    _append_entry_run(
-        aot, header, slots, preserve_source_separator=preserve_source_separator
-    )
-    # Rebasing has placed every KV at this entry's path or below it.
-    body, blocks = split_subtree_slots(
-        (slot for slot in slots if slot is not header), len(path) + 1
-    )
-    ordered = [header, *body, *blocks]
-    del body, blocks  # Release scratch lists before refiling the ordered run.
+    ordered = [header, *_aot_entry_body(slots, header, path)]
     if ordered == slots:
         ordered = slots
-    else:
-        predecessor, successor = slots[0]._prev, slots[-1]._next  # noqa: SLF001
-        with _refile_region_refs(doc, predecessor, successor):
-            _link_run_between(predecessor, ordered, successor, doc)
+    with contextlib.nullcontext() if ordered is slots else _refile_slot_refs(slots):
+        _append_entry_run(
+            aot, header, ordered, preserve_source_separator=preserve_source_separator
+        )
     if original_header is None:
         file_own_header(value, header)
     _extend_header_bindings_to_root(parent, ordered)
@@ -3120,11 +3112,19 @@ def clone_aot_entry_layout(
         dst_newline=nl,
         head=head,
     )
-    # Rebasing has placed every KV at this entry's path or below it.
+    return cloned_head, _aot_entry_body(cloned, cloned_head, path)
+
+
+def _aot_entry_body(
+    slots: Iterable[Slot],
+    header: StructuralHeaderSlot | None,
+    path: tuple[str, ...],
+) -> list[Slot]:
+    """Put an entry's own body before its forward-declared descendants."""
     body, blocks = split_subtree_slots(
-        (slot for slot in cloned if slot is not cloned_head), len(path) + 1
+        (slot for slot in slots if slot is not header), len(path) + 1
     )
-    return cloned_head, body + blocks
+    return body + blocks
 
 
 def _prepare_entry(

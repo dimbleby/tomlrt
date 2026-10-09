@@ -1505,6 +1505,36 @@ def test_implicit_copy_and_move_hoist_body_before_forward_declared_children(
     assert _reparses(expected) == doc.to_dict()
 
 
+def test_aot_factory_terminates_body_hoisted_before_forward_child() -> None:
+    text = td("""
+        [source.child]
+        y=2 # child
+        [source]
+        x=1 # body
+        """).rstrip("\n")
+    source = tomlrt.loads(text)
+    value = source.table("source")
+    factory = AoT([value, {"fresh": 5}])
+    held = factory[0]
+    doc = tomlrt.loads("prefix = 0\n")
+    doc["items"] = factory
+    expected = td("""
+        prefix = 0
+
+        [[items]]
+        x=1 # body
+        [items.child]
+        y=2 # child
+
+        [[items]]
+        fresh = 5
+        """)
+    assert doc.aot("items")[0] is held
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    assert tomlrt.dumps(source) == text
+
+
 def test_per_key_clone_of_dotted_preserves_dotted_form() -> None:
     src = tomlrt.loads(
         td("""
