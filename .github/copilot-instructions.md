@@ -250,6 +250,9 @@ them. Read roughly in this order:
   Copied and adopted AoT entries share body-before-descendant ordering,
   prepared before their destination splice. Retained adopted projections
   are refiled across that splice when the source order needs changing.
+  Positional AoT insertion and resizing slices share entry publication at
+  the destination index, without a whole-array reorder. Foreign sections
+  and surviving entry spacing stay put.
   Inline replacements prepare their value before entering the replacement
   context, so conversion precedes deletion.
   Removal separates physical slot discovery (`owned_slots` plus binding

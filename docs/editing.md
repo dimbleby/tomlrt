@@ -131,20 +131,10 @@ entry["version"] = "1.0"
 An array-of-tables with no entries has no `[[key]]` syntax, so it serialises as
 `key = []` — which re-parses as an empty inline `Array`, not an `AoT`.
 
-Integer assignment and any slice assignment replacing the same number of entries
-operate in place: destination headers (including comments), held entry views and
-interleaved sections stay put. Only a slice that changes the array's length
-gathers the entries into their new order.
-Parsed sections and array-of-tables entries both contribute their original body
-formatting; an in-place replacement keeps the destination's header.
-
-Overlapping sources are captured before changing bodies or array membership, so
-`pkgs[::-1] = pkgs` exchanges the bodies, and
-`pkgs[0] = {"nested": pkgs[0]}` copies the original body into a nested section.
-Likewise, `pkgs[:0] = [{"nested": pkgs}]` copies the array before inserting into it.
-This also works through nested mappings, lists and factory inputs. Fresh typed
-values still attach at their first installed occurrence; adopting an orphan
-child still removes it from its old parent.
+Use the usual list operations to insert, replace, delete or reorder entries.
+Replacing a single entry in a document keeps its `Table` view and header comments.
+Inserting entries leaves unrelated sections in place; `sort()` and `reverse()`
+may move them. Parsed tables retain their body formatting when used as entries.
 
 ## Reshaping the layout
 

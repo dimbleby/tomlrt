@@ -739,15 +739,8 @@ class AoT(_View, list["Table"]):
         if self._layout_root is None:
             list.insert(self, index, _make_unattached_entry(entry))
             return
-        # Normalise against the pre-append length to match list.insert.
         idx = _norm_insert_index(index, len(self))
-        needs_reorder = idx != len(self)
-        new_entry = _layout_ops.add_aot_entry(self, entry)
-        if needs_reorder:
-            new_order: list[Table] = list(self)
-            new_order.pop()
-            new_order.insert(idx, new_entry)
-            _layout_ops.renormalise_aot_order(self, new_order)
+        _layout_ops.add_aot_entry(self, entry, index=idx)
 
     @override
     def remove(self, value: Mapping[str, TomlInput]) -> None:

@@ -1149,7 +1149,7 @@ def _last_body_kv(c: Container) -> KVSlot | None:
 
 
 def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
-    """Return the last body KV of the most recent prior AoT sibling.
+    """Prefer a preceding AoT sibling's body, then the nearest following one.
 
     Used to inherit indent when ``c`` is an AoT entry root with no body
     KV of its own yet.
@@ -1157,14 +1157,11 @@ def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
     aot = c._host  # noqa: SLF001
     if not isinstance(aot, _array.AoT):
         return None
-    found_self = False
-    for entry_table in reversed(aot):
-        if entry_table is c:
-            found_self = True
-            continue
-        if not found_self:
-            continue
-        sib = _last_body_kv(entry_table)
+    position = next(index for index in range(len(aot) - 1, -1, -1) if aot[index] is c)
+    for index in itertools.chain(
+        range(position - 1, -1, -1), range(position + 1, len(aot))
+    ):
+        sib = _last_body_kv(aot[index])
         if sib is not None:
             return sib
     return None
@@ -1207,8 +1204,7 @@ def _kv_separator_leading(c: Container, doc: Document) -> str:
     the peer whose indent and blank-gap it continues — the same
     question `install_dotted_kv_slot` asks, and neither cares whether
     the peer is dotted. For an AoT entry with no body KV of its own
-    yet, falls back to inheriting indent (only) from the previous
-    sibling entry's last one.
+    yet, falls back to inheriting indent (only) from a sibling entry.
     """
     last = _last_body_kv(c)
     if last is not None:
@@ -1536,13 +1532,20 @@ def _splice_block_after(slots: list[Slot], anchor: Slot | None, doc: Document) -
     if not slots:
         return
     tail = doc._tail if anchor is None else anchor  # noqa: SLF001
-    if tail is not None:
-        ensure_terminator(tail, doc._newline)  # noqa: SLF001
     nxt = tail._next if tail is not None else doc._head  # noqa: SLF001
-    _link_run_between(tail, slots, nxt, doc)
+    _splice_block_between(slots, tail, nxt, doc)
+
+
+def _splice_block_between(
+    slots: list[Slot], prev: Slot | None, nxt: Slot | None, doc: Document
+) -> None:
+    """Install a completed block at an explicit seam."""
+    if prev is not None:
+        ensure_terminator(prev, doc._newline)  # noqa: SLF001
+    _link_run_between(prev, slots, nxt, doc)
     for slot in slots:
         _terminate_unless_tail(slot, doc)
-    if tail is None:
+    if prev is None and nxt is None:
         _promote_trailing_to_preamble(doc)
 
 
@@ -1742,8 +1745,9 @@ def add_aot_entry(
     *,
     rehome: Table | None = None,
     preserve_source_separator: bool = False,
+    index: int | None = None,
 ) -> Table:
-    """Capture and append an entry, preserving a structural source's layout.
+    """Capture and insert an entry, preserving a structural source's layout.
 
     ``rehome`` selects an unattached factory entry as the destination
     view and supplies its body. Bulk cloning can retain source separators
@@ -1755,7 +1759,10 @@ def add_aot_entry(
     table = _container.Table() if rehome is None else rehome
     prepared = _prepare_entry(aot, table, {} if body is None else body, (aot,), {})
     return _install_entry(
-        aot, prepared, preserve_source_separator=preserve_source_separator
+        aot,
+        prepared,
+        preserve_source_separator=preserve_source_separator,
+        index=index,
     )
 
 
@@ -2238,7 +2245,7 @@ def adopt_private_entry(
     if ordered == slots:
         ordered = slots
     with contextlib.nullcontext() if ordered is slots else _refile_slot_refs(slots):
-        _append_entry_run(
+        _insert_entry_run(
             aot, header, ordered, preserve_source_separator=preserve_source_separator
         )
     if original_header is None:
@@ -3174,31 +3181,49 @@ def _prepare_entry(
     return _PreparedEntry(table, header, payload)
 
 
-def _append_entry_run(
+def _insert_entry_run(
     aot: AoT,
     header: StructuralHeaderSlot,
     run: list[Slot],
     *,
     preserve_source_separator: bool,
+    index: int | None = None,
 ) -> None:
-    """Splice a new entry's slots at the AoT's tail, separated to fit there.
+    """Splice a new entry's slots at its logical position.
 
-    A bulk clone may keep the separators its source had, but the first
+    Appending a bulk clone may keep its source separators, but the first
     entry always takes the destination's own section spacing: it is the
-    one being positioned, not spaced from a predecessor.
+    one being positioned, not spaced from a predecessor. Positional
+    insertion uses the destination seam regardless of source spacing.
     """
     doc = aot._attached_doc  # noqa: SLF001
-    ordinal = len(aot)
-    _consume_first_entry_placeholder(aot, ordinal)
-    if ordinal == 0:
-        _retarget_separator(header, _build_section_leading(doc))
-    elif not preserve_source_separator:
-        _retarget_separator(header, _aot_separator(aot, doc))
-    _splice_block_after(run, _aot_append_anchor(aot), doc)
+    length = len(aot)
+    ordinal = length if index is None else index
+    _consume_first_entry_placeholder(aot, length)
+    if ordinal < length:
+        target: Slot | None = aot[ordinal]._header  # noqa: SLF001
+        assert target is not None
+        prefix, _attached = _split_leading_trivia(target)
+        _retarget_separator(header, prefix)
+        if ordinal == 0:
+            _retarget_separator(target, _aot_separator(aot, doc))
+        predecessor = target._prev  # noqa: SLF001
+    else:
+        if ordinal == 0:
+            _retarget_separator(header, _build_section_leading(doc))
+        elif not preserve_source_separator:
+            _retarget_separator(header, _aot_separator(aot, doc))
+        predecessor = _aot_append_anchor(aot) or doc._tail  # noqa: SLF001
+        target = predecessor._next if predecessor is not None else doc._head  # noqa: SLF001
+    _splice_block_between(run, predecessor, target, doc)
 
 
 def _install_entry(
-    aot: AoT, prepared: _PreparedEntry, *, preserve_source_separator: bool = False
+    aot: AoT,
+    prepared: _PreparedEntry,
+    *,
+    preserve_source_separator: bool = False,
+    index: int | None = None,
 ) -> Table:
     """Publish a fresh header or retain an existing one, then consume its body."""
     table, header = prepared.table, prepared.header
@@ -3213,12 +3238,16 @@ def _install_entry(
         table._wire(  # noqa: SLF001
             layout_root=doc, parent=aot, path=path, owner=owner
         )
-        _append_entry_run(
-            aot, header, [header], preserve_source_separator=preserve_source_separator
+        _insert_entry_run(
+            aot,
+            header,
+            [header],
+            preserve_source_separator=preserve_source_separator,
+            index=index,
         )
         file_own_header(table, header)
         _file_header_binding_chain(parent, header)
-        list.append(aot, table)
+        list.insert(aot, len(aot) if index is None else index, table)
         _maybe_demote_synthetic_empty_header(parent)
     else:
         table.clear()
@@ -3263,13 +3292,8 @@ def assign_aot_entries(
     ]
     if resizing and indices:
         remove_aot_entries(aot, indices)
-    for entry in prepared:
-        _install_entry(aot, entry)
-    # New entries were appended; moving them is unnecessary for a tail splice.
-    if resizing and prepared and start != len(aot) - len(prepared):
-        order = list(aot)[: -len(prepared)]
-        order[start:start] = [entry.table for entry in prepared]
-        renormalise_aot_order(aot, order)
+    for offset, entry in enumerate(prepared):
+        _install_entry(aot, entry, index=start + offset if resizing else None)
 
 
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
