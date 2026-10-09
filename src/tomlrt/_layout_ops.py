@@ -89,10 +89,12 @@ class PromotedHeader:
 class Replacement:
     """Placement information the caller cannot derive from the new binding."""
 
-    __slots__ = ("dotted", "promotion")
+    __slots__ = ("anchor", "dotted", "in_body", "promotion")
 
-    def __init__(self, *, dotted: bool) -> None:
+    def __init__(self, anchor: Slot | None, *, dotted: bool, in_body: bool) -> None:
+        self.anchor = anchor
         self.dotted = dotted
+        self.in_body = in_body
         self.promotion: PromotedHeader | None = None
 
 
@@ -132,13 +134,18 @@ def reposition_install(parent: Container, key: str) -> Generator[Replacement]:
     Value preparation belongs to the caller; a failed installation is not
     rolled back.
 
-    Reinstalling at the tail is what keeps `_insert_new` and the
-    attach paths under it anchor-free: a ``[a]`` header claims each
+    Structural installs use their normal append anchors, keeping `_insert_new`
+    and the attach paths under it anchor-free: a ``[a]`` header claims each
     following line until the next, so a part-built block mid-stream
     owns the wrong lines while one at the tail can swallow nothing.
     Only its position is then wrong. The move is best-effort — an
     anchor the reinstall invalidated, or a destination that would
     change what the block owns, leaves it at the tail.
+
+    Direct KVs can use the captured body anchor on their first splice.
+    They introduce no header, so deletion cannot change the anchor's scope
+    and installation cannot demote it. The remaining checks and trivia
+    restoration are shared with structural installs.
 
     A surviving neighbour keeps its pre-op leading iff, after the move,
     it sits immediately after the slot that legitimately precedes it:
@@ -171,7 +178,7 @@ def reposition_install(parent: Container, key: str) -> Generator[Replacement]:
     old_is_kv = isinstance(old_primary, KVSlot)
     delete_key(parent, key)
     doc = parent._attached_doc  # noqa: SLF001
-    replacement = Replacement(dotted=old_is_kv)
+    replacement = Replacement(saved_anchor_prev, dotted=old_is_kv, in_body=in_body)
     yield replacement
     # Header demotion during reinstall can invalidate the saved anchor.
     if saved_anchor_prev is not None and not _slot_is_linked(saved_anchor_prev, doc):
@@ -661,6 +668,7 @@ def append_direct_kv(
     value: Value,
     *,
     reinstall_as_dotted: bool = False,
+    replacement: Replacement | None = None,
     key_parts: tuple[str, ...] | None = None,
     key_seps: tuple[str, ...] | None = None,
 ) -> PromotedHeader | None:
@@ -693,7 +701,11 @@ def append_direct_kv(
         return None
     doc = c._attached_doc  # noqa: SLF001
     # Capture the anchor *before* mutating any cache.
-    body_tail = c._body_tail  # noqa: SLF001
+    body_tail = (
+        replacement.anchor
+        if replacement is not None and replacement.in_body
+        else c._body_tail  # noqa: SLF001
+    )
 
     new_slot = _build_kv_slot(
         c,

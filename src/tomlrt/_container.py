@@ -734,7 +734,11 @@ class Container(_View, dict[str, Any]):
         if not _is_inline_input(old):
             with _layout_ops.reposition_install(self, key) as replacement:
                 replacement.promotion = _layout_ops.append_direct_kv(
-                    self, key, cst, reinstall_as_dotted=replacement.dotted
+                    self,
+                    key,
+                    cst,
+                    reinstall_as_dotted=replacement.dotted,
+                    replacement=replacement,
                 )
                 dict.__setitem__(self, key, decoded)
             return
