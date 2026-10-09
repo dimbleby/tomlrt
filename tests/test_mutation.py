@@ -11964,6 +11964,86 @@ def test_adopt_private_implicit_transfers_aot_entry_ownership() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_adopt_private_entry_section_keeps_nested_aot_body_anchors() -> None:
+    source = tomlrt.loads(
+        td("""
+        [[source]]
+        z = 9
+        a = 1
+
+        [[source.nested]]
+        y = 2
+        x = 3
+        """)
+    )
+    orphan = source.aot("source").pop()
+    doc = tomlrt.loads(
+        td("""
+        [[target]]
+        existing = 7
+        """)
+    )
+    target = doc.aot("target")[0]
+    target["section"] = orphan
+    section = target.table("section")
+    assert section is orphan
+    section.sort()
+    nested = section.aot("nested")[0]
+    nested.sort()
+    nested["n"] = 4
+    del section["z"]
+    section["b"] = 5
+    target["last"] = 8
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[target]]
+        existing = 7
+        last = 8
+
+        [target.section]
+        a = 1
+        b = 5
+
+        [[target.section.nested]]
+        x = 3
+        y = 2
+        n = 4
+        """)
+    assert _reparses(out) == doc.to_dict()
+    assert tomlrt.dumps(source) == "source = []\n"
+
+
+def test_adopt_headerless_orphan_entry_preserves_body_anchor() -> None:
+    source = tomlrt.loads(
+        td("""
+        a.z = 9
+        a.b = 1
+        """)
+    )
+    orphan = source.pop("a")
+    doc = tomlrt.loads(
+        td("""
+        [[target]]
+        existing = 7
+        """)
+    )
+    doc["adopted"] = tomlrt.AoT([orphan])
+    doc.aot("adopted")[0]["last"] = 3
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[target]]
+        existing = 7
+
+        [[adopted]]
+        z = 9
+        b = 1
+        last = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_materialise_empty_aot_anchors_within_owning_entry() -> None:
     """When popping an AoT's last entry leaves its container empty,
     ``_materialise_empty_aot`` synthesises a ``key = []`` placeholder

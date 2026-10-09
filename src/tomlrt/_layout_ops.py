@@ -12,10 +12,9 @@ Design notes:
   direct KV insert's ref goes immediately after the anchor's ref (or
   at the front), not blindly at the tail where child-section refs may
   already sit.
-* ``c._body_tail`` is incremental: O(1) on insert, and on deleting the
-  current tail a bisect plus a walk back over ``c``'s own body. It also
-  answers "what is ``c``'s last body KV?" (`_last_body_kv`), so no
-  insert has to search for one.
+* ``c._body_tail`` caches the last same-owner KV, or its own header
+  when empty. Filing, unfiling and refiling maintain it alongside
+  ``_refs``; callers need no separate invalidation protocol.
 * A non-dotted direct KV files exactly one ref on its host container;
   ancestors are unaffected.
 """
@@ -318,11 +317,8 @@ def record_slot(c: Container, slot: Slot) -> None:
     disagreeing key. ``slot`` must already be linked into the
     doc-stream, since its order key is what places the ref.
 
-    Filing is also where ``c._body_tail`` advances. The tail is the
-    latest body slot among ``c``'s refs, so a ref filed past it is
-    exactly what moves it; deciding that here is what stops the two
-    from disagreeing. A KV can be filed through a differently owned
-    container; only matching owners advance its body tail.
+    A KV can be filed through a differently owned container; only
+    matching owners advance its body tail.
     """
     slot._containers.append(c)  # noqa: SLF001
     order = slot._order  # noqa: SLF001
@@ -368,7 +364,7 @@ def _refile_region_refs(
 @contextlib.contextmanager
 def _refile_slot_refs(slots: Iterable[Slot]) -> Generator[None]:
     """Keep retained projections ordered while a slot run is moved or split."""
-    runs: dict[int, tuple[list[Slot], list[Slot]]] = {}
+    runs: dict[int, tuple[Container, list[Slot], list[Slot]]] = {}
     for slot in slots:
         for c in slot._containers:  # noqa: SLF001
             key = slot_local_key(slot, c)
@@ -377,16 +373,30 @@ def _refile_slot_refs(slots: Iterable[Slot]) -> Generator[None]:
                 # A projection holding this ref alone has nothing to
                 # reorder and nowhere else to sit.
                 if len(refs) > 1:
-                    runs.setdefault(id(refs), (refs, []))[1].append(slot)
+                    runs.setdefault(id(refs), (c, refs, []))[2].append(slot)
     placed = [
-        (refs, run, _ordered_index(refs, _slot_order(run[0])))
-        for refs, run in runs.values()
+        (c, refs, run, _ordered_index(refs, _slot_order(run[0])))
+        for c, refs, run in runs.values()
     ]
-    for refs, run, start in placed:
+    for _, refs, run, start in placed:
         assert refs[start : start + len(run)] == run, "region refs must be one run"
     yield
-    for refs, run, start in placed:
+    for c, refs, run, start in placed:
         _replace_ordered_run(refs, run, start)
+        if (
+            refs is c._refs  # noqa: SLF001
+            and isinstance(c._body_tail, KVSlot)  # noqa: SLF001
+            and c._body_tail is not refs[-1]  # noqa: SLF001
+            and (
+                len(run) == len(refs)
+                or any(
+                    isinstance(slot, KVSlot)
+                    and slot.owner_aot_entry is c._owner_aot_entry  # noqa: SLF001
+                    for slot in run
+                )
+            )
+        ):
+            c._body_tail = _recompute_body_tail(c)  # noqa: SLF001
 
 
 def _replace_ordered_run(refs: list[Slot], run: list[Slot], start: int) -> None:
@@ -409,17 +419,11 @@ def _replace_ordered_run(refs: list[Slot], run: list[Slot], start: int) -> None:
 
 
 def file_own_header(c: Container, header: StructuralHeaderSlot) -> None:
-    """File ``header`` as ``c``'s own physical presence.
-
-    A header cannot advance the body tail through `record_slot`, which
-    only advances for a body KV, so this is one of the paths that
-    establishes ``_header`` and ``_body_tail`` together. Here ``c``
-    has no body yet, so its own header is the tail, which is exactly
-    what `_recompute_body_tail` derives for it.
-    """
+    """File ``header`` as ``c``'s own physical presence and empty-body anchor."""
     record_slot(c, header)
     c._header = header  # noqa: SLF001
-    c._body_tail = header  # noqa: SLF001
+    if not isinstance(c._body_tail, KVSlot):  # noqa: SLF001
+        c._body_tail = header  # noqa: SLF001
 
 
 def _file_header_binding_chain(
@@ -721,41 +725,6 @@ def append_synth_kv(
     return layout
 
 
-def _invalidate_body_tail_chain(
-    start: Container | None,
-    owned_slots: set[Slot] | None,
-    *,
-    min_depth: int = 0,
-    departing: bool = False,
-) -> None:
-    """Recompute invalidated ``_body_tail`` values on the path to root.
-
-    For each container ``cc`` along the chain whose existing
-    ``_body_tail`` slot is in ``owned_slots``, recompute the tail.
-    ``owned_slots`` of ``None`` means "every cached tail is suspect" —
-    used after a block move, which can hand a container a later body
-    slot than the one it was caching.
-
-    ``departing`` says the named slots are leaving, so a tail among
-    them can only be replaced by an earlier body slot and each
-    recompute can bound its search there. A reorder keeps its slots and
-    can promote a later one, so it leaves this alone.
-
-    Stops once ``len(cc._path) < min_depth``: an ancestor at depth
-    ``d`` cannot have its body_tail point at a slot whose minimum
-    bottom-depth exceeds ``d``, so common-case leaf-KV deletes never
-    walk past ``c`` itself.
-    """
-    cur = start
-    while cur is not None and len(cur._path) >= min_depth:  # noqa: SLF001
-        tail = cur._body_tail  # noqa: SLF001
-        if tail is not None and (owned_slots is None or tail in owned_slots):
-            cur._body_tail = _recompute_body_tail(  # noqa: SLF001
-                cur, below=tail if departing else None
-            )
-        cur = cur._parent  # noqa: SLF001
-
-
 def _nearest_header_host(c: Container) -> Container:
     """The closest ancestor (or ``c``) owning a header, else the subtree root.
 
@@ -920,7 +889,6 @@ def _materialise_empty_inline_table(
         unfile_slot(c, slot)
     c._inline = True  # noqa: SLF001
     c._value = val  # noqa: SLF001
-    c._body_tail = None  # noqa: SLF001
 
 
 def _root_orphan_subtree(
@@ -1064,22 +1032,13 @@ def _detach_departing_slots(
     ``views`` includes every retained descendant, including inline values.
     """
     doc = start._attached_doc  # noqa: SLF001
-    owned = set(slots)
-    assert len(owned) == len(slots), "departing slots must be distinct"
+    assert len(set(slots)) == len(slots), "departing slots must be distinct"
     skip_ids = frozenset(
         id(view)
         for view in views
         if not view._inline and isinstance(view, _container.Container)  # noqa: SLF001
     )
     _scrub_owned_slots_via_backptrs(slots, skip_container_ids=skip_ids)
-    min_depth = len(start._path)  # noqa: SLF001
-    for slot in slots:
-        if not min_depth:
-            break
-        depth = len(slot.host_path) if isinstance(slot, KVSlot) else 0
-        if depth < min_depth:
-            min_depth = depth
-    _invalidate_body_tail_chain(start, owned, min_depth=min_depth, departing=True)
     # Unlinking the document head strips leading blanks from its successor.
     # Work backwards so only a surviving slot can be promoted and changed.
     for slot in reversed(slots):
@@ -1170,9 +1129,8 @@ def reset_displaced_views(*vals: object) -> None:
 def _last_body_kv(c: Container) -> KVSlot | None:
     """``c``'s latest body-region KV, or ``None`` if its body holds none.
 
-    A cache read, not a search: ``_body_tail`` is maintained as exactly
-    this slot, and holds ``c``'s own header instead only when the body
-    has no KV at all — which is what `_recompute_body_tail` derives.
+    A cache read, not a search: ref maintenance keeps ``_body_tail`` at
+    this slot, or ``c``'s own header when the body has no KV.
     """
     tail = c._body_tail  # noqa: SLF001
     return tail if isinstance(tail, KVSlot) else None
@@ -1428,31 +1386,20 @@ def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
 
 
 def _recompute_body_tail(c: Container, *, below: Slot | None = None) -> Slot | None:
-    """Last body-region ref's slot in ``c._refs`` (mirrors invariants rule).
+    """Last same-owner body KV, or the container's own header when empty.
 
-    The one query the ``_body_tail`` cache cannot answer, and so the
-    only reverse walk of ``c._refs``: it runs exactly when the cache
-    has been invalidated by a delete or a move.
-
-    ``below`` is the departing tail. It held the latest body slot, so
-    nothing past it in ``_refs`` is one and the walk starts from its
-    place instead of the end — bisected, because the refs past it are
-    child headers, of which there can be any number.
-
-    No host-path filter is needed: a KV's refs propagate from its host
-    container *down* its dotted path, so a KV under ``[a.b]`` is filed
-    on ``a.b``, never on ``a``. A host container therefore only ever
-    sees KVs hosted at its own path, and an implicit dotted container —
-    the one shape that does see foreign-host KVs — wants them all.
+    Unfiling the cached tail bounds the search below its departing order
+    key. Ref removal and region refiling are the only callers: mutations
+    do not need to discover or repair affected ancestors separately.
     """
     refs = c._refs  # noqa: SLF001
     i = len(refs) if below is None else _ordered_index(refs, below._order)  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
     while i:
         i -= 1
-        s = refs[i]
-        if isinstance(s, KVSlot) and s.owner_aot_entry is owner:
-            return s
+        slot = refs[i]
+        if isinstance(slot, KVSlot) and slot.owner_aot_entry is owner:
+            return slot
     return c._header  # noqa: SLF001
 
 
@@ -1626,7 +1573,6 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     unlink_slot(header, doc, strip_new_head_leading=True)
     _strip_leading_blank_lines(successor)
     successor.leading = header.leading + successor.leading
-    parent._body_tail = None  # noqa: SLF001
     # Bulk-scrub via the header's back-pointer list: drops ``header``
     # from ``parent._refs`` (clearing ``parent._header`` as a side
     # effect), drops binding refs from every ancestor, and empties
@@ -1760,12 +1706,8 @@ def _consume_first_entry_placeholder(aot: AoT, ordinal: int) -> None:
     slot = _empty_aot_placeholder_slot(aot)
     if slot is None:
         return
-    parent = aot._host  # noqa: SLF001
-    assert parent is not None
     doc = aot._attached_doc  # noqa: SLF001
     _scrub_owned_slots_via_backptrs([slot])
-    min_depth = len(slot.host_path)
-    _invalidate_body_tail_chain(parent, {slot}, min_depth=min_depth, departing=True)
     unlink_slot(slot, doc)
 
 
@@ -2141,9 +2083,6 @@ def _unfile_stale_same_orphan_ancestors(
     out must scrub those refs up to, but not beyond, the orphan root.
     Slot back-pointers avoid scanning every ancestor's complete cache.
 
-    Scrubbing can strand an ancestor's cached ``_body_tail`` on a slot
-    that is no longer filed there, so the chain is revalidated after —
-    the same repair the delete path makes for the same reason.
     """
     host = value._host  # noqa: SLF001
     if host is None:
@@ -2172,13 +2111,10 @@ def _unfile_stale_same_orphan_ancestors(
     while node is not None and node._layout_root is value._layout_root:  # noqa: SLF001
         stale_container_ids.add(id(node))
         node = node._parent  # noqa: SLF001
-    unfiled: set[Slot] = set()
     for slot in target_slots:
         for c in list(slot._containers):  # noqa: SLF001
             if id(c) in stale_container_ids:
                 unfile_slot(c, slot)
-                unfiled.add(slot)
-    _invalidate_body_tail_chain(old_parent, unfiled, departing=True)
 
 
 def adopt_private_section(
@@ -2303,7 +2239,6 @@ def adopt_private_entry(
             _link_run_between(predecessor, ordered, successor, doc)
     if original_header is None:
         file_own_header(value, header)
-        value._body_tail = _recompute_body_tail(value)  # noqa: SLF001
     _extend_header_bindings_to_root(parent, ordered)
     list.append(aot, value)
     _maybe_demote_synthetic_empty_header(parent)
@@ -2847,6 +2782,8 @@ def unfile_slot(c: Container, slot: Slot) -> None:
         _unfile_ordered(bucket, slot)
         if not bucket:
             del c._index[local_key]  # noqa: SLF001
+    if c._body_tail is slot:  # noqa: SLF001
+        c._body_tail = _recompute_body_tail(c, below=slot)  # noqa: SLF001
     _unfile_container(slot, c)
 
 
@@ -2893,8 +2830,11 @@ def _scrub_owned_slots_via_backptrs(
         _unfile_ordered_many(bucket, removed)
         if not bucket:
             del c._index[key]  # noqa: SLF001
+        tail = c._body_tail  # noqa: SLF001
         for slot in removed:
             _unfile_container(slot, c)
+            if slot is tail:
+                c._body_tail = _recompute_body_tail(c, below=slot)  # noqa: SLF001
 
 
 def _norm_aot_index(aot: AoT, index: int) -> int:
@@ -3532,8 +3472,7 @@ def _move_slots_to_anchor(
     Splices the contiguous block immediately after ``saved_anchor_prev``
     (or to doc head), restores ``saved_leading`` on the new head via
     :func:`restore_captured_leading`, re-files the block's refs at their
-    new doc position and repairs the cached body tails the move can have
-    invalidated.
+    new doc position.
 
     :func:`_installed_span` supplies nonempty slots in contiguous
     doc-stream order; its caller leaves scattered installations in place.
@@ -3549,7 +3488,6 @@ def _move_slots_to_anchor(
             for slot in slots:
                 unlink_slot(slot, doc, strip_new_head_leading=False)
             _relink_run_after(saved_anchor_prev, slots, doc)
-        _invalidate_body_tail_chain(parent, None)
 
     restore_captured_leading(head, saved_leading, from_kv=from_kv)
     _terminate_unless_tail(tail, doc)
@@ -3713,9 +3651,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         prefix = next(prefix_iterators[(unit.structural, unit.mixed)])
         placements.append((unit.slots, prefix + unit.remainder))
 
-    original_anchor = earliest_owned._prev  # noqa: SLF001
-    anchor_prev = original_anchor
-    min_depth = 0
+    anchor_prev = earliest_owned._prev  # noqa: SLF001
     first_slot = placements[0][0][0]
     if isinstance(first_slot, KVSlot):
         host = _nearest_header_host(c)
@@ -3726,7 +3662,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             # A forward-declared child precedes the header hosting c's
             # dotted body. Keep that header and its other body keys ahead
             # of the sorted run rather than moving leaves out of scope.
-            min_depth = len(host._path)  # noqa: SLF001
             anchor_prev = host._body_tail  # noqa: SLF001
             assert anchor_prev is not None
             while anchor_prev in movable_ids:
@@ -3737,10 +3672,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     with _refile_region_refs(doc, region_predecessor, region_successor):
         _splice_blocks_in_order(doc, movable_slots, placements, anchor_prev=anchor_prev)
-    moved_ids = (
-        movable_ids | set(front_foreign) if anchor_prev is original_anchor else None
-    )
-    _invalidate_body_tail_chain(c, moved_ids, min_depth=min_depth)
 
 
 __all__ = [

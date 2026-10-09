@@ -256,18 +256,12 @@ them. Read roughly in this order:
   reverse-order unlinking; logical deletion and orphan shape stay in
   the callers.
   By far the largest file. Internal hot-path conventions:
-  - **Reverse-walks of `c._refs`** happen in exactly one place,
-    `_recompute_body_tail`, for the one question the caches cannot
-    answer: recomputing an invalidated `_body_tail`. Everything else
-    reads the cache through `_last_body_kv`. Don't add a second walk.
   - **Ordered slot filing** goes through `record_slot`, which places a
-    slot by its order key and, for a body KV that lands past the
-    cached tail, advances `_body_tail` with it — filing is the only
-    thing that moves the tail forward, so the two cannot disagree; a
-    physical change to a region of the
-    stream is wrapped in `_refile_region_refs`, which puts every
-    affected `_refs` / `_index` projection back in the refreshed key
-    order.
+    slot in `_refs` and its `_index` bucket and advances `_body_tail`
+    for a same-owner KV. Single and bulk unfiling repair departing
+    tails directly. A physical change to a region of the stream is
+    wrapped in `_refile_region_refs`, which refreshes projections and
+    body anchors together. Mutation callers never invalidate tails.
   - **Container sorting is region-local** and keeps leaf / dotted-KV
     blocks before structural section / AoT blocks so re-parsing cannot
     change ownership. `key` / `reverse` apply within those partitions.
@@ -275,8 +269,8 @@ them. Read roughly in this order:
     `Slot._order` before splicing rather than storing a second position.
   - **Bulk ref removal** walks each slot's back-pointers through
     `_scrub_owned_slots_via_backptrs`, not ancestor-wide cache scans.
-  - **`Container._body_tail`** is the cached doc-stream-tail of
-    the container's region; treat it as ground truth for
+  - **`Container._body_tail`** caches the last body slot, falling back
+    to `_header` when empty; treat it as ground truth for
     "what's the latest body slot of `c`?". `_last_body_kv` reads
     it — every insert takes its new slot's leading trivia from
     there rather than searching `_refs` for the last body KV.
@@ -465,15 +459,15 @@ wrong.
   and make physical
   changes to a region inside `_refile_region_refs`, which re-files
   the region's contiguous run in each projection.
-- **`Container._body_tail`** ≡ "the most recent slot in `_refs`
-  belonging to the body region" (KV with matching owner; or, for
-  a header-bearing container with no body, the header itself).
-  Maintained by `record_slot`, which advances it whenever it files a
-  body KV past the current tail, and recomputed by
-  `_recompute_body_tail` on body-affecting deletes. Every header-
-  filing path establishes it, so a container with a `_header`
-  always has a `_body_tail`: insertion anchors read the tail alone
-  and need no header fallback of their own.
+- **`Container._body_tail`** is the last same-owner KV in `_refs`, or
+  `_header` when the body is empty. Ref filing, unfiling and region
+  refiling maintain it centrally; no ancestor invalidation is needed.
+  `_recompute_body_tail` is the only reverse walk of `_refs`, invoked
+  by ref maintenance after a body-affecting removal or reorder.
+  Owner transfers change matching slot and container tokens together,
+  preserving body membership, while nested AoT owners stay distinct.
+  Filing an own header preserves an existing KV tail, so adoption needs
+  no special repair. A container with a header always has a body anchor.
 - **`Slot.owner_aot_entry`** lives on the base `Slot`, not on the
   subclasses. Use direct attribute access — never `getattr(slot,
   "owner_aot_entry", None)`.
@@ -657,8 +651,8 @@ of any public API.
   `_inline_ops`.
 - Adding per-membership records or storing a slot's local key —
   the slot and its indexing container already determine that key.
-- Adding a second ad-hoc reverse-walk of `c._refs` instead of reading
-  the `_body_tail` cache through `_last_body_kv`.
+- Searching `c._refs` for a body anchor instead of reading the
+  `_body_tail` cache through `_last_body_kv`.
 - "Fixing" formatting differences in the writer's output without
   adding a round-trip test that proves it.
 - Touching `vendor/` (it is third-party, vendored verbatim).
