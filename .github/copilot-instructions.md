@@ -247,6 +247,9 @@ them. Read roughly in this order:
   `key = []` placeholder or parent promotion. First entries use the same
   local, scope-safe child anchor as section children; only genuinely empty
   AoTs materialise a placeholder.
+  Copied and adopted AoT entries share body-before-descendant ordering,
+  prepared before their destination splice. Retained adopted projections
+  are refiled across that splice when the source order needs changing.
   Inline replacements prepare their value before entering the replacement
   context, so conversion precedes deletion.
   Removal separates physical slot discovery (`owned_slots` plus binding
