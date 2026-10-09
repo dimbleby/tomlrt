@@ -1459,6 +1459,19 @@ def test_array_clear_and_append() -> None:
     assert _reparses(out) == {"xs": ["hi"]}
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_clear_empty_array_preserves_framing_comments(newline: str) -> None:
+    source = td("""
+        xs = [ # framing
+            # above closing
+        ]
+        """).replace("\n", newline)
+    doc = tomlrt.loads(source)
+    doc.array("xs").clear()
+    assert tomlrt.dumps(doc) == source
+    assert _reparses(source) == doc.to_dict()
+
+
 def test_array_multiline_tracks_shape_across_add_and_remove() -> None:
     # `multiline` is derived from the value's rendered shape and memoised.
     # The memo must stay correct as items are added (shape preserved) and
@@ -9205,6 +9218,46 @@ def test_comment_write_promotes_indented_inline_table_at_its_own_indent() -> Non
           }
         """)
     assert _reparses(out) == {"s": {"t": {"a": 1}}}
+
+
+def test_collapse_multiline_preserves_comment_free_nested_layout() -> None:
+    src = td("""
+        xs = [
+            [1,  2],
+            { a = [3,  4], b = {} },
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("xs").set_multiline(multiline=False)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        xs = [[1,  2], { a = [3,  4], b = {} }]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        td("""
+            xs = [
+                [[1, # deep array
+                ]],
+            ]
+            """),
+        td("""
+            xs = [
+                { a = { b = 1, # deep inline table
+                } },
+            ]
+            """),
+    ],
+)
+def test_collapse_multiline_rejects_deeply_nested_comments(src: str) -> None:
+    doc = tomlrt.loads(src)
+    with pytest.raises(tomlrt.TOMLError, match="EOL or leading comments"):
+        doc.array("xs").set_multiline(multiline=False)
+    assert tomlrt.dumps(doc) == src
 
 
 def test_collapse_multiline_with_nested_array_comment_raises() -> None:

@@ -1002,7 +1002,7 @@ class _CopyAwareInt(_MutableInt):
 def test_comma_node_deepcopy_preserves_memo_aliases_and_payload_hooks() -> None:
     payload = _CopyAwareInt(42)
     scalar = IntegerValue("0x2A", payload)
-    item = ArrayItem("", scalar, "", has_comma=True, post_comma_trivia=" ")
+    item = ArrayItem(scalar, has_comma=True, after=" ")
     node = ArrayValue([item, item])
     sibling = ArrayValue(node.items)
     payload.owners = [node, sibling]
@@ -1029,7 +1029,7 @@ def test_comma_node_deepcopy_preserves_memo_aliases_and_payload_hooks() -> None:
 
 def test_comma_node_deepcopy_honors_preset_scalar_memo() -> None:
     scalar = IntegerValue("0x2A", 42)
-    item = ArrayItem("", scalar, "", has_comma=False, post_comma_trivia="")
+    item = ArrayItem(scalar)
     node = ArrayValue([item])
     replacement = IntegerValue("7", 7)
     cloned = deepcopy(node, {id(scalar): replacement})
@@ -1044,18 +1044,15 @@ def test_comma_node_deepcopy_copies_mutable_trivia_and_key_fields() -> None:
     key_parts = (_MutableStr("'key'"),)
     key_path = (_MutableStr("key"),)
     entry = InlineTableEntry(
-        "",
         ArrayValue(),
-        "",
-        has_comma=False,
-        post_comma_trivia="",
         key_parts=key_parts,
         key_seps=(),
         key_path=key_path,
         pre_eq=padding,
         post_eq=padding,
+        following=padding,
     )
-    node = InlineTableValue([entry], padding, padding)
+    node = InlineTableValue([entry], padding)
     assert not node.is_multiline()
     cloned = deepcopy(node)
     assert not cloned.is_multiline()
@@ -1064,13 +1061,13 @@ def test_comma_node_deepcopy_copies_mutable_trivia_and_key_fields() -> None:
     assert cloned_entry.key_parts is not key_parts
     assert isinstance(cloned_entry.key_path[0], _MutableStr)
     assert cloned_entry.key_path[0] is not key_path[0]
-    assert cloned.header_trivia is cloned.final_trivia
-    assert cloned.header_trivia is cloned_entry.pre_eq is cloned_entry.post_eq
-    assert isinstance(cloned.header_trivia, _MutableStr)
-    assert cloned.header_trivia is not padding
+    assert cloned.opening is cloned_entry.following
+    assert cloned.opening is cloned_entry.pre_eq is cloned_entry.post_eq
+    assert isinstance(cloned.opening, _MutableStr)
+    assert cloned.opening is not padding
     padding.labels.append("changed")
     entry.key_parts = ("'changed'",)
-    assert cloned.header_trivia.labels == ["original"]
+    assert cloned.opening.labels == ["original"]
     assert cloned.render() == "{ 'key' = [] }"
     assert node.render() == "{ 'changed' = [] }"
 

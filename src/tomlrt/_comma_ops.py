@@ -1,8 +1,8 @@
 """Mutate inline-array / inline-table item lists structurally.
 
 All structural changes to a :class:`tomlrt._values.CommaValue` pass
-through this module: per-item trivia ownership, ``header_trivia`` /
-``final_trivia`` bracket-pad attachment, one-row-break-per-row, EOL
+through this module: seam trivia ownership, bracket-pad attachment,
+one-row-break-per-row, EOL
 section placement, and trailing-comma policy. :mod:`tomlrt._format` is
 the counterpart that canonicalises an existing layout without changing
 structure.
@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from tomlrt._list_ops import delete_runs, index_runs
 from tomlrt._trivia import (
+    emptied_bracket_pad,
     leading_break,
     leading_ws,
     newline_at,
@@ -22,7 +23,6 @@ from tomlrt._trivia import (
     split_item_above,
     split_line,
     split_lines,
-    strip_trailing_indent,
     strip_trailing_ws,
     trailing_ws,
 )
@@ -43,8 +43,7 @@ if TYPE_CHECKING:
         @property
         def items(self) -> Sequence[CommaItem]: ...
 
-        header_trivia: str
-        final_trivia: str
+        opening: str
 
 
 _CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
@@ -70,7 +69,7 @@ def _eol_on_pre_comma(
 
     Callers supply the two channels and the break decision because the
     two representations spell them differently: a live `CommaItem` holds
-    flat ``trailing`` / ``post_comma_trivia`` runs, while a `Boundary`
+    flat ``before`` / ``after`` runs, while a `Boundary`
     holds the pre-comma run split into lanes and looks for the break in
     its head lane alone.
     """
@@ -81,42 +80,42 @@ def _eol_on_pre_comma(
     return not has_comma
 
 
-def _item_breaks_before_comma(item: CommaItem) -> bool:
+def _seam_breaks_before_comma(item: CommaItem) -> bool:
     """Return whether the row break and any EOL comment precede the comma."""
-    return item.has_comma and "\n" in item.trailing
+    return item.has_comma and "\n" in item.before
 
 
-def item_eol_on_trailing(item: CommaItem) -> bool:
-    """Whether ``trailing`` (rather than ``post_comma_trivia``) owns the EOL."""
+def seam_eol_on_before(item: CommaItem) -> bool:
+    """Whether ``before`` (rather than ``after``) owns the left item's EOL."""
     return _eol_on_pre_comma(
-        item.trailing,
-        item.post_comma_trivia,
-        breaks_before_comma=_item_breaks_before_comma(item),
+        item.before,
+        item.after,
+        breaks_before_comma=_seam_breaks_before_comma(item),
         has_comma=item.has_comma,
     )
 
 
-def item_eol_channel(item: CommaItem) -> str:
+def seam_eol_channel(item: CommaItem) -> str:
     """The trivia run that owns the item's row-attached EOL section."""
-    return item.trailing if item_eol_on_trailing(item) else item.post_comma_trivia
+    return item.before if seam_eol_on_before(item) else item.after
 
 
-def set_item_eol_channel(item: CommaItem, text: str) -> None:
-    """Write back the run that :func:`item_eol_channel` reads."""
-    if item_eol_on_trailing(item):
-        item.trailing = text
+def set_seam_eol_channel(item: CommaItem, text: str) -> None:
+    """Write back the run that :func:`seam_eol_channel` reads."""
+    if seam_eol_on_before(item):
+        item.before = text
     else:
-        item.post_comma_trivia = text
+        item.after = text
 
 
-def _inter_item_separator(items: Sequence[CommaItem]) -> str:
-    """Structural-pad portion of ``items[1].leading``; ``" "`` if ``len < 2``.
+def _inter_item_separator(value: CommaValue[_CV_ItemT]) -> str:
+    """Structural pad before item 1; ``" "`` if there are fewer than two items.
 
     Excludes any above-item comment block, which belongs to the item's
-    leading rather than to the separator.
+    above-block rather than to the separator.
     """
-    if len(items) >= 2:
-        head, _above, tail = split_item_above(items[1].leading)
+    if len(value.items) >= 2:
+        head, _above, tail = split_item_above(value.items[0].following)
         return head + tail
     return " "
 
@@ -126,26 +125,26 @@ def _take_eol(item: CommaItem) -> str:
 
     The item keeps only the structural rest in that channel.
     """
-    if item_eol_on_trailing(item):
-        eol, item.trailing = split_eol_section(item.trailing)
+    if seam_eol_on_before(item):
+        eol, item.before = split_eol_section(item.before)
     else:
-        eol, item.post_comma_trivia = split_eol_section(item.post_comma_trivia)
+        eol, item.after = split_eol_section(item.after)
     return eol
 
 
 def _put_eol(item: CommaItem, eol: str) -> None:
     """Put a previously-taken EOL section onto the item.
 
-    Routes to ``post_comma_trivia`` or ``trailing`` according to the
-    item's *current* ``has_comma``, which may differ from the value
+    Routes to ``after`` or ``before`` according to the
+    seam's *current* ``has_comma``, which may differ from the value
     at extraction time.
     """
     if not eol:
         return
     if item.has_comma:
-        item.post_comma_trivia += eol
+        item.after += eol
     else:
-        item.trailing += eol
+        item.before += eol
 
 
 # ---------------------------------------------------------------------------
@@ -202,9 +201,8 @@ class Boundary:
 
     @classmethod
     def capture(cls, cv: _BoundaryValue, i: int) -> Boundary:
-        items = cv.items
         if i == 0:
-            following = cv.header_trivia
+            following = cv.opening
             start = _first_newline_end(following) or len(following)
             # Positional ``has_comma`` / ``is_head``: the busiest
             # boundary in an inline-array edit.
@@ -215,20 +213,20 @@ class Boundary:
                 False,  # noqa: FBT003
                 True,  # noqa: FBT003
             )
-        pred = items[i - 1]
-        following = cv.final_trivia if i == len(items) else items[i].leading
-        before_break = pred.has_comma and "\n" in pred.trailing
-        closed_lane = pred.post_comma_trivia if pred.has_comma else pred.trailing
+        seam = cv.items[i - 1]
+        following = seam.following
+        before_break = seam.has_comma and "\n" in seam.before
+        closed_lane = seam.after if seam.has_comma else seam.before
         row_closed = "\n" in closed_lane
         before_start = (
-            _first_newline_end(pred.trailing) if before_break else len(pred.trailing)
+            _first_newline_end(seam.before) if before_break else len(seam.before)
         )
         following_start = 0 if row_closed else leading_break(following)
         return cls(
-            _Lane.capture(pred.trailing, before_start),
-            pred.post_comma_trivia,
+            _Lane.capture(seam.before, before_start),
+            seam.after,
             _Lane.capture(following, following_start),
-            pred.has_comma,
+            seam.has_comma,
         )
 
     def copy(self) -> Boundary:
@@ -241,19 +239,14 @@ class Boundary:
         )
 
     def restore(self, cv: _BoundaryValue, i: int) -> None:
-        following = self.following.join()
-        if self.is_head:
-            cv.header_trivia = following
-            cv.items[0].leading = ""
+        if i == 0:
+            cv.opening = self.following.join()
             return
-        pred = cv.items[i - 1]
-        pred.trailing = self.before.join()
-        pred.has_comma = self.has_comma
-        pred.post_comma_trivia = self.after
-        if i == len(cv.items):
-            cv.final_trivia = following
-        else:
-            cv.items[i].leading = following
+        seam = cv.items[i - 1]
+        seam.before = self.before.join()
+        seam.has_comma = self.has_comma
+        seam.after = self.after
+        seam.following = self.following.join()
 
     @property
     def break_before_comma(self) -> bool:
@@ -275,8 +268,7 @@ class Boundary:
     def _eol(self) -> tuple[_EolLane | None, str]:
         """The lane owning the row-attached EOL, and its payload.
 
-        ``before`` is the predecessor's ``trailing``, ``after`` its
-        ``post_comma_trivia``; ``None`` means no EOL is present at all.
+        ``None`` means no EOL is present in either pre/post-comma channel.
         """
         before = self.before.join()
         if _eol_on_pre_comma(
@@ -510,24 +502,11 @@ class Boundary:
 # directly, while carried boundaries shift only that structural break.
 
 
-def _structural_break(pred: CommaItem, succ: CommaItem, nl: str) -> None:
-    """Drop a fresh separator when ``pred`` already closes its row."""
-    succ.leading = shift_breaks(succ.leading, -int("\n" in item_eol_channel(pred)), nl)
-
-
-def boundary_break_holder(cv: CommaValue[_CV_ItemT], b: int) -> str:
-    """Return boundary ``b``'s downstream row-break owner."""
-    items = cv.items
-    return items[b].leading if b < len(items) else cv.final_trivia
-
-
-def set_boundary_break_holder(cv: CommaValue[_CV_ItemT], b: int, text: str) -> None:
-    """Write back the run that :func:`boundary_break_holder` reads."""
-    items = cv.items
-    if b < len(items):
-        items[b].leading = text
-    else:
-        cv.final_trivia = text
+def _structural_break(seam: CommaItem, nl: str) -> None:
+    """Drop a fresh separator when the seam's EOL already closes its row."""
+    seam.following = shift_breaks(
+        seam.following, -int("\n" in seam_eol_channel(seam)), nl
+    )
 
 
 def shift_breaks(t: str, delta: int, nl: str) -> str:
@@ -580,15 +559,6 @@ def flip_to_internal(item: CommaItem) -> None:
     _put_eol(item, eol)
 
 
-def flip_to_terminal(item: CommaItem, style: CommaStyle) -> None:
-    """Apply terminal comma policy while keeping the item's EOL attached."""
-    if item.has_comma == style.trailing_comma:
-        return
-    eol = _take_eol(item)
-    item.has_comma = style.trailing_comma
-    _put_eol(item, eol)
-
-
 # ---------------------------------------------------------------------------
 # Style detection
 # ---------------------------------------------------------------------------
@@ -599,8 +569,8 @@ class CommaStyle:
 
     A non-empty ``pre_comma_break`` marks a *break-before-comma*
     (comma-first) value: one that parks each row break in the item's
-    own ``trailing`` ahead of its comma rather than downstream in the
-    next item's ``leading``, so ``inter_separator`` is just the
+    outgoing seam's ``before`` rather than downstream in its
+    ``following``, so ``inter_separator`` is just the
     post-comma pad.
     """
 
@@ -634,7 +604,7 @@ def _pre_comma_break(item: CommaItem) -> str:
     Sampled so a new internal item matches the authored newline and the
     comma-row indent (the trailing whitespace between break and comma).
     """
-    t = item.trailing
+    t = item.before
     i = t.find("\n")
     return newline_at(t, i) + trailing_ws(t)
 
@@ -645,7 +615,7 @@ def detect_style(value: CommaValue[_CV_ItemT]) -> CommaStyle:
     Multi-line shape comes from the value's own trivia
     (:meth:`CommaValue.is_multiline`) -- there is no separate "force
     multi-line" flag. The inter-item separator is sampled from
-    ``items[1].leading``, falling back to :func:`_canonical_separator`
+    ``items[0].following``, falling back to :func:`_canonical_separator`
     for a comma-last multi-line value with only one item to sample
     from. When item 0 parks its break before its comma the value is
     comma-first: the post-comma pad is kept and ``pre_comma_break``
@@ -653,8 +623,8 @@ def detect_style(value: CommaValue[_CV_ItemT]) -> CommaStyle:
     """
     items = value.items
     is_multiline = value.is_multiline()
-    inter_sep = _inter_item_separator(items)
-    leader = items[0] if items and _item_breaks_before_comma(items[0]) else None
+    inter_sep = _inter_item_separator(value)
+    leader = items[0] if items and _seam_breaks_before_comma(items[0]) else None
     if is_multiline and leader is None and "\n" not in inter_sep:
         inter_sep = _canonical_separator(value)
     trailing_comma = items[-1].has_comma if items else is_multiline
@@ -669,20 +639,12 @@ def detect_style(value: CommaValue[_CV_ItemT]) -> CommaStyle:
 def _row_runs(value: CommaValue[_CV_ItemT]) -> Iterator[str]:
     """Yield ``value``'s interior trivia as physically contiguous runs.
 
-    One run per boundary, in document order: the bracket pad, then each
-    item's render tail glued to the next item's leading -- or, past the
-    last item, to the closing bracket pad. Gluing what a boundary owns
-    keeps a row break and the indent it opens in one string however
-    ownership splits them.
+    Rendering each seam keeps a row break and the indent it opens in
+    one string however its channels split them.
     """
-    items = value.items
-    run = value.header_trivia
-    for i, item in enumerate(items):
-        yield run
-        run = item.render_tail()
-        if i + 1 < len(items):
-            run += items[i + 1].leading
-    yield run + value.final_trivia
+    yield value.opening
+    for item in value.items:
+        yield item.render_tail()
 
 
 def _value_newline(value: CommaValue[_CV_ItemT]) -> str:
@@ -690,9 +652,7 @@ def _value_newline(value: CommaValue[_CV_ItemT]) -> str:
 
     The first break wins, wherever it lives -- an item's EOL section
     included. Only a multi-line value has a break to sample, and always
-    has one: the runs cover every region `CommaValue.is_multiline` reads
-    bar a comma-less item's ``post_comma_trivia``, which the item does
-    not render either and so is always empty.
+    has one: the runs cover every rendered channel of the value's seams.
     """
     run = next(run for run in _row_runs(value) if "\n" in run)
     i = run.index("\n")
@@ -802,42 +762,42 @@ def splice_in(
     """Append ``new_item`` while preserving the inferred comma style."""
     items = cv.items
     if not items:
-        header, final = restamp_bracket_pad_for_first(cv.final_trivia)
+        header, final = restamp_bracket_pad_for_first(cv.opening)
         if cv._single_line_pad and not header and not final:  # noqa: SLF001
             header = final = cv._single_line_pad  # noqa: SLF001
-        cv.header_trivia, cv.final_trivia = header, final
+        cv.opening = header
+        new_item.has_comma = style.trailing_comma
+        new_item.following = final
         items.append(new_item)
-        flip_to_terminal(new_item, style)
         return
     old_tail = items[-1]
     old_final = _detach_above(cv, len(items))
-    new_item.leading = style.inter_separator
+    new_item.has_comma = style.trailing_comma
+    new_item.following = old_tail.following
+    old_tail.following = style.inter_separator
     if style.break_before_comma:
         # Comma-first: the former tail keeps its EOL comment but yields its
         # terminal break (re-homed before the closing bracket) and gains its
         # own pre-comma break; the new tail needs no trailing break.
         eol = _take_eol(old_tail).rstrip("\r\n")
-        old_tail.trailing = eol + style.pre_comma_break
+        old_tail.before = eol + style.pre_comma_break
         old_tail.has_comma = True
-        old_tail.post_comma_trivia = ""
-        if "\n" not in cv.final_trivia:
-            cv.final_trivia = nl + cv.final_trivia
-        items.append(new_item)
-        flip_to_terminal(new_item, style)
+        old_tail.after = ""
+        if "\n" not in new_item.following:
+            new_item.following = nl + new_item.following
     else:
         flip_to_internal(old_tail)
-        items.append(new_item)
-        flip_to_terminal(new_item, style)
-        if style.is_multiline:
-            # Fresh boundary onto the new item; carried final boundary, whose
-            # predecessor changes from the old tail to the new item.
-            _structural_break(old_tail, new_item, nl)
-            _shift_carried_boundary(
-                cv,
-                len(items),
-                nl,
-                old=old_final,
-            )
+    items.append(new_item)
+    if style.is_multiline and not style.break_before_comma:
+        # Fresh boundary onto the new item; carried final boundary, whose
+        # predecessor changes from the old tail to the new item.
+        _structural_break(old_tail, nl)
+        _shift_carried_boundary(
+            cv,
+            len(items),
+            nl,
+            old=old_final,
+        )
     # A block that sat above the closing bracket belongs above the
     # appended item, at the seam the append created.
     _rehome_above(cv, len(items) - 1, old_final, style, nl)
@@ -858,17 +818,19 @@ def splice_insert(
         displaced = _detach_above(cv, index)
         count = len(run)
         for item in run:
-            item.leading = style.inter_separator
-            item.trailing = style.pre_comma_break
-        if index == 0:
-            run[0].leading = ""
-            items[0].leading = style.inter_separator
+            item.before = style.pre_comma_break
+            item.has_comma = True
+            item.following = style.inter_separator
+        if index:
+            pred = items[index - 1]
+            run[-1].following = pred.following
+            pred.following = style.inter_separator
         items[index:index] = run
         if style.is_multiline and not style.break_before_comma:
             if index == 0:
-                _structural_break(run[-1], items[count], nl)
+                _structural_break(run[-1], nl)
             else:
-                _structural_break(items[index - 1], run[0], nl)
+                _structural_break(items[index - 1], nl)
                 _shift_carried_boundary(cv, index + count, nl, old=displaced)
         index += count
         _rehome_above(cv, index, displaced, style, nl)
@@ -928,19 +890,21 @@ def splice_out(
         new_last_eol = _take_eol(items[last_survivor])
         new_terminal_has_comma = items[last_idx].has_comma
 
+    final = items[-1].following
+    for start, stop in removed_runs:
+        if start:
+            items[start - 1].following = items[stop - 1].following
     delete_runs(items, removed_runs)
 
     if not items:
-        cv.header_trivia, cv.final_trivia = strip_trailing_indent(
-            cv.header_trivia, cv.final_trivia
-        )
+        cv.opening = emptied_bracket_pad(cv.opening, final)
         return
     if last_survivor is not None:
         new_last = items[-1]
-        new_last.post_comma_trivia = ""
+        new_last.after = ""
         new_last.has_comma = new_terminal_has_comma
-        if not new_terminal_has_comma and "\n" in new_last.trailing:
-            new_last.trailing = ""
+        if not new_terminal_has_comma and "\n" in new_last.before:
+            new_last.before = ""
         _put_eol(new_last, new_last_eol)
         if is_multiline:
             _shift_carried_boundary(
@@ -1031,13 +995,12 @@ def strip_framing_comments(cv: CommaValue[_CV_ItemT]) -> None:
 __all__ = [
     "Boundary",
     "CommaStyle",
-    "boundary_break_holder",
     "detect_style",
-    "item_eol_channel",
-    "item_eol_on_trailing",
     "reindent_as_leader",
     "reorder_owned",
-    "set_item_eol_channel",
+    "seam_eol_channel",
+    "seam_eol_on_before",
+    "set_seam_eol_channel",
     "shift_breaks",
     "splice_in",
     "splice_insert",

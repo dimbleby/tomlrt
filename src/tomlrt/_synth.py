@@ -346,11 +346,11 @@ def _inline_value(
         for i, sub in enumerate(v):
             array.items.append(
                 ArrayItem(
-                    "" if i == 0 else " ",
                     _inline_value(sub, nl, scalar_memo),
                     "",
                     i != last,
                     "",
+                    " " if i != last else "",
                 )
             )
         return array
@@ -362,20 +362,20 @@ def _inline_value(
             key_path = (child_key,)
             entries.append(
                 InlineTableEntry(
-                    "" if i == 0 else " ",
                     _inline_value(sub, nl, scalar_memo, key=child_key),
-                    "",
-                    i != last,
-                    "",
                     make_keyparts(key_path),
                     (),
                     key_path,
                     " ",
                     " ",
+                    "",
+                    i != last,
+                    "",
+                    " ",
                 )
             )
         pad = InlineTableValue._single_line_pad if items else ""  # noqa: SLF001
-        return InlineTableValue(entries, pad, pad)
+        return InlineTableValue(entries, pad)
     raise TypeError(_unrepresentable_message(v, key))
 
 

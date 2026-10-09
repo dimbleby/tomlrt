@@ -13,7 +13,12 @@ from tomlrt._scanner import _Scanner
 from tomlrt._slots import AoTEntry, KVSlot, StructuralHeaderSlot, stitch_run
 from tomlrt._trivia import leading_has_blank_line, split_eol_section
 from tomlrt._validator import _Validator
-from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
+from tomlrt._values import (
+    ArrayItem,
+    ArrayValue,
+    InlineTableEntry,
+    InlineTableValue,
+)
 
 if TYPE_CHECKING:
     from tomlrt._slots import Slot
@@ -195,12 +200,11 @@ class _Parser:
         end = sc.end
         if sc.pos < end and src[sc.pos] == "]":
             # Empty array: head trivia is the canonical pre-`]` slot.
-            node.final_trivia = head
+            node.opening = head
             sc.pos += 1
             return node
-        node.header_trivia = head
+        node.opening = head
         items = node.items
-        leading = ""  # items[0].leading is always empty
         while True:
             value = self._parse_value()
             trailing = sc.scan_array_trivia()
@@ -213,16 +217,13 @@ class _Parser:
             else:
                 msg = f"expected ',' or ']' in array, got {ch!r}"
                 raise sc.error(msg)
-            item = ArrayItem(leading, value, trailing, ch == ",", post_comma)
+            item = ArrayItem(value, trailing, ch == ",", post_comma, next_leading)
             items.append(item)
             if sc.pos < end and src[sc.pos] == "]":
-                if item.has_comma:
-                    node.final_trivia = next_leading
-                else:
-                    item.trailing, node.final_trivia = split_eol_section(trailing)
+                if not item.has_comma:
+                    item.before, item.following = split_eol_section(trailing)
                 sc.pos += 1
                 return node
-            leading = next_leading
 
     def _parse_inline_table(self) -> InlineTableValue:
         """Parse a ``{...}`` inline table.
@@ -236,11 +237,10 @@ class _Parser:
         node = InlineTableValue()
         head = sc.scan_array_trivia()
         if sc.pos < end and src[sc.pos] == "}":
-            node.final_trivia = head
+            node.opening = head
             sc.pos += 1
             return node
-        node.header_trivia = head
-        leading = ""  # entries[0].leading is always empty
+        node.opening = head
         seen_prefixes: set[tuple[str, ...]] = set()
         entries = node.items
         while True:
@@ -270,27 +270,24 @@ class _Parser:
                 msg = f"expected ',' or '}}' in inline table, got {ch!r}"
                 raise sc.error(msg)
             entry = InlineTableEntry(
-                leading,
                 value,
-                trailing,
-                ch == ",",
-                post_comma,
                 key_parts,
                 key_seps,
                 key_path,
                 pre_eq,
                 post_eq,
+                trailing,
+                ch == ",",
+                post_comma,
+                next_leading,
             )
             entries.append(entry)
             node.record_entry(entry)
             if sc.pos < end and src[sc.pos] == "}":
-                if entry.has_comma:
-                    node.final_trivia = next_leading
-                else:
-                    entry.trailing, node.final_trivia = split_eol_section(trailing)
+                if not entry.has_comma:
+                    entry.before, entry.following = split_eol_section(trailing)
                 sc.pos += 1
                 return node
-            leading = next_leading
 
 
 __all__ = ["ParseResult", "_Parser"]
