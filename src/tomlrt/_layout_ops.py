@@ -1746,6 +1746,16 @@ def _aot_separator(aot: AoT, doc: Document) -> str:
     return _peer_separator(last_entry.header.leading, doc)
 
 
+def _aot_header_indent(aot: AoT, index: int | None = None) -> str:
+    """Borrow column indentation from the insertion target, or the last entry."""
+    if not aot:
+        return ""
+    peer = aot[-1 if index is None else min(index, len(aot) - 1)]
+    header = peer._header  # noqa: SLF001
+    assert header is not None
+    return trailing_ws(header.leading)
+
+
 def add_aot_entry(
     aot: AoT,
     body: Mapping[str, TomlInput] | None,
@@ -1764,7 +1774,9 @@ def add_aot_entry(
         assert rehome._layout_root is None  # noqa: SLF001
         body = rehome
     table = _container.Table() if rehome is None else rehome
-    prepared = _prepare_entry(aot, table, {} if body is None else body, (aot,), {})
+    prepared = _prepare_entry(
+        aot, table, {} if body is None else body, (aot,), {}, index=index
+    )
     return _install_entry(
         aot,
         prepared,
@@ -2240,7 +2252,11 @@ def adopt_private_entry(
     slots = _move_private_subtree(value, aot, path, owner=owner)
     if original_header is None:
         header = _new_section_header(
-            path, leading="", doc=doc, entry=owner, owner_aot_entry=owner
+            path,
+            leading=_aot_header_indent(aot),
+            doc=doc,
+            entry=owner,
+            owner_aot_entry=owner,
         )
         slots.insert(0, header)
     else:
@@ -3147,6 +3163,8 @@ def _prepare_entry(
     body: Mapping[str, TomlInput],
     sites: Sequence[Container | AoT],
     snapshots: dict[int, Document],
+    *,
+    index: int | None = None,
 ) -> _PreparedEntry:
     """Capture a body without clearing, wiring or publishing its destination.
 
@@ -3183,7 +3201,11 @@ def _prepare_entry(
         payload = _capture_items(_mapping_items(body), sites, snapshots)
     if header is None:
         header = _new_section_header(
-            path, leading="", doc=doc, entry=owner, owner_aot_entry=owner
+            path,
+            leading=_aot_header_indent(aot, index),
+            doc=doc,
+            entry=owner,
+            owner_aot_entry=owner,
         )
     return _PreparedEntry(table, header, payload)
 
@@ -3295,7 +3317,8 @@ def assign_aot_entries(
     sites = [aot] if resizing else [table for table, _ in targets]
     snapshots: dict[int, Document] = {}
     prepared = [
-        _prepare_entry(aot, table, body, sites, snapshots) for table, body in targets
+        _prepare_entry(aot, table, body, sites, snapshots, index=start)
+        for table, body in targets
     ]
     if resizing and indices:
         remove_aot_entries(aot, indices)
