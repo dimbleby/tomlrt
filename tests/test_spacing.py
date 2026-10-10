@@ -431,7 +431,7 @@ def test_aot_insert_middle_inherits_target_header_indent() -> None:
         """)
 
 
-def test_aot_resizing_slice_retains_replaced_header_indent() -> None:
+def test_aot_resizing_slice_retains_replaced_indentation() -> None:
     doc = tomlrt.loads(
         td("""
         version = 1
@@ -448,13 +448,160 @@ def test_aot_resizing_slice_retains_replaced_header_indent() -> None:
         version = 1
 
           [[items]]
-        x = 3
+            x = 3
 
           [[items]]
-        x = 4
+            x = 4
 
           [[items]]
-        x = 5
+            x = 5
+        """)
+
+
+def test_aot_same_size_replacement_retains_each_body_indent() -> None:
+    doc = tomlrt.loads(
+        td("""
+        version = 1
+
+          [[items]]
+            x = 1
+
+          [[items]]
+              x = 2
+        """)
+    )
+    doc.aot("items")[:] = [{"x": 3, "y": 4}, {"x": 5, "y": 6}]
+    assert tomlrt.dumps(doc) == td("""
+        version = 1
+
+          [[items]]
+            x = 3
+            y = 4
+
+          [[items]]
+              x = 5
+              y = 6
+        """)
+
+
+def test_aot_empty_entry_replacement_inherits_sibling_body_indent() -> None:
+    doc = tomlrt.loads(
+        td("""
+        version = 1
+
+          [[items]]
+
+          [[items]]
+            x = 1
+        """)
+    )
+    doc.aot("items")[0] = {"x": 2, "y": 3}
+    assert tomlrt.dumps(doc) == td("""
+        version = 1
+
+          [[items]]
+            x = 2
+            y = 3
+
+          [[items]]
+            x = 1
+        """)
+
+
+def test_aot_replacement_body_indent_does_not_change_child_sections() -> None:
+    doc = tomlrt.loads(
+        td("""
+        version = 1
+
+          [[items]]
+            x = 1
+        """)
+    )
+    doc.aot("items")[0] = {
+        "child": Table.section({"x": 2}),
+        "x": 3,
+        "y": 4,
+    }
+    assert tomlrt.dumps(doc) == td("""
+        version = 1
+
+          [[items]]
+            x = 3
+            y = 4
+
+        [items.child]
+        x = 2
+        """)
+
+
+def test_aot_resizing_replacement_preserves_copied_body_indent() -> None:
+    source = tomlrt.loads(
+        td("""
+        version = 1
+
+              [source]
+                # copied
+                x = 2
+        """)
+    )
+    doc = tomlrt.loads(
+        td("""
+        version = 1
+
+          [[items]]
+            x = 1
+        """)
+    )
+    doc.aot("items")[:] = [source.table("source"), {"x": 3, "y": 4}]
+    assert tomlrt.dumps(doc) == td("""
+        version = 1
+
+              [[items]]
+                # copied
+                x = 2
+
+          [[items]]
+            x = 3
+            y = 4
+        """)
+
+
+def test_aot_replacement_preserves_copied_dotted_child_indent() -> None:
+    source = tomlrt.loads(
+        td("""
+        version = 1
+              child.x = 1
+              child.y = 2
+        """)
+    )
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+          old = 0
+        """)
+    )
+    doc.aot("items")[0] = {"child": source.table("child"), "z": 3, "w": 4}
+    assert tomlrt.dumps(doc) == td("""
+        [[items]]
+              child.x = 1
+              child.y = 2
+          z = 3
+          w = 4
+        """)
+
+
+def test_aot_replacement_indents_empty_aot_placeholder() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+          old = 0
+        """)
+    )
+    doc.aot("items")[0] = {"children": AoT(), "x": 2}
+    assert tomlrt.dumps(doc) == td("""
+        [[items]]
+          children = []
+          x = 2
         """)
 
 

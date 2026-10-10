@@ -103,7 +103,7 @@ def strip_trailing_ws(t: str) -> str:
 
 def trailing_ws(t: str) -> str:
     """The trailing inline-whitespace run of ``t`` (possibly empty)."""
-    return t[len(strip_trailing_ws(t)) :]
+    return t[len(t.rstrip(_WS)) :]
 
 
 def leading_ws(t: str) -> str:
