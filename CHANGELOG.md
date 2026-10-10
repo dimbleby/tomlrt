@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - New array-of-tables headers match existing entries' indentation.
+- Sorting or reversing an array of tables preserves unrelated sections
+  between entry positions instead of gathering the array into one run.
 
 ## [2.3.0] - 2026-10-09
 

@@ -3345,9 +3345,9 @@ def assign_aot_entries(
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     """Re-order an attached AoT's entries to ``new_logical_order``.
 
-    Normalises on reorder: snapshot the slot before the AoT's first
-    owned slot, unlink every owned entry slot, then reinsert entries in
-    the new order as contiguous blocks.
+    Entries exchange their original header positions, leaving foreign
+    runs between those positions. Each entry's whole subtree moves as
+    one contiguous block, gathering any internally scattered fragments.
 
     ``new_logical_order`` must be a permutation of the AoT's current
     entries (same set of `Table` objects, possibly reordered).
@@ -3360,35 +3360,34 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         return
     doc = aot._attached_doc  # noqa: SLF001
 
-    # Collect every entry's full physical block, in current logical
-    # order (which equals physical doc-stream order for AoT entries),
-    # and map each surviving Table identity back to its block. The
-    # ``len(aot) <= 1`` early return above guarantees at least two
-    # attached entries, each of which retains its ``[[path]]`` header.
-    #
-    # A block spans the entry's whole subtree, not just its own
-    # header + KV slots: a nested ``[[a.x]]`` has its own AoTEntry and
-    # must travel with its parent entry, so that reordering doesn't
-    # strand it and re-parent it onto whichever entry lands at its old
-    # position.
-    physical_blocks: list[list[Slot]] = []
-    phys_idx_by_id: dict[int, int] = {}
-    for entry_table in aot:
-        e = entry_table._owner_aot_entry  # noqa: SLF001
-        assert e is not None
-        phys_idx_by_id[id(entry_table)] = len(physical_blocks)
-        physical_blocks.append(owned_slots(entry_table))
+    # Include nested AoT owners so descendants cannot rebind to another
+    # entry when reparsed. Logical order is also physical header order.
+    blocks_by_id = {id(table): owned_slots(table) for table in aot}
+    physical_blocks = list(blocks_by_id.values())
+    output_blocks = [blocks_by_id[id(table)] for table in new_logical_order]
 
     region_predecessor = physical_blocks[0][0]._prev  # noqa: SLF001
     region_successor = physical_blocks[-1][-1]._next  # noqa: SLF001
-
-    new_order_indices = [
-        phys_idx_by_id[id(t)] for t in new_logical_order if id(t) in phys_idx_by_id
-    ]
-    output_blocks = [physical_blocks[phys_idx] for phys_idx in new_order_indices]
-    movable_slots = [slot for block in physical_blocks for slot in block]
-    placements = _peer_placements(physical_blocks, output_blocks)
-    with _refile_region_refs(doc, region_predecessor, region_successor):
+    movable_slots = _slots_between(doc, region_predecessor, region_successor)
+    owned = {slot for block in physical_blocks for slot in block}
+    entry_placements = dict(
+        zip(
+            (block[0] for block in physical_blocks),
+            _peer_placements(physical_blocks, output_blocks),
+            strict=True,
+        )
+    )
+    placements: list[tuple[list[Slot], str]] = []
+    foreign_run: list[Slot] = []
+    for slot in movable_slots:
+        if slot in entry_placements:
+            placements.append(entry_placements[slot])
+            foreign_run = []
+        elif slot not in owned:
+            if not foreign_run:
+                placements.append((foreign_run, slot.leading))
+            foreign_run.append(slot)
+    with _refile_slot_refs(movable_slots):
         _splice_blocks_in_order(
             doc, movable_slots, placements, anchor_prev=region_predecessor
         )
