@@ -319,6 +319,208 @@ def test_aot_entry_inherits_indent_from_dotted_sibling() -> None:
         """)
 
 
+def test_aot_append_and_extend_inherit_header_indent() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[fruit]]
+          name = "apple"
+
+          [[fruit.color]] # colors
+            name = "red"
+        """)
+    )
+    colors = doc.aot("fruit")[0].aot("color")
+    colors.append({"name": "green"})
+    colors.extend([{"name": "blue"}, {"name": "pink"}])
+    assert tomlrt.dumps(doc) == td("""
+        [[fruit]]
+          name = "apple"
+
+          [[fruit.color]] # colors
+            name = "red"
+
+          [[fruit.color]]
+            name = "green"
+
+          [[fruit.color]]
+            name = "blue"
+
+          [[fruit.color]]
+            name = "pink"
+        """)
+
+
+def test_aot_append_factory_inherits_header_indent() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[fruit]]
+          name = "apple"
+
+          [[fruit.color]] # colors
+            name = "red"
+        """)
+    )
+    doc.aot("fruit")[0].aot("color").append(Table.section({"name": "green"}))
+    assert tomlrt.dumps(doc) == td("""
+        [[fruit]]
+          name = "apple"
+
+          [[fruit.color]] # colors
+            name = "red"
+
+          [[fruit.color]]
+            name = "green"
+        """)
+
+
+def test_aot_insert_first_inherits_target_header_indent() -> None:
+    doc = tomlrt.loads(
+        td("""
+          [[items]] # first
+            x = 1
+
+          [[items]] # second
+            x = 2
+
+        [[items]] # last
+        x = 3
+        """)
+    )
+    doc.aot("items").insert(0, {"x": 0})
+    assert tomlrt.dumps(doc) == td("""
+          [[items]]
+            x = 0
+
+          [[items]] # first
+            x = 1
+
+          [[items]] # second
+            x = 2
+
+        [[items]] # last
+        x = 3
+        """)
+
+
+def test_aot_insert_middle_inherits_target_header_indent() -> None:
+    doc = tomlrt.loads(
+        td("""
+          [[items]] # first
+            x = 1
+
+          [[items]] # second
+            x = 2
+
+        [[items]] # last
+        x = 3
+        """)
+    )
+    doc.aot("items").insert(1, {"x": 0})
+    assert tomlrt.dumps(doc) == td("""
+          [[items]] # first
+            x = 1
+
+          [[items]]
+            x = 0
+
+          [[items]] # second
+            x = 2
+
+        [[items]] # last
+        x = 3
+        """)
+
+
+def test_aot_resizing_slice_retains_replaced_header_indent() -> None:
+    doc = tomlrt.loads(
+        td("""
+        version = 1
+
+          [[items]]
+            x = 1
+
+          [[items]]
+            x = 2
+        """)
+    )
+    doc.aot("items")[:] = [{"x": 3}, {"x": 4}, {"x": 5}]
+    assert tomlrt.dumps(doc) == td("""
+        version = 1
+
+          [[items]]
+        x = 3
+
+          [[items]]
+        x = 4
+
+          [[items]]
+        x = 5
+        """)
+
+
+def test_aot_copied_source_header_indent_is_preserved() -> None:
+    source = tomlrt.loads(
+        td("""
+        version = 1
+
+            # source
+            [source] # header
+              x = 2
+        """)
+    )
+    doc = tomlrt.loads(
+        td("""
+        version = 1
+
+          [[items]]
+            x = 1
+        """)
+    )
+    doc.aot("items").append(source.table("source"))
+    assert tomlrt.dumps(doc) == td("""
+        version = 1
+
+          [[items]]
+            x = 1
+
+            # source
+            [[items]] # header
+              x = 2
+        """)
+
+
+def test_aot_adopted_source_header_indent_is_preserved() -> None:
+    source = tomlrt.loads(
+        td("""
+        version = 1
+
+            # source
+            [source] # header
+              x = 2
+        """)
+    )
+    table = source.pop("source")
+    doc = tomlrt.loads(
+        td("""
+        version = 1
+
+          [[items]]
+            x = 1
+        """)
+    )
+    doc["items"] = AoT([doc.aot("items")[0], table])
+    assert tomlrt.dumps(doc) == td("""
+        version = 1
+
+          [[items]]
+            x = 1
+
+            # source
+            [[items]] # header
+              x = 2
+        """)
+
+
 # ---------------------------------------------------------------------------
 # Inline array style preservation on append/sort/delete
 # ---------------------------------------------------------------------------
