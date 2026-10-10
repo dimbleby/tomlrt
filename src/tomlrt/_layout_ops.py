@@ -517,11 +517,6 @@ def ensure_implicit_chain(
     return cur
 
 
-def _default_eol(doc: Document) -> str:
-    """A bare-newline EOL run for a freshly synthesised slot."""
-    return doc._newline  # noqa: SLF001
-
-
 def _link_run_between(
     prev: Slot | None, run: Sequence[Slot], nxt: Slot | None, doc: Document
 ) -> None:
@@ -1239,7 +1234,7 @@ def _new_kv_slot(
     return KVSlot(
         leading,
         owner,
-        _default_eol(doc),
+        doc._newline,  # noqa: SLF001
         host_path,
         make_keyparts(key) if key_parts is None else key_parts,
         (".",) * (len(key) - 1) if key_seps is None else key_seps,
@@ -1434,7 +1429,7 @@ def _new_section_header(
     header = StructuralHeaderSlot(
         leading,
         owner_aot_entry,
-        _default_eol(doc),
+        doc._newline,  # noqa: SLF001
         make_keyparts(path),
         (".",) * (len(path) - 1),
         path,
@@ -3100,17 +3095,19 @@ def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
 class _PreparedEntry:
     """An existing or unpublished entry and its destination-ready body."""
 
-    __slots__ = ("body", "header", "table")
+    __slots__ = ("body", "body_indent", "header", "table")
 
     def __init__(
         self,
         table: Table,
         header: StructuralHeaderSlot,
         body: list[Slot] | dict[str, TomlInput],
+        body_indent: str | None,
     ) -> None:
         self.table = table
         self.header = header
         self.body = body
+        self.body_indent = body_indent
 
 
 def clone_aot_entry_layout(
@@ -3165,12 +3162,14 @@ def _prepare_entry(
     snapshots: dict[int, Document],
     *,
     index: int | None = None,
+    body_indent: str | None = None,
 ) -> _PreparedEntry:
     """Capture a body without clearing, wiring or publishing its destination.
 
     A whole structural source contributes slots, independently of any
     later adoption of its children. Nested values in mapping bodies
-    retain ordinary attachment semantics.
+    retain ordinary attachment semantics. Existing entries retain their
+    own body indentation; ``body_indent`` is the fallback for new entries.
     """
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
@@ -3182,6 +3181,9 @@ def _prepare_entry(
         owner = table._owner_aot_entry  # noqa: SLF001
         assert owner is not None
         header = owner.header
+        tail = _last_body_kv(table)
+        if tail is not None:
+            body_indent = trailing_ws(tail.leading)
     payload: list[Slot] | dict[str, TomlInput]
     if (
         isinstance(body, _container.Container)
@@ -3207,7 +3209,7 @@ def _prepare_entry(
             entry=owner,
             owner_aot_entry=owner,
         )
-    return _PreparedEntry(table, header, payload)
+    return _PreparedEntry(table, header, payload, body_indent)
 
 
 def _insert_entry_run(
@@ -3256,6 +3258,7 @@ def _install_entry(
 ) -> Table:
     """Publish a fresh header or retain an existing one, then consume its body."""
     table, header = prepared.table, prepared.header
+    body_indent = prepared.body_indent
     owner = header.entry
     assert owner is not None
     parent = aot._host  # noqa: SLF001
@@ -3283,6 +3286,12 @@ def _install_entry(
     if isinstance(prepared.body, dict):
         for key, value in prepared.body.items():
             table._setitem_validated(key, value)  # noqa: SLF001
+            if body_indent is not None:
+                tail = _last_body_kv(table)
+                # Dotted-child grafts retain their source indentation.
+                if tail is not None and tail.key_path == (key,):
+                    tail.leading = strip_trailing_ws(tail.leading) + body_indent
+                    body_indent = None
     else:
         _splice_block_after(prepared.body, header, doc)
         _populate_entry_views(
@@ -3316,8 +3325,15 @@ def assign_aot_entries(
     ]
     sites = [aot] if resizing else [table for table, _ in targets]
     snapshots: dict[int, Document] = {}
+    body_indent = None
+    if resizing and aot:
+        tail = _last_body_kv(aot[min(start, len(aot) - 1)])
+        if tail is not None:
+            body_indent = trailing_ws(tail.leading)
     prepared = [
-        _prepare_entry(aot, table, body, sites, snapshots, index=start)
+        _prepare_entry(
+            aot, table, body, sites, snapshots, index=start, body_indent=body_indent
+        )
         for table, body in targets
     ]
     if resizing and indices:
