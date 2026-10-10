@@ -3917,6 +3917,190 @@ def test_aot_reverse_preserves_owned_subtables() -> None:
     ]
 
 
+@pytest.mark.parametrize("operation", ["sort", "reverse"])
+def test_aot_reorder_preserves_foreign_runs(operation: str) -> None:
+    doc = tomlrt.loads(
+        td("""
+            # preamble
+
+            # three
+            [[t]]
+            x = 0x3
+
+            # foreign
+            [[other]]
+            name = 'keep'
+
+            [[other]]
+            name = 'also keep'
+
+            # two
+            [[t]]
+            x = 0x2
+
+            [other.sub]
+            y = 9  # keep
+
+            # one
+            [[t]]
+            x = 0x1""")
+    )
+    aot = doc.aot("t")
+    held = aot[0]
+    if operation == "sort":
+        aot.sort(key=lambda entry: entry["x"])
+    else:
+        aot.reverse()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        # preamble
+
+        # one
+        [[t]]
+        x = 0x1
+
+        # foreign
+        [[other]]
+        name = 'keep'
+
+        [[other]]
+        name = 'also keep'
+
+        # two
+        [[t]]
+        x = 0x2
+
+        [other.sub]
+        y = 9  # keep
+
+        # three
+        [[t]]
+        x = 0x3
+        """)
+    assert aot[2] is held
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_reorder_gathers_scattered_subtrees_between_foreign_runs() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[t]]
+            x = 3
+
+            [left]
+            keep = 1
+
+            [t.child]
+            y = 30
+
+            [left.extra]
+            keep = 3
+
+            [[t]]
+            x = 2
+
+            [right]
+            keep = 2
+
+            [[t.child]]
+            y = 20
+
+            [[t.child]]
+            y = 21
+
+            [[t]]
+            x = 1
+
+            # epilogue
+            """)
+    )
+    doc.aot("t").sort(key=lambda entry: entry["x"])
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[t]]
+        x = 1
+
+        [left]
+        keep = 1
+
+        [left.extra]
+        keep = 3
+
+        [[t]]
+        x = 2
+
+        [[t.child]]
+        y = 20
+
+        [[t.child]]
+        y = 21
+
+        [right]
+        keep = 2
+
+        [[t]]
+        x = 3
+
+        [t.child]
+        y = 30
+
+        # epilogue
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_nested_aot_reorder_preserves_foreign_sibling_scope() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[parent]]
+            name = 'first'
+
+            [[parent.t]]
+            x = 2
+
+            [parent.other]
+            y = 9
+
+            [[parent.t]]
+            x = 1
+
+            [[parent]]
+            name = 'second'
+
+            [[parent.t]]
+            x = 0
+            """)
+    )
+    parent = doc.aot("parent")[0]
+    held = parent.aot("t")[0]
+    parent.aot("t").reverse()
+    held["extra"] = True
+    parent.table("other")["y"] = 10
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[parent]]
+        name = 'first'
+
+        [[parent.t]]
+        x = 1
+
+        [parent.other]
+        y = 10
+
+        [[parent.t]]
+        x = 2
+        extra = true
+
+        [[parent]]
+        name = 'second'
+
+        [[parent.t]]
+        x = 0
+        """)
+    assert parent.aot("t")[1] is held
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_append_aot_entry_after_sorting_an_entrys_keys() -> None:
     """Appending an AoT entry after reordering a prior entry's keys must
     anchor the new entry after the entry's true last slot.
