@@ -22,10 +22,10 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 ## Where next
 
 - [Quickstart](quickstart.md) — parse, edit, dump.
-- [Building documents](building.md) — construct a `Document` from scratch or
-  from a `dict`.
 - [Reading documents](reading.md) — look up values and convert to plain Python.
-- [Editing documents](editing.md) — set, replace, and remove values.
+- [Building documents](building.md) — construct a `Document` from scratch or
+  from a `dict`, and choose table and array forms.
+- [Editing documents](editing.md) — set, replace, remove, and copy values.
 - [Comments](comments.md) — read and write comments.
 - [Layout](layout.md) — sort keys, arrange tables and arrays, and format spacing.
 - [Errors](errors.md) — exception types.

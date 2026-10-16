@@ -52,14 +52,7 @@ value = doc.entry("tool.poetry.name")           # raises if missing
 maybe = doc.get_entry("tool.poetry.licence")    # None if missing
 ```
 
-## Independent copies
-
-Use `copy.copy(table)` or `copy.deepcopy(table)` for an independent copy that
-retains comments and formatting. Both copy nested values too, and work on
-documents and arrays as well. In contrast, `.copy()` makes an ordinary shallow
-dictionary or list copy.
-
-## Back to plain Python
+## Converting to plain Python
 
 Use `to_dict()` and `to_list()` to get ordinary Python dictionaries and lists:
 

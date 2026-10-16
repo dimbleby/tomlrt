@@ -48,5 +48,17 @@ assignment.
 `Document(data)` copies its input; changing `data` afterward does not affect
 the document.
 
-To choose between sections and inline tables when adding values, see
-[Editing documents](editing.md).
+## Choosing tables and arrays
+
+When assigning individual values, a plain `dict` installs as an inline table;
+a plain `list` installs as an inline array.
+Use tomlrt's classes to choose how a value is written:
+
+```python
+from tomlrt import AoT, Array, Table
+
+doc["tool"] = Table.section({"version": 1})      # [tool] section
+doc["xy"]   = Table.inline({"x": 1, "y": 2})     # xy = { x = 1, y = 2 }
+doc["pkgs"] = AoT([{"a": 1}, {"b": 2}])          # [[pkgs]] … [[pkgs]]
+doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
+```

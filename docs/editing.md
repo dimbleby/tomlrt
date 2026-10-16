@@ -8,6 +8,9 @@ doc["project"]["dependencies"].append("requests>=2")
 del doc["project"]["description"]
 ```
 
+For sections, inline tables, and arrays-of-tables, see
+[Choosing tables and arrays](building.md#choosing-tables-and-arrays).
+
 ## Dotted paths
 
 `doc["a.b"] = 1` always treats `"a.b"` as a _single literal key_.
@@ -38,27 +41,14 @@ doc.install("tool.ruff.line-length", 88)
 # tool = { ruff = { line-length = 88 } }
 ```
 
-## Choosing tables and arrays
-
-A plain `dict` value installs as an inline table; a plain `list` installs as an
-inline array.
-Use tomlrt's classes to choose how a value is written:
-
-```python
-from tomlrt import AoT, Array, Table
-
-doc["tool"] = Table.section({"version": 1})      # [tool] section
-doc["xy"]   = Table.inline({"x": 1, "y": 2})     # xy = { x = 1, y = 2 }
-doc["pkgs"] = AoT([{"a": 1}, {"b": 2}])          # [[pkgs]] … [[pkgs]]
-doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
-```
-
 ## Live vs snapshot
 
 Assigning a newly created tomlrt table or array adds that object to the document.
 Changes through your original reference then update the document:
 
 ```python
+from tomlrt import Array
+
 xs = Array([1, 2])
 doc["xs"] = xs
 xs.append(3)             # doc["xs"] is now [1, 2, 3]
@@ -81,6 +71,13 @@ doc["tool"]["bumpversion"] = template    # becomes [tool.bumpversion]
 
 The source document's [preamble and epilogue](comments.md#document-preamble-and-epilogue)
 are not copied.
+
+## Independent copies
+
+Use `copy.copy(table)` or `copy.deepcopy(table)` for an independent copy that
+retains comments and formatting. Both copy nested values too, and work on
+documents and arrays as well. In contrast, `.copy()` makes an ordinary shallow
+dictionary or list copy.
 
 ## Removing values
 
