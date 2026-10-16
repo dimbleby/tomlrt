@@ -1,15 +1,13 @@
 # Errors
 
-tomlrt raises a small exception hierarchy.
-
-Exceptions from custom value conversion propagate to the caller. Scalar and
-inline replacements are converted before the old binding is removed; this
-does not make all mutations transactional.
+tomlrt raises `TOMLParseError` for invalid input and `TOMLError` for operations
+that a document's structure does not allow. Ordinary lookups also raise
+`KeyError`, `IndexError`, and `TypeError` as appropriate.
 
 ## `TOMLError`
 
-Base class for tomlrt's own errors — operations that are invalid for a
-document's structure, such as promoting a non-inline table.
+Base class for tomlrt's own errors. For example, converting a non-inline table
+to a section raises `TOMLError`.
 
 ```python
 try:
@@ -36,9 +34,7 @@ except tomlrt.TOMLParseError as exc:
 | `col`     | 1-based column number                           |
 | `offset`  | 0-based character offset into the source string |
 
-The human-readable description of the problem is the exception's
-string form — `str(exc)` (equivalently `exc.args[0]`) — which has
-the shape `"{message} (line L, column C)"`:
+Printing the exception includes the problem and its location:
 
 ```python
 try:

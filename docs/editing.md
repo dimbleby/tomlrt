@@ -1,10 +1,17 @@
 # Editing documents
 
+Use ordinary dictionary and list operations to change values:
+
+```python
+doc["project"]["version"] = "0.2.0"
+doc["project"]["dependencies"].append("requests>=2")
+del doc["project"]["description"]
+```
+
 ## Dotted paths
 
 `doc["a.b"] = 1` always treats `"a.b"` as a _single literal key_.
-To descend into nested tables, pass a dotted string (split on `.`) or any
-sequence of literal segments to `install` or `ensure_table`:
+To descend into nested tables, use `install` or `ensure_table`:
 
 ```python
 doc.install("tool.poetry.version", "0.1.0")  # [tool.poetry] version = "..."
@@ -14,18 +21,16 @@ ruff = doc.ensure_table("tool.ruff")         # creates [tool.ruff] if absent
 ruff["line-length"] = 88
 ```
 
-Both create any missing intermediate tables on the way down.
-They differ at the leaf:
+Both accept dotted paths or sequences of key names and create missing parent
+tables.
 
-- `install(path, value)` writes `value` at `path`, replacing whatever was there.
-  It returns the freshly-installed live view (or the leaf value).
-- `ensure_table(path)` is idempotent: it returns the existing table at `path` if
-  there is one, or creates an empty one if not.
-  It never overwrites an existing value.
+- `install(path, value)` sets or replaces the value and returns it.
+- `ensure_table(path)` returns an existing table or creates one. It does not
+  overwrite a non-table value.
 
-`ensure_table` preserves existing tables' form. `install` does the same for scalar
-and inline values. Missing children of inline tables are inline; elsewhere they
-are sections:
+For intermediate tables along the path, `ensure_table` keeps their existing
+form. So does `install` when setting a scalar or inline value. New intermediate
+tables are inline inside inline tables, and sections elsewhere:
 
 ```python
 doc = tomlrt.loads("tool = {}\n")
@@ -33,17 +38,11 @@ doc.install("tool.ruff.line-length", 88)
 # tool = { ruff = { line-length = 88 } }
 ```
 
-When installing a section or array-of-tables from an attached section or document,
-`install` promotes inline ancestors as needed. A scalar or array blocking the
-path, or a promotion that would lose inner comments, raises `TOMLError` without
-changing the document. Use `promote_inline()` to [request conversion](layout.md)
-without installing a value.
-
-## Structural assignment
+## Choosing tables and arrays
 
 A plain `dict` value installs as an inline table; a plain `list` installs as an
 inline array.
-To pick a different shape, assign a flavoured value:
+Use tomlrt's classes to choose how a value is written:
 
 ```python
 from tomlrt import AoT, Array, Table
@@ -56,71 +55,49 @@ doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
 
 ## Live vs snapshot
 
-Assigning a fresh `Table.section(...)`, `Table.inline(...)`, `Array(...)`, or
-`AoT(...)` _attaches it live_: your reference becomes the live view at the
-destination, and later mutations through that reference show up in the document.
+Assigning a newly created tomlrt table or array adds that object to the document.
+Changes through your original reference then update the document:
 
 ```python
 xs = Array([1, 2])
 doc["xs"] = xs
 xs.append(3)             # doc["xs"] is now [1, 2, 3]
 assert doc["xs"] is xs
-
-t = Table.section()
-doc["a"] = t
-t["x"] = 1               # doc["a"] is now {"x": 1}
-assert doc["a"] is t
 ```
 
-Plain `dict` / `list` values are _snapshot_ on assignment — mutating the
-original after assignment does _not_ affect the document.
-Reach for `Table.section`, `Table.inline`, or `Array` when you want live
-semantics.
+Plain dictionaries and lists are copied on assignment. Changing the original
+afterward does not affect the document.
 
-A container that is already attached somewhere is deep-cloned on assignment, so
-two slots never share state.
-This applies whether the source and destination are in the same document
-(`doc["b"] = doc["a"]`) or different ones (`d2["x"] = d1["x"]`).
-The clone is byte-faithful: comments, whitespace, and string / number style on
-the bytes you didn't touch survive the move.
-That holds when the two overlap, too — `doc["a"]["b"] = doc["a"]` copies the
-`a` that was there before the assignment began.
+A tomlrt table or array that already belongs to a document is also copied,
+retaining its comments and formatting. For example, `doc["b"] = doc["a"]`
+creates an independent copy of `a`.
 
-Assigning a whole parsed `Document` as a value lifts its body into a section,
-preserving the comments and layout that were in the source:
+Assigning a whole `Document` adds its contents as a section:
 
 ```python
 template = tomlrt.loads(template_text)   # a standalone file, no [header]
-doc["tool"]["bumpversion"] = template    # becomes [tool.bumpversion], trivia intact
+doc["tool"]["bumpversion"] = template    # becomes [tool.bumpversion]
 ```
 
-The document's own file-level preamble / epilogue (comment blocks separated from
-the body by a blank line) belong to no key and are not carried across.
+The source document's [preamble and epilogue](comments.md#document-preamble-and-epilogue)
+are not copied.
 
-## Removal and orphaning
+## Removing values
 
 Removing a `Table`, `Array`, or `AoT` — via `del`, `pop`, `clear`, or overwrite
-— detaches the view.
-It keeps its data, but further mutations no longer reach the document:
+— leaves any references you kept usable, but no longer connected to the document:
 
 ```python
-old = doc.pop("tool")        # detached Table view
+old = doc.pop("tool")
 old["debug"] = True          # does NOT affect doc
 ```
 
-Reattaching the detached view keeps its existing entry and nested-view
-references live at the new location.
-
-Copying or moving a header-less table preserves the order and spelling of
-its dotted keys. Those keys remain in the enclosing section's body;
-child sections and arrays-of-tables remain structural blocks below it.
-If the table has only child headers, both copying and moving use normal
-section placement rather than inserting it ahead of existing sections.
+Assign it elsewhere to add it to a document again.
 
 ## Arrays-of-tables
 
-`AoT.add()` appends a fresh entry and returns the new `Table` view, so you can
-keep mutating it:
+An `AoT` represents repeated `[[table]]` blocks. Use list operations to insert,
+replace, remove, or reorder its tables. `add()` appends a table and returns it:
 
 ```python
 pkgs = doc.aot("packages")
@@ -131,14 +108,7 @@ entry["version"] = "1.0"
 An array-of-tables with no entries has no `[[key]]` syntax, so it serialises as
 `key = []` — which re-parses as an empty inline `Array`, not an `AoT`.
 
-Use the usual list operations to insert, replace, delete or reorder entries.
-Replacing a single entry in a document keeps its `Table` view and header comments.
-Inserting entries leaves unrelated sections in place; `sort()` and `reverse()`
-may move them. Parsed tables retain their body formatting when used as entries.
-
 ## Reshaping the layout
 
-Editing changes a document's _data_. To reshape its _layout_ — sort
-keys, switch inline values between single- and multi-line, promote an
-inline value to a section, or snap a subtree to a canonical format — see
-[Layout](layout.md).
+See [Layout](layout.md) to sort keys, change table and array layout, or format
+spacing.

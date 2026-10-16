@@ -200,11 +200,10 @@ class Container(_View, dict[str, Any]):
 
     @property
     def comments(self) -> MutableMapping[str, str]:
-        """Mapping view of EOL comments on this container's direct keys.
+        """End-of-line comments, keyed by entry name.
 
-        Comments may be set before attachment. Section tables expose direct
-        key/value entries; inline tables expose direct leaf entries. Adding
-        comments to a single-line inline table makes it multi-line.
+        Comment strings do not include the leading ``#``. Adding comments
+        to a single-line inline table makes it multi-line.
         """
         if self._inline:
             return CommaEolView(_InlineAdapter(self))
@@ -212,16 +211,14 @@ class Container(_View, dict[str, Any]):
 
     @property
     def leading_comments(self) -> MutableMapping[str, tuple[str, ...]]:
-        """Mapping view of leading-comment blocks on this container's direct keys.
+        """Comment lines immediately above each key, keyed by entry name.
 
-        Returns only the *attached* comment run immediately above each key
-        (no blank line between). For the full block, including any
-        above-blank groups and the blank-line structure between them, see
+        Returns a tuple of strings without the leading ``#``. Only comments
+        with no blank line between them and the key are included.
+        For comments separated by blank lines, see
         [`leading_block`][tomlrt.Table.leading_block].
 
-        Comments may be set before attachment. Inline tables expose direct
-        leaf entries with the same attached-run semantics. Adding comments
-        makes a single-line inline table multi-line.
+        Adding comments makes a single-line inline table multi-line.
         """
         if self._inline:
             return CommaLeadingView(_InlineAdapter(self))
@@ -229,19 +226,17 @@ class Container(_View, dict[str, Any]):
 
     @property
     def leading_block(self) -> MutableMapping[str, tuple[str | None, ...]]:
-        """Mapping view of full leading-trivia blocks on direct keys.
+        """Comments and blank lines above each key, keyed by entry name.
 
-        Each entry is a ``tuple[str | None, ...]`` of comment strings
-        interleaved with ``None`` (one per blank line), in source order;
-        the slot's own column indent is implicit and re-applied on write.
+        Each value is a tuple of comment strings without the leading ``#``,
+        with ``None`` for each blank line, in source order.
 
         For the document's first key, the opening comment paragraph is the
         [`Document.preamble`][tomlrt.Document.preamble] and is omitted here;
         this block starts after the first blank line.
 
-        Blocks may be set before attachment. Inline tables expose direct
-        leaf entries; opening-bracket EOL comments are framing and are not
-        part of the first entry's block.
+        Comments on an inline table's opening brace are not part of the
+        first entry's block.
         """
         if self._inline:
             return CommaLeadingBlockView(_InlineAdapter(self))
@@ -249,12 +244,11 @@ class Container(_View, dict[str, Any]):
 
     @property
     def header_comment(self) -> str | None:
-        """The EOL comment on this container's section header, or None.
+        """The end-of-line comment on this table's section header, or None.
 
-        Section factories may be annotated before attachment.
-        Document roots and implicit sections opened only by a nested
-        ``[a.b]`` header read as ``None``. Setting on such a container raises
-        [`TOMLError`][tomlrt.TOMLError]; inline tables also raise.
+        Tables with no header of their own return ``None``; setting a comment
+        on them raises [`TOMLError`][tomlrt.TOMLError].
+        Inline tables do not support this property.
         """
         return _header_comment_get(self)
 
@@ -268,15 +262,13 @@ class Container(_View, dict[str, Any]):
 
     @property
     def header_leading_comments(self) -> tuple[str, ...]:
-        """The attached comment block immediately above this container's header.
+        """Comment lines immediately above this table's section header.
 
-        Section factories may be annotated before attachment.
-        Document roots and implicit sections opened only by a nested
-        ``[a.b]`` header read as ``()``.
-        Setting on such a container raises [`TOMLError`][tomlrt.TOMLError];
-        inline tables also raise.
+        Tables with no header of their own return ``()``; setting comments
+        on them raises [`TOMLError`][tomlrt.TOMLError].
+        Inline tables do not support this property.
 
-        Excludes any above-blank groups — those are visible via
+        For comments separated from the header by blank lines, see
         [`header_leading_block`][tomlrt.Table.header_leading_block].
         """
         return _header_leading_get(self)
@@ -291,14 +283,13 @@ class Container(_View, dict[str, Any]):
 
     @property
     def header_leading_block(self) -> tuple[str | None, ...]:
-        """The full leading-trivia block above this container's header.
+        """Comments and blank lines above this table's section header.
 
-        A ``tuple[str | None, ...]`` of comment strings interleaved with
-        ``None`` (one per blank line), in source order. Section factories
-        may be annotated before attachment. Document roots and implicit
-        sections opened only by a nested ``[a.b]`` header read as ``()``.
-        Setting on such a container raises [`TOMLError`][tomlrt.TOMLError];
-        inline tables also raise.
+        A tuple of comment strings without the leading ``#``, with ``None``
+        for each blank line, in source order.
+        Tables with no header of their own return ``()``; setting comments
+        on them raises [`TOMLError`][tomlrt.TOMLError].
+        Inline tables do not support this property.
 
         For the document's first section, the opening comment paragraph is
         the [`Document.preamble`][tomlrt.Document.preamble] and is omitted
@@ -321,25 +312,17 @@ class Container(_View, dict[str, Any]):
     ) -> None:
         """Canonicalise this container's formatting in place.
 
-        Rewrites this subtree to the canonical layout:
-
-        * Keys, ``=`` spacing, and header brackets use canonical
-          whitespace.
-        * Sibling key/value slots have no blank line between them;
-          section / array-of-tables headers get one.
-        * Orphan comment blocks above slots are preserved, with each
-          blank-line run collapsed to one.
-        * Inline values keep their shape (single-line stays single-line,
-          multi-line stays multi-line), and a multi-line one closes on
-          the row it starts on.
-        * Newlines use the owning document's style.
+        Normalizes spacing, indentation, and blank lines in this table
+        and its children. Comments are retained, and multi-line values
+        stay multi-line. Newlines use the document's line endings.
 
         Use ``FormatOptions(normalize_comments=False)`` to leave comment
         text untouched.
 
-        Factory-style containers without layout yet (``Table.section()`` /
-        ``Table.inline()``) and inline dotted
-        navigators are unsupported and raise `TOMLError`.
+        Add a newly created table to a document before formatting it.
+        For inline tables defined by dotted keys, format the enclosing
+        inline table, not an inner table such as ``a`` in ``{a.b = 1}``.
+        Unsupported tables raise `TOMLError`.
         """
         resolved = _resolve_format_options(options=options)
         kind = self._kind
@@ -514,7 +497,7 @@ class Container(_View, dict[str, Any]):
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        """Materialise independent plain-Python data (recursive)."""
+        """Return a deep copy as a plain Python dictionary."""
         out = _to_python(self)
         assert isinstance(out, dict)
         return out
@@ -823,22 +806,14 @@ class Container(_View, dict[str, Any]):
         key: Callable[[str], SupportsRichComparison] | None = None,
         reverse: bool = False,
     ) -> None:
-        """Sort direct child keys in place, preserving per-key trivia.
+        """Sort direct child keys in place, keeping comments and formatting.
 
-        Mirrors ``list.sort``: keyword-only ``key`` / ``reverse``,
-        stable, in-place. Structural keys (children bound to an ``AoT``
-        or to a section ``Table``, i.e. one rendered with a ``[header]``)
-        are always placed after bare keys; otherwise a bare key after a
-        section header would re-bind under it. ``key`` and ``reverse``
-        apply within, never across, the partitions. Implicit sections
-        built from dotted keys (e.g. ``a.x = 1``) sort as bare keys.
-
-        Inline containers have no structural children, so the partition
-        is a no-op and ``key`` / ``reverse`` behave as on a plain dict.
-
-        See [`has_header`][tomlrt.Table.has_header] for the predicate
-        that defines the partition; a custom ``key`` function can call it
-        to decide which side of the split a given child sits on.
+        Accepts keyword-only ``key`` and ``reverse``, like ``list.sort``.
+        Key-value lines stay before section and array-of-tables headers
+        so they still belong to the same table. Keys are sorted in groups:
+        those with only key-value lines, those with both lines and headers,
+        then those with only headers. ``key`` and ``reverse`` apply within
+        each group.
         """
         current = list(dict.keys(self))
         if len(current) <= 1:
@@ -885,14 +860,11 @@ class Container(_View, dict[str, Any]):
         _reorder_dict_storage(self, new_order)
 
     def has_header(self, key: str) -> bool:
-        """Whether ``key``'s rendered block contains a structural header.
+        """Whether ``key`` or its children contain a ``[table]`` or ``[[table]]``.
 
-        This describes the whole block, not the child table itself: with
-        ``[a.b]``, ``doc.has_header("a")`` is true although ``a`` is implicit
-        and only ``b`` owns the header. Structural headers are ``[header]``
-        sections and ``[[header]]`` array-of-tables entries. Returns ``False``
-        for bare ``key = value`` leaves, inline tables, implicit sections built
-        entirely from dotted keys (e.g. ``a.x = 1``), and missing keys.
+        For example, ``[a.b]`` makes ``doc.has_header("a")`` true, even
+        though ``a`` has no header of its own. Returns ``False`` for missing
+        keys and values written entirely as key-value lines.
         """
         refs = self._index.get(key, ())
         # A plain loop measurably beats any()+generator here; sort()
@@ -969,10 +941,10 @@ class Container(_View, dict[str, Any]):
     def install(self, path: str | Sequence[str], value: TomlInput) -> Any:
         """Set ``value`` at the (possibly dotted) ``path``.
 
-        Existing parents retain their form for scalar and inline values.
-        Installing a section-style container or `AoT` from an attached section
-        or document promotes inline ancestors as needed. An inline receiver
-        or detached inline ancestor cannot be promoted this way.
+        Creates missing parent tables. Existing parents keep their form
+        for scalar and inline values. When called on a document or a section
+        in a document, installing a section or `AoT` converts inline parent
+        tables to sections as needed.
 
         Returns the stored value or live view. Rejected paths and values
         leave the document unchanged.
@@ -1019,12 +991,10 @@ class Container(_View, dict[str, Any]):
     ) -> Table:
         """Return the table at ``key``, creating it if missing.
 
-        Existing section and inline tables are traversed without changing
-        their representation. A missing child of an inline table is created
-        inline; elsewhere, missing intermediate components stay implicit and
-        only the deepest component gets an explicit ``[a.b.c]`` header.
-        Raises `TOMLError` if an existing component is an array-of-tables or
-        non-table value.
+        Accepts a dotted path or a sequence of key names. Existing tables
+        keep their form. Missing tables inside inline tables are inline;
+        elsewhere, a section is created with a header such as ``[a.b.c]``.
+        Raises `TOMLError` if a value along the path is not a table.
 
         ``promote_inline`` is deprecated and ignored. Use `promote_inline()`
         to request conversion explicitly.
@@ -1385,17 +1355,11 @@ class Document(Container):
         * lists of mappings become ``[[array.of.tables]]`` blocks;
         * everything else is set with ordinary key-value assignment.
 
-        Constructing copies. Every value in ``data`` is copied into the
-        new document, so later mutations through your own references
-        are not visible in it -- and a rejected ``data`` leaves them all
-        alone. A [`Table`][tomlrt.Table] / [`Array`][tomlrt.Array] /
-        [`AoT`][tomlrt.AoT] contributes its contents and its shape
-        (section or inline, array or array-of-tables). Available comments
-        and spacing are preserved, including on entries of lists and
-        standalone arrays-of-tables.
+        Input values are copied. Existing tomlrt tables and arrays retain
+        their form, comments, and formatting in the copy.
 
-        To have the document keep your object, assign it instead:
-        ``doc[k] = table`` *attaches live*. See
+        To add a newly created table or array without copying, assign it
+        instead: ``doc[k] = table``. See
         [Editing documents](editing.md#live-vs-snapshot).
         """
         super().__init__()
@@ -1463,16 +1427,14 @@ class Document(Container):
     def epilogue(self) -> tuple[str | None, ...]:
         """Comment block at the very end of the document.
 
-        The trailing comments that follow all structural content, as bare
-        comment texts (without the leading ``#``) with ``None`` for each
-        blank line, in source order. With no structural content everything
-        is `preamble` instead.
+        Comments after the last entry, without the leading ``#``, with
+        ``None`` for each blank line, in source order.
 
         Setting replaces the epilogue with the same shape; assign ``()`` to
         remove. Line terminators within a comment are rejected.
 
         Raises [`TOMLError`][tomlrt.TOMLError] if called with a non-empty
-        value on a document with no structural content.
+        value on a document with no entries.
         """
         return _doc_epilogue_get(self)
 

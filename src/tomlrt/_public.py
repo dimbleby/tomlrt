@@ -52,10 +52,10 @@ def load(fp: IO[bytes]) -> Document:
 
 
 def dumps(data: Mapping[str, Any]) -> str:
-    """Serialize a [`Document`][tomlrt.Document] back to a TOML string.
+    """Serialize a document or mapping to a TOML string.
 
-    A mapping that is not already a [`Document`][tomlrt.Document] is
-    synthesised as one, so ``tomlrt.dumps({"a": 1})`` works.
+    Plain mappings are written using the same rules as
+    [`Document(data)`][tomlrt.Document].
     """
     if isinstance(data, Document):
         return data.render()
