@@ -1,24 +1,12 @@
 # Layout
 
-`tomlrt` is format-preserving by design: parsing and dumping a document
-returns exactly the same bytes. Separately from editing a document's
-_data_, you can reshape its _layout_ — the order of keys, whether an
-inline value spans one line or many, whether a value is inline or a
-section, and the canonical spacing of the whole thing.
-
-None of these operations change a document's _data_ — `to_dict()`
-compares equal before and after. All of them are format-preserving,
-keeping comments and trivia attached to their data, except
-[`format()`](#canonical-formatting), which deliberately _drops_ format
-preservation to snap a subtree to a canonical layout.
+These operations change how a document is written without changing its values.
+Comments stay with their entries.
 
 ## Sorting child keys
 
-`Document.sort()` and `Table.sort()` reorder direct child keys in
-place. The signature mirrors `list.sort`: keyword-only `key` and
-`reverse`. Comments and blank lines travel with their keys. Unlike
-[`format()`](#canonical-formatting), sorting is format-preserving — only
-the order changes.
+`doc.sort()` and `table.sort()` reorder their direct keys in place, keeping
+comments and formatting. They accept `key` and `reverse`, like `list.sort()`.
 
 ```python
 doc = tomlrt.loads("""
@@ -32,59 +20,27 @@ doc = tomlrt.loads("""
 doc.sort()
 ```
 
-When a document mixes bare keys and `[section]` / `[[aot]]` headers,
-`.sort()` keeps the headers after the bare keys — any bare key
-emitted after a section header would otherwise be re-parsed as a
-member of that section.
+## Single-line and multi-line values
 
-```python
-doc = tomlrt.loads("""
-    [a]
-    x = 1
-    [b]
-    y = 2
-""")
-doc["nickname"] = "hi"
-doc.sort()
-# nickname, [a], [b]
-```
-
-- `key` and `reverse` apply within each partition (bare keys, then
-  sections); they do not interleave the two.
-- Dotted keys (`a.x = 1`) are bare keys for sorting purposes.
-
-## Inline-array layout
-
-`Array.multiline` flips between single- and multi-line layout in place.
-For multi-line layout with a custom indent, call `set_multiline`:
+Use `.multiline` on arrays and inline tables to change their layout.
+For a custom indent, use `set_multiline`:
 
 ```python
 arr = doc.array("tags")
+arr.multiline = True
 arr.set_multiline(multiline=True, indent=2)
-```
 
-Collapsing a multi-line array to single-line is rejected if any item carries a
-comment; clear them first (see [Comments](comments.md)).
-
-## Inline-table layout
-
-Inline tables expose the same controls. `Table.multiline` and
-`Table.set_multiline` flip an inline table between single- and multi-line
-layout (TOML 1.1 allows multi-line inline tables):
-
-```python
 tbl = doc.table("pkg")
 tbl.set_multiline(multiline=True, indent=2)
 ```
 
-As with arrays, collapsing back to a single line is rejected when an entry
-carries a comment. `multiline` / `set_multiline` apply to the inline table as
-a whole, so call them on the table itself, not on a dotted-key view of it.
+Setting `multiline=False` makes the value single-line. This raises `TOMLError`
+if it would lose a comment; [remove the comments](comments.md) first.
 
-## Promoting inline → section
+## Converting inline tables to sections
 
-If a value started life as an inline table or inline array of inline tables, you
-can promote it in place:
+Use `promote_inline` to turn an inline table into a section, or `promote_array`
+to turn an array of inline tables into repeated `[[table]]` blocks:
 
 ```python
 doc = tomlrt.loads('[tool]\nruff = { line-length = 88 }\n')
@@ -94,29 +50,12 @@ doc = tomlrt.loads('pkgs = [{a = 1}, {b = 2}]\n')
 doc.promote_array("pkgs")                      # → [[pkgs]] … [[pkgs]]
 ```
 
-Promotion is rejected if it would lose inner comments; clear them first (see
-[Comments](comments.md)).
+Conversion raises `TOMLError` if it would lose comments inside the value.
 
 ## Canonical formatting
 
-The operations above are format-preserving. When you instead want to
-_opt in_ to canonical formatting — to drop the original spacing of a
-single value, a section, or the whole document — call `format()`.
-
-`Container.format()` and `Array.format()` both mutate in place and return
-`None`, mirroring `list.sort()`. Pass a `FormatOptions` object to configure
-canonical formatting consistently at any scope.
-
-| Option | Default | Effect |
-|--------|---------|--------|
-| `normalize_comments` | `True` | Normalize comment text. |
-| `indent` | `2` | Spaces added per nested multiline inline value. |
-| `eol_comment_spaces` | `1` | Spaces before supported EOL comments. |
-| `multiline_trailing_comma` | `True` | Emit a final comma in multiline arrays and inline tables. |
-| `quote_style` | `QuoteStyle.PRESERVE` | Leave quotes untouched, or choose `QuoteStyle.DOUBLE` / `QuoteStyle.SINGLE` when neither requires more escapes. |
-
-For example, `doc.format(options=tomlrt.FormatOptions(indent=4))` uses a
-four-space step at every nested multiline level.
+Call `format()` to replace the original spacing with consistent formatting.
+It works in place on a document, table, or array:
 
 ```python
 import tomlrt
@@ -146,45 +85,31 @@ arr = [1, 2, 3]
 x = { a = 1, b = 2 }
 ```
 
-### What gets normalised
+Formatting normalizes whitespace, indentation, and blank lines. Comments stay
+with their entries, and multi-line values stay multi-line. Formatting one
+section leaves other sections alone.
 
-- **Whitespace around `=`**: collapsed to one space on each side.
-- **Dotted keys**: separators become bare `.` (no surrounding whitespace).
-  Bare keys stay bare; quoted segments use `quote_style`.
-- **Header brackets**: `[  a . b  ]` → `[a.b]`.
-- **Inline arrays and inline tables**: spacing collapses to the
-  canonical form (`[1, 2, 3]`, `{ x = 1, y = 2 }`). The overall
-  _shape_ is preserved — a multi-line value stays multi-line, and a
-  single-line value stays single-line.
-- **Blank lines between sibling KVs** collapse to none.
-- **Blank lines before structural section / array-of-tables headers**
-  collapse to exactly one.
-- Other runs of blank lines reached by the formatter collapse to one.
-- **All newlines** are retargeted to the owning document's newline
-  style (LF or CRLF), including newlines inside multi-line inline
-  values.
+For a newly created table, add it to a document before calling `format()`.
 
-### What is preserved
+Pass `FormatOptions` to customize the result:
 
-- The document **preamble** (any leading comments above the first
-  section).
-- **Orphan comment blocks** — comment runs separated from a key or
-  header by at least one blank line — are kept in place. Multiple
-  separating blank lines collapse to one.
-- Each key's **attached comment block** (the comments immediately
-  above the key, with no intervening blank line) stays attached.
-- Multi-line inline values keep their multi-line shape.
-- With the default `quote_style=QuoteStyle.PRESERVE`, string and quoted-key
-  spellings (including escapes) are left untouched.
-- Slots outside the receiver's subtree are not touched: calling
-  `format()` on a single section leaves sibling sections alone.
+```python
+doc.format(options=tomlrt.FormatOptions(indent=4, normalize_comments=False))
+```
+
+See the [API reference](api.md#tomlrt.FormatOptions) for all options.
 
 ### Quote style
 
-`QuoteStyle.DOUBLE` and `QuoteStyle.SINGLE` are readability preferences, not
-strict quoting rules. The formatter avoids escapes **required by a quote
-form**; when neither form requires them, it uses your preferred style. For
-example, with `FormatOptions(quote_style=tomlrt.QuoteStyle.DOUBLE)`:
+By default, formatting preserves string and quoted-key spelling, including
+escapes. Set `quote_style` to prefer single or double quotes:
+
+```python
+doc.format(options=tomlrt.FormatOptions(quote_style=tomlrt.QuoteStyle.DOUBLE))
+```
+
+The formatter avoids adding escapes, even when that means using the other
+quote style:
 
 | Before | After |
 |--------|-------|
@@ -192,35 +117,11 @@ example, with `FormatOptions(quote_style=tomlrt.QuoteStyle.DOUBLE)`:
 | `greeting = "say \"hi\""` | `greeting = 'say "hi"'` |
 | `path = 'C:\Users'` | `path = 'C:\Users'` |
 
-The escaped greeting becomes easier to read with literal quotes, and the
-Windows path stays literal rather than gaining escaped backslashes. A quote
-form that cannot express the value is never chosen. This rule also applies to
-already-quoted key segments, including headers and inline tables; bare keys
-remain bare. Single-line and multi-line strings retain their shape, and a
-multi-line string keeps its original quotes if switching would change its
-physical line breaks. `QuoteStyle.PRESERVE` (the default) leaves each original
-spelling, including escapes, untouched.
+Bare keys stay bare, and multi-line strings stay multi-line.
 
 ### Comment normalization
 
-By default, every comment reached by the walk is rewritten so that there is
-exactly one space between `#` and the body, and any trailing whitespace inside
-the comment is stripped:
-
-| Before | After |
-|--------|-------|
-| <code style="white-space: pre">#foo</code> | <code style="white-space: pre"># foo</code> |
-| <code style="white-space: pre">#   foo</code> | <code style="white-space: pre"># foo</code> |
-| <code style="white-space: pre"># foo   </code> | <code style="white-space: pre"># foo</code> |
-| <code style="white-space: pre">#</code> (empty) | <code style="white-space: pre">#</code> |
+Formatting adds one space after `#` and removes trailing whitespace from comment
+text. Empty comments remain `#`.
 
 Pass `FormatOptions(normalize_comments=False)` to leave comment text untouched.
-
-`eol_comment_spaces` applies to key/value, section-header, array-item, and
-inline-table-entry comments. Opening-bracket comment spacing remains authored.
-
-### Detached views
-
-`format()` requires backing layout. A fresh `Table.section()` or
-`Table.inline()` factory without layout yet raises `TOMLError`.
-Setting comments or attaching the table creates its layout.

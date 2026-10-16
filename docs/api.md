@@ -1,11 +1,10 @@
 # API reference
 
-The complete public surface, generated from the docstrings in the source.
+Details of the public classes, methods, and options.
 
 ## Stability
 
-Anything imported from the top-level `tomlrt` namespace is part of the public,
-semver-stable API:
+Import public names from `tomlrt`. They follow semantic versioning:
 
 | Symbol                              | Kind       |
 | ----------------------------------- | ---------- |
@@ -17,9 +16,7 @@ semver-stable API:
 | `TomlInput`                         | type alias |
 | `TOMLError`, `TOMLParseError`       | exception  |
 
-Anything not re-exported from `tomlrt/__init__.py` (modules prefixed with `_`,
-internal helpers) may change without notice and should not be imported by user
-code.
+Modules prefixed with `_` are internal and may change without notice.
 
 ## Top-level functions
 

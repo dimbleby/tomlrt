@@ -143,7 +143,7 @@ class Array(_View, list[Any]):
         )
 
     def to_list(self) -> list[Any]:
-        """Materialise independent plain-Python data (recursive)."""
+        """Return a deep copy as a plain Python list."""
         from tomlrt._container import _to_python  # noqa: PLC0415
 
         out = _to_python(self)
@@ -208,7 +208,7 @@ class Array(_View, list[Any]):
 
     @property
     def multiline(self) -> bool:
-        """True iff this array is rendered in multi-line form."""
+        """Whether this array is written across multiple lines."""
         return self._value.is_multiline()
 
     @multiline.setter
@@ -219,17 +219,17 @@ class Array(_View, list[Any]):
 
     @property
     def comments(self) -> MutableMapping[int, str]:
-        """EOL comment view, indexed by item position."""
+        """End-of-line comments, keyed by item index."""
         return CommaEolView(_ArrayAdapter(self))
 
     @property
     def leading_comments(self) -> MutableMapping[int, tuple[str, ...]]:
-        """Attached leading-comment view, indexed by item position."""
+        """Comment lines immediately above each item, keyed by item index."""
         return CommaLeadingView(_ArrayAdapter(self))
 
     @property
     def leading_block(self) -> MutableMapping[int, tuple[str | None, ...]]:
-        """Full leading-block view, indexed by item position.
+        """Comments and blank lines above each item, keyed by item index.
 
         Comment lines are strings and blank lines are ``None``.
         """
@@ -243,9 +243,9 @@ class Array(_View, list[Any]):
         """Canonicalise this array's formatting in place.
 
         Rewrites whitespace, indentation, separators, and newlines
-        while preserving shape (single-line stays single-line, multi-line
-        stays multi-line) and orphan comment text. A multi-line array's
-        closing bracket lines up with the row the array starts on.
+        while retaining comments and keeping multi-line values multi-line.
+        A multi-line array's closing bracket lines up with the row the
+        array starts on.
 
         Use ``FormatOptions(normalize_comments=False)`` to leave comment
         text untouched.
@@ -261,7 +261,7 @@ class Array(_View, list[Any]):
         )
 
     def set_multiline(self, *, multiline: bool, indent: int = 4) -> Array:
-        """Switch this array between flush single-line and multi-line form.
+        """Switch this array between single-line and multi-line form.
 
         When laying out multi-line, items are indented by ``indent``
         spaces and the closing bracket lines up with the row the array
@@ -565,7 +565,7 @@ def _norm_index(index: SupportsIndex, n: int, action: str) -> int:
 
 
 class AoT(_View, list["Table"]):
-    """An Array-of-tables, e.g. ``[[products]]`` repeated.
+    """An array of tables, written as repeated headers such as ``[[products]]``.
 
     `AoT` is a `list[Table]` subclass, so ``isinstance(aot, list)`` holds
     and it can be passed wherever a `list` or `Sequence` is expected.
@@ -600,7 +600,7 @@ class AoT(_View, list["Table"]):
         self._path = ()
 
     def to_list(self) -> list[dict[str, Any]]:
-        """Materialise independent plain-Python dictionaries (recursive)."""
+        """Return a deep copy as a list of plain Python dictionaries."""
         out = _container._to_python(self)  # noqa: SLF001
         assert isinstance(out, list)
         return out
@@ -613,10 +613,10 @@ class AoT(_View, list["Table"]):
         return cloned
 
     def add(self, entry: Mapping[str, TomlInput] | None = None) -> Table:
-        """Append a fresh ``[[path]]`` entry and return its `Table` view.
+        """Append a table and return it.
 
-        ``entry`` may be initial body content or ``None``. Attached AoTs
-        append to the owning document.
+        ``entry`` supplies the table's initial values; ``None`` creates an
+        empty table.
         """
         body = _prepare_aot_entries((entry,))[0] if entry is not None else None
         if self._layout_root is None:

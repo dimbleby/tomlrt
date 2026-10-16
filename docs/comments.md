@@ -1,23 +1,12 @@
 # Comments
 
-tomlrt exposes comments at every level of a document: end-of-line, above an entry, above a section header, and at the top or bottom of the file.
-
-Tables can be annotated before attachment:
-
-```python
-feature = tomlrt.Table.section({"enabled": True})
-feature.comments["enabled"] = "Enable this feature"
-doc = tomlrt.Document()
-doc["feature"] = feature
-```
-
-This also works for inline tables and entries in standalone arrays of tables.
-Attachment keeps their comments and live references.
+Read and write comments separately from values. Comment strings do not include
+the leading `#`.
 
 ## End-of-line comments
 
-`Table.comments` is a live `MutableMapping[str, str]` keyed by entry name.
-Assign a string to set or replace the comment; `del` removes it entirely.
+Use `.comments` like a dictionary keyed by entry name. Assign a string to set
+or replace a comment; `del` removes it.
 
 ```python
 doc = tomlrt.loads("""
@@ -28,7 +17,7 @@ port = 8080
 
 server = doc.table("server")
 server.comments["port"] = "override with $PORT"
-del server.comments["host"]                 # remove the comment entirely
+del server.comments["host"]
 
 print(tomlrt.dumps(doc))
 # [server]
@@ -38,8 +27,8 @@ print(tomlrt.dumps(doc))
 
 ## Comments above an entry
 
-`Table.leading_comments` is keyed by entry name and stores the attached run
-of bare comment lines immediately above that entry (no leading `#`):
+`.leading_comments` reads or replaces the comment lines immediately above an
+entry, with no intervening blank line:
 
 ```python
 server.leading_comments["port"] = (
@@ -50,9 +39,8 @@ server.leading_comments["port"] = (
 
 ## Section header comments
 
-`Table.header_comment` is the end-of-line comment on the `[section]` line
-itself; `Table.header_leading_comments` is the run of `# …` lines immediately
-above it:
+Use `header_comment` for a comment on the `[section]` line itself, and
+`header_leading_comments` for comments immediately above it:
 
 ```python
 server.header_comment = "HTTP listener"
@@ -61,22 +49,18 @@ server.header_leading_comments = ("Server configuration.",)
 
 ## Array-item comments
 
-`Array` exposes `comments`, `leading_comments`, and `leading_block` keyed by
-**integer index**:
+Arrays have the same comment properties, keyed by item index:
 
 ```python
 tags = doc.array("tags")
 tags.comments[0] = "primary"
 tags.leading_comments[1] = ("alternate",)
-tags.leading_block[2] = ("older note", None, "attached note")
 ```
 
 ## Inline-table comments
 
-Because tomlrt targets TOML 1.1, inline tables may span multiple lines and
-carry comments. `Table.comments`, `Table.leading_comments`, and
-`Table.leading_block` work on an inline table just as they do on a
-`[section]`, keyed by entry name:
+TOML 1.1 allows inline tables to span multiple lines and carry comments.
+Use the same comment properties as for sections:
 
 ```python
 doc = tomlrt.loads('pkg = { name = "tomlrt", version = "0.1" }\n')
@@ -90,61 +74,40 @@ print(tomlrt.dumps(doc))
 # }
 ```
 
-A single-line inline table has nowhere to put a comment, so setting one
-promotes the table to multi-line form automatically — exactly as it does
-for an inline array. You can also control the layout explicitly with
-`Table.multiline` / `Table.set_multiline(multiline=…)`; collapsing back to
-a single line raises if it would orphan a comment.
+Adding a comment makes a single-line table or array multi-line automatically.
+See [Layout](layout.md) to control this explicitly.
 
-For a dotted-key inline table such as `{ a.b = 1 }`, address the comment
-through the inner table — `doc["t"]["a"].comments["b"]` — mirroring how a
-top-level `a.b = 1` is reached via `doc["a"].comments["b"]`.
-
-`Table.header_comment`, `Table.header_leading_comments`, and
-`Table.header_leading_block` remain unavailable on inline tables: an inline
-table has no header line to attach them to.
+Inline tables have no section header, so the `header_*` properties are not
+available on them.
 
 ## Blank-separated leading blocks
 
-`leading_comments` and `header_leading_comments` cover only the run of `# …`
-lines that sit *directly* above an entry, array element, or section header.
-A comment group separated from its construct by a blank line is not part of
-either view.
-
-`Table.leading_block`, `Array.leading_block`, and
-`Table.header_leading_block` are the full-region counterparts: they expose
-both blank-separated groups and the attached run as a tuple in which each
-`str` is a bare comment line and each `None` is a blank line. The same
-distinction applies to section entries, multiline inline-table entries, and
-multiline array elements.
-
-The full comment block travels with its entry when copied, moved, or sorted.
-Only the blank separator before the block is adjusted to its new position.
-Document preambles and epilogues remain with the document.
+Use `leading_block` or `header_leading_block` to include comments separated by
+blank lines. These return a tuple of comment strings, with `None` for each
+blank line. For example:
 
 ```toml
 [a]
 x = 1
 
-# orphan
+# Configuration
 
 [b]
 y = 2
 ```
 
 ```python
-assert doc["b"].header_leading_block == (None, "orphan", None)
-doc["b"].header_leading_block = ("orphan", None, "attached")
+assert doc["b"].header_leading_block == (None, "Configuration", None)
+doc["b"].header_leading_block = ("Configuration", None, "Section b")
 ```
 
-For the first slot in a document, `Document.preamble` is disjoint from
-this view: it is read and written through `Document.preamble` only.
+Comment blocks travel with their entry when copied, moved, or sorted.
+The document preamble and epilogue stay with the document.
 
 ## Document preamble and epilogue
 
-The top-of-file and bottom-of-file comment blocks are reachable via
-`Document.preamble` and `Document.epilogue`, and both have setters that
-replace the entire block. Assign `()` to clear.
+Use `Document.preamble` and `Document.epilogue` for opening and closing file
+comments. Assignment replaces the whole block; `()` clears it.
 
 ```python
 doc.preamble = ("Generated by build.py — do not edit.",)
@@ -156,6 +119,5 @@ lines before the first blank line.
 Comments below that blank line belong to the first key or section, not the
 preamble.
 
-The "epilogue" is the trailing comment block after all structural content.
-Unlike the preamble it may span blank-separated groups, so it is a
-`tuple[str | None, ...]` with `None` for each blank line.
+The "epilogue" is the comment block after the last entry. It can include blank
+lines, represented by `None`.

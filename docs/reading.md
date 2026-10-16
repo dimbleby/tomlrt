@@ -1,83 +1,69 @@
 # Reading documents
 
-Plain `doc["key"]` returns `Any`. This page covers the richer read API:
-shape-checked typed accessors, dotted-path navigation, untyped path lookups,
-and conversion back to plain Python.
+Read tables like dictionaries and arrays like lists:
+
+```python
+name = doc["project"]["name"]
+first_dependency = doc["project"]["dependencies"][0]
+```
 
 ## Typed accessors
 
-The typed accessors give you a shape-checked `Table`, `Array`, or `AoT`
-directly.
-
-### Strict accessors
-
-Each raises `KeyError` if the key is missing and `TypeError` if the value at the
-key has the wrong shape:
+Use `table`, `array`, or `aot` to check the kind of value you are reading.
+They return a `Table`, `Array`, or `AoT` (array of tables), which also helps
+static type checkers:
 
 ```python
-project = doc.table("project")            # -> Table
-deps    = project.array("dependencies")   # -> Array
-pkgs    = doc.aot("packages")             # -> AoT
+project = doc.table("project")
+deps = project.array("dependencies")
+pkgs = doc.aot("packages")
 ```
 
-The same accessors exist on `Array` for indexed lookup:
+Arrays support `table` and `array` for indexed lookup:
 
 ```python
-first_pkg = pkgs.table(0)             # -> Table
-nested    = some_array.array(2)       # -> Array
+first_table = some_array.table(0)
+nested = some_array.array(2)
 ```
 
-### Lenient accessors
-
-`get_table` / `get_array` / `get_aot` mirror `dict.get`: return the value when
-the shape matches, otherwise the `default` (default `None`).
-They raise `TypeError` only if the key exists but has the _wrong_ shape:
+Missing keys raise `KeyError`; a value of the wrong kind raises `TypeError`.
+Use `get_table`, `get_array`, or `get_aot` to return a default for a missing
+key instead. The default is `None`; a value of the wrong kind still raises
+`TypeError`.
 
 ```python
-ruff = doc.get_table("tool", default={}).get("ruff")
+ruff = doc.get_table("tool.ruff")
 ```
 
-## Dotted paths and sequences of segments
+## Nested lookups
 
-The `Table`-side accessors (`table`, `array`, `aot`, `entry`, and their `get_*`
-variants) accept either a dotted path string or a sequence of literal segments.
-Use the sequence form when a segment must contain a literal `.`:
+On documents and tables, these methods accept a dotted path or a sequence of
+key names. Use a sequence when a name contains a literal `.`:
 
 ```python
 doc.table("tool.poetry")            # tool -> poetry
 doc.table(("tool", "weird.key"))    # tool -> "weird.key"
 ```
 
-## Untyped path access
-
-Sometimes you just want the value at a path without asserting a shape — e.g.
-when dispatching on the result yourself, or when the leaf is a scalar.
-`entry` and `get_entry` walk the same path the typed accessors do but return
-`Any`:
+Use `entry` or `get_entry` to read any kind of value at a path:
 
 ```python
 value = doc.entry("tool.poetry.name")           # raises if missing
 maybe = doc.get_entry("tool.poetry.licence")    # None if missing
 ```
 
-## Copying views
+## Independent copies
 
-Use `copy.copy(view)` or `copy.deepcopy(view)` for an independent copy that
-retains comments and available formatting. Both operations are deep for tomlrt
-views. Inherited methods such as `table.copy()` and `array.copy()` still make
-ordinary shallow `dict` and `list` copies.
+Use `copy.copy(table)` or `copy.deepcopy(table)` for an independent copy that
+retains comments and formatting. Both copy nested values too, and work on
+documents and arrays as well. In contrast, `.copy()` makes an ordinary shallow
+dictionary or list copy.
 
 ## Back to plain Python
 
-`Table.to_dict()`, `Array.to_list()`, and `AoT.to_list()` return a deep copy
-made of plain `dict` / `list` / scalar values, sharing no state with the
-document. Use one when you want to mutate the result without affecting the
-document, or to hand data off to code that will outlive the document:
+Use `to_dict()` and `to_list()` to get ordinary Python dictionaries and lists:
 
 ```python
 plain = doc.to_dict()
 plain["project"]["name"] = "renamed"   # does not touch the document
 ```
-
-Plain exports deliberately discard formatting and are usually cheaper than
-copying an existing layout.
