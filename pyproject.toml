@@ -19,7 +19,6 @@ keywords = [
 ]
 classifiers = [
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Typing :: Typed",
@@ -47,8 +46,8 @@ docs = [
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["flit_core>=4.1,<5"]
+build-backend = "flit_core.buildapi"
 
 [tool.coverage.run]
 source = ["src/tomlrt"]
