@@ -2946,6 +2946,46 @@ def test_append_preserves_dangling_comment_in_comma_first_array() -> None:
         """)
 
 
+def test_append_preserves_comments_on_both_sides_of_comma() -> None:
+    src = td("""
+        a = [1 # one
+        , # separator
+        # end
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    doc.array("a").append(2)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        a = [1 # one
+        , # separator
+        # end
+         2,
+        ]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_inline_assign_preserves_comments_on_both_sides_of_comma() -> None:
+    src = td("""
+        t = {a = 1 # one
+        , # separator
+        # end
+        }
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("t")["b"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        t = {a = 1 # one
+        , # separator
+        # end
+         b = 2,
+        }
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_assign_preserves_comma_first_boundary_in_inline_table() -> None:
     # Comma-first inline tables share the row-break logic with arrays
     # (via _comma_ops), so a new entry also takes its own
