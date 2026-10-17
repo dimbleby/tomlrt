@@ -782,7 +782,6 @@ def splice_in(
         eol = _take_eol(old_tail).rstrip("\r\n")
         old_tail.before = eol + style.pre_comma_break
         old_tail.has_comma = True
-        old_tail.after = ""
         if "\n" not in new_item.following:
             new_item.following = nl + new_item.following
     else:
