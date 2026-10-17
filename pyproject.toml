@@ -43,7 +43,7 @@ dev = [
 docs = [
   "markdown-exec>=1.12.5",
   "mkdocstrings[python]>=0.27",
-  "zensical>=0.0.36",
+  "zensical>=0.0.71",
 ]
 
 [build-system]
