@@ -16,6 +16,9 @@ nav = [
   { "API reference" = "api.md" },
 ]
 
+[project.extra]
+generator = false
+
 [project.theme]
 features = [
   "content.code.copy",

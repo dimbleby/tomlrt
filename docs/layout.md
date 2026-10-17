@@ -5,8 +5,9 @@ Comments stay with their entries.
 
 ## Sorting child keys
 
-`doc.sort()` and `table.sort()` reorder their direct keys in place, keeping
-comments and formatting. They accept `key` and `reverse`, like `list.sort()`.
+[`doc.sort()`][tomlrt.Document.sort] and [`table.sort()`][tomlrt.Table.sort]
+reorder their direct keys in place, keeping comments and formatting.
+They accept `key` and `reverse`, like `list.sort()`.
 
 ```python exec="on" source="above" result="toml"
 import tomlrt
@@ -25,8 +26,8 @@ print(tomlrt.dumps(doc))
 
 ## Single-line and multi-line values
 
-Use `.multiline` on arrays and inline tables to change their layout.
-For a custom indent, use `set_multiline`:
+Use [`multiline`][tomlrt.Array.multiline] on arrays and inline tables to change
+their layout. For a custom indent, use [`set_multiline`][tomlrt.Array.set_multiline]:
 
 ```python
 arr = doc.array("tags")
@@ -37,12 +38,14 @@ tbl = doc.table("pkg")
 tbl.set_multiline(multiline=True, indent=2)
 ```
 
-Setting `multiline=False` makes the value single-line. This raises `TOMLError`
-if it would lose a comment; [remove the comments](comments.md) first.
+Setting `multiline=False` makes the value single-line. This raises
+[`TOMLError`][tomlrt.TOMLError] if it would lose a comment;
+[remove the comments](comments.md) first.
 
 ## Converting inline tables to sections
 
-Use `promote_inline` to turn an inline table into a section:
+Use [`promote_inline`][tomlrt.Table.promote_inline] to turn an inline table
+into a section:
 
 ```python exec="on" source="above" result="toml"
 import tomlrt
@@ -55,8 +58,8 @@ doc.table("tool").promote_inline("ruff")
 print(tomlrt.dumps(doc))
 ```
 
-Use `promote_array` to turn an array of inline tables into repeated
-`[[table]]` blocks:
+Use [`promote_array`][tomlrt.Document.promote_array] to turn an array of inline
+tables into repeated `[[table]]` blocks:
 
 ```python exec="on" source="above" result="toml"
 import tomlrt
@@ -70,8 +73,8 @@ Conversion raises `TOMLError` if it would lose comments inside the value.
 
 ## Canonical formatting
 
-Call `format()` to replace the original spacing with consistent formatting.
-It works in place on a document, table, or array:
+Call [`format()`][tomlrt.Document.format] to replace the original spacing with
+consistent formatting. It works in place on a document, table, or array:
 
 ```python exec="on" source="above" result="toml"
 import tomlrt
@@ -96,18 +99,17 @@ section leaves other sections alone.
 
 For a newly created table, add it to a document before calling `format()`.
 
-Pass `FormatOptions` to customize the result:
+Pass [`FormatOptions`][tomlrt.FormatOptions] to customize the result:
 
 ```python
 doc.format(options=tomlrt.FormatOptions(indent=4, normalize_comments=False))
 ```
 
-See the [API reference](api.md#tomlrt.FormatOptions) for all options.
-
 ### Quote style
 
 By default, formatting preserves string and quoted-key spelling, including
-escapes. Set `quote_style` to prefer single or double quotes:
+escapes. Set [`quote_style`][tomlrt.FormatOptions.quote_style] to prefer single
+or double quotes:
 
 ```python
 doc.format(options=tomlrt.FormatOptions(quote_style=tomlrt.QuoteStyle.DOUBLE))

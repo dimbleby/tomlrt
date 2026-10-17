@@ -14,7 +14,8 @@ For sections, inline tables, and arrays-of-tables, see
 ## Dotted paths
 
 `doc["a.b"] = 1` always treats `"a.b"` as a _single literal key_.
-To descend into nested tables, use `install` or `ensure_table`:
+To descend into nested tables, use [`install`][tomlrt.Document.install] or
+[`ensure_table`][tomlrt.Document.ensure_table]:
 
 ```python exec="on" source="above" result="toml"
 import tomlrt
@@ -69,7 +70,7 @@ A tomlrt table or array that already belongs to a document is also copied,
 retaining its comments and formatting. For example, `doc["b"] = doc["a"]`
 creates an independent copy of `a`.
 
-Assigning a whole `Document` adds its contents as a section:
+Assigning a whole [`Document`][tomlrt.Document] adds its contents as a section:
 
 ```python
 template = tomlrt.loads(template_text)   # a standalone file, no [header]
@@ -83,13 +84,14 @@ are not copied.
 
 Use `copy.copy(table)` or `copy.deepcopy(table)` for an independent copy that
 retains comments and formatting. Both copy nested values too, and work on
-documents and arrays as well. In contrast, `.copy()` makes an ordinary shallow
-dictionary or list copy.
+documents and arrays as well. In contrast, `table.copy()` and `array.copy()`
+make ordinary shallow dictionary and list copies.
 
 ## Removing values
 
-Removing a `Table`, `Array`, or `AoT` — via `del`, `pop`, `clear`, or overwrite
-— leaves any references you kept usable, but no longer connected to the document:
+Removing a [`Table`][tomlrt.Table], [`Array`][tomlrt.Array], or [`AoT`][tomlrt.AoT]
+— via `del`, `pop`, `clear`, or overwrite — leaves any references you kept usable,
+but no longer connected to the document:
 
 ```python
 old = doc.pop("tool")
@@ -101,7 +103,8 @@ Assign it elsewhere to add it to a document again.
 ## Arrays-of-tables
 
 An `AoT` represents repeated `[[table]]` blocks. Use list operations to insert,
-replace, remove, or reorder its tables. `add()` appends a table and returns it:
+replace, remove, or reorder its tables. [`add()`][tomlrt.AoT.add] appends a table
+and returns it:
 
 ```python
 pkgs = doc.aot("packages")

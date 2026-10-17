@@ -1212,7 +1212,7 @@ def _populate_unattached(t: Container, mapping: Mapping[str, TomlInput]) -> None
 class Table(Container):
     """A logical TOML table.
 
-    Every nested mapping in a document is a [`Table`][tomlrt.Table].
+    Every nested mapping in a document is a `Table`.
     `Table` is a `dict` subclass, so ``isinstance(t, dict)`` holds
     and it can be passed wherever a `dict` or `Mapping` is expected.
 
@@ -1329,7 +1329,7 @@ DEFAULT_NEWLINE: Final = "\n"
 class Document(Container):
     """Top-level TOML document.
 
-    A [`Document`][tomlrt.Document] is the root of a parsed TOML
+    A `Document` is the root of a parsed TOML
     file. It is a `dict` subclass and can be passed wherever a
     `dict` or `Mapping` is expected.
     """

@@ -15,8 +15,9 @@ with open("pyproject.toml", "wb") as f:
     tomlrt.dump(doc, f)
 ```
 
-Open files in binary mode (`rb` / `wb`) so that line endings are preserved.
-For strings, use `loads` / `dumps`:
+With [`load`][tomlrt.load] / [`dump`][tomlrt.dump], open files in binary mode
+(`rb` / `wb`) so that line endings are preserved.
+For strings, use [`loads`][tomlrt.loads] / [`dumps`][tomlrt.dumps]:
 
 ```python
 doc = tomlrt.loads(text)
