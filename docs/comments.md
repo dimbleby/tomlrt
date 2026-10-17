@@ -5,8 +5,8 @@ the leading `#`.
 
 ## End-of-line comments
 
-Use `.comments` like a dictionary keyed by entry name. Assign a string to set
-or replace a comment; `del` removes it.
+Use [`comments`][tomlrt.Table.comments] like a dictionary keyed by entry name.
+Assign a string to set or replace a comment; `del` removes it.
 
 ```python exec="on" source="above" result="toml"
 import tomlrt
@@ -26,8 +26,8 @@ print(tomlrt.dumps(doc))
 
 ## Comments above an entry
 
-`.leading_comments` reads or replaces the comment lines immediately above an
-entry, with no intervening blank line:
+[`leading_comments`][tomlrt.Table.leading_comments] reads or replaces the comment
+lines immediately above an entry, with no intervening blank line:
 
 ```python
 server.leading_comments["port"] = (
@@ -38,8 +38,10 @@ server.leading_comments["port"] = (
 
 ## Section header comments
 
-Use `header_comment` for a comment on the `[section]` line itself, and
-`header_leading_comments` for comments immediately above it:
+Use [`header_comment`][tomlrt.Table.header_comment] for a comment on the
+`[section]` line itself, and
+[`header_leading_comments`][tomlrt.Table.header_leading_comments] for comments
+immediately above it:
 
 ```python
 server.header_comment = "HTTP listener"
@@ -48,7 +50,9 @@ server.header_leading_comments = ("Server configuration.",)
 
 ## Array-item comments
 
-Arrays have the same comment properties, keyed by item index:
+Arrays have the same [`comments`][tomlrt.Array.comments] and
+[`leading_comments`][tomlrt.Array.leading_comments] properties, keyed by item
+index:
 
 ```python
 tags = doc.array("tags")
@@ -79,9 +83,10 @@ available on them.
 
 ## Blank-separated leading blocks
 
-Use `leading_block` or `header_leading_block` to include comments separated by
-blank lines. These return a tuple of comment strings, with `None` for each
-blank line. For example:
+Use [`leading_block`][tomlrt.Table.leading_block] or
+[`header_leading_block`][tomlrt.Table.header_leading_block] to include comments
+separated by blank lines. These return a tuple of comment strings, with `None`
+for each blank line. For example:
 
 ```toml
 [a]
@@ -103,7 +108,8 @@ The document preamble and epilogue stay with the document.
 
 ## Document preamble and epilogue
 
-Use `Document.preamble` and `Document.epilogue` for opening and closing file
+Use [`Document.preamble`][tomlrt.Document.preamble] and
+[`Document.epilogue`][tomlrt.Document.epilogue] for opening and closing file
 comments. Assignment replaces the whole block; `()` clears it.
 
 ```python

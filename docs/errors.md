@@ -1,8 +1,9 @@
 # Errors
 
-tomlrt raises `TOMLParseError` for invalid input and `TOMLError` for operations
-that a document's structure does not allow. Ordinary lookups also raise
-`KeyError`, `IndexError`, and `TypeError` as appropriate.
+tomlrt raises [`TOMLParseError`][tomlrt.TOMLParseError] for invalid input and
+[`TOMLError`][tomlrt.TOMLError] for operations that a document's structure does
+not allow. Ordinary lookups also raise `KeyError`, `IndexError`, and `TypeError`
+as appropriate.
 
 ## `TOMLError`
 
@@ -18,8 +19,8 @@ except tomlrt.TOMLError as exc:
 
 ## `TOMLParseError`
 
-Raised by `loads` / `load` when the input isn't valid TOML.
-Carries useful position information:
+Raised by [`loads`][tomlrt.loads] / [`load`][tomlrt.load] when the input isn't
+valid TOML. Carries useful position information:
 
 ```python exec="on" source="above" result="text"
 import tomlrt

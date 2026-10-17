@@ -12,7 +12,7 @@ print(dumps(doc))
 
 ## From a `dict`
 
-Pass a mapping to populate the document recursively:
+Pass a mapping to [`Document`][tomlrt.Document] to populate it recursively:
 
 ```python exec="on" source="above" result="toml"
 from tomlrt import Document, dumps
@@ -41,7 +41,9 @@ the document.
 
 When assigning individual values, a plain `dict` installs as an inline table;
 a plain `list` installs as an inline array.
-Use tomlrt's classes to choose how a value is written:
+Use [`Table.section()`][tomlrt.Table.section] or
+[`Table.inline()`][tomlrt.Table.inline] to choose the table form, and
+[`AoT`][tomlrt.AoT] or [`Array`][tomlrt.Array] to choose the array form:
 
 ```python exec="on" source="above" result="toml"
 from tomlrt import AoT, Array, Document, Table, dumps
