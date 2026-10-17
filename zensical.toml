@@ -37,6 +37,9 @@ scheme = "slate"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to light mode"
 
+[project.plugins.llmstxt.sections]
+Documentation = ["*.md"]
+
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["src"]
 
