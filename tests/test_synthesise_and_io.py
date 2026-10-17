@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 if sys.version_info >= (3, 12):
     from typing import override
-else:  # pragma: no cover -- backport for Python < 3.12
+else:
     from typing_extensions import override
 
 
