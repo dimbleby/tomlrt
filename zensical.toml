@@ -1,4 +1,5 @@
 [project]
+strict = true
 site_name = "tomlrt"
 site_description = "A format-preserving TOML reader and writer for Python."
 site_url = "https://dimbleby.github.io/tomlrt/"
