@@ -37,19 +37,6 @@ scheme = "slate"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to light mode"
 
-[project.markdown_extensions.admonition]
-
-[project.markdown_extensions.pymdownx.details]
-
-[project.markdown_extensions.pymdownx.highlight]
-
-[project.markdown_extensions.pymdownx.inlinehilite]
-
-[project.markdown_extensions.pymdownx.superfences]
-
-[project.markdown_extensions.toc]
-permalink = true
-
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["src"]
 
