@@ -8,16 +8,19 @@ Comments stay with their entries.
 `doc.sort()` and `table.sort()` reorder their direct keys in place, keeping
 comments and formatting. They accept `key` and `reverse`, like `list.sort()`.
 
-```python
-doc = tomlrt.loads("""
-    # the name
-    name = "tomlrt"
-    # the version
-    version = "0.1"
-    # the author
-    author = "me"
+```python exec="on" source="above" result="toml"
+import tomlrt
+
+doc = tomlrt.loads("""\
+# the name
+name = "tomlrt"
+# the version
+version = "0.1"
+# the author
+author = "me"
 """)
 doc.sort()
+print(tomlrt.dumps(doc))
 ```
 
 ## Single-line and multi-line values
@@ -39,15 +42,28 @@ if it would lose a comment; [remove the comments](comments.md) first.
 
 ## Converting inline tables to sections
 
-Use `promote_inline` to turn an inline table into a section, or `promote_array`
-to turn an array of inline tables into repeated `[[table]]` blocks:
+Use `promote_inline` to turn an inline table into a section:
 
-```python
-doc = tomlrt.loads('[tool]\nruff = { line-length = 88 }\n')
-doc.table("tool").promote_inline("ruff")       # → [tool.ruff]
+```python exec="on" source="above" result="toml"
+import tomlrt
+
+doc = tomlrt.loads("""\
+[tool]
+ruff = { line-length = 88 }
+""")
+doc.table("tool").promote_inline("ruff")
+print(tomlrt.dumps(doc))
+```
+
+Use `promote_array` to turn an array of inline tables into repeated
+`[[table]]` blocks:
+
+```python exec="on" source="above" result="toml"
+import tomlrt
 
 doc = tomlrt.loads('pkgs = [{a = 1}, {b = 2}]\n')
-doc.promote_array("pkgs")                      # → [[pkgs]] … [[pkgs]]
+doc.promote_array("pkgs")
+print(tomlrt.dumps(doc))
 ```
 
 Conversion raises `TOMLError` if it would lose comments inside the value.
@@ -57,7 +73,7 @@ Conversion raises `TOMLError` if it would lose comments inside the value.
 Call `format()` to replace the original spacing with consistent formatting.
 It works in place on a document, table, or array:
 
-```python
+```python exec="on" source="above" result="toml"
 import tomlrt
 
 doc = tomlrt.loads("""
@@ -72,17 +88,6 @@ x={a=1,b=2}
 
 doc.format()
 print(tomlrt.dumps(doc))
-```
-
-prints
-
-```toml
-a = 1
-b = 2
-arr = [1, 2, 3]
-
-[bar]
-x = { a = 1, b = 2 }
 ```
 
 Formatting normalizes whitespace, indentation, and blank lines. Comments stay

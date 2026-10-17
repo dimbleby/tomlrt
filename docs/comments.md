@@ -8,8 +8,10 @@ the leading `#`.
 Use `.comments` like a dictionary keyed by entry name. Assign a string to set
 or replace a comment; `del` removes it.
 
-```python
-doc = tomlrt.loads("""
+```python exec="on" source="above" result="toml"
+import tomlrt
+
+doc = tomlrt.loads("""\
 [server]
 host = "localhost"  # default
 port = 8080
@@ -20,9 +22,6 @@ server.comments["port"] = "override with $PORT"
 del server.comments["host"]
 
 print(tomlrt.dumps(doc))
-# [server]
-# host = "localhost"
-# port = 8080 # override with $PORT
 ```
 
 ## Comments above an entry
@@ -62,16 +61,14 @@ tags.leading_comments[1] = ("alternate",)
 TOML 1.1 allows inline tables to span multiple lines and carry comments.
 Use the same comment properties as for sections:
 
-```python
+```python exec="on" source="above" result="toml"
+import tomlrt
+
 doc = tomlrt.loads('pkg = { name = "tomlrt", version = "0.1" }\n')
 pkg = doc.table("pkg")
 pkg.comments["name"] = "the package name"
 
 print(tomlrt.dumps(doc))
-# pkg = {
-#     name = "tomlrt", # the package name
-#     version = "0.1",
-# }
 ```
 
 Adding a comment makes a single-line table or array multi-line automatically.
