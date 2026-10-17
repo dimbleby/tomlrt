@@ -16,12 +16,17 @@ For sections, inline tables, and arrays-of-tables, see
 `doc["a.b"] = 1` always treats `"a.b"` as a _single literal key_.
 To descend into nested tables, use `install` or `ensure_table`:
 
-```python
-doc.install("tool.poetry.version", "0.1.0")  # [tool.poetry] version = "..."
-doc.install(("tool", "weird.key"), 1)        # [tool] "weird.key" = 1
+```python exec="on" source="above" result="toml"
+import tomlrt
 
-ruff = doc.ensure_table("tool.ruff")         # creates [tool.ruff] if absent
+doc = tomlrt.Document()
+doc["a.b"] = 1
+doc.install("tool.poetry.version", "0.1.0")
+doc.install(("tool", "weird.key"), 1)
+
+ruff = doc.ensure_table("tool.ruff")
 ruff["line-length"] = 88
+print(tomlrt.dumps(doc))
 ```
 
 Both accept dotted paths or sequences of key names and create missing parent
@@ -35,10 +40,12 @@ For intermediate tables along the path, `ensure_table` keeps their existing
 form. So does `install` when setting a scalar or inline value. New intermediate
 tables are inline inside inline tables, and sections elsewhere:
 
-```python
+```python exec="on" source="above" result="toml"
+import tomlrt
+
 doc = tomlrt.loads("tool = {}\n")
 doc.install("tool.ruff.line-length", 88)
-# tool = { ruff = { line-length = 88 } }
+print(tomlrt.dumps(doc))
 ```
 
 ## Live vs snapshot

@@ -21,11 +21,13 @@ except tomlrt.TOMLError as exc:
 Raised by `loads` / `load` when the input isn't valid TOML.
 Carries useful position information:
 
-```python
+```python exec="on" source="above" result="text"
+import tomlrt
+
 try:
     tomlrt.loads("a = ?")
 except tomlrt.TOMLParseError as exc:
-    print(exc.line, exc.col, exc.offset)
+    print(f"line: {exc.line}, column: {exc.col}, offset: {exc.offset}")
 ```
 
 | Attribute | Meaning                                         |
@@ -36,9 +38,11 @@ except tomlrt.TOMLParseError as exc:
 
 Printing the exception includes the problem and its location:
 
-```python
+```python exec="on" source="above" result="text"
+import tomlrt
+
 try:
     tomlrt.loads("a = ?")
 except tomlrt.TOMLParseError as exc:
-    print(exc)  # invalid integer '?' (line 1, column 5)
+    print(exc)
 ```

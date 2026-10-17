@@ -40,6 +40,8 @@ toggle.name = "Switch to light mode"
 [project.plugins.llmstxt.sections]
 Documentation = ["*.md"]
 
+[project.plugins.markdown-exec]
+
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["src"]
 
