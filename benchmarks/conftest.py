@@ -37,7 +37,7 @@ def _pin_to_one_cpu() -> None:
     has to be consistent; CPU 0 is skipped because it tends to serve
     interrupts.
     """
-    if not hasattr(os, "sched_setaffinity"):  # pragma: no cover -- not Linux
+    if not hasattr(os, "sched_setaffinity"):
         return
     available = sorted(os.sched_getaffinity(0))
     if len(available) > 1:
