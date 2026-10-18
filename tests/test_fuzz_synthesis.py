@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import string
 from typing import Any
 
 import pytest
@@ -13,7 +14,10 @@ from _helpers import deep_equal, dumps_by_assignment
 
 pytestmark = pytest.mark.slow
 
-_KEYS = st.from_regex(r"\A[A-Za-z][A-Za-z0-9_-]{0,15}\Z")
+_KEYS = st.tuples(
+    st.sampled_from(string.ascii_letters),
+    st.text(alphabet=string.ascii_letters + string.digits + "_-", max_size=15),
+).map("".join)
 _LEAVES = st.one_of(
     st.text(max_size=20),
     st.integers(min_value=-(2**31), max_value=2**31 - 1),
@@ -21,21 +25,14 @@ _LEAVES = st.one_of(
     st.floats(allow_nan=False, width=64),
     st.dates(),
 )
-_INLINE = st.recursive(
+_TREE = st.recursive(
     _LEAVES,
     lambda children: st.one_of(
         st.lists(children, max_size=4),
         st.dictionaries(_KEYS, children, max_size=4),
-    ),
-    max_leaves=6,
-)
-_TREE = st.recursive(
-    _INLINE,
-    lambda children: st.one_of(
-        st.dictionaries(_KEYS, children, max_size=4),
         st.lists(st.dictionaries(_KEYS, children, max_size=4), min_size=1, max_size=2),
     ),
-    max_leaves=16,
+    max_leaves=96,
 )
 
 
