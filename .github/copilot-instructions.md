@@ -518,6 +518,8 @@ wrong.
 - `tests/test_fuzz_roundtrip.py` — property-based round-trip tests
   (Hypothesis). If you break round-tripping, this will usually catch
   it; add new strategies here when you add a new construct.
+- `tests/test_fuzz_synthesis.py` — generated synthesis round-trips and
+  equivalence with key-by-key assignment.
 - `tests/test_fuzz_parser.py` — bytes-level grammar fuzzer that feeds the
   parser arbitrary / near-valid input and asserts it either raises
   `TOMLParseError` or accepts and round-trips byte-exactly. Marked
@@ -549,7 +551,10 @@ wrong.
   `Array.format()` canonicaliser.
 - `tests/test_live_attach.py` — live-attach semantics for
   `Table.inline`, `Array`, and `AoT` when assigned into a document.
-- `tests/test_synthesise_and_io.py` — value synthesis and binary I/O.
+- `tests/test_synthesis.py` — value synthesis through construction and
+  assignment, including shape selection, validation, and layout grafting.
+- `tests/test_io.py` — binary I/O, encoding, and newline handling.
+- `tests/test_copy.py` — copying, layout preservation, and export isolation.
 - `tests/_helpers.py` — shared test helpers: `td(""" … """)` for writing
   TOML fixtures as indented triple-quoted literals (prefer it over walls
   of `\n`-escaped strings in new tests), and `reparses(src)` for the

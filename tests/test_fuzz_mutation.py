@@ -1,9 +1,10 @@
 """Mutation fuzzer over the ``toml-test`` valid corpus, and from empty.
 
 The deterministic regression tests pin specific mutation outcomes; the
-property tests in ``test_fuzz_roundtrip.py`` exercise round-trip and
-synthesis invariants, not broad mutation-API fuzzing. This module fills
-that gap: it runs the same random edit-program fuzzer against every
+property tests in ``test_fuzz_roundtrip.py`` and ``test_fuzz_synthesis.py``
+exercise round-trip and synthesis invariants, not broad mutation-API
+fuzzing. This module fills that gap: it runs the same random edit-program
+fuzzer against every
 corpus document (rich structural shapes: nested AoTs, dotted keys,
 sub-sections, out-of-order headers) *and* against a single starting
 empty document (reaching the from-scratch section/AoT creation path a
