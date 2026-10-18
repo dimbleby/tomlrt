@@ -143,7 +143,7 @@ class _Scanner:
         end_pos = m.end()
         if end_pos < self.end:
             ch = src[end_pos]
-            if ch != "\n" and ch != "\r":
+            if ch not in {"\n", "\r"}:
                 self.pos = end_pos
                 cp = ord(ch)
                 msg = f"invalid control character U+{cp:04X} in comment"
@@ -158,7 +158,7 @@ class _Scanner:
         pos = self.pos
         while pos < end:
             ch = src[pos]
-            if ch == " " or ch == "\t":
+            if ch in {" ", "\t"}:
                 pos += 1
             elif ch == "#":
                 self.pos = pos
@@ -189,7 +189,7 @@ class _Scanner:
         pos = start = self.pos
         while pos < end:
             c = src[pos]
-            if c != " " and c != "\t":
+            if c not in {" ", "\t"}:
                 break
             pos += 1
         self.pos = pos
@@ -211,7 +211,7 @@ class _Scanner:
         pos = self.pos
         while pos < end:
             ch = src[pos]
-            if ch == " " or ch == "\t":
+            if ch in {" ", "\t"}:
                 pos += 1
             elif ch == "\n":
                 pos += 1
@@ -307,7 +307,7 @@ class _Scanner:
                 return StringValue("", "".join(out))
             if ch == "\\":
                 out.append(self._scan_escape())
-            elif ch == "\n" or ch == "\r":
+            elif ch in {"\n", "\r"}:
                 msg = "newline in basic string"
                 raise self.error(msg)
             else:
@@ -426,7 +426,7 @@ class _Scanner:
             value = src[start : self.pos]
             self.pos += 1
             return StringValue("", value)
-        if ch == "\n" or ch == "\r":
+        if ch in {"\n", "\r"}:
             msg = "newline in literal string"
             raise self.error(msg)
         msg = f"invalid control character U+{ord(ch):04X} in string"
@@ -483,7 +483,7 @@ class _Scanner:
         while True:
             start = self.pos
             ch = src[start] if start < end else ""
-            if ch == '"' or ch == "'":
+            if ch in {'"', "'"}:
                 quoted = self.scan_string(allow_multiline=False)
                 raw = quoted.lexeme
                 path.append(quoted.value)
