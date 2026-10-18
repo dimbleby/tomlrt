@@ -312,12 +312,13 @@ def _run_fuzz_programs(
                 check_view_caches(doc, f"step {step}")
             out = tomlrt.dumps(doc)
             # Valid TOML and a fixed point of dump -> load -> dump.
-            tomli.loads(out)
+            reparsed = tomli.loads(out)
             assert tomlrt.dumps(tomlrt.loads(out)) == out, f"non-idempotent\n{out!r}"
             # The rendered output reflects the in-memory logical model.
-            assert deep_equal(tomli.loads(out), doc.to_dict()), (
+            logical = doc.to_dict()
+            assert deep_equal(reparsed, logical), (
                 f"render/model mismatch\n{out!r}\n"
-                f"logical={doc.to_dict()!r}\nreparsed={tomli.loads(out)!r}"
+                f"logical={logical!r}\nreparsed={reparsed!r}"
             )
 
 

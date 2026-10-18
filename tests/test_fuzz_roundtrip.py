@@ -11,6 +11,7 @@ Synthesis from plain Python trees lives in `test_fuzz_synthesis.py`.
 
 from __future__ import annotations
 
+import string
 from typing import Any
 
 import pytest
@@ -30,7 +31,10 @@ pytestmark = pytest.mark.slow
 # rendering by the parser is byte-stable, so we can assert exact round-trip).
 # ---------------------------------------------------------------------------
 
-_BARE_KEY = st.from_regex(r"\A[A-Za-z][A-Za-z0-9_-]{0,15}\Z")
+_BARE_KEY = st.tuples(
+    st.sampled_from(string.ascii_letters),
+    st.text(alphabet=string.ascii_letters + string.digits + "_-", max_size=15),
+).map("".join)
 
 _BASIC_STR_CHARS = st.text(
     alphabet=st.characters(
