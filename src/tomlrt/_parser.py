@@ -172,7 +172,7 @@ class _Parser:
         sc = self._sc
         pos = sc.pos
         ch = sc.src[pos] if pos < sc.end else ""
-        if ch == '"' or ch == "'":
+        if ch in {'"', "'"}:
             return sc.scan_string()
         if ch in ("[", "{"):
             if self._value_depth >= self._MAX_VALUE_DEPTH:
