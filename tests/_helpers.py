@@ -12,6 +12,7 @@
   NaN-as-equal-to-itself, type-exact at the leaves) used by the
   property/fuzz suites to compare a decoded `Document` against a
   `tomli`-parsed oracle or a Python-dict shadow model.
+* :func:`dumps_by_assignment` — synthesis oracle using key-by-key assignment.
 * :func:`fuzz_context` — attach the seed to whatever a fuzz program
   raises, so a CI failure is reproducible.
 * :func:`fuzz_seeds` — the fuzzers' seed source, honouring
@@ -29,19 +30,21 @@ import math
 import os
 import secrets
 from contextlib import contextmanager
+from datetime import date, time
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
 import tomli
 
-from tomlrt import AoT
+import tomlrt
+from tomlrt import AoT, Array, Table
 from tomlrt._container import _is_section
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, slot_local_key
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
-    from tomlrt._container import Container, Document
+    from tomlrt._container import Container, Document, TomlInput
     from tomlrt._slots import Slot
 
 
@@ -70,6 +73,32 @@ def td(src: str) -> str:
 def reparses(src: str) -> dict[str, Any]:
     """Parse ``src`` with ``tomli`` and return the result."""
     return tomli.loads(src)
+
+
+def dumps_by_assignment(data: dict[str, Any]) -> str:
+    """Render ``data`` built by assignment, the mutation layer's own path.
+
+    Each value is given the shape `Document(mapping)` would choose, so
+    the two should agree; the route there shares nothing but `_build`.
+    """
+    doc = tomlrt.Document()
+    for key, value in data.items():
+        doc[key] = _shaped(value)
+    return tomlrt.dumps(doc)
+
+
+def _shaped(value: object) -> TomlInput:
+    """``value`` with its structural shape spelled out explicitly."""
+    if isinstance(value, (Table, Array, AoT)):
+        return value
+    if isinstance(value, dict):
+        return Table.section({k: _shaped(v) for k, v in value.items()})
+    if isinstance(value, list) and value and all(isinstance(x, dict) for x in value):
+        return AoT([{k: _shaped(v) for k, v in entry.items()} for entry in value])
+    if isinstance(value, (str, int, float, date, time, list)):
+        return value
+    msg = f"unexpected test value: {value!r}"
+    raise AssertionError(msg)
 
 
 def deep_equal(a: object, b: object) -> bool:

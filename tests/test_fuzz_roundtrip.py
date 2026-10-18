@@ -4,9 +4,9 @@ throws adversarial/malformed input at the parser, and
 `test_fuzz_mutation.py`, which fuzzes the mutation API over real
 corpus documents and, from empty, via the builder API). Built with
 Hypothesis, but organised by what each property covers: round-trip +
-semantic equivalence to `tomli` over generated documents, comment-API
-round-trip, `format()` idempotence, CRLF preservation, and synthesis
-from a plain Python tree.
+semantic equivalence to `tomli` over generated documents (including mixed
+LF/CRLF endings), comment-API round-trip, and `format()` idempotence.
+Synthesis from plain Python trees lives in `test_fuzz_synthesis.py`.
 """
 
 from __future__ import annotations
@@ -238,7 +238,8 @@ def _document(draw: st.DrawFn) -> str:
         )
         body = draw(_kv_lines(keys=body_keys))
         parts.append(header + body)
-    return "".join(parts) or "\n"
+    lines = ("".join(parts) or "\n").splitlines()
+    return "".join(line + draw(st.sampled_from(["\n", "\r\n"])) for line in lines)
 
 
 def _python_scalar(literal: str) -> Any:
@@ -259,7 +260,7 @@ def _document_with_overrides(draw: st.DrawFn) -> tuple[str, dict[str, Any]]:
 
 
 @settings(
-    max_examples=200,
+    max_examples=300,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow],
 )
@@ -268,7 +269,7 @@ def test_document_invariants(case: tuple[str, dict[str, Any]]) -> None:
     """All `_document()`-strategy invariants in one parser-pass per example.
 
     For each generated source, asserts:
-    * byte-exact round-trip (parse + dumps == src);
+    * byte-exact round-trip, including mixed LF/CRLF endings;
     * semantic equivalence to `tomli`;
     * mutating top-level scalar slots reflects in to_dict() and
       survives a dump/parse cycle.
@@ -492,69 +493,3 @@ def test_eol_comment_set_then_clear(text: str) -> None:
     doc.comments["a"] = text
     del doc.comments["a"]
     assert tomlrt.dumps(doc) == base
-
-
-# ---------------------------------------------------------------------------
-# CRLF preservation: the round-trip invariant explicitly covers line endings.
-# Take a generated source and randomly map each '\n' to '\n' or '\r\n'.
-# ---------------------------------------------------------------------------
-
-
-@st.composite
-def _crlf_variant(draw: st.DrawFn) -> str:
-    src = draw(_document())
-    n = src.count("\n")
-    flips = draw(st.lists(st.booleans(), min_size=n, max_size=n))
-    out: list[str] = []
-    i = 0
-    for ch in src:
-        if ch == "\n":
-            out.append("\r\n" if flips[i] else "\n")
-            i += 1
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-@settings(
-    max_examples=100,
-    deadline=None,
-    suppress_health_check=[HealthCheck.too_slow],
-)
-@given(src=_crlf_variant())
-def test_crlf_roundtrip_exact(src: str) -> None:
-    assert tomlrt.dumps(tomlrt.loads(src)) == src
-
-
-# ---------------------------------------------------------------------------
-# Synthesis round-trip: build a Document from a plain Python tree, dump it,
-# parse it back, and compare the recovered data to the original.
-# ---------------------------------------------------------------------------
-
-_PY_SCALARS: st.SearchStrategy[Any] = st.one_of(
-    _BASIC_STR_CHARS,
-    st.integers(min_value=-(2**31), max_value=2**31 - 1),
-    st.booleans(),
-    st.floats(allow_nan=False, allow_infinity=False, width=64),
-)
-
-
-def _py_dict(max_depth: int) -> st.SearchStrategy[dict[str, Any]]:
-    if max_depth <= 0:
-        values: st.SearchStrategy[Any] = _PY_SCALARS
-    else:
-        values = st.one_of(
-            _PY_SCALARS,
-            st.lists(_PY_SCALARS, max_size=4),
-            _py_dict(max_depth - 1),
-        )
-    return st.dictionaries(_BARE_KEY, values, max_size=4)
-
-
-@settings(max_examples=100, deadline=None)
-@given(data=_py_dict(max_depth=2))
-def test_synthesise_roundtrip(data: dict[str, Any]) -> None:
-    doc = Document(data)
-    out = tomlrt.dumps(doc)
-    recovered = tomlrt.loads(out).to_dict()
-    assert deep_equal(recovered, data)
