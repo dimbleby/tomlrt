@@ -7853,17 +7853,66 @@ def test_inline_delete_dotted_prefix_removes_all_subentries() -> None:
     assert tomlrt.loads(out).table("obj").to_dict() == {"d": 3}
 
 
-def test_inline_delete_dotted_leaf_cleans_empty_prefix_container() -> None:
-    doc = tomlrt.loads("obj = { a.b = 1 }\n")
-    obj = doc.table("obj")
-    inner_a = obj.table("a")
-    del inner_a["b"]
-    # Synthetic prefix container `a` is now empty and has no entry in
-    # the backing InlineTableValue; outer dict view should drop it.
-    assert "a" not in obj
+@pytest.mark.parametrize(
+    ("src", "expected"),
+    [
+        ("t = {a = 1, b.c = 2, d = 3}\n", "t = {a = 1, b = {}, d = 3}\n"),
+        ("t = {b.c = 2, a = 1}\n", "t = {b = {}, a = 1}\n"),
+        ("t = {a = 1, b.c = 2}\n", "t = {a = 1, b = {}}\n"),
+        ("t = {b.c = 2}\n", "t = {b = {}}\n"),
+    ],
+)
+def test_inline_delete_dotted_leaf_preserves_empty_parent(
+    src: str, expected: str
+) -> None:
+    doc = tomlrt.loads(src)
+    inner = doc.table("t").table("b")
+    del inner["c"]
+    assert tomlrt.dumps(doc) == expected
+    assert doc.table("t").table("b") is inner
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_inline_empty_dotted_parent_stays_live_and_can_be_copied() -> None:
+    doc = tomlrt.loads("t = {a.b.c = 1}\n")
+    inner = doc.table("t").table("a").table("b")
+    del inner["c"]
+    assert tomlrt.dumps(doc) == "t = {a.b = {}}\n"
+    doc["copy"] = inner
+    inner["d"] = 2
+    assert tomlrt.dumps(doc) == "t = {a.b = { d = 2 }}\ncopy = {}\n"
+    assert _reparses(tomlrt.dumps(doc)) == doc.to_dict()
+
+
+def test_inline_delete_only_dotted_subtree_preserves_empty_parent() -> None:
+    doc = tomlrt.loads("t = {a = 1, b.c.x = 2, d = 3, b.c.y = 4, z = 5}\n")
+    removed = doc.table("t").table("b").pop("c")
     out = tomlrt.dumps(doc)
-    assert out == "obj = { }\n"
-    assert tomlrt.loads(out).table("obj").to_dict() == {}
+    assert out == "t = {a = 1, d = 3, b = {}, z = 5}\n"
+    assert _reparses(out) == {"t": {"a": 1, "b": {}, "d": 3, "z": 5}} == doc.to_dict()
+    assert removed == {"x": 2, "y": 4}
+
+
+def test_inline_empty_dotted_parent_preserves_comments_and_key_style() -> None:
+    doc = tomlrt.loads(
+        td("""
+            t = {
+                # before b
+                "b" . c = 2, # after b
+                d = 3,
+            }
+            """)
+    )
+    del doc.table("t").table("b")["c"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        t = {
+            # before b
+            "b" = {}, # after b
+            d = 3,
+        }
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_insert_into_comment_only_doc_migrates_preamble() -> None:

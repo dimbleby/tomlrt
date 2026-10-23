@@ -93,9 +93,6 @@ def copy_dotted_table(table: Container) -> InlineTableValue:
     ]
     if removed:
         splice_out(value, removed, newline, is_multiline=multiline)
-    if not value.items:
-        return InlineTableValue()
-
     strip_framing_comments(value)
     for entry in value.items:
         entry.key_parts = entry.key_parts[depth:]
@@ -170,7 +167,8 @@ def delete_entry(t: Container, key: str) -> None:
     The logical inline view must already contain ``key``. When ``key`` names a
     synthetic dotted-prefix container (e.g. ``a`` in
     ``{a.b = 1, a.c = 2}``), every entry whose ``key_parts`` start with
-    that prefix is removed.
+    that prefix is removed. Emptying a dotted parent materialises it as
+    an explicit empty inline table.
     """
     root = _outermost_inline(t)
     iv = root._value  # noqa: SLF001
@@ -182,6 +180,20 @@ def delete_entry(t: Container, key: str) -> None:
         indices: list[int] = [found[0]]
     else:
         indices = _find_prefix_entries(iv, full_path)
+    if t._kind is _Kind.INLINE_DOTTED_INNER and len(t) == 1:  # noqa: SLF001
+        # Keep the last owned entry's position and trivia for the empty table.
+        entry = iv.items[indices[-1]]
+        if len(indices) > 1:
+            _remove_entries(iv, indices[:-1], root._doc_newline)  # noqa: SLF001
+        depth = len(full_path) - 1
+        entry.key_parts = entry.key_parts[:depth]
+        entry.key_seps = entry.key_seps[: depth - 1]
+        entry.key_path = entry.key_path[:depth]
+        value = InlineTableValue()
+        entry.value = value
+        t._value = value  # noqa: SLF001
+        iv.reindex()
+        return
     _remove_entries(iv, indices, root._doc_newline)  # noqa: SLF001
 
 

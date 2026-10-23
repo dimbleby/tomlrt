@@ -637,13 +637,13 @@ class Container(_View, dict[str, Any]):
         Public sources are copied. Private layout moves with its live
         views; entries without layout are synthesized in place.
         """
-        src_root = value._layout_root  # noqa: SLF001
-        if src_root is not None and not _can_adopt_from(src_root, self._attached_doc):
-            return _layout_ops.clone_aot(self, key, value)
         snapshot = _snapshot_for_overlapping_install(self, key, value)
         if snapshot is not value:
             assert isinstance(snapshot, AoT)
             return _layout_ops.clone_aot(self, key, snapshot)
+        src_root = value._layout_root  # noqa: SLF001
+        if src_root is not None and not _can_adopt_from(src_root, self._attached_doc):
+            return _layout_ops.clone_aot(self, key, value)
         emptied = value._host  # noqa: SLF001
         existing_entries: list[Table] = list(value)
         _layout_ops.detach_aot_from_orphan(value)
@@ -920,23 +920,6 @@ class Container(_View, dict[str, Any]):
         _layout_ops.reset_displaced_views(dict.__getitem__(self, key))
         _inline_ops.delete_entry(self, key)
         dict.__delitem__(self, key)
-        # Empty dotted-prefix navigators have no backing CST entry; prune
-        # them from the dict chain too.
-        cur: Container | None = self
-        while (
-            cur is not None
-            and cur._kind is _Kind.INLINE_DOTTED_INNER  # noqa: SLF001
-            and len(cur) == 0
-            and cur._path  # noqa: SLF001
-        ):
-            parent = cur._parent  # noqa: SLF001
-            assert parent is not None  # implied by INLINE_DOTTED_INNER
-            my_key = cur._path[-1]  # noqa: SLF001
-            # `cur` is only ever filed under `parent` by this same prune
-            # loop or by initial build, both of which keep the two in
-            # lockstep, so `my_key` is always still present here.
-            dict.__delitem__(parent, my_key)
-            cur = parent
 
     def install(self, path: str | Sequence[str], value: TomlInput) -> Any:
         """Set ``value`` at the (possibly dotted) ``path``.
