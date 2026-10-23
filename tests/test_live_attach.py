@@ -887,6 +887,38 @@ def test_private_ancestor_aot_is_copied_before_nested_install() -> None:
     assert tomlrt.dumps(source) == ""
 
 
+def test_public_ancestor_aot_is_copied_before_nested_install() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[items]]
+        x = 1
+
+        [[items]]
+        x = 2
+        """)
+    )
+    items = doc.aot("items")
+    items[1]["nested"] = items
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        x = 1
+
+        [[items]]
+        x = 2
+
+        [[items.nested]]
+        x = 1
+
+        [[items.nested]]
+        x = 2
+        """)
+    assert _reparses(out) == {
+        "items": [{"x": 1}, {"x": 2, "nested": [{"x": 1}, {"x": 2}]}]
+    }
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_whole_aot_transfer_preserves_emptied_parent_header_block() -> None:
     source = tomlrt.loads(
         td("""

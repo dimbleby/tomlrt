@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Deleting a dotted inline table's last key preserves the empty table.
+- Copying an array of tables into its own descendant snapshots it safely.
+
 ## [2.3.1] - 2026-10-17
 
 ### Fixed

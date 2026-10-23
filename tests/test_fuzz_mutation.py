@@ -12,8 +12,9 @@ parsed starting point doesn't exercise as its first step). Programs
 draw from one shared operation vocabulary -- set / delete / overwrite
 / install / ensure-table / sort / clone-or-graft across containers, plus
 append / insert / pop / sort / reverse across arrays and arrays-of-tables --
-and assert the model stayed self-consistent:
+and check both semantics and layout consistency:
 
+* each edit has the same whole-document effect as on plain dicts/lists;
 * the rendered output is valid TOML (``tomli`` accepts it);
 * dump -> load -> dump is a fixed point (byte-exact idempotence);
 * the rendered output reads back as the in-memory logical model
@@ -46,8 +47,9 @@ of attempts cheaply, while the trivial ones cost almost nothing.
 from __future__ import annotations
 
 import random
+from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import tomli
@@ -96,33 +98,46 @@ _VALUES: tuple[TomlInput, ...] = (
     [{"q": 1}],
 )
 _Target = Container | Array | AoT
+_Candidate = tuple[str, _Target, Any]
 
 
 def _rand_value(rng: random.Random) -> TomlInput:
     return rng.choice(_VALUES)
 
 
-def _targets(node: object, out: list[tuple[str, _Target]], depth: int = 0) -> None:
+def _plain(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _sort_key(value: Any) -> str:
+    return repr(_plain(value))
+
+
+def _targets(node: object, shadow: Any, out: list[_Candidate], depth: int = 0) -> None:
     if depth > 7:
         return
     if isinstance(node, AoT):
-        out.append(("aot", node))
-        for entry in node:
-            _targets(entry, out, depth + 1)
+        out.append(("aot", node, shadow))
+        for i, entry in enumerate(node):
+            _targets(entry, shadow[i], out, depth + 1)
     elif isinstance(node, Array):
-        out.append(("array", node))
-        for item in node:
-            _targets(item, out, depth + 1)
+        out.append(("array", node, shadow))
+        for i, item in enumerate(node):
+            _targets(item, shadow[i], out, depth + 1)
     elif isinstance(node, Container):
-        out.append(("container", node))
+        out.append(("container", node, shadow))
         for key in list(node.keys()):
-            _targets(node[key], out, depth + 1)
+            _targets(node[key], shadow[key], out, depth + 1)
 
 
 def _mutate(
     doc: tomlrt.Document,
     rng: random.Random,
-    foreign_pool: list[tuple[str, _Target]],
+    foreign_pool: list[_Candidate],
 ) -> None:
     """Apply one random mutation to ``doc``.
 
@@ -130,31 +145,37 @@ def _mutate(
     ``doc``'s own for clone/graft ops so they draw from either the same
     or a different document uniformly through one code path.
     """
-    targets: list[tuple[str, _Target]] = []
-    _targets(doc, targets)
+    before = doc.to_dict()
+    expected = deepcopy(before)
+    targets: list[_Candidate] = []
+    _targets(doc, expected, targets)
     if not targets:
         return
-    kind, node = rng.choice(targets)
+    kind, node, shadow = rng.choice(targets)
     pool = targets + foreign_pool
     try:
         if kind == "container":
             assert isinstance(node, Container)
-            _mutate_container(node, rng, pool)
+            _mutate_container(node, shadow, rng, pool)
         elif kind == "array":
             assert isinstance(node, Array)
-            _mutate_array(node, rng, pool)
+            _mutate_array(node, shadow, rng, pool)
         else:
             assert isinstance(node, AoT)
-            _mutate_aot(node, rng, pool)
+            _mutate_aot(node, shadow, rng, pool)
     except (KeyError, IndexError, TypeError, ValueError, tomlrt.TOMLError):
-        # The fuzzer drives the API into unusual shapes; user-facing
-        # errors are expected and tolerated. The invariant is that the
-        # model stays consistent, not that every op succeeds.
-        pass
+        # The fuzzer drives the API into unusual shapes; rejected edits
+        # must leave the document unchanged.
+        expected = before
+    actual = doc.to_dict()
+    assert deep_equal(actual, expected), (
+        f"mutation semantics mismatch\nbefore={before!r}\n"
+        f"expected={expected!r}\nactual={actual!r}"
+    )
 
 
 def _mutate_container(
-    node: Container, rng: random.Random, pool: list[tuple[str, _Target]]
+    node: Container, shadow: dict[str, Any], rng: random.Random, pool: list[_Candidate]
 ) -> None:
     keys = list(node.keys())
     # "clone_table" / "clone_aot" assign an already-attached Table / AoT
@@ -164,8 +185,8 @@ def _mutate_container(
     # (not the plain-dict/-list inline forms `_rand_value` produces),
     # exercising the same structural-creation path whether ``node``
     # started out empty or already had content.
-    tables = [t for kind, t in pool if kind == "container" and isinstance(t, Table)]
-    aots = [t for kind, t in pool if kind == "aot" and isinstance(t, AoT)]
+    tables = [t for kind, t, _ in pool if kind == "container" and isinstance(t, Table)]
+    aots = [t for kind, t, _ in pool if kind == "aot" and isinstance(t, AoT)]
     ops = [
         "set_new",
         "del",
@@ -182,18 +203,24 @@ def _mutate_container(
     op = rng.choice(ops)
     new_key = f"k{rng.randint(0, 99)}"
     clone_key = rng.choice(keys) if keys and rng.random() < 0.5 else new_key
+    key = new_key
+    value: TomlInput
     if op == "set_new":
-        node[new_key] = _rand_value(rng)
+        value = _rand_value(rng)
     elif op == "del" and keys:
-        del node[rng.choice(keys)]
+        key = rng.choice(keys)
+        del shadow[key]
+        del node[key]
+        return
     elif op == "overwrite" and keys:
-        node[rng.choice(keys)] = _rand_value(rng)
+        key = rng.choice(keys)
+        value = _rand_value(rng)
     elif op == "clone_table":
-        node[clone_key] = rng.choice(tables)
+        key, value = clone_key, rng.choice(tables)
     elif op == "clone_aot":
-        node[clone_key] = rng.choice(aots)
+        key, value = clone_key, rng.choice(aots)
     elif op == "set_new_structural":
-        node[new_key] = (
+        value = (
             Table.section({"v": _rand_value(rng)})
             if rng.random() < 0.5
             else AoT([{"v": _rand_value(rng)} for _ in range(rng.randint(0, 3))])
@@ -201,21 +228,35 @@ def _mutate_container(
     elif op in {"install", "ensure_table"}:
         path = [clone_key, *(f"p{rng.randint(0, 9)}" for _ in range(rng.randint(0, 2)))]
         if op == "install":
-            node.install(path, _rand_value(rng))
+            value = _rand_value(rng)
+            node.install(path, value)
         else:
             node.ensure_table(path)
+        parent = shadow
+        for part in path[:-1]:
+            parent = parent.setdefault(part, {})
+        if op == "install":
+            parent[path[-1]] = _plain(value)
+        else:
+            parent.setdefault(path[-1], {})
+        return
     elif op == "sort":
         node.sort()
+        return
+    else:
+        return
+    shadow[key] = _plain(value)
+    node[key] = value
 
 
 def _mutate_array(
-    node: Array, rng: random.Random, pool: list[tuple[str, _Target]]
+    node: Array, shadow: list[Any], rng: random.Random, pool: list[_Candidate]
 ) -> None:
     # "clone_value" appends an already-attached inline Table or Array
     # (same- or foreign-document) rather than a fresh scalar/dict/list.
     clonables = [
         t
-        for kind, t in pool
+        for kind, t, _ in pool
         if kind == "array"
         or (kind == "container" and isinstance(t, Table) and t.is_inline)
     ]
@@ -224,42 +265,70 @@ def _mutate_array(
         ops.append("clone_value")
     op = rng.choice(ops)
     if op == "append":
-        node.append(_rand_value(rng))
+        value = _rand_value(rng)
+        shadow.append(_plain(value))
+        node.append(value)
     elif op == "insert":
-        node.insert(rng.randint(0, len(node)), _rand_value(rng))
+        index, value = rng.randint(0, len(node)), _rand_value(rng)
+        shadow.insert(index, _plain(value))
+        node.insert(index, value)
     elif op == "clone_value":
-        node.append(rng.choice(clonables))
+        value = rng.choice(clonables)
+        shadow.append(_plain(value))
+        node.append(value)
     elif op == "pop" and node:
-        node.pop(rng.randrange(len(node)))
+        index = rng.randrange(len(node))
+        expected = shadow.pop(index)
+        actual = node.pop(index)
+        assert deep_equal(_plain(actual), expected), "pop returned the wrong value"
     elif op == "setitem" and node:
-        node[rng.randrange(len(node))] = _rand_value(rng)
+        index, value = rng.randrange(len(node)), _rand_value(rng)
+        shadow[index] = _plain(value)
+        node[index] = value
     elif op == "sort":
-        node.sort(key=repr)
+        shadow.sort(key=_sort_key)
+        node.sort(key=_sort_key)
     elif op == "reverse":
+        shadow.reverse()
         node.reverse()
 
 
-def _mutate_aot(node: AoT, rng: random.Random, pool: list[tuple[str, _Target]]) -> None:
+def _mutate_aot(
+    node: AoT, shadow: list[Any], rng: random.Random, pool: list[_Candidate]
+) -> None:
     # "clone_table" appends an already-attached Table (same- or
     # foreign-document) rather than a fresh dict, exercising the AoT
     # clone path.
-    tables = [t for kind, t in pool if kind == "container" and isinstance(t, Table)]
+    tables = [t for kind, t, _ in pool if kind == "container" and isinstance(t, Table)]
     ops = ["append", "insert", "pop", "reverse", "sort", "replace_slice"]
     if tables:
         ops.append("clone_table")
     op = rng.choice(ops)
     if op == "append":
-        node.append({"new": _rand_value(rng)})
+        value: dict[str, TomlInput] | Table = {"new": _rand_value(rng)}
+        shadow.append(_plain(value))
+        node.append(value)
     elif op == "insert":
-        node.insert(rng.randint(0, len(node)), {"new": _rand_value(rng)})
+        index, value = rng.randint(0, len(node)), {"new": _rand_value(rng)}
+        shadow.insert(index, _plain(value))
+        node.insert(index, value)
     elif op == "clone_table":
-        node.append(rng.choice(tables))
+        value = rng.choice(tables)
+        shadow.append(_plain(value))
+        node.append(value)
     elif op == "pop" and node:
-        node.pop(rng.randrange(len(node)))
+        index = rng.randrange(len(node))
+        expected_pop = shadow.pop(index)
+        actual_pop = node.pop(index)
+        assert deep_equal(_plain(actual_pop), expected_pop), (
+            "pop returned the wrong value"
+        )
     elif op == "reverse":
+        shadow.reverse()
         node.reverse()
     elif op == "sort":
-        node.sort(key=lambda t: repr(dict(t)))
+        shadow.sort(key=_sort_key)
+        node.sort(key=_sort_key)
     elif op == "replace_slice" and node:
         step = rng.choice([1, -2, -1, 2])
         if step == 1:
@@ -269,7 +338,6 @@ def _mutate_aot(node: AoT, rng: random.Random, pool: list[tuple[str, _Target]]) 
         else:
             target = slice(None, None, step)
             count = len(range(*target.indices(len(node))))
-        before = node.to_list()
         values: list[dict[str, TomlInput] | Table] = []
         expected = []
         for _ in range(count):
@@ -277,20 +345,19 @@ def _mutate_aot(node: AoT, rng: random.Random, pool: list[tuple[str, _Target]]) 
             shape = rng.choice(["entry", "nested", "factory"])
             if shape == "entry":
                 values.append(node[source])
-                expected.append(before[source])
+                expected.append(deepcopy(shadow[source]))
             elif shape == "nested":
                 values.append({"nested": node[source]})
-                expected.append({"nested": before[source]})
+                expected.append({"nested": deepcopy(shadow[source])})
             else:
                 values.append({"factory": Table.section({"nested": node[source]})})
-                expected.append({"factory": {"nested": before[source]}})
+                expected.append({"factory": {"nested": deepcopy(shadow[source])}})
+        shadow[target] = expected
         node[target] = values
-        before[target] = expected
-        assert deep_equal(node.to_list(), before)
 
 
 def _run_fuzz_programs(
-    src: str, foreign_pool: list[tuple[str, _Target]], ctx_label: str
+    src: str, foreign_pool: list[_Candidate], ctx_label: str
 ) -> None:
     """Run one random mutation program per seed from :func:`fuzz_seeds`
     against ``src``, asserting the model stays self-consistent throughout
@@ -303,7 +370,8 @@ def _run_fuzz_programs(
             check_slot_chain(doc, "after load")
             check_view_caches(doc, "after load")
             for step in range(rng.randint(1, 15)):
-                _mutate(doc, rng, foreign_pool)
+                with fuzz_context(f"step {step}"):
+                    _mutate(doc, rng, foreign_pool)
                 # A corrupt projection still renders correctly, so the
                 # model oracles below cannot see one; these can, and they
                 # name the step that caused it rather than a later one
@@ -341,8 +409,8 @@ def test_mutation_keeps_model_consistent(path: Path) -> None:
         foreign_doc = tomlrt.loads(foreign_path.read_text(encoding="utf-8"))
     except tomlrt.TOMLError:
         foreign_doc = tomlrt.loads("")
-    foreign_pool: list[tuple[str, _Target]] = []
-    _targets(foreign_doc, foreign_pool)
+    foreign_pool: list[_Candidate] = []
+    _targets(foreign_doc, foreign_doc.to_dict(), foreign_pool)
 
     _run_fuzz_programs(src, foreign_pool, path.relative_to(_VALID_ROOT).as_posix())
 
@@ -360,6 +428,17 @@ def test_mutation_keeps_model_consistent_from_empty_document() -> None:
     still have something to draw from.
     """
     foreign_doc = tomlrt.loads(_CORPUS[0].read_text(encoding="utf-8"))
-    foreign_pool: list[tuple[str, _Target]] = []
-    _targets(foreign_doc, foreign_pool)
+    foreign_pool: list[_Candidate] = []
+    _targets(foreign_doc, foreign_doc.to_dict(), foreign_pool)
     _run_fuzz_programs("", foreign_pool, "<empty>")
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "t = {a = 1, b.c = 2, d = 3}\n",
+        "t = {a.b.c = 2, d = [1, {e.f = 3}]}\n",
+    ],
+)
+def test_mutation_keeps_model_consistent_from_dotted_inline_table(src: str) -> None:
+    _run_fuzz_programs(src, [], "<dotted-inline>")
