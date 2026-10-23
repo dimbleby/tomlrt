@@ -444,7 +444,7 @@ class InlineTableValue(CommaValue[InlineTableEntry]):
     """Inline table literal with direct key bindings and ordered entries.
 
     Order labels increase along ``items``. Deletion leaves labels intact;
-    copying, reordering and key rebasing rebuild the index and labels.
+    reordering transfers the existing labels between moved entries.
     """
 
     __slots__ = ("_key_index",)
