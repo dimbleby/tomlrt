@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextlib
 import copy
 import sys
-import warnings
 from collections.abc import Mapping
 from datetime import date, datetime, time
 from typing import (
@@ -984,6 +983,8 @@ class Container(_View, dict[str, Any]):
         """
         parts = validate_path(key)
         if promote_inline is not None:
+            import warnings  # noqa: PLC0415
+
             warnings.warn(
                 "ensure_table(promote_inline=...) is deprecated and ignored; "
                 "use promote_inline() for explicit conversion",
