@@ -31,15 +31,12 @@ if TYPE_CHECKING:
 # Comment body: anything except newline + control chars (tab is OK).
 _RE_COMMENT_BODY: Final = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
 
-# Body of a basic string: not quote, backslash, newline, or control
+# Body fragments stop at newlines; string scanners handle or reject them.
+# Basic string: not quote, backslash, newline, or control
 # char (U+0000-U+001F / U+007F, except tab).
-_RE_BASIC_STR_BODY: Final = re.compile(r'[^"\\\n\r\x00-\x08\x0b-\x1f\x7f]+')
+_RE_BASIC_BODY: Final = re.compile(r'[^"\\\n\r\x00-\x08\x0b-\x1f\x7f]+')
 # Body of a literal string: no quote, newline, or control char.
-_RE_LITERAL_STR_BODY: Final = re.compile(r"[^'\n\r\x00-\x08\x0b-\x1f\x7f]+")
-# Body of a multi-line basic string fragment. Newlines are valid there,
-# so the caller handles them; stop at \r to verify CRLF before emitting it.
-_RE_ML_BASIC_BODY: Final = re.compile(r'[^"\\\r\n\x00-\x08\x0b-\x1f\x7f]+')
-_RE_ML_LITERAL_BODY: Final = re.compile(r"[^'\r\n\x00-\x08\x0b-\x1f\x7f]+")
+_RE_LITERAL_BODY: Final = re.compile(r"[^'\n\r\x00-\x08\x0b-\x1f\x7f]+")
 # Bare key (ASCII letters, digits, underscore, dash — the same set in
 # TOML 1.0 and 1.1), plus the inline whitespace that follows it: one
 # scan of adjacent source rather than two.
@@ -47,8 +44,8 @@ _RE_BARE_KEY: Final = re.compile(r"([A-Za-z0-9_\-]+)([ \t]*)")
 
 # Per-flavour multi-line string body pattern and name for diagnostics.
 _ML_FLAVOURS: Final = {
-    '"': (_RE_ML_BASIC_BODY, "basic"),
-    "'": (_RE_ML_LITERAL_BODY, "literal"),
+    '"': (_RE_BASIC_BODY, "basic"),
+    "'": (_RE_LITERAL_BODY, "literal"),
 }
 
 _HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
@@ -284,7 +281,7 @@ class _Scanner:
         src = self.src
         end = self.end
         # Fast path: simple basic string with no escapes.
-        m = _RE_BASIC_STR_BODY.match(src, self.pos + 1)
+        m = _RE_BASIC_BODY.match(src, self.pos + 1)
         body_start = self.pos + 1
         if m is not None:
             body_end = m.end()
@@ -313,7 +310,7 @@ class _Scanner:
             else:
                 msg = f"invalid control character U+{ord(ch):04X} in string"
                 raise self.error(msg)
-            m = _RE_BASIC_STR_BODY.match(src, self.pos)
+            m = _RE_BASIC_BODY.match(src, self.pos)
             if m is not None:
                 out.append(m.group(0))
                 self.pos = m.end()
@@ -415,7 +412,7 @@ class _Scanner:
         src = self.src
         end = self.end
         start = self.pos
-        m = _RE_LITERAL_STR_BODY.match(src, start)
+        m = _RE_LITERAL_BODY.match(src, start)
         if m is not None:
             self.pos = m.end()
         if self.pos >= end:
