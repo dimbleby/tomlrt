@@ -26,15 +26,13 @@ from tomlrt._trivia import (
     strip_trailing_ws,
     trailing_ws,
 )
+from tomlrt._values import CommaItem
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from typing import Literal, Protocol
 
-    from tomlrt._values import (
-        CommaItem,
-        CommaValue,
-    )
+    from tomlrt._values import CommaValue
 
     _EolLane = Literal["before", "after"]
     _AboveLane = Literal["before", "following"]
@@ -46,7 +44,7 @@ if TYPE_CHECKING:
         opening: str
 
 
-_CV_ItemT = TypeVar("_CV_ItemT", bound="CommaItem")
+_CV_ItemT = TypeVar("_CV_ItemT", bound=CommaItem)
 
 
 # ---------------------------------------------------------------------------

@@ -38,13 +38,14 @@ from tomlrt._comment_text import (
     _validate_comment_str,
 )
 from tomlrt._trivia import leading_break, split_eol_section, split_lines
+from tomlrt._values import CommaItem
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from tomlrt._values import CommaItem, CommaValue
+    from tomlrt._values import CommaValue
 
-_ItemT = TypeVar("_ItemT", bound="CommaItem")
+_ItemT = TypeVar("_ItemT", bound=CommaItem)
 _KeyT = TypeVar("_KeyT")
 _ValueT = TypeVar("_ValueT")
 
