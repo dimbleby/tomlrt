@@ -501,7 +501,9 @@ class Container(_View, dict[str, Any]):
         assert isinstance(out, dict)
         return out
 
-    def _synth_local_value(self, key: str, value: TomlInput) -> tuple[Value, object]:
+    def _synth_local_value(
+        self, key: str, value: TomlInput
+    ) -> tuple[Value, DecodedValue]:
         """Synthesise ``value`` for direct storage under ``key`` on ``self``."""
         return _synth_value(
             value,
@@ -1657,6 +1659,9 @@ def _has_extractable_layout(data: Mapping[str, object]) -> TypeGuard[Table]:
 # re-exported for convenience.
 from tomlrt._array import AoT, Array  # noqa: E402
 
+if TYPE_CHECKING:
+    DecodedValue: TypeAlias = Scalar | Container | Array | AoT
+
 TomlInput: TypeAlias = (
     str
     | int
@@ -1815,7 +1820,7 @@ def _synth_value(
     name: str | None,
     owner: AoTEntry | None,
     array_host: Array | None = None,
-) -> tuple[Value, object]:
+) -> tuple[Value, DecodedValue]:
     """Synthesise a validated (CST value, decoded view) pair from ``v``.
 
     Plain ``dict`` / ``Mapping`` → ``InlineTableValue`` + inline ``Table``.

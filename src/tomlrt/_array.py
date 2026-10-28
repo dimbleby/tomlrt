@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from tomlrt._comma_ops import (
         CommaStyle,
     )
-    from tomlrt._container import Container, Document, Table, TomlInput
+    from tomlrt._container import Container, DecodedValue, Document, Table, TomlInput
     from tomlrt._format import FormatOptions
     from tomlrt._values import (
         Value,
@@ -292,7 +292,7 @@ class Array(_View, list[Any]):
 
         _validate_input(value, inline_only=True, inline_kind="array")
 
-    def _synth_item(self, value: TomlInput) -> tuple[Value, object]:
+    def _synth_item(self, value: TomlInput) -> tuple[Value, DecodedValue]:
         """Synthesise one validated value for this inline array."""
         from tomlrt._container import _synth_value  # noqa: PLC0415
 
@@ -305,14 +305,14 @@ class Array(_View, list[Any]):
             array_host=self,
         )
 
-    def _prepare_item(self, value: TomlInput) -> tuple[Value, object]:
+    def _prepare_item(self, value: TomlInput) -> tuple[Value, DecodedValue]:
         """Validate and synthesise one value."""
         self._validate_item(value)
         return self._synth_item(value)
 
     def _prepare_values(
         self, values: Sequence[TomlInput]
-    ) -> list[tuple[Value, object]]:
+    ) -> list[tuple[Value, DecodedValue]]:
         """Validate a batch before synthesis can attach any nested views."""
         self._validate_values(values)
         return [self._synth_item(value) for value in values]
@@ -328,14 +328,14 @@ class Array(_View, list[Any]):
         self._append_with_style(cst, decoded, self._style())
 
     def _append_with_style(
-        self, cst: Value, decoded: object, style: CommaStyle
+        self, cst: Value, decoded: DecodedValue, style: CommaStyle
     ) -> None:
         """Append an already-synthesised item with the sampled layout."""
         new_item = ArrayItem(cst)
         splice_in(self._value, new_item, style, self._doc_newline)
         list.append(self, decoded)
 
-    def _extend_prepared(self, prepared: Iterable[tuple[Value, object]]) -> None:
+    def _extend_prepared(self, prepared: Iterable[tuple[Value, DecodedValue]]) -> None:
         """Append a batch; the first two items establish bracket pad and separator."""
         style = self._style()
         for cst, decoded in prepared:
@@ -386,7 +386,9 @@ class Array(_View, list[Any]):
         splice_insert(self._value, (new_item,), i, self._doc_newline)
         list.insert(self, i, decoded)
 
-    def _replace_synthesised(self, index: int, cst: Value, decoded: object) -> None:
+    def _replace_synthesised(
+        self, index: int, cst: Value, decoded: DecodedValue
+    ) -> None:
         """Replace an item with an already-synthesised value."""
         old = self[index]
         # Exact same-position assignments returned before synthesis.
@@ -520,7 +522,7 @@ class Array(_View, list[Any]):
 
         src_items = list(self._value.items)
 
-        def copies() -> Iterator[tuple[Value, object]]:
+        def copies() -> Iterator[tuple[Value, DecodedValue]]:
             for _ in range(n - 1):
                 for src in src_items:
                     cst = deepcopy(src.value)
