@@ -1746,6 +1746,7 @@ def add_aot_entry(
     rehome: Table | None = None,
     preserve_source_separator: bool = False,
     index: int | None = None,
+    capture: _SourceCapture | None = None,
 ) -> Table:
     """Capture and insert an entry, preserving a structural source's layout.
 
@@ -1757,16 +1758,18 @@ def add_aot_entry(
         assert rehome._layout_root is None  # noqa: SLF001
         body = rehome
     table = _container.Table() if rehome is None else rehome
+    capture = _SourceCapture((aot,), capture)
     prepared = _prepare_entry(
         aot,
         table,
         {} if body is None else body,
-        _SourceCapture((aot,)),
+        capture,
         index=index,
     )
     return _install_entry(
         aot,
         prepared,
+        capture,
         preserve_source_separator=preserve_source_separator,
         index=index,
     )
@@ -2657,6 +2660,7 @@ def attach_section_at(
     source: Table,
     *,
     preserve_header: bool = False,
+    capture: _SourceCapture | None = None,
 ) -> Table:
     """Synthesise ``[parent_path.sub_path]`` (multi-component) at end-of-doc.
 
@@ -2731,7 +2735,7 @@ def attach_section_at(
     for k, v in scalars:
         append_synth_kv(section, k, v)
     for k, v in structurals:
-        section._setitem_validated(k, v)  # noqa: SLF001
+        section._setitem_validated(k, v, capture)  # noqa: SLF001
     return section
 
 
@@ -2995,14 +2999,19 @@ def _snapshot_in_copy(
 
 
 class _SourceCapture:
-    """Capture an operation's sources before mutating any of its write sites."""
+    """Capture local sources, sharing factory walks across nested installs."""
 
-    __slots__ = ("_ancestor_ids", "_sites", "_snapshots")
+    __slots__ = ("_ancestor_ids", "_factories", "_sites", "_snapshots")
 
-    def __init__(self, sites: Iterable[Container | AoT]) -> None:
+    def __init__(
+        self, sites: Iterable[Container | AoT], outer: _SourceCapture | None = None
+    ) -> None:
         self._sites = tuple(sites)
         self._ancestor_ids: set[int] | None = None
         self._snapshots: dict[int, Document] = {}
+        self._factories: dict[int, Container | AoT] = (
+            {} if outer is None else outer._factories  # noqa: SLF001
+        )
 
     def _contains_write_site(self, view: Container | AoT) -> bool:
         ancestors = self._ancestor_ids
@@ -3042,11 +3051,15 @@ class _SourceCapture:
         return [v if isinstance(v, SCALAR_TYPES) else self.capture(v) for v in value]
 
     def _capture_factory(self, factory: Container | AoT) -> None:
+        """Capture descendants once; installation still reads each live body."""
+        if id(factory) in self._factories:
+            return
         if isinstance(factory, _array.AoT):
             for entry in factory:
                 self._capture_factory(entry)
-            return
-        dict.update(factory, self.capture_items(_mapping_items(factory)))
+        else:
+            dict.update(factory, self.capture_items(_mapping_items(factory)))
+        self._factories[id(factory)] = factory
 
 
 def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
@@ -3229,6 +3242,7 @@ def _insert_entry_run(
 def _install_entry(
     aot: AoT,
     prepared: _PreparedEntry,
+    capture: _SourceCapture,
     *,
     preserve_source_separator: bool = False,
     index: int | None = None,
@@ -3256,18 +3270,18 @@ def _install_entry(
     _file_header_binding_chain(parent, header)
     list.insert(aot, len(aot) if index is None else index, table)
     _maybe_demote_synthetic_empty_header(parent)
-    _populate_prepared_entry(prepared)
+    _populate_prepared_entry(prepared, capture)
     return table
 
 
-def _populate_prepared_entry(prepared: _PreparedEntry) -> None:
+def _populate_prepared_entry(prepared: _PreparedEntry, capture: _SourceCapture) -> None:
     """Fill an entry whose header and logical binding have been published."""
     table, header = prepared.table, prepared.header
     body_indent = prepared.body_indent
     doc = table._attached_doc  # noqa: SLF001
     if isinstance(prepared.body, dict):
         for key, value in prepared.body.items():
-            table._setitem_validated(key, value)  # noqa: SLF001
+            table._setitem_validated(key, value, capture)  # noqa: SLF001
             if body_indent is not None:
                 tail = _last_body_kv(table)
                 # Dotted-child grafts retain their source indentation.
@@ -3382,9 +3396,9 @@ def assign_aot_entries(
         _materialise_empty_aot(aot)
     with _container._sources_kept_intact(aot._layout_root, departing):  # noqa: SLF001
         for _offset, entry in prepared:
-            _populate_prepared_entry(entry)
+            _populate_prepared_entry(entry, capture)
         for offset, entry in enumerate(added, start=start + len(indices)):
-            _install_entry(aot, entry, index=offset)
+            _install_entry(aot, entry, capture, index=offset)
 
 
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
