@@ -77,7 +77,7 @@ jobs:
         run: git clone --depth 1 https://github.com/toml-lang/toml-test vendor/toml-test
 
       - name: pytest
-        run: uv run pytest
+        run: uv run pytest --cov
 
       - name: mypy
         run: uv run mypy
