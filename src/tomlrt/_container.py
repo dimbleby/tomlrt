@@ -947,7 +947,8 @@ class Container(_View, dict[str, Any]):
         if promote:
             prefix = parts[:i]
             _check_table_promotions(self, prefix)
-            value = _layout_ops._capture_input(value, [cur], {})  # noqa: SLF001
+            write_ancestors = _layout_ops._write_ancestor_ids((cur,))  # noqa: SLF001
+            value = _layout_ops._capture_input(value, write_ancestors, {})  # noqa: SLF001
             cur = _promote_tables(self, prefix)
         if i == len(parts) - 1:
             host = cur
