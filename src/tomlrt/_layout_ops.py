@@ -1761,8 +1761,7 @@ def add_aot_entry(
         aot,
         table,
         {} if body is None else body,
-        _write_ancestor_ids((aot,)),
-        {},
+        _SourceCapture((aot,)),
         index=index,
     )
     return _install_entry(
@@ -2995,78 +2994,59 @@ def _snapshot_in_copy(
     return _follow_view_route(snapshot, _view_route(view))
 
 
-def _write_ancestor_ids(sites: Iterable[Container | AoT]) -> set[int]:
-    """Index write sites and their ancestors before capture or mutation."""
-    ancestors: set[int] = set()
-    for site in sites:
-        cur: Container | AoT | Array | None = site
-        while cur is not None and id(cur) not in ancestors:
-            ancestors.add(id(cur))
-            cur = cur._host  # noqa: SLF001
-    return ancestors
+class _SourceCapture:
+    """Capture an operation's sources before mutating any of its write sites."""
 
+    __slots__ = ("_ancestor_ids", "_sites", "_snapshots")
 
-def _capture_items(
-    items: Iterable[tuple[str, TomlInput]],
-    write_ancestors: set[int],
-    snapshots: dict[int, Document],
-) -> dict[str, TomlInput]:
-    """Snapshot mapping storage, recursing only into compound values."""
-    return {
-        key: value
-        if isinstance(value, SCALAR_TYPES)
-        else _capture_input(value, write_ancestors, snapshots)
-        for key, value in items
-    }
+    def __init__(self, sites: Iterable[Container | AoT]) -> None:
+        self._sites = tuple(sites)
+        self._ancestor_ids: set[int] | None = None
+        self._snapshots: dict[int, Document] = {}
 
+    def _contains_write_site(self, view: Container | AoT) -> bool:
+        ancestors = self._ancestor_ids
+        if ancestors is None:
+            ancestors = set()
+            for site in self._sites:
+                cur: Container | AoT | Array | None = site
+                while cur is not None and id(cur) not in ancestors:
+                    ancestors.add(id(cur))
+                    cur = cur._host  # noqa: SLF001
+            self._ancestor_ids = ancestors
+        return id(view) in ancestors
 
-def _capture_input(
-    value: TomlInput,
-    write_ancestors: set[int],
-    snapshots: dict[int, Document],
-) -> TomlInput:
-    """Capture sources containing a write site, recursively through wrappers.
+    def capture_items(
+        self, items: Iterable[tuple[str, TomlInput]]
+    ) -> dict[str, TomlInput]:
+        """Snapshot mapping storage, recursing only into compound values."""
+        return {
+            key: value if isinstance(value, SCALAR_TYPES) else self.capture(value)
+            for key, value in items
+        }
 
-    Detached factories retain their identity; plain mappings and lists
-    are rebuilt. Other values keep ordinary installation semantics,
-    including adoption of descendants orphaned by the write. Callers
-    handle scalar leaves without entering this recursive path.
-    """
-    if isinstance(value, (_container.Container, _array.AoT)):
-        # A detached view's storage is all it has, so that is where its
-        # own sources are captured; an attached one is copied from its
-        # slots at install time, which reads nothing this write touches.
-        if value._layout_root is None:  # noqa: SLF001
-            _capture_into_factory(value, write_ancestors, snapshots)
-        elif id(value) in write_ancestors:
-            return _snapshot_in_copy(value, snapshots)
-        return value
-    if is_inline_value(value):
-        return value
-    if isinstance(value, Mapping):
-        return _capture_items(_mapping_items(value), write_ancestors, snapshots)
-    assert isinstance(value, list)
-    return [
-        v
-        if isinstance(v, SCALAR_TYPES)
-        else _capture_input(v, write_ancestors, snapshots)
-        for v in value
-    ]
+    def capture(self, value: TomlInput) -> TomlInput:
+        """Capture overlapping sources, retaining detached factory identities."""
+        if isinstance(value, (_container.Container, _array.AoT)):
+            # Factories hold raw inputs; materialized views have their own slots.
+            if value._layout_root is None:  # noqa: SLF001
+                self._capture_factory(value)
+            elif self._contains_write_site(value):
+                return _snapshot_in_copy(value, self._snapshots)
+            return value
+        if is_inline_value(value):
+            return value
+        if isinstance(value, Mapping):
+            return self.capture_items(_mapping_items(value))
+        assert isinstance(value, list)
+        return [v if isinstance(v, SCALAR_TYPES) else self.capture(v) for v in value]
 
-
-def _capture_into_factory(
-    factory: Container | AoT,
-    write_ancestors: set[int],
-    snapshots: dict[int, Document],
-) -> None:
-    """Capture in the factory's storage so its first occurrence still attaches."""
-    if isinstance(factory, _array.AoT):
-        for entry in factory:
-            _capture_into_factory(entry, write_ancestors, snapshots)
-        return
-    dict.update(
-        factory, _capture_items(_mapping_items(factory), write_ancestors, snapshots)
-    )
+    def _capture_factory(self, factory: Container | AoT) -> None:
+        if isinstance(factory, _array.AoT):
+            for entry in factory:
+                self._capture_factory(entry)
+            return
+        dict.update(factory, self.capture_items(_mapping_items(factory)))
 
 
 def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
@@ -3156,8 +3136,7 @@ def _prepare_entry(
     aot: AoT,
     table: Table,
     body: Mapping[str, TomlInput],
-    write_ancestors: set[int],
-    snapshots: dict[int, Document],
+    capture: _SourceCapture,
     *,
     index: int | None = None,
     body_indent: str | None = None,
@@ -3198,7 +3177,7 @@ def _prepare_entry(
         if cloned_head is not None:
             header = cloned_head
     else:
-        payload = _capture_items(_mapping_items(body), write_ancestors, snapshots)
+        payload = capture.capture_items(_mapping_items(body))
     if header is None:
         header = _new_section_header(
             path,
@@ -3359,8 +3338,7 @@ def assign_aot_entries(
     sites: list[Container | AoT] = list(departing)
     if len(bodies) > len(indices):
         sites.append(aot)
-    write_ancestors = _write_ancestor_ids(sites)
-    snapshots: dict[int, Document] = {}
+    capture = _SourceCapture(sites)
     body_indent = None
     if len(bodies) > len(indices) and aot:
         tail = _last_body_kv(aot[min(start, len(aot) - 1)])
@@ -3374,8 +3352,7 @@ def assign_aot_entries(
                 aot,
                 _container.Table(),
                 bodies[offset],
-                write_ancestors,
-                snapshots,
+                capture,
                 previous=aot[index],
             ),
         )
@@ -3386,8 +3363,7 @@ def assign_aot_entries(
             aot,
             _container.Table(),
             body,
-            write_ancestors,
-            snapshots,
+            capture,
             index=start,
             body_indent=body_indent,
         )
