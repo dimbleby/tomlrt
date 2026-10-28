@@ -748,8 +748,11 @@ class Container(_View, dict[str, Any]):
 
     @override
     def clear(self) -> None:
-        for k in list(dict.keys(self)):
-            del self[k]
+        if self._needs_layout or self._inline:
+            for k in list(dict.keys(self)):
+                del self[k]
+            return
+        _layout_ops.delete_keys(self, tuple(dict.keys(self)), materialise_empty=True)
 
     @override
     def pop(self, key: object, default: Any = _MISSING) -> Any:

@@ -6997,10 +6997,77 @@ def test_clear_doc_orphans_held_aot_view() -> None:
         n = 2
         """)
     )
-    held = doc["a"]
+    held = doc.aot("a")
+    empty = AoT()
+    doc["empty"] = empty
     doc.clear()
     assert tomlrt.dumps(doc) == ""
-    assert [dict(e) for e in held] == [{"n": 1}, {"n": 2}]
+    empty.append({"value": 3})
+    doc["a"] = held
+    doc["empty"] = empty
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        n = 1
+        [[a]]
+        n = 2
+        [[empty]]
+        value = 3
+        """)
+
+
+def test_clear_interleaved_child_remains_independently_usable() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+
+        [other]
+        keep = 9
+
+        [a.child]
+        value = 2
+        """)
+    )
+    target = doc.table("a")
+    child = target.table("child")
+    target.clear()
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+
+        [other]
+        keep = 9
+        """)
+
+    child["value"] = 3
+    doc["saved"] = child
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+
+        [other]
+        keep = 9
+
+        [saved]
+        value = 3
+        """)
+
+
+def test_clear_mixed_dotted_and_header_origin_keeps_header() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a.x = 1
+
+        [a.child]
+        y = 2
+        """)
+    )
+    target = doc.table("a")
+    target.clear()
+    assert tomlrt.dumps(doc) == "[a]\n"
+    target["new"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        new = 3
+        """)
 
 
 def test_clear_nested_section_keeps_anchor_and_drops_subsections() -> None:

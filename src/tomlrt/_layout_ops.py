@@ -892,8 +892,11 @@ def _materialise_empty_inline_table(
     # entries live in ``val.items``). Unfile its remaining
     # descendant-binding refs first — this also unregisters their slot
     # back-pointers, so the later scrub no longer reaches ``c``.
-    for slot in list(c._refs):  # noqa: SLF001
-        unfile_slot(c, slot)
+    for slot in c._refs:  # noqa: SLF001
+        _unfile_container(slot, c)
+    c._refs.clear()  # noqa: SLF001
+    c._index.clear()  # noqa: SLF001
+    c._body_tail = None  # noqa: SLF001
     c._inline = True  # noqa: SLF001
     c._value = val  # noqa: SLF001
 
@@ -952,83 +955,68 @@ def _root_orphan_subtree(
 
 
 def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> None:
-    """Delete ``key`` from ``c`` — scalar, inline, section, AoT, or dotted-subtree.
+    """Delete a child binding without pruning its empty ancestors."""
+    delete_keys(c, (key,), materialise_empty=materialise_empty)
 
-    Owned slots are scrubbed from live refs/indexes via slot
-    back-pointers, body tails are repaired, then the slots are unlinked.
-    Cascade-prune is intentionally *not*
-    performed: ``del c[k]`` removes exactly ``k`` and leaves any
-    now-emptied implicit ancestor chain reachable as nested empty
-    ``Table`` views.
 
-    ``materialise_empty`` is opt-in for the public delete API: if the
-    removal leaves ``c`` itself an empty, header-less section, a
-    synthetic ``[c._path]`` header is materialised so it still renders.
-    Internal delete-then-reinstall callers leave it ``False``, since
-    the container is repopulated immediately and a transient empty
-    state must not grow a spurious header.
+def delete_keys(
+    c: Container, keys: Sequence[str], *, materialise_empty: bool = False
+) -> None:
+    """Delete distinct child bindings without pruning empty implicit ancestors.
 
-    Deleted structural views are transplanted to a private orphan
-    document, preserving safe mutation and later reattachment without
-    touching the live document.
+    Structural views retain their layout in private orphan documents.
+    Public deletion materialises an emptied headerless section using the
+    last key's origin; internal delete-then-reinstall callers opt out.
     """
-    val = dict.__getitem__(c, key)  # raises KeyError if absent
+    if not keys:
+        return
+    plans: list[tuple[str, TomlInput, list[Slot], list[_View]]] = []
+    for key in keys:
+        value = dict.__getitem__(c, key)  # raises KeyError if absent
+        owned = set(c._index.get(key, ()))  # noqa: SLF001
+        if _container._is_section(value) or isinstance(value, _array.AoT):  # noqa: SLF001
+            owned.update(owned_slots(value))
+            views = list(_walk_views((value,)))
+        else:
+            views = []
+        plans.append((key, value, sorted(owned, key=_slot_order), views))
+        del owned
+    slots = sorted(
+        (slot for _key, _value, child_slots, _views in plans for slot in child_slots),
+        key=_slot_order,
+    )
+    views = [
+        view for _key, _value, _slots, child_views in plans for view in child_views
+    ]
     doc = c._attached_doc  # noqa: SLF001
 
-    # If this empties ``c`` into a live, header-less, non-inline section,
-    # a ``[c._path]`` header is synthesised below (before the unlink
-    # loop, while the descendant's primary slot is still in place).
-    will_materialise = (
+    # Materialise before scrubbing, while the last binding's primary is linked.
+    if (
         materialise_empty
         and bool(c._path)  # noqa: SLF001
         and not c._inline  # noqa: SLF001
         and c._header is None  # noqa: SLF001
-        and len(c) == 1
-    )
-    mat_primary: Slot | None = None
-    if will_materialise:
-        # ``_index[key]`` is scrubbed below; grab the removed descendant's
-        # doc-stream-first slot now, while it is still linked.
-        mat_primary = c._index[key][0]  # noqa: SLF001
-
-    owned = set(c._index.get(key, ()))  # noqa: SLF001
-    if _container._is_section(val) or isinstance(val, _array.AoT):  # noqa: SLF001
-        owned.update(owned_slots(val))
-        views = list(_walk_views((val,)))
-    else:
-        views = []
-    slots = sorted(owned, key=operator.attrgetter("_order"))
-    del owned  # The removal step builds its own membership set.
-
-    # Synthesise the now-empty section's physical presence while the
-    # descendant's primary slot is still linked, so the replacement takes
-    # its position in place. The descendant's *origin* picks the form: a
-    # dotted-origin section (``a.b.x = 1``) re-materialises as an inline
-    # table ``a = {}``; a header-origin section (``[a.b]``) as a header
-    # ``[a]``.
-    if will_materialise:
-        assert mat_primary is not None
-        if isinstance(mat_primary, KVSlot):
-            _materialise_empty_inline_table(c, mat_primary, doc)
+        and len(keys) == len(c)
+    ):
+        primary = c._index[keys[-1]][0]  # noqa: SLF001
+        if isinstance(primary, KVSlot):
+            _materialise_empty_inline_table(c, primary, doc)
         else:
-            _materialise_empty_section_header(c, mat_primary, doc)
+            _materialise_empty_section_header(c, primary, doc)
 
     _detach_departing_slots(c, slots, views)
-
-    if views:
-        assert isinstance(val, (_container.Container, _array.AoT))
-        _transplant_to_orphan(
-            val,
-            slots,
-            doc._newline,  # noqa: SLF001
-            views,
-        )
-    else:
-        # No orphan (e.g. a top-level inline value): reset so a held
-        # reference reports detached and can re-attach cleanly.
-        reset_displaced_views(val)
-
-    dict.__delitem__(c, key)
+    for key, value, child_slots, child_views in plans:
+        if child_views:
+            assert isinstance(value, (_container.Container, _array.AoT))
+            _transplant_to_orphan(
+                value,
+                child_slots,
+                doc._newline,  # noqa: SLF001
+                child_views,
+            )
+        else:
+            reset_displaced_views(value)
+        dict.__delitem__(c, key)
 
 
 def _detach_departing_slots(
@@ -2838,9 +2826,8 @@ def _scrub_owned_slots_via_backptrs(
     `delete_key`, which transplants the deleted subtree to a fresh
     orphan doc and needs the subtree containers' internal
     structure intact. AoT removal likewise retains the departing
-    entries' internal refs. Both multi-slot callers visit binding refs
-    in document order. Each affected ancestor therefore loses an ordered
-    subset of one child binding, never its own header or several different keys.
+    entries' internal refs. Multi-slot callers visit binding refs in
+    document order and retain the subtree containers' own headers.
     """
     # One slot has at most one ref per container: there is nothing to batch.
     if len(owned) == 1:
@@ -2857,13 +2844,18 @@ def _scrub_owned_slots_via_backptrs(
                 continue
             by_container.setdefault(container_id, (c, []))[1].append(s)
     for c, removed in by_container.values():
-        key = slot_local_key(removed[0], c)
-        assert key is not None, "bulk removal retains subtree containers' own refs"
-        bucket = c._index[key]  # noqa: SLF001
+        by_key: dict[str, list[Slot]] = {}
+        for slot in removed:
+            key = slot_local_key(slot, c)
+            assert key is not None, "bulk removal retains subtree containers' own refs"
+            by_key.setdefault(key, []).append(slot)
+        # Splice the whole projection once, even when several keys are removed.
         _unfile_ordered_many(c._refs, removed)  # noqa: SLF001
-        _unfile_ordered_many(bucket, removed)
-        if not bucket:
-            del c._index[key]  # noqa: SLF001
+        for key, entries in by_key.items():
+            bucket = c._index[key]  # noqa: SLF001
+            _unfile_ordered_many(bucket, entries)
+            if not bucket:
+                del c._index[key]  # noqa: SLF001
         tail = c._body_tail  # noqa: SLF001
         for slot in removed:
             _unfile_container(slot, c)
