@@ -33,6 +33,7 @@ from tomlrt._format import (
     format_inline_root,
     set_comma_value_multiline,
 )
+from tomlrt._list_ops import replacement_indices
 from tomlrt._trivia import (
     emptied_bracket_pad,
 )
@@ -453,26 +454,24 @@ class Array(_View, list[Any]):
                 )
                 raise ValueError(msg)
             self._validate_values(values)
-            if len(values) == len(indices) and all(
-                self[i] is v for i, v in zip(indices, values, strict=True)
-            ):
-                return
-            prepared = [self._synth_item(v) for v in values]
-            if step != 1:
-                # Extended slice positions are unchanged; replace per slot.
-                for k, (cst, decoded) in zip(indices, prepared, strict=True):
-                    self._replace_synthesised(k, cst, decoded)
-                return
-            # Reuse delete/insert boundary handling for contiguous slices.
-            del self[start:stop]
-            if prepared:
-                if start == len(self):
-                    self._extend_prepared(prepared)
+            prepared = [
+                (index, self._synth_item(values[offset]))
+                for offset, index in replacement_indices(self, indices, values)
+            ]
+            added = [self._synth_item(v) for v in values[len(indices) :]]
+            for index, (cst, decoded) in prepared:
+                self._replace_synthesised(index, cst, decoded)
+            if len(values) < len(indices):
+                del self[start + len(values) : stop]
+            if added:
+                at = start + len(indices)
+                if at == len(self):
+                    self._extend_prepared(added)
                 else:
-                    new_items = [ArrayItem(cst) for cst, _ in prepared]
-                    splice_insert(self._value, new_items, start, self._doc_newline)
+                    new_items = [ArrayItem(cst) for cst, _ in added]
+                    splice_insert(self._value, new_items, at, self._doc_newline)
                     list.__setitem__(
-                        self, slice(start, start), [decoded for _, decoded in prepared]
+                        self, slice(at, at), [decoded for _, decoded in added]
                     )
             return
         # int index: reject before synthesising or mutating any CST, to
@@ -678,7 +677,7 @@ class AoT(_View, list["Table"]):
             except TypeError as exc:
                 msg = "can only assign an iterable"
                 raise TypeError(msg) from exc
-            indices = list(range(*index.indices(len(self))))
+            indices = range(*index.indices(len(self)))
             if (
                 index.step is not None
                 and index.step != 1
@@ -692,15 +691,21 @@ class AoT(_View, list["Table"]):
             # Atomicity preflight: validate everything before mutating.
             typed_values = _prepare_aot_entries(values)
             if self._layout_root is None:
-                list.__setitem__(
-                    self, index, [_make_unattached_entry(v) for v in typed_values]
-                )
+                entries = [
+                    self[indices[offset]]
+                    if offset < len(indices) and self[indices[offset]] is body
+                    else _make_unattached_entry(body)
+                    for offset, body in enumerate(typed_values)
+                ]
+                list.__setitem__(self, index, entries)
                 return
             _layout_ops.assign_aot_entries(self, index, typed_values)
             return
         entry = _prepare_aot_entries((value,))[0]
         if self._layout_root is None:
-            list.__setitem__(self, index, _make_unattached_entry(entry))
+            i = _norm_index(index, len(self), "list assignment")
+            if self[i] is not entry:
+                list.__setitem__(self, i, _make_unattached_entry(entry))
             return
         _layout_ops.assign_aot_entries(self, operator.index(index), (entry,))
 

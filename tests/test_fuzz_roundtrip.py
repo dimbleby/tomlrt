@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 import tomli
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 import tomlrt
@@ -167,26 +167,34 @@ def _array_layout(draw: st.DrawFn) -> str:
 
 
 @settings(max_examples=1000, deadline=None)
+@example(src="arr = [0 ]\n", start=0, stop=1, values=[-1])
 @given(
     src=_array_layout(),
     start=st.integers(min_value=-10, max_value=10),
     stop=st.integers(min_value=-10, max_value=10),
     values=st.lists(st.integers(min_value=-100, max_value=-1), max_size=5),
 )
-def test_batch_array_splice_matches_individual_inserts(
+def test_batch_array_splice_matches_individual_edits(
     src: str, start: int, stop: int, values: list[int]
 ) -> None:
     doc = tomlrt.loads(src)
     expected = tomlrt.loads(src)
     arr = expected.array("arr")
-    insertion, _, _ = slice(start, stop).indices(len(arr))
-    del arr[start:stop]
-    for offset, value in enumerate(values):
-        arr.insert(insertion + offset, value)
+    expected_values = list(arr)
+    expected_values[start:stop] = values
+    indices = range(*slice(start, stop).indices(len(arr)))
+    for index, value in zip(indices, values, strict=False):
+        arr[index] = value
+    if len(values) < len(indices):
+        del arr[indices.start + len(values) : indices.stop]
+    for index, value in enumerate(
+        values[len(indices) :], start=indices.start + len(indices)
+    ):
+        arr.insert(index, value)
     doc.array("arr")[start:stop] = values
     rendered = tomlrt.dumps(doc)
     assert rendered == tomlrt.dumps(expected)
-    assert tomli.loads(rendered) == doc.to_dict()
+    assert tomli.loads(rendered) == doc.to_dict() == {"arr": expected_values}
 
 
 @st.composite

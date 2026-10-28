@@ -2097,7 +2097,7 @@ def test_array_inserts_a_run_between_commented_items(newline: str) -> None:
     assert _reparses(expected) == doc.to_dict()
 
 
-def test_array_splice_resamples_style_after_rehoming_the_first_comment() -> None:
+def test_array_growing_slice_preserves_replaced_item_layout() -> None:
     doc = tomlrt.loads(
         td("""
         arr = [0,
@@ -2109,8 +2109,7 @@ def test_array_splice_resamples_style_after_rehoming_the_first_comment() -> None
     )
     doc.array("arr")[:1] = [-1, -1]
     expected = td("""
-        arr = [
-          -1,
+        arr = [-1,
           -1,
         # above
           1,
@@ -2779,11 +2778,9 @@ def test_aot_extended_slice_captures_source_bodies() -> None:
     assert out == td("""
         [[items]] # first
         x = 0x02 # two
-        held = true
 
         [[items]] # second
         x = 0x01 # one
-        held = false
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -2870,13 +2867,11 @@ def test_aot_whole_body_capture_preserves_layout_without_copying_document(
     elif operation == "insert":
         items.insert(0, body)
     elif operation == "replace":
-        held = items[0]
         items[0] = body
-        assert items[0] is held
     else:
         items[:] = [body, {"tail": 2}]
     header = "[[items]]"
-    if operation == "replace":
+    if operation in {"replace", "resize"}:
         header += " # retained"
     elif kind in {"section", "aot"}:
         header += " # source"
@@ -2944,7 +2939,7 @@ def test_aot_resizing_slice_captures_array_source(
     if private:
         doc["items"] = items
     out = tomlrt.dumps(doc)
-    assert out == (
+    expected = (
         td("""
         [[items]]
 
@@ -2956,6 +2951,9 @@ def test_aot_resizing_slice_captures_array_source(
         """)
         + tail
     )
+    if target.stop:
+        expected = expected.replace("[[items]]", "[[items]] # first", 1)
+    assert out == expected
     assert _reparses(out) == doc.to_dict()
 
 
@@ -3038,7 +3036,7 @@ def test_aot_slice_captures_empty_array_without_changing_its_kind() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_aot_resizing_slice_captures_body_before_adopting_its_child() -> None:
+def test_aot_resizing_slice_captures_body_and_child_independently() -> None:
     doc = tomlrt.loads(
         td("""
         [[items]]
@@ -3064,7 +3062,6 @@ def test_aot_resizing_slice_captures_body_before_adopting_its_child() -> None:
 
         [items.taken]
         y = 0x02 # two
-        held = true
 
         [[items]]
         x = 0x01 # one
@@ -3384,7 +3381,7 @@ def test_aot_integer_captures_section_factory_inputs() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_aot_integer_captures_parent_before_adopting_displaced_child() -> None:
+def test_aot_integer_copies_parent_and_displaced_child() -> None:
     doc = tomlrt.loads(
         td("""
         [[items]]
@@ -3409,7 +3406,7 @@ def test_aot_integer_captures_parent_before_adopting_displaced_child() -> None:
         y = 0x02 # two
 
         [items.kept]
-        y = 9 # two
+        y = 0x02 # two
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -6474,6 +6471,31 @@ def test_aot_slice_delete_leaves_interleaved_section_alone() -> None:
         x = 2
         """)
     assert [t["x"] for t in aot] == [2]
+
+
+def test_aot_slice_clear_preserves_removed_entry() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[a]] # first
+        x = 0x01 # retained
+
+        [[a]] # second
+        x = 2
+        """)
+    )
+    aot = doc.aot("a")
+    first = aot[0]
+    aot[:] = []
+    assert tomlrt.dumps(doc) == "a = []\n"
+
+    first["x"] = 3
+    other = tomlrt.Document()
+    other["kept"] = first
+    assert tomlrt.dumps(other) == td("""
+        [kept] # first
+        x = 3 # retained
+        """)
+    assert tomlrt.dumps(doc) == "a = []\n"
 
 
 def test_aot_extend_self_duplicates_once() -> None:
@@ -11386,6 +11408,164 @@ def test_aot_self_assign_is_noop() -> None:
     src = tomlrt.dumps(doc)
     doc.aot("a")[0] = doc.aot("a")[0]
     assert tomlrt.dumps(doc) == src
+
+
+def test_unattached_aot_self_assignment_keeps_entry_reference() -> None:
+    aot = AoT([{"x": 1}])
+    entry = aot[-1]
+    aot[-1] = entry
+    entry["x"] = 2
+    doc = tomlrt.Document()
+    doc["a"] = aot
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 2
+        """)
+
+
+def test_unattached_aot_slice_keeps_only_same_entry_references() -> None:
+    aot = AoT([{"x": 1}, {"x": 2}, {"x": 3}])
+    first, second, third = aot
+    aot[:] = [first, {"x": 2}, third]
+    first["x"] = 11
+    second["x"] = 12
+    third["x"] = 13
+    doc = tomlrt.Document()
+    doc["a"] = aot
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 11
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 13
+        """)
+
+
+def test_unattached_aot_reverse_slice_keeps_entry_references() -> None:
+    aot = AoT([{"x": 1}, {"x": 2}, {"x": 3}])
+    first, _second, third = aot
+    aot[::-2] = aot[::-2]
+    first["x"] = 11
+    third["x"] = 13
+    doc = tomlrt.Document()
+    doc["a"] = aot
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 11
+
+        [[a]]
+        x = 2
+
+        [[a]]
+        x = 13
+        """)
+
+
+def test_array_mixed_slice_keeps_only_same_entry_references() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [{ x = 1 }, { x = 2 }, { x = 3 }]
+        """)
+    )
+    array = doc.array("a")
+    first, second, third = array
+    array[:] = [first, {"x": 2}, third]
+    first["x"] = 11
+    second["x"] = 12
+    third["x"] = 13
+    assert tomlrt.dumps(doc) == td("""
+        a = [{ x = 11 }, { x = 2 }, { x = 13 }]
+        """)
+
+
+def test_array_resizing_keeps_paired_entry_references() -> None:
+    doc = tomlrt.loads(
+        td("""
+        a = [{ x = 1 }, { x = 2 }]
+        """)
+    )
+    array = doc.array("a")
+    first, second = array
+    array[:] = [first]
+    first["x"] = 11
+    second["x"] = 12
+    assert tomlrt.dumps(doc) == "a = [{ x = 11 }]\n"
+
+    array[:] = [first, {"x": 3}]
+    first["x"] = 13
+    assert tomlrt.dumps(doc) == "a = [{ x = 13 }, { x = 3 }]\n"
+
+
+def test_aot_resizing_keeps_paired_entry_references() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[a]] # first
+        x = 1
+
+        [[a]] # second
+        x = 2
+        """)
+    )
+    aot = doc.aot("a")
+    first, second = aot
+    aot[:] = [first]
+    first["x"] = 11
+    second["x"] = 12
+    assert tomlrt.dumps(doc) == td("""
+        [[a]] # first
+        x = 11
+        """)
+
+    aot[:] = [first, {"x": 3}]
+    first["x"] = 13
+    assert tomlrt.dumps(doc) == td("""
+        [[a]] # first
+        x = 13
+
+        [[a]]
+        x = 3
+        """)
+
+
+def test_aot_replacement_detaches_old_entry_and_children() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [[a]] # keep
+        x = 0x01 # old
+
+        [a.child]
+        y = 'old'
+
+        [tail]
+        z = 7
+        """)
+    )
+    aot = doc.aot("a")
+    old = aot[0]
+    child = old.table("child")
+    aot[0] = {"x": 2}
+    old["x"] = 3
+    child["y"] = "changed"
+    assert tomlrt.dumps(doc) == td("""
+        [[a]] # keep
+        x = 2
+
+        [tail]
+        z = 7
+        """)
+
+    other = tomlrt.Document()
+    other["old"] = old
+    assert tomlrt.dumps(other) == td("""
+        [old] # keep
+        x = 3 # old
+
+        [old.child]
+        y = "changed"
+        """)
 
 
 def test_aot_cross_doc_assign_negative_index() -> None:
