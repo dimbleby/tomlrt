@@ -833,6 +833,19 @@ def _materialise_empty_section_header(
     _bind_own_section_header(c, header)
 
 
+def _clear_child_refs(c: Container) -> None:
+    """Drop child projections, retaining the container's own header."""
+    header = c._header  # noqa: SLF001
+    for slot in c._refs:  # noqa: SLF001
+        if slot is not header:
+            _unfile_container(slot, c)
+    c._refs.clear()  # noqa: SLF001
+    if header is not None:
+        c._refs.append(header)  # noqa: SLF001
+    c._index.clear()  # noqa: SLF001
+    c._body_tail = _recompute_body_tail(c)  # noqa: SLF001
+
+
 def _materialise_empty_inline_table(
     c: Container,
     primary: KVSlot,
@@ -892,11 +905,7 @@ def _materialise_empty_inline_table(
     # entries live in ``val.items``). Unfile its remaining
     # descendant-binding refs first — this also unregisters their slot
     # back-pointers, so the later scrub no longer reaches ``c``.
-    for slot in c._refs:  # noqa: SLF001
-        _unfile_container(slot, c)
-    c._refs.clear()  # noqa: SLF001
-    c._index.clear()  # noqa: SLF001
-    c._body_tail = None  # noqa: SLF001
+    _clear_child_refs(c)
     c._inline = True  # noqa: SLF001
     c._value = val  # noqa: SLF001
 
@@ -962,7 +971,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
 def delete_keys(
     c: Container, keys: Sequence[str], *, materialise_empty: bool = False
 ) -> None:
-    """Delete distinct child bindings without pruning empty implicit ancestors.
+    """Delete one child binding or all bindings without pruning empty ancestors.
 
     Structural views retain their layout in private orphan documents.
     Public deletion materialises an emptied headerless section using the
@@ -970,24 +979,27 @@ def delete_keys(
     """
     if not keys:
         return
+    clear_all = len(keys) == len(c)
+    assert len(keys) == 1 or clear_all, "delete one binding or the whole container"
     plans: list[tuple[str, TomlInput, list[Slot], list[_View]]] = []
+    slots: list[Slot] = []
+    views: list[_View] = []
     for key in keys:
         value = dict.__getitem__(c, key)  # raises KeyError if absent
-        owned = set(c._index.get(key, ()))  # noqa: SLF001
+        child_slots = list(c._index.get(key, ()))  # noqa: SLF001
         if _container._is_section(value) or isinstance(value, _array.AoT):  # noqa: SLF001
+            owned = set(child_slots)
             owned.update(owned_slots(value))
-            views = list(_walk_views((value,)))
+            child_slots = sorted(owned, key=_slot_order)
+            del owned
+            child_views = list(_walk_views((value,)))
         else:
-            views = []
-        plans.append((key, value, sorted(owned, key=_slot_order), views))
-        del owned
-    slots = sorted(
-        (slot for _key, _value, child_slots, _views in plans for slot in child_slots),
-        key=_slot_order,
-    )
-    views = [
-        view for _key, _value, _slots, child_views in plans for view in child_views
-    ]
+            child_views = []
+        plans.append((key, value, child_slots, child_views))
+        slots.extend(child_slots)
+        views.extend(child_views)
+    if len(plans) > 1:
+        slots.sort(key=_slot_order)
     doc = c._attached_doc  # noqa: SLF001
 
     # Materialise before scrubbing, while the last binding's primary is linked.
@@ -996,7 +1008,7 @@ def delete_keys(
         and bool(c._path)  # noqa: SLF001
         and not c._inline  # noqa: SLF001
         and c._header is None  # noqa: SLF001
-        and len(keys) == len(c)
+        and clear_all
     ):
         primary = c._index[keys[-1]][0]  # noqa: SLF001
         if isinstance(primary, KVSlot):
@@ -1004,6 +1016,8 @@ def delete_keys(
         else:
             _materialise_empty_section_header(c, primary, doc)
 
+    if clear_all:
+        _clear_child_refs(c)
     _detach_departing_slots(c, slots, views)
     for key, value, child_slots, child_views in plans:
         if child_views:
@@ -2831,6 +2845,8 @@ def _scrub_owned_slots_via_backptrs(
     structure intact. AoT removal likewise retains the departing
     entries' internal refs. Multi-slot callers visit binding refs in
     document order and retain the subtree containers' own headers.
+    Each affected container loses refs for one binding; full clears
+    unregister their own child projections before reaching this helper.
     """
     # One slot has at most one ref per container: there is nothing to batch.
     if len(owned) == 1:
@@ -2847,18 +2863,13 @@ def _scrub_owned_slots_via_backptrs(
                 continue
             by_container.setdefault(container_id, (c, []))[1].append(s)
     for c, removed in by_container.values():
-        by_key: dict[str, list[Slot]] = {}
-        for slot in removed:
-            key = slot_local_key(slot, c)
-            assert key is not None, "bulk removal retains subtree containers' own refs"
-            by_key.setdefault(key, []).append(slot)
-        # Splice the whole projection once, even when several keys are removed.
+        key = slot_local_key(removed[0], c)
+        assert key is not None, "bulk removal retains subtree containers' own refs"
         _unfile_ordered_many(c._refs, removed)  # noqa: SLF001
-        for key, entries in by_key.items():
-            bucket = c._index[key]  # noqa: SLF001
-            _unfile_ordered_many(bucket, entries)
-            if not bucket:
-                del c._index[key]  # noqa: SLF001
+        bucket = c._index[key]  # noqa: SLF001
+        _unfile_ordered_many(bucket, removed)
+        if not bucket:
+            del c._index[key]  # noqa: SLF001
         tail = c._body_tail  # noqa: SLF001
         for slot in removed:
             _unfile_container(slot, c)
@@ -3168,7 +3179,9 @@ def _prepare_entry(
     header = None
     if previous is not None:
         assert previous._header is not None  # noqa: SLF001
-        header = copy.deepcopy(previous._header)  # noqa: SLF001
+        cloned = previous._header.__deepcopy__({})  # noqa: SLF001
+        assert isinstance(cloned, StructuralHeaderSlot)
+        header = cloned
         header.entry = header.owner_aot_entry = owner
         owner.bind_header(header)
         tail = _last_body_kv(previous)
