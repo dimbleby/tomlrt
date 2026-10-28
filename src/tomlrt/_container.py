@@ -24,7 +24,7 @@ from typing import (
 )
 
 if sys.version_info >= (3, 12):
-    from typing import Self, override
+    from typing import Self, override  # pragma: no cover -- Python >= 3.12
 else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 

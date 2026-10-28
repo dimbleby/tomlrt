@@ -19,7 +19,7 @@ from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 if sys.version_info >= (3, 12):
-    from typing import override
+    from typing import override  # pragma: no cover -- Python >= 3.12
 else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
