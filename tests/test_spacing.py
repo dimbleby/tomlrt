@@ -556,7 +556,7 @@ def test_aot_resizing_replacement_preserves_copied_body_indent() -> None:
     assert tomlrt.dumps(doc) == td("""
         version = 1
 
-              [[items]]
+          [[items]]
                 # copied
                 x = 2
 

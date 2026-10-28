@@ -31,3 +31,14 @@ def delete_runs(items: list[_T], runs: Sequence[tuple[int, int]]) -> None:
         retained.extend(items[stop:next_start])
         stop = next_stop
     list.__setitem__(items, slice(start, stop), retained)
+
+
+def replacement_indices(
+    items: Sequence[_T], indices: range, values: Sequence[_T]
+) -> list[tuple[int, int]]:
+    """Source offsets and destination indices of non-self replacement pairs."""
+    return [
+        (offset, index)
+        for offset, (index, value) in enumerate(zip(indices, values, strict=False))
+        if items[index] is not value
+    ]

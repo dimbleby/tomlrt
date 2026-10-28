@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt import _array, _container
 from tomlrt._kind import _Kind
-from tomlrt._list_ops import delete_runs, index_runs
+from tomlrt._list_ops import delete_runs, index_runs, replacement_indices
 from tomlrt._scalar import SCALAR_TYPES
 from tomlrt._slots import (
     AoTEntry,
@@ -2898,53 +2898,39 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     """
     idx_list = list(indices)
     assert idx_list
-    doc = aot._attached_doc  # noqa: SLF001
     parent = aot._host  # noqa: SLF001
     assert parent is not None
-
-    # Collect each entry's whole subtree in doc-stream order and capture
-    # the entry table itself for return. Distinct entries own
-    # disjoint subtrees, so concatenating is already a union.
-    popped_entries: list[Table] = []
-    union_owned_ordered: list[Slot] = []  # in doc-stream order
-
-    for i in idx_list:
-        entry_table = aot[i]
-        union_owned_ordered.extend(owned_slots(entry_table))
-        popped_entries.append(entry_table)
-
-    # The entries themselves keep their internal caches: they are moving
-    # to a document of their own, not being taken apart.
-    views = list(_walk_views(popped_entries))
-
-    _detach_departing_slots(parent, union_owned_ordered, views)
-
+    popped_entries = [aot[i] for i in idx_list]
+    _orphan_aot_entries(aot, popped_entries)
     delete_runs(aot, index_runs(idx_list))
-
-    # The popped entries move to a private document, keeping their own
-    # lines, exactly as a deleted section does. An array-of-tables is
-    # what their ``[[path]]`` headers spell, so that is what holds them
-    # there, at the path they came from.
-    holder = _array.AoT()
-    holder._path = aot._path  # noqa: SLF001
-    list.extend(holder, popped_entries)
-    views.append(holder)
-    _transplant_to_orphan(
-        holder,
-        union_owned_ordered,
-        doc._newline,  # noqa: SLF001
-        views,
-    )
 
     last_key = aot._path[-1]  # noqa: SLF001
     if len(aot) == 0 and not parent._index.get(last_key):  # noqa: SLF001
-        parent._index.pop(last_key, None)  # noqa: SLF001
-        # An empty AoT still lives in dict storage; a ``key = []``
-        # placeholder gives it a physical presence so the document keeps
-        # the same semantic shape as the dict view.
         _materialise_empty_aot(aot)
 
     return popped_entries
+
+
+def _orphan_aot_entries(aot: AoT, entries: Sequence[Table]) -> None:
+    """Detach doc-ordered entries intact, leaving logical list edits to the caller."""
+    doc = aot._attached_doc  # noqa: SLF001
+    parent = aot._host  # noqa: SLF001
+    assert parent is not None
+    slots = [slot for entry in entries for slot in owned_slots(entry)]
+    views = list(_walk_views(entries))
+
+    _detach_departing_slots(parent, slots, views)
+
+    holder = _array.AoT()
+    holder._path = aot._path  # noqa: SLF001
+    list.extend(holder, entries)
+    views.append(holder)
+    _transplant_to_orphan(
+        holder,
+        slots,
+        doc._newline,  # noqa: SLF001
+        views,
+    )
 
 
 def _view_route(view: Container | AoT) -> list[tuple[str, int | None]]:
@@ -3093,7 +3079,7 @@ def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
 
 
 class _PreparedEntry:
-    """An existing or unpublished entry and its destination-ready body."""
+    """An unpublished entry and its destination-ready body."""
 
     __slots__ = ("body", "body_indent", "header", "table")
 
@@ -3163,6 +3149,7 @@ def _prepare_entry(
     *,
     index: int | None = None,
     body_indent: str | None = None,
+    previous: Table | None = None,
 ) -> _PreparedEntry:
     """Capture a body without clearing, wiring or publishing its destination.
 
@@ -3173,15 +3160,14 @@ def _prepare_entry(
     """
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
-    owner: AoTEntry | None
-    if table._layout_root is None:  # noqa: SLF001
-        owner = AoTEntry()
-        header = None
-    else:
-        owner = table._owner_aot_entry  # noqa: SLF001
-        assert owner is not None
-        header = owner.header
-        tail = _last_body_kv(table)
+    owner = AoTEntry()
+    header = None
+    if previous is not None:
+        assert previous._header is not None  # noqa: SLF001
+        header = copy.deepcopy(previous._header)  # noqa: SLF001
+        header.entry = header.owner_aot_entry = owner
+        owner.bind_header(header)
+        tail = _last_body_kv(previous)
         if tail is not None:
             body_indent = trailing_ws(tail.leading)
     payload: list[Slot] | dict[str, TomlInput]
@@ -3256,33 +3242,38 @@ def _install_entry(
     preserve_source_separator: bool = False,
     index: int | None = None,
 ) -> Table:
-    """Publish a fresh header or retain an existing one, then consume its body."""
+    """Publish a fresh entry, then consume its prepared body."""
     table, header = prepared.table, prepared.header
-    body_indent = prepared.body_indent
     owner = header.entry
     assert owner is not None
     parent = aot._host  # noqa: SLF001
     assert parent is not None
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
-    if table._layout_root is None:  # noqa: SLF001
-        dict.clear(table)
-        table._wire(  # noqa: SLF001
-            layout_root=doc, parent=aot, path=path, owner=owner
-        )
-        _insert_entry_run(
-            aot,
-            header,
-            [header],
-            preserve_source_separator=preserve_source_separator,
-            index=index,
-        )
-        file_own_header(table, header)
-        _file_header_binding_chain(parent, header)
-        list.insert(aot, len(aot) if index is None else index, table)
-        _maybe_demote_synthetic_empty_header(parent)
-    else:
-        table.clear()
+    dict.clear(table)
+    table._wire(  # noqa: SLF001
+        layout_root=doc, parent=aot, path=path, owner=owner
+    )
+    _insert_entry_run(
+        aot,
+        header,
+        [header],
+        preserve_source_separator=preserve_source_separator,
+        index=index,
+    )
+    file_own_header(table, header)
+    _file_header_binding_chain(parent, header)
+    list.insert(aot, len(aot) if index is None else index, table)
+    _maybe_demote_synthetic_empty_header(parent)
+    _populate_prepared_entry(prepared)
+    return table
+
+
+def _populate_prepared_entry(prepared: _PreparedEntry) -> None:
+    """Fill an entry whose header and logical binding have been published."""
+    table, header = prepared.table, prepared.header
+    body_indent = prepared.body_indent
+    doc = table._attached_doc  # noqa: SLF001
     if isinstance(prepared.body, dict):
         for key, value in prepared.body.items():
             table._setitem_validated(key, value)  # noqa: SLF001
@@ -3297,49 +3288,114 @@ def _install_entry(
         _populate_entry_views(
             entry_table=table,
             cloned_slots=prepared.body,
-            target_prefix=path,
+            target_prefix=table._path,  # noqa: SLF001
             doc=doc,
         )
+        parent = table._parent  # noqa: SLF001
+        assert parent is not None
         _extend_header_bindings_to_root(parent, prepared.body)
-    return table
+
+
+def _replace_entry_header(previous: Table, prepared: _PreparedEntry) -> None:
+    """Replace a header without shifting its ancestor projections."""
+    table, header = prepared.table, prepared.header
+    old = previous._header  # noqa: SLF001
+    owner = header.entry
+    assert old is not None
+    assert owner is not None
+    doc = previous._attached_doc  # noqa: SLF001
+    host = previous._host  # noqa: SLF001
+    assert isinstance(host, _array.AoT)
+    table._wire(  # noqa: SLF001
+        layout_root=doc,
+        parent=host,
+        path=previous._path,  # noqa: SLF001
+        owner=owner,
+    )
+    _replace_primary_in_place(header, old, doc)
+    file_own_header(table, header)
+    for container in tuple(old._containers):  # noqa: SLF001
+        if container is previous:
+            continue
+        key = slot_local_key(old, container)
+        assert key is not None
+        for refs in (container._refs, container._index[key]):  # noqa: SLF001
+            at = _ordered_index(refs, old._order)  # noqa: SLF001
+            assert refs[at] is old
+            refs[at] = header
+        _unfile_container(old, container)
+        header._containers.append(container)  # noqa: SLF001
 
 
 def assign_aot_entries(
     aot: AoT, index: int | slice, bodies: Sequence[Mapping[str, TomlInput]]
 ) -> None:
-    """Capture all sources, then replace in place or resize the array."""
+    """Capture sources, replace changed pairs, then remove or insert excess entries."""
     if isinstance(index, slice):
         start, stop, step = index.indices(len(aot))
         indices = range(start, stop, step)
     else:
         start = _norm_aot_index(aot, index)
         indices = range(start, start + 1)
-    resizing = len(indices) != len(bodies)
-    tables = (
-        [_container.Table() for _ in bodies] if resizing else [aot[i] for i in indices]
-    )
-    targets = [
-        (table, body)
-        for table, body in zip(tables, bodies, strict=True)
-        if table is not body
+    changed = replacement_indices(aot, indices, bodies)
+    if not changed and len(bodies) == len(indices):
+        return
+    removed = indices[len(bodies) :]
+    departing = [
+        aot[index] for index in sorted([index for _, index in changed] + list(removed))
     ]
-    sites = [aot] if resizing else [table for table, _ in targets]
+    sites: list[Container | AoT] = list(departing)
+    if len(bodies) > len(indices):
+        sites.append(aot)
     snapshots: dict[int, Document] = {}
     body_indent = None
-    if resizing and aot:
+    if len(bodies) > len(indices) and aot:
         tail = _last_body_kv(aot[min(start, len(aot) - 1)])
         if tail is not None:
             body_indent = trailing_ws(tail.leading)
+    selected = [aot[index] for index in indices[: len(bodies)]]
     prepared = [
-        _prepare_entry(
-            aot, table, body, sites, snapshots, index=start, body_indent=body_indent
+        (
+            offset,
+            _prepare_entry(
+                aot,
+                _container.Table(),
+                bodies[offset],
+                sites,
+                snapshots,
+                previous=aot[index],
+            ),
         )
-        for table, body in targets
+        for offset, index in changed
     ]
-    if resizing and indices:
-        remove_aot_entries(aot, indices)
-    for offset, entry in enumerate(prepared):
-        _install_entry(aot, entry, index=start + offset if resizing else None)
+    added = [
+        _prepare_entry(
+            aot,
+            _container.Table(),
+            body,
+            sites,
+            snapshots,
+            index=start,
+            body_indent=body_indent,
+        )
+        for body in bodies[len(indices) :]
+    ]
+    for offset, entry in prepared:
+        _replace_entry_header(selected[offset], entry)
+        selected[offset] = entry.table
+    if departing:
+        _orphan_aot_entries(aot, departing)
+    if isinstance(index, slice):
+        list.__setitem__(aot, index, selected)
+    else:
+        list.__setitem__(aot, start, selected[0])
+    if departing and not aot:
+        _materialise_empty_aot(aot)
+    with _container._sources_kept_intact(aot._layout_root, departing):  # noqa: SLF001
+        for _offset, entry in prepared:
+            _populate_prepared_entry(entry)
+        for offset, entry in enumerate(added, start=start + len(indices)):
+            _install_entry(aot, entry, index=offset)
 
 
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
