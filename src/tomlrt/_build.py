@@ -28,7 +28,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from tomlrt._container import Container
+    from tomlrt._container import Container, DecodedValue
     from tomlrt._parser import ParseResult
     from tomlrt._slots import AoTEntry, Slot
     from tomlrt._values import (
@@ -247,7 +247,7 @@ def _decode_value(
     name: str | None,
     owner: AoTEntry | None,
     array_host: Array | None = None,
-) -> object:
+) -> DecodedValue:
     """Decode any TOML value to its Python representation.
 
     ``parent``/``name`` -- the container and key ``value`` is bound
