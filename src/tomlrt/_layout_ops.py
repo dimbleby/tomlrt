@@ -3724,8 +3724,8 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             key_blocks[bind_key].append(cur)
             movable_slots.append(cur)
 
-    # `Container.sort` only calls in when the order actually changes, so
-    # at least two keys are bound, each contributing a slot.
+    # `Container.sort` only calls in with at least two keys, each
+    # contributing a slot.
     assert movable_slots
 
     movable_ids = set(movable_slots)

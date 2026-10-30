@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sorting corrects physical key order even when dictionary keys are ordered.
 - Make array element and slice assignment more consistent.
 - Speed up bulk array-of-tables updates and clearing large tables.
 

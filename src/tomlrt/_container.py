@@ -865,14 +865,13 @@ class Container(_View, dict[str, Any]):
             for group in (pure_leaves, mixed, pure_sections):
                 group.sort(key=key, reverse=reverse)
             new_order = pure_leaves + mixed + pure_sections
-        if new_order == current:
-            return
         if not self._needs_layout:
             if self._inline:
                 _inline_ops.reorder_inline(self, new_order)
             else:
                 _layout_ops.reorder_container(self, new_order)
-        _reorder_dict_storage(self, new_order)
+        if new_order != current:
+            _reorder_dict_storage(self, new_order)
 
     def has_header(self, key: str) -> bool:
         """Whether ``key`` or its children contain a ``[table]`` or ``[[table]]``.
