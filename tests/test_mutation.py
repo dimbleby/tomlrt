@@ -10058,10 +10058,10 @@ def test_sort_keeps_mixed_key_leaf_ahead_of_a_sorted_section() -> None:
     assert out == td("""
         z.k = 7
 
-        [[x]]
-
         [z.m]
         n = 1
+
+        [[x]]
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -10196,6 +10196,68 @@ def test_sort_already_ordered_is_noop() -> None:
     doc = tomlrt.loads(src)
     doc.sort()
     assert tomlrt.dumps(doc) == src
+
+
+def test_sort_parent_after_sorting_scattered_dotted_child() -> None:
+    doc = tomlrt.loads(
+        td("""
+            a.z = 1
+            b = 2
+            a.a = 3
+            """)
+    )
+    doc.table("a").sort()
+    expected = td("""
+        a.a = 3
+        a.z = 1
+        b = 2
+        """)
+
+    doc.sort()
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+    doc.sort()
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_sort_groups_scattered_dotted_keys_with_ordered_dict() -> None:
+    doc = tomlrt.loads(
+        td("""
+            a.z = 1 # zee
+            b = 2 # bee
+            a.a = 3 # aye
+            """)
+    )
+    doc.sort()
+    expected = td("""
+        a.z = 1 # zee
+        a.a = 3 # aye
+        b = 2 # bee
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
+
+
+def test_sort_inline_groups_scattered_dotted_keys_with_ordered_dict() -> None:
+    doc = tomlrt.loads(
+        td("""
+            t = {
+                a.z = 1, # zee
+                b = 2, # bee
+                a.a = 3, # aye
+            }
+            """)
+    )
+    doc.table("t").sort()
+    expected = td("""
+        t = {
+            a.z = 1, # zee
+            a.a = 3, # aye
+            b = 2, # bee
+        }
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict()
 
 
 def test_sort_detached_table_reorders_dict_storage() -> None:
