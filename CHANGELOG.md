@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-10-31
+
 ### Fixed
 
 - Sorting corrects physical key order even when dictionary keys are ordered.
