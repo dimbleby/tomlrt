@@ -3,7 +3,7 @@ UV ?= uv
 .DEFAULT_GOAL := help
 
 .PHONY: help
-help: ## Show this help
+help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
@@ -39,7 +39,7 @@ mypy:
 	mypy
 
 .PHONY: docs
-docs: ## build the MkDocs site (strict)
+docs: ## build the docs site
 	$(UV) run --group docs zensical build
 
 .PHONY: docs-serve
