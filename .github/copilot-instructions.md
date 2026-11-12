@@ -670,9 +670,11 @@ of any public API.
   adding a round-trip test that proves it.
 - Touching `vendor/` (it is third-party, vendored verbatim).
 - Editing `uv.lock` by hand — let `uv` regenerate it.
-- Bumping action versions in `.github/workflows/*.yml` to a tag instead
-  of a 40-char commit SHA. The workflows are **`zizmor` clean** and
-  must stay that way (`uv tool run zizmor .`).
+- Changing actions in `.github/workflows/*.yml` without running
+  `gh actions-lock` to update `.github/workflows/actions.lock`.
+  Use full version tags in workflows; do not edit the lockfile by hand.
+  Verify with `gh actions-lock --verify`. The workflows are **`zizmor`
+  clean** and must stay that way (`uv tool run zizmor .`).
 
 ## Commit conventions
 
