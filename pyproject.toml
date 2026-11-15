@@ -63,6 +63,14 @@ exclude_also = [
   "raise NotImplementedError",
 ]
 
+[tool.flit.sdist]
+include = [
+  "CHANGELOG.md",
+  "docs/",
+  "tests/",
+  "zensical.toml",
+]
+
 [tool.mypy]
 files = ["src", "tests"]
 strict = true
