@@ -1,5 +1,3 @@
-UV ?= uv
-
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -40,11 +38,11 @@ mypy:
 
 .PHONY: docs
 docs: ## build the docs site
-	$(UV) run --group docs zensical build
+	uv run --group docs zensical build
 
 .PHONY: docs-serve
 docs-serve: ## preview the docs locally
-	$(UV) run --group docs zensical serve
+	uv run --group docs zensical serve
 
 .PHONY: bench
 bench: ## run the parse and mutation benchmarks
