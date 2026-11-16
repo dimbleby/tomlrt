@@ -1757,36 +1757,40 @@ def add_aot_entry(
     aot: AoT,
     body: Mapping[str, TomlInput] | None,
     *,
-    rehome: Table | None = None,
     preserve_source_separator: bool = False,
     index: int | None = None,
     capture: _SourceCapture | None = None,
 ) -> Table:
-    """Capture and insert an entry, preserving a structural source's layout.
-
-    ``rehome`` selects an unattached factory entry as the destination
-    view and supplies its body. Bulk cloning can retain source separators
-    after the first entry instead of deriving destination-style gaps.
-    """
-    if rehome is not None:
-        assert rehome._layout_root is None  # noqa: SLF001
-        body = rehome
-    table = _container.Table() if rehome is None else rehome
-    capture = _SourceCapture((aot,), capture)
-    prepared = _prepare_entry(
+    """Insert one entry through the shared batch preparation path."""
+    insert_aot_entries(
         aot,
-        table,
-        {} if body is None else body,
-        capture,
+        ({} if body is None else body,),
         index=index,
-    )
-    return _install_entry(
-        aot,
-        prepared,
-        capture,
         preserve_source_separator=preserve_source_separator,
-        index=index,
+        capture=capture,
     )
+    return aot[-1 if index is None else index]
+
+
+def insert_aot_entries(
+    aot: AoT,
+    bodies: Sequence[Mapping[str, TomlInput]],
+    *,
+    index: int | None = None,
+    preserve_source_separator: bool = False,
+    capture: _SourceCapture | None = None,
+) -> None:
+    """Capture all entry sources before publishing any new occurrences."""
+    capture = _SourceCapture((aot,), capture, aot)
+    prepared = [_prepare_entry(aot, body, capture) for body in bodies]
+    for offset, entry in enumerate(prepared):
+        _install_entry(
+            aot,
+            entry,
+            preserve_source_separator=preserve_source_separator,
+            index=None if index is None else index + offset,
+        )
+        _populate_prepared_entry(entry, capture)
 
 
 def prepare_promoted_inline_entries(
@@ -2238,48 +2242,6 @@ def _move_private_subtree(
         new_owner=owner,
     )
     return slots
-
-
-def adopt_private_entry(
-    aot: AoT, value: Table, *, preserve_source_separator: bool = False
-) -> None:
-    """Move a private table into its AoT, retaining layout and all live views.
-
-    The caller retains the source parent and repairs it after adoption.
-    """
-    doc = aot._attached_doc  # noqa: SLF001
-    parent = aot._host  # noqa: SLF001
-    assert parent is not None
-    path = aot._path  # noqa: SLF001
-    owner = AoTEntry()
-    original_header = value._header  # noqa: SLF001
-    slots = _move_private_subtree(value, aot, path, owner=owner)
-    if original_header is None:
-        header = _new_section_header(
-            path,
-            leading=_aot_header_indent(aot),
-            doc=doc,
-            entry=owner,
-            owner_aot_entry=owner,
-        )
-        slots.insert(0, header)
-    else:
-        header = original_header
-        header.entry = owner
-        owner.bind_header(header)
-
-    ordered = [header, *_aot_entry_body(slots, header, path)]
-    if ordered == slots:
-        ordered = slots
-    with contextlib.nullcontext() if ordered is slots else _refile_slot_refs(slots):
-        _insert_entry_run(
-            aot, header, ordered, preserve_source_separator=preserve_source_separator
-        )
-    if original_header is None:
-        file_own_header(value, header)
-    _extend_header_bindings_to_root(parent, ordered)
-    list.append(aot, value)
-    _maybe_demote_synthetic_empty_header(parent)
 
 
 def _rehome_view_tree(
@@ -3010,15 +2972,29 @@ def _snapshot_in_copy(
 
 
 class _SourceCapture:
-    """Capture local sources, sharing factory walks across nested installs."""
+    """Capture sources and reserve reusable subtrees before an entry edit."""
 
-    __slots__ = ("_ancestor_ids", "_factories", "_sites", "_snapshots")
+    __slots__ = (
+        "_ancestor_ids",
+        "_aot",
+        "_claim_ancestors",
+        "_claims",
+        "_factories",
+        "_sites",
+        "_snapshots",
+    )
 
     def __init__(
-        self, sites: Iterable[Container | AoT], outer: _SourceCapture | None = None
+        self,
+        sites: Iterable[Container | AoT],
+        outer: _SourceCapture | None = None,
+        aot: AoT | None = None,
     ) -> None:
         self._sites = tuple(sites)
+        self._aot = aot
         self._ancestor_ids: set[int] | None = None
+        self._claims: set[int] | None = None
+        self._claim_ancestors: set[int] | None = None
         self._snapshots: dict[int, Document] = {}
         self._factories: dict[int, Container | AoT] = (
             {} if outer is None else outer._factories  # noqa: SLF001
@@ -3036,6 +3012,52 @@ class _SourceCapture:
             self._ancestor_ids = ancestors
         return id(view) in ancestors
 
+    def _claim(self, view: Container | AoT) -> bool:
+        claims = self._claims
+        ancestors = self._claim_ancestors
+        if claims is None:
+            claims = self._claims = set()
+        identity = id(view)
+        if identity in claims or (ancestors is not None and identity in ancestors):
+            return False
+        cur = view._host  # noqa: SLF001
+        if cur is None:
+            claims.add(identity)
+            return True
+        lineage: list[int] = []
+        while cur is not None:
+            if id(cur) in claims:
+                return False
+            lineage.append(id(cur))
+            cur = cur._host  # noqa: SLF001
+        claims.add(identity)
+        if ancestors is None:
+            self._claim_ancestors = set(lineage)
+        else:
+            ancestors.update(lineage)
+        return True
+
+    def _reusable(self, view: Container | AoT) -> bool:
+        aot = self._aot
+        assert aot is not None
+        root = view._layout_root  # noqa: SLF001
+        return root is None or (
+            _container._can_adopt_from(root, aot._attached_doc)  # noqa: SLF001
+            and not hosts_site(aot, view)
+            and not self._contains_write_site(view)
+        )
+
+    def entry_table(self, body: Mapping[str, TomlInput]) -> Table:
+        """Claim a free entry view, or allocate an independent occurrence."""
+        if (
+            isinstance(body, _container.Table)
+            and not body._inline  # noqa: SLF001
+            and self._reusable(body)
+            and self._claim(body)
+        ):
+            return body
+        return _container.Table()
+
     def capture_items(
         self, items: Iterable[tuple[str, TomlInput]]
     ) -> dict[str, TomlInput]:
@@ -3050,8 +3072,22 @@ class _SourceCapture:
         if isinstance(value, (_container.Container, _array.AoT)):
             # Factories hold raw inputs; materialized views have their own slots.
             if value._layout_root is None:  # noqa: SLF001
+                if (
+                    self._aot is not None
+                    and not value._inline  # noqa: SLF001
+                    and not self._claim(value)
+                ):
+                    return _container._copy_input(value)  # noqa: SLF001
                 self._capture_factory(value)
-            elif self._contains_write_site(value):
+            elif self._contains_write_site(value) or (
+                self._aot is not None
+                and not value._inline  # noqa: SLF001
+                and _container._can_adopt_from(  # noqa: SLF001
+                    value._layout_root,  # noqa: SLF001
+                    self._aot._attached_doc,  # noqa: SLF001
+                )
+                and (not self._reusable(value) or not self._claim(value))
+            ):
                 return _snapshot_in_copy(value, self._snapshots)
             return value
         if is_inline_value(value):
@@ -3066,8 +3102,10 @@ class _SourceCapture:
         if id(factory) in self._factories:
             return
         if isinstance(factory, _array.AoT):
-            for entry in factory:
-                self._capture_factory(entry)
+            for index, entry in enumerate(factory):
+                captured = self.capture(entry)
+                assert isinstance(captured, _container.Table)
+                list.__setitem__(factory, index, captured)
         else:
             dict.update(factory, self.capture_items(_mapping_items(factory)))
         self._factories[id(factory)] = factory
@@ -3095,19 +3133,19 @@ def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
 
 
 class _PreparedEntry:
-    """An unpublished entry and its destination-ready body."""
+    """Captured input or cloned slots; ``body=None`` retains the table's layout."""
 
-    __slots__ = ("body", "body_indent", "header", "table")
+    __slots__ = ("body", "body_indent", "owner", "table")
 
     def __init__(
         self,
         table: Table,
-        header: StructuralHeaderSlot,
-        body: list[Slot] | dict[str, TomlInput],
+        owner: AoTEntry,
+        body: list[Slot] | dict[str, TomlInput] | None,
         body_indent: str | None,
     ) -> None:
         self.table = table
-        self.header = header
+        self.owner = owner
         self.body = body
         self.body_indent = body_indent
 
@@ -3158,11 +3196,9 @@ def _aot_entry_body(
 
 def _prepare_entry(
     aot: AoT,
-    table: Table,
     body: Mapping[str, TomlInput],
     capture: _SourceCapture,
     *,
-    index: int | None = None,
     body_indent: str | None = None,
     previous: Table | None = None,
 ) -> _PreparedEntry:
@@ -3175,55 +3211,57 @@ def _prepare_entry(
     """
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
+    table = capture.entry_table(body)
+    moving = table._layout_root is not None  # noqa: SLF001
     owner = AoTEntry()
     header = None
-    if previous is not None:
-        assert previous._header is not None  # noqa: SLF001
-        cloned = previous._header.__deepcopy__({})  # noqa: SLF001
+    header_source = previous if previous is not None else table if moving else None
+    if header_source is not None and header_source._header is not None:  # noqa: SLF001
+        cloned = header_source._header.__deepcopy__({})  # noqa: SLF001
         assert isinstance(cloned, StructuralHeaderSlot)
         header = cloned
+        if previous is None:
+            _rebase_slot(
+                header,
+                table._path,  # noqa: SLF001
+                path,
+                path,
+                doc._newline,  # noqa: SLF001
+            )
         header.entry = header.owner_aot_entry = owner
         owner.bind_header(header)
+    if previous is not None:
         tail = _last_body_kv(previous)
         if tail is not None:
             body_indent = trailing_ws(tail.leading)
-    payload: list[Slot] | dict[str, TomlInput]
-    if (
+    payload: list[Slot] | dict[str, TomlInput] | None
+    if moving:
+        payload = None
+    elif (
         isinstance(body, _container.Container)
         and body._layout_root is not None  # noqa: SLF001
         and not body._inline  # noqa: SLF001
     ):
-        cloned_head, payload = clone_aot_entry_layout(
+        _, payload = clone_aot_entry_layout(
             body,
             path=path,
             owner=owner,
             nl=doc._newline,  # noqa: SLF001
             keep_header=header is None,
         )
-        if cloned_head is not None:
-            header = cloned_head
     else:
         payload = capture.capture_items(_mapping_items(body))
-    if header is None:
-        header = _new_section_header(
-            path,
-            leading=_aot_header_indent(aot, index),
-            doc=doc,
-            entry=owner,
-            owner_aot_entry=owner,
-        )
-    return _PreparedEntry(table, header, payload, body_indent)
+    return _PreparedEntry(table, owner, payload, body_indent)
 
 
-def _insert_entry_run(
+def _insert_entry_header(
     aot: AoT,
     header: StructuralHeaderSlot,
-    run: list[Slot],
     *,
     preserve_source_separator: bool,
     index: int | None = None,
 ) -> None:
-    """Splice a new entry's slots at its logical position.
+    """Splice a new entry's header at its logical position.
 
     Appending a bulk clone may keep its source separators, but the first
     entry always takes the destination's own section spacing: it is the
@@ -3249,49 +3287,74 @@ def _insert_entry_run(
             _retarget_separator(header, _aot_separator(aot, doc))
         predecessor = _aot_append_anchor(aot) or doc._tail  # noqa: SLF001
         target = predecessor._next if predecessor is not None else doc._head  # noqa: SLF001
-    _splice_block_between(run, predecessor, target, doc)
+    _splice_block_between([header], predecessor, target, doc)
 
 
 def _install_entry(
     aot: AoT,
     prepared: _PreparedEntry,
-    capture: _SourceCapture,
     *,
     preserve_source_separator: bool = False,
     index: int | None = None,
-) -> Table:
-    """Publish a fresh entry, then consume its prepared body."""
-    table, header = prepared.table, prepared.header
-    owner = header.entry
-    assert owner is not None
+    previous: Table | None = None,
+) -> None:
+    """Publish an insertion or replacement, retaining moved views and refs."""
+    table, owner = prepared.table, prepared.owner
     parent = aot._host  # noqa: SLF001
     assert parent is not None
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
-    dict.clear(table)
+    header = owner._header  # noqa: SLF001
+    if header is None:
+        header = _new_section_header(
+            path,
+            leading=_aot_header_indent(aot, index),
+            doc=doc,
+            entry=owner,
+            owner_aot_entry=owner,
+        )
+    source_parent = None
+    slots: list[Slot] = []
+    if prepared.body is None:
+        source_parent = table._parent  # noqa: SLF001
+        original_header = table._header  # noqa: SLF001
+        slots = _move_private_subtree(table, aot, path, owner=owner)
+        if original_header is not None:
+            unfile_slot(table, original_header)
+            slots.remove(original_header)
+    else:
+        dict.clear(table)
     table._wire(  # noqa: SLF001
         layout_root=doc, parent=aot, path=path, owner=owner
     )
-    _insert_entry_run(
-        aot,
-        header,
-        [header],
-        preserve_source_separator=preserve_source_separator,
-        index=index,
-    )
+    if previous is None:
+        _insert_entry_header(
+            aot,
+            header,
+            preserve_source_separator=preserve_source_separator,
+            index=index,
+        )
+    else:
+        _replace_entry_header(previous, header)
+    if slots:
+        ordered = _aot_entry_body(slots, None, path)
+        if ordered == slots:
+            ordered = slots
+        with contextlib.nullcontext() if ordered is slots else _refile_slot_refs(slots):
+            _splice_block_after(ordered, header, doc)
+        _extend_header_bindings_to_root(parent, ordered)
     file_own_header(table, header)
-    _file_header_binding_chain(parent, header)
-    list.insert(aot, len(aot) if index is None else index, table)
+    if previous is None:
+        _file_header_binding_chain(parent, header)
+        list.insert(aot, len(aot) if index is None else index, table)
     _maybe_demote_synthetic_empty_header(parent)
-    _populate_prepared_entry(prepared, capture)
-    return table
+    synthesise_header_for_emptied(source_parent)
 
 
 def _populate_prepared_entry(prepared: _PreparedEntry, capture: _SourceCapture) -> None:
     """Fill an entry whose header and logical binding have been published."""
-    table, header = prepared.table, prepared.header
+    table = prepared.table
     body_indent = prepared.body_indent
-    doc = table._attached_doc  # noqa: SLF001
     if isinstance(prepared.body, dict):
         for key, value in prepared.body.items():
             table._setitem_validated(key, value, capture)  # noqa: SLF001
@@ -3301,7 +3364,9 @@ def _populate_prepared_entry(prepared: _PreparedEntry, capture: _SourceCapture) 
                 if tail is not None and tail.key_path == (key,):
                     tail.leading = strip_trailing_ws(tail.leading) + body_indent
                     body_indent = None
-    else:
+    elif prepared.body is not None:
+        header = prepared.owner.header
+        doc = table._attached_doc  # noqa: SLF001
         _splice_block_after(prepared.body, header, doc)
         _populate_entry_views(
             entry_table=table,
@@ -3314,24 +3379,12 @@ def _populate_prepared_entry(prepared: _PreparedEntry, capture: _SourceCapture) 
         _extend_header_bindings_to_root(parent, prepared.body)
 
 
-def _replace_entry_header(previous: Table, prepared: _PreparedEntry) -> None:
+def _replace_entry_header(previous: Table, header: StructuralHeaderSlot) -> None:
     """Replace a header without shifting its ancestor projections."""
-    table, header = prepared.table, prepared.header
     old = previous._header  # noqa: SLF001
-    owner = header.entry
     assert old is not None
-    assert owner is not None
     doc = previous._attached_doc  # noqa: SLF001
-    host = previous._host  # noqa: SLF001
-    assert isinstance(host, _array.AoT)
-    table._wire(  # noqa: SLF001
-        layout_root=doc,
-        parent=host,
-        path=previous._path,  # noqa: SLF001
-        owner=owner,
-    )
     _replace_primary_in_place(header, old, doc)
-    file_own_header(table, header)
     for container in tuple(old._containers):  # noqa: SLF001
         if container is previous:
             continue
@@ -3365,7 +3418,7 @@ def assign_aot_entries(
     sites: list[Container | AoT] = list(departing)
     if len(bodies) > len(indices):
         sites.append(aot)
-    capture = _SourceCapture(sites)
+    capture = _SourceCapture(sites, aot=aot)
     body_indent = None
     if len(bodies) > len(indices) and aot:
         tail = _last_body_kv(aot[min(start, len(aot) - 1)])
@@ -3377,7 +3430,6 @@ def assign_aot_entries(
             offset,
             _prepare_entry(
                 aot,
-                _container.Table(),
                 bodies[offset],
                 capture,
                 previous=aot[index],
@@ -3388,16 +3440,14 @@ def assign_aot_entries(
     added = [
         _prepare_entry(
             aot,
-            _container.Table(),
             body,
             capture,
-            index=start,
             body_indent=body_indent,
         )
         for body in bodies[len(indices) :]
     ]
     for offset, entry in prepared:
-        _replace_entry_header(selected[offset], entry)
+        _install_entry(aot, entry, previous=selected[offset])
         selected[offset] = entry.table
     if departing:
         _orphan_aot_entries(aot, departing)
@@ -3411,7 +3461,8 @@ def assign_aot_entries(
         for _offset, entry in prepared:
             _populate_prepared_entry(entry, capture)
         for offset, entry in enumerate(added, start=start + len(indices)):
-            _install_entry(aot, entry, capture, index=offset)
+            _install_entry(aot, entry, index=offset)
+            _populate_prepared_entry(entry, capture)
 
 
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:

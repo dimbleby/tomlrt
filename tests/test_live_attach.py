@@ -1038,8 +1038,10 @@ def test_detached_table_writes_survive_reattach() -> None:
 
 
 def test_aot_entry_view_identity_preserved_through_attach() -> None:
-    aot = tomlrt.AoT([{"name": "a"}])
-    entry = aot[0]
+    entry = Table.section({"name": "a"})
+    aot = tomlrt.AoT()
+    aot.extend([entry])
+    assert aot[0] is entry
     doc = tomlrt.loads("")
     doc["servers"] = aot
     # The same Table view the user grabbed before assignment is still
@@ -1054,6 +1056,27 @@ def test_aot_entry_view_identity_preserved_through_attach() -> None:
         """)
     parsed = _reparses(out)
     assert parsed == {"servers": [{"name": "a", "extra": 1}]}
+
+
+def test_aot_slice_installs_fresh_table_once_then_copies() -> None:
+    doc = tomlrt.loads("[[items]]\nold = 0\n")
+    aot = doc.aot("items")
+    entry = Table.section({"x": 1})
+
+    aot[:] = [entry, entry]
+
+    assert aot[0] is entry
+    assert aot[1] is not entry
+    entry["x"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        x = 2
+
+        [[items]]
+        x = 1
+        """)
+    assert _reparses(out) == doc.to_dict()
 
 
 def test_aot_entry_as_table_with_kv_before_nested_section() -> None:

@@ -2503,8 +2503,10 @@ def test_aot_pop_keeps_the_entry_it_hands_back() -> None:
     )
     items = doc.aot("items")
 
-    items.append(items.pop(0))
+    moved = items.pop(0)
+    items.append(moved)
 
+    assert items[-1] is moved
     out = tomlrt.dumps(doc)
     assert out == td("""
         [[items]] # second
@@ -2512,6 +2514,191 @@ def test_aot_pop_keeps_the_entry_it_hands_back() -> None:
 
         [[items]] # first
         x = 0x01 # one
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_pop_insert_reattaches_empty_entry() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[a]]
+            x=2
+            [[a]]
+            """)
+    )
+    aot = doc.aot("a")
+    moved = aot.pop()
+
+    aot.insert(0, moved)
+
+    assert aot[0] is moved
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[a]]
+
+        [[a]]
+        x=2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_replace_with_removed_section_preserves_nested_live_view() -> None:
+    source = tomlrt.loads(
+        td("""
+            [a]
+            [a.child]
+            x = 1
+            """)
+    )
+    moved = source.table("a")
+    child = moved.table("child")
+    del source["a"]
+    target = tomlrt.loads(
+        td("""
+            [[b]] # destination
+            y = 0
+            """)
+    )
+
+    target.aot("b")[0] = moved
+
+    assert target.aot("b")[0] is moved
+    assert moved.table("child") is child
+    child["x"] = 2
+    out = tomlrt.dumps(target)
+    assert out == td("""
+        [[b]] # destination
+        [b.child]
+        x = 2
+        """)
+    assert _reparses(out) == target.to_dict()
+
+
+def test_aot_insert_owned_entry_in_private_document_still_copies() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[a]]
+            x = 1
+            """)
+    )
+    aot = doc.aot("a")
+    doc.pop("a")
+    entry = aot[0]
+
+    aot.insert(0, entry)
+
+    assert aot[0] is not entry
+    assert aot[1] is entry
+    entry["x"] = 2
+    doc["a"] = aot
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_extend_copies_child_of_already_claimed_parent() -> None:
+    source = tomlrt.loads(
+        td("""
+            [parent]
+            x=1
+            [parent.child]
+            y=2
+            """)
+    )
+    parent = source.table("parent")
+    child = parent.table("child")
+    del source["parent"]
+    doc = tomlrt.Document({"rows": AoT()})
+    rows = doc.aot("rows")
+
+    rows.extend([parent, child])
+
+    assert rows[0] is parent
+    assert rows[1] is not child
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[rows]]
+        x=1
+        [rows.child]
+        y=2
+
+        [[rows]]
+        y=2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_batch_captures_private_children_inside_factories() -> None:
+    source = tomlrt.loads(
+        td("""
+            [parent]
+            x=1
+            [parent.child]
+            y=2
+            """)
+    )
+    parent = source.table("parent")
+    child = parent.table("child")
+    del source["parent"]
+    factory = Table.section({"child": child})
+    rows = AoT([{"wrapped": factory}, parent])
+    doc = tomlrt.Document()
+    doc["rows"] = rows
+
+    assert rows[0].table(("wrapped", "child")) is child
+    assert rows[1] is not parent
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[rows]]
+
+        [rows.wrapped.child]
+        y=2
+
+        [[rows]]
+        x=1
+        [rows.child]
+        y=2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_extend_moves_disjoint_private_siblings_within_one_document() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [parent.left]
+            x=1
+            [[parent.rows]]
+            x=0
+            [parent.right]
+            x=2
+            """)
+    )
+    parent = doc.table("parent")
+    left, right = parent.table("left"), parent.table("right")
+    del doc["parent"]
+    rows = parent.aot("rows")
+
+    rows.extend([left, right])
+
+    assert rows[1] is left
+    assert rows[2] is right
+    doc["parent"] = parent
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[parent.rows]]
+        x=0
+
+        [[parent.rows]]
+        x=1
+
+        [[parent.rows]]
+        x=2
         """)
     assert _reparses(out) == doc.to_dict()
 
