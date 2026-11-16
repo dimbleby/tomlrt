@@ -728,8 +728,11 @@ class AoT(_View, list["Table"]):
     def extend(self, values: Iterable[Table | Mapping[str, TomlInput]]) -> None:
         # Snapshot so ``aot.extend(aot)`` duplicates once like list does.
         entries = _prepare_aot_entries(values)
-        for entry in entries:
-            self._append_validated(entry)
+        if self._layout_root is None:
+            for entry in entries:
+                self._append_validated(entry)
+            return
+        _layout_ops.insert_aot_entries(self, entries)
 
     @override
     def insert(
@@ -818,15 +821,13 @@ def _prepare_aot_entries(
 
 
 def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
-    """Build a fresh unattached `Table` view as an AoT-entry placeholder."""
+    """Keep a section factory or build an independent AoT-entry placeholder."""
     from tomlrt._container import Table, _populate_unattached  # noqa: PLC0415
 
     # Keep ordinary mappings free of cold-path imports and helper calls.
-    if (
-        isinstance(body, Table)
-        and body._layout_root is not None  # noqa: SLF001
-        and not body._inline  # noqa: SLF001
-    ):
+    if isinstance(body, Table) and not body._inline:  # noqa: SLF001
+        if body._layout_root is None or body._layout_root._is_private:  # noqa: SLF001
+            return body
         from tomlrt._container import _clone_private_layout  # noqa: PLC0415
 
         entry = _clone_private_layout(body)

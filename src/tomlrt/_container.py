@@ -658,25 +658,13 @@ class Container(_View, dict[str, Any]):
         promotion = _layout_ops.attach_aot(self, key, value)
         list.clear(value)
         dict.__setitem__(self, key, value)
-        for entry_table in existing_entries:
-            source_doc = entry_table._layout_root  # noqa: SLF001
-            if source_doc is None:
-                _layout_ops.add_aot_entry(
-                    value, None, rehome=entry_table, capture=capture
-                )
-            elif _can_adopt_from(source_doc, self._attached_doc):
-                source_parent = (
-                    emptied if src_root is not None else entry_table._parent  # noqa: SLF001
-                )
-                _layout_ops.adopt_private_entry(
-                    value,
-                    entry_table,
-                    preserve_source_separator=src_root is not None,
-                )
-                _layout_ops.synthesise_header_for_emptied(source_parent)
-            else:
-                _layout_ops.add_aot_entry(value, entry_table, capture=capture)
         _layout_ops.synthesise_header_for_emptied(emptied)
+        _layout_ops.insert_aot_entries(
+            value,
+            existing_entries,
+            preserve_source_separator=src_root is not None,
+            capture=capture,
+        )
         return promotion
 
     def _attach_section(

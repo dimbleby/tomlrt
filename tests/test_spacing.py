@@ -636,7 +636,7 @@ def test_aot_copied_source_header_indent_is_preserved() -> None:
         """)
 
 
-def test_aot_adopted_source_header_indent_is_preserved() -> None:
+def test_aot_adopted_source_header_sets_following_entry_indent() -> None:
     source = tomlrt.loads(
         td("""
         version = 1
@@ -655,7 +655,7 @@ def test_aot_adopted_source_header_indent_is_preserved() -> None:
             x = 1
         """)
     )
-    doc["items"] = AoT([doc.aot("items")[0], table])
+    doc["items"] = AoT([doc.aot("items")[0], table, {}])
     assert tomlrt.dumps(doc) == td("""
         version = 1
 
@@ -665,6 +665,8 @@ def test_aot_adopted_source_header_indent_is_preserved() -> None:
             # source
             [[items]] # header
               x = 2
+
+            [[items]]
         """)
 
 

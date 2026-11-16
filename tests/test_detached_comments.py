@@ -321,25 +321,20 @@ def test_materializing_factory_clones_an_already_owned_inline_child() -> None:
     assert reparses(out) == doc.to_dict()
 
 
-def test_annotated_section_is_copied_into_a_standalone_aot() -> None:
+def test_annotated_section_keeps_identity_through_a_standalone_aot() -> None:
     source = Table.section({"enabled": True})
     source.comments["enabled"] = "original"
     source.header_comment = "entry"
     values = AoT([source])
     entry = values[0]
-    assert entry is not source
+    assert entry is source
     doc = tomlrt.Document()
     doc["features"] = values
     assert values[0] is entry
     source.comments["enabled"] = "changed"
     out = tomlrt.dumps(doc)
-    assert out == "[[features]] # entry\nenabled = true # original\n"
+    assert out == "[[features]] # entry\nenabled = true # changed\n"
     assert reparses(out) == doc.to_dict()
-    assert tomlrt.dumps(source) == td("""
-        # entry
-
-        enabled = true # changed
-        """)
 
 
 def test_annotated_aot_entry_keeps_nested_views_and_ownership() -> None:
