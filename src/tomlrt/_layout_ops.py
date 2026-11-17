@@ -1783,10 +1783,12 @@ def insert_aot_entries(
     """Capture all entry sources before publishing any new occurrences."""
     capture = _SourceCapture((aot,), capture, aot)
     prepared = [_prepare_entry(aot, body, capture) for body in bodies]
+    capture.release()
     for offset, entry in enumerate(prepared):
         _install_entry(
             aot,
             entry,
+            capture,
             preserve_source_separator=preserve_source_separator,
             index=None if index is None else index + offset,
         )
@@ -2092,7 +2094,7 @@ def clone_section(
     return section
 
 
-def detach_aot_from_orphan(value: AoT) -> None:
+def detach_aot_from_orphan(value: AoT, slots: list[Slot] | None = None) -> None:
     """Cut a private-orphan AoT loose from the document it lives in.
 
     The orphan must stop naming entries that move to the destination:
@@ -2106,61 +2108,65 @@ def detach_aot_from_orphan(value: AoT) -> None:
     """
     if value._layout_root is None:  # noqa: SLF001
         return
+    if slots is None:
+        if not value:
+            slot = _empty_aot_placeholder_slot(value)
+            assert slot is not None, "an attached empty AoT renders as `k = []`"
+            slots = [slot]
+        else:
+            slots = owned_slots(value)
     if not value:
-        slot = _empty_aot_placeholder_slot(value)
-        assert slot is not None, "an attached empty AoT renders as `k = []`"
-        slots: list[Slot] = [slot]
         _detach_from_source_doc(value, slots)
-    else:
-        slots = owned_slots(value)
-    _unfile_stale_same_orphan_ancestors(value, slots)
+    _release_private_bindings([(value, slots)])
     for entry in value:
         assert entry._host is value  # noqa: SLF001
         entry._host = None  # noqa: SLF001
     value._unbind_from_document()  # noqa: SLF001
 
 
-def _unfile_stale_same_orphan_ancestors(
-    value: Container | AoT, target_slots: Iterable[Slot]
+def _release_private_bindings(
+    sources: Sequence[tuple[Container | AoT, list[Slot]]],
 ) -> None:
-    """Drop ``value``'s bindings from its old same-orphan ancestor chain.
-
-    A detached orphan retains its internal refs. Moving a nested value
-    out must scrub those refs up to, but not beyond, the orphan root.
-    Slot back-pointers avoid scanning every ancestor's complete cache.
-
-    """
-    host = value._host  # noqa: SLF001
-    if host is None:
-        # Whole-AoT detachment already removed these ancestor bindings.
-        return
-    old_parent = host._host if isinstance(host, _array.AoT) else host  # noqa: SLF001
-    assert isinstance(old_parent, _container.Container)
-    assert old_parent._layout_root is value._layout_root  # noqa: SLF001
-    assert len(value._path) == len(old_parent._path) + 1  # noqa: SLF001
-    key = value._path[-1]  # noqa: SLF001
-    if isinstance(host, _array.AoT):
-        entry_index = next(i for i, entry in enumerate(host) if entry is value)
-        list.__delitem__(host, entry_index)
+    """Release source memberships together, leaving layout for its installers."""
+    hosts: dict[int, tuple[AoT, set[int]]] = {}
+    stale_ids: set[int] = set()
+    by_doc: dict[int, list[Slot]] = {}
+    for value, slots in sources:
+        host = value._host  # noqa: SLF001
+        if host is None:
+            continue
+        parent = host._host if isinstance(host, _array.AoT) else host  # noqa: SLF001
+        assert isinstance(parent, _container.Container)
+        if isinstance(host, _array.AoT):
+            hosts.setdefault(id(host), (host, set()))[1].add(id(value))
+        else:
+            dict.pop(parent, value._path[-1], None)  # noqa: SLF001
+        node: Container | None = parent
+        while node is not None and id(node) not in stale_ids:
+            stale_ids.add(id(node))
+            node = node._parent  # noqa: SLF001
+        targets = slots
+        if isinstance(value, _container.Container) and value._header is not None:  # noqa: SLF001
+            targets = [s for s in slots if isinstance(s, StructuralHeaderSlot)]
+        by_doc.setdefault(id(value._layout_root), []).extend(targets)  # noqa: SLF001
+        value._host = None  # noqa: SLF001
+    for host, removed in hosts.values():
+        positions = [i for i, entry in enumerate(host) if id(entry) in removed]
+        delete_runs(host, index_runs(positions))
         if not host:
-            # The last entry has gone, so the array leaves the model too
-            # — and must stop being a view onto the orphan, or a caller
-            # still holding it would add entries to a document that no
-            # longer names it, which would then render what it denies.
-            dict.__delitem__(old_parent, key)
+            parent = host._host  # noqa: SLF001
+            assert parent is not None
+            dict.__delitem__(parent, host._path[-1])  # noqa: SLF001
             host._unbind_from_document()  # noqa: SLF001
-    else:
-        dict.pop(old_parent, key, None)
-
-    stale_container_ids: set[int] = set()
-    node: Container | None = old_parent
-    while node is not None and node._layout_root is value._layout_root:  # noqa: SLF001
-        stale_container_ids.add(id(node))
-        node = node._parent  # noqa: SLF001
-    for slot in target_slots:
-        for c in list(slot._containers):  # noqa: SLF001
-            if id(c) in stale_container_ids:
-                unfile_slot(c, slot)
+    for slots in by_doc.values():
+        slots.sort(key=_slot_order)
+        retained = frozenset(
+            id(c)
+            for slot in slots
+            for c in slot._containers  # noqa: SLF001
+            if id(c) not in stale_ids
+        )
+        _scrub_owned_slots_via_backptrs(slots, skip_container_ids=retained)
 
 
 def adopt_private_section(
@@ -2216,12 +2222,7 @@ def _move_private_subtree(
     stale_owner = value._owner_aot_entry  # noqa: SLF001
     slots = owned_slots(value)
     _detach_from_source_doc(value, slots)
-    targets = (
-        slots
-        if value._header is None  # noqa: SLF001
-        else [s for s in slots if isinstance(s, StructuralHeaderSlot)]
-    )
-    _unfile_stale_same_orphan_ancestors(value, targets)
+    _release_private_bindings([(value, slots)])
     if host_path is None:
         host_path = new_prefix
     for slot in slots:
@@ -2807,8 +2808,6 @@ def _scrub_owned_slots_via_backptrs(
     structure intact. AoT removal likewise retains the departing
     entries' internal refs. Multi-slot callers visit binding refs in
     document order and retain the subtree containers' own headers.
-    Each affected container loses refs for one binding; full clears
-    unregister their own child projections before reaching this helper.
     """
     # One slot has at most one ref per container: there is nothing to batch.
     if len(owned) == 1:
@@ -2825,13 +2824,17 @@ def _scrub_owned_slots_via_backptrs(
                 continue
             by_container.setdefault(container_id, (c, []))[1].append(s)
     for c, removed in by_container.values():
-        key = slot_local_key(removed[0], c)
-        assert key is not None, "bulk removal retains subtree containers' own refs"
         _unfile_ordered_many(c._refs, removed)  # noqa: SLF001
-        bucket = c._index[key]  # noqa: SLF001
-        _unfile_ordered_many(bucket, removed)
-        if not bucket:
-            del c._index[key]  # noqa: SLF001
+        by_key: dict[str, list[Slot]] = {}
+        for slot in removed:
+            key = slot_local_key(slot, c)
+            assert key is not None, "bulk removal retains subtree containers' own refs"
+            by_key.setdefault(key, []).append(slot)
+        for key, key_slots in by_key.items():
+            bucket = c._index[key]  # noqa: SLF001
+            _unfile_ordered_many(bucket, key_slots)
+            if not bucket:
+                del c._index[key]  # noqa: SLF001
         tail = c._body_tail  # noqa: SLF001
         for slot in removed:
             _unfile_container(slot, c)
@@ -2906,30 +2909,6 @@ def _orphan_aot_entries(aot: AoT, entries: Sequence[Table]) -> None:
     )
 
 
-def _view_route(view: Container | AoT) -> list[tuple[str, int | None]]:
-    """The ``(key, entry ordinal)`` steps from a document down to ``view``.
-
-    A path alone cannot say which entry of an array-of-tables a view
-    sits in, so each step records the ordinal too, and only for the
-    steps that pass through one.
-    """
-    route: list[tuple[str, int | None]] = []
-    cur: Container | AoT = view
-    while cur._path:  # noqa: SLF001
-        host = cur._host  # noqa: SLF001
-        assert host is not None, "an attached view below the root has a host"
-        key = cur._path[-1]  # noqa: SLF001
-        ordinal = None
-        if isinstance(host, _array.AoT):
-            ordinal = next(i for i, entry in enumerate(host) if entry is cur)
-            host = host._host  # noqa: SLF001
-        assert isinstance(host, _container.Container)
-        route.append((key, ordinal))
-        cur = host
-    route.reverse()
-    return route
-
-
 def stable_snapshot(view: Container | AoT) -> Container | AoT:
     """``view`` as it is now, safe to read across a write to its document.
 
@@ -2939,22 +2918,41 @@ def stable_snapshot(view: Container | AoT) -> Container | AoT:
     return _snapshot_in_copy(view, {})
 
 
-def _follow_view_route(
-    root: Container | AoT, route: Sequence[tuple[str, int | None]]
-) -> Container | AoT:
-    """Resolve a structural route, including ordinals through nested AoTs."""
-    cur = root
-    for key, ordinal in route:
-        assert isinstance(cur, _container.Container)
-        cur = dict.__getitem__(cur, key)
-        if ordinal is not None:
-            assert isinstance(cur, _array.AoT)
-            cur = cur[ordinal]
-    return cur
+class _SourceSnapshot:
+    """A pre-edit document copy indexed by its source views' identities."""
+
+    __slots__ = ("source", "views")
+
+    def __init__(self, source: Document) -> None:
+        self.source = source
+        self.views: dict[int, Container | AoT] = {id(source): copy.copy(source)}
+
+    def resolve(self, view: Container | AoT) -> Container | AoT:
+        """Find a source view's copy, caching the correspondence along its owners."""
+        lineage: list[Container | AoT] = []
+        original = view
+        while id(original) not in self.views:
+            lineage.append(original)
+            host = original._host  # noqa: SLF001
+            assert isinstance(host, (_container.Container, _array.AoT))
+            original = host
+        cloned = self.views[id(original)]
+        for original in reversed(lineage):
+            host = original._host  # noqa: SLF001
+            if isinstance(host, _array.AoT):
+                assert isinstance(cloned, _array.AoT)
+                for entry, copied in zip(host, cloned, strict=True):
+                    self.views[id(entry)] = copied
+                cloned = self.views[id(original)]
+            else:
+                assert isinstance(cloned, _container.Container)
+                cloned = dict.__getitem__(cloned, original._path[-1])  # noqa: SLF001
+                self.views[id(original)] = cloned
+        return cloned
 
 
 def _snapshot_in_copy(
-    view: Container | AoT, snapshots: dict[int, Document]
+    view: Container | AoT, snapshots: dict[int, _SourceSnapshot]
 ) -> Container | AoT:
     """``view`` as it is now, in a copy of the document it lives in.
 
@@ -2966,9 +2964,19 @@ def _snapshot_in_copy(
     assert root is not None, "only an attached view has a document to copy"
     snapshot = snapshots.get(id(root))
     if snapshot is None:
-        snapshot = copy.copy(root)
+        snapshot = _SourceSnapshot(root)
         snapshots[id(root)] = snapshot
-    return _follow_view_route(snapshot, _view_route(view))
+    return snapshot.resolve(view)
+
+
+class _SourceRelease:
+    """Repair a source parent after its last claimed child is installed."""
+
+    __slots__ = ("parent", "pending")
+
+    def __init__(self, parent: Container) -> None:
+        self.parent = parent
+        self.pending = 0
 
 
 class _SourceCapture:
@@ -2980,6 +2988,7 @@ class _SourceCapture:
         "_claim_ancestors",
         "_claims",
         "_factories",
+        "_released",
         "_sites",
         "_snapshots",
     )
@@ -2993,9 +3002,12 @@ class _SourceCapture:
         self._sites = tuple(sites)
         self._aot = aot
         self._ancestor_ids: set[int] | None = None
-        self._claims: set[int] | None = None
+        self._claims: dict[int, Container | AoT] | None = None
         self._claim_ancestors: set[int] | None = None
-        self._snapshots: dict[int, Document] = {}
+        self._snapshots: dict[int, _SourceSnapshot] = {}
+        self._released: dict[int, tuple[_SourceRelease, list[Slot]]] = (
+            {} if outer is None else outer._released  # noqa: SLF001
+        )
         self._factories: dict[int, Container | AoT] = (
             {} if outer is None else outer._factories  # noqa: SLF001
         )
@@ -3016,13 +3028,13 @@ class _SourceCapture:
         claims = self._claims
         ancestors = self._claim_ancestors
         if claims is None:
-            claims = self._claims = set()
+            claims = self._claims = {}
         identity = id(view)
         if identity in claims or (ancestors is not None and identity in ancestors):
             return False
         cur = view._host  # noqa: SLF001
         if cur is None:
-            claims.add(identity)
+            claims[identity] = view
             return True
         lineage: list[int] = []
         while cur is not None:
@@ -3030,12 +3042,53 @@ class _SourceCapture:
                 return False
             lineage.append(id(cur))
             cur = cur._host  # noqa: SLF001
-        claims.add(identity)
+        claims[identity] = view
         if ancestors is None:
             self._claim_ancestors = set(lineage)
         else:
             ancestors.update(lineage)
         return True
+
+    def release(self) -> None:
+        """Release claimed bindings in bulk after every overlap is captured."""
+        if self._claims is None:
+            return
+        parents: dict[int, _SourceRelease] = {}
+        sources: list[tuple[Container | AoT, list[Slot]]] = []
+        for view in self._claims.values():
+            if view._layout_root is None or view._host is None:  # noqa: SLF001
+                continue
+            parent = (
+                view._host if isinstance(view, _array.AoT) else view._parent  # noqa: SLF001
+            )
+            assert parent is not None
+            release = parents.get(id(parent))
+            if release is None:
+                release = parents[id(parent)] = _SourceRelease(parent)
+            release.pending += 1
+            slots: list[Slot] = owned_slots(view)
+            if isinstance(view, _array.AoT) and not view:
+                placeholder = _empty_aot_placeholder_slot(view)
+                assert placeholder is not None
+                slots = [placeholder]
+            sources.append((view, slots))
+            self._released[id(view)] = release, slots
+        if sources:
+            _release_private_bindings(sources)
+
+    def slots(self, view: Container | AoT) -> list[Slot] | None:
+        """Return captured binding slots after their source refs are released."""
+        released = self._released.get(id(view))
+        return None if released is None else released[1]
+
+    def finish(self, view: Container | AoT) -> None:
+        """Complete a source install at its existing parent-repair point."""
+        released = self._released.pop(id(view), None)
+        if released is not None:
+            release = released[0]
+            release.pending -= 1
+            if release.pending == 0:
+                synthesise_header_for_emptied(release.parent)
 
     def _reusable(self, view: Container | AoT) -> bool:
         aot = self._aot
@@ -3293,6 +3346,7 @@ def _insert_entry_header(
 def _install_entry(
     aot: AoT,
     prepared: _PreparedEntry,
+    capture: _SourceCapture,
     *,
     preserve_source_separator: bool = False,
     index: int | None = None,
@@ -3313,10 +3367,8 @@ def _install_entry(
             entry=owner,
             owner_aot_entry=owner,
         )
-    source_parent = None
     slots: list[Slot] = []
     if prepared.body is None:
-        source_parent = table._parent  # noqa: SLF001
         original_header = table._header  # noqa: SLF001
         slots = _move_private_subtree(table, aot, path, owner=owner)
         if original_header is not None:
@@ -3348,7 +3400,7 @@ def _install_entry(
         _file_header_binding_chain(parent, header)
         list.insert(aot, len(aot) if index is None else index, table)
     _maybe_demote_synthetic_empty_header(parent)
-    synthesise_header_for_emptied(source_parent)
+    capture.finish(table)
 
 
 def _populate_prepared_entry(prepared: _PreparedEntry, capture: _SourceCapture) -> None:
@@ -3446,8 +3498,9 @@ def assign_aot_entries(
         )
         for body in bodies[len(indices) :]
     ]
+    capture.release()
     for offset, entry in prepared:
-        _install_entry(aot, entry, previous=selected[offset])
+        _install_entry(aot, entry, capture, previous=selected[offset])
         selected[offset] = entry.table
     if departing:
         _orphan_aot_entries(aot, departing)
@@ -3461,7 +3514,7 @@ def assign_aot_entries(
         for _offset, entry in prepared:
             _populate_prepared_entry(entry, capture)
         for offset, entry in enumerate(added, start=start + len(indices)):
-            _install_entry(aot, entry, index=offset)
+            _install_entry(aot, entry, capture, index=offset)
             _populate_prepared_entry(entry, capture)
 
 

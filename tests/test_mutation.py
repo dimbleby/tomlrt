@@ -2681,16 +2681,19 @@ def test_aot_extend_moves_disjoint_private_siblings_within_one_document() -> Non
     )
     parent = doc.table("parent")
     left, right = parent.table("left"), parent.table("right")
+    parent["empty"] = empty = AoT()
     del doc["parent"]
     rows = parent.aot("rows")
 
-    rows.extend([left, right])
+    rows.extend([left, right, {"nested": empty}])
 
     assert rows[1] is left
     assert rows[2] is right
+    assert rows[3].aot("nested") is empty
     doc["parent"] = parent
     out = tomlrt.dumps(doc)
     assert out == td("""
+        [parent]
         [[parent.rows]]
         x=0
 
@@ -2699,6 +2702,56 @@ def test_aot_extend_moves_disjoint_private_siblings_within_one_document() -> Non
 
         [[parent.rows]]
         x=2
+
+        [[parent.rows]]
+        nested = []
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_batch_moves_reversed_private_entries_and_snapshots_aliases() -> None:
+    source = tomlrt.loads(
+        td("""
+            [[items]] # first
+            x=0
+            [[items]] # middle
+            x=1
+            [[items]] # last
+            x=2
+            """)
+    )
+    private = source.aot("items")
+    del source["items"]
+    first, middle, last = private
+    doc = tomlrt.Document({"rows": AoT()})
+    rows = doc.aot("rows")
+
+    rows.extend([last, first, {"copy": last, "other": first}])
+
+    assert rows[0] is last
+    assert rows[1] is first
+    assert private[0] is middle
+    middle["x"] = 3
+    source["items"] = private
+    assert tomlrt.dumps(source) == td("""
+        [[items]] # middle
+        x=3
+        """)
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[rows]] # last
+        x=2
+
+        [[rows]] # first
+        x=0
+
+        [[rows]]
+
+        [rows.copy] # last
+        x=2
+
+        [rows.other] # first
+        x=0
         """)
     assert _reparses(out) == doc.to_dict()
 
