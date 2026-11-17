@@ -654,11 +654,15 @@ class Container(_View, dict[str, Any]):
             return _layout_ops.clone_aot(self, key, value)
         emptied = value._host  # noqa: SLF001
         existing_entries: list[Table] = list(value)
-        _layout_ops.detach_aot_from_orphan(value)
+        _layout_ops.detach_aot_from_orphan(
+            value, None if capture is None else capture.slots(value)
+        )
         promotion = _layout_ops.attach_aot(self, key, value)
         list.clear(value)
         dict.__setitem__(self, key, value)
         _layout_ops.synthesise_header_for_emptied(emptied)
+        if capture is not None:
+            capture.finish(value)
         _layout_ops.insert_aot_entries(
             value,
             existing_entries,
@@ -694,6 +698,8 @@ class Container(_View, dict[str, Any]):
             _layout_ops.clone_section(self, key, value)
         else:
             _layout_ops.clone_implicit_section(self, key, value)
+        if capture is not None:
+            capture.finish(value)
 
     def _replace_scalar(self, key: str, value: Scalar) -> None:
         """Replace a scalar while preserving its existing KV slot."""
