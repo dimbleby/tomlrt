@@ -60,6 +60,8 @@ from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Iterator, Sequence
+    from types import TracebackType
+    from typing import Self
 
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table, TomlInput
@@ -1781,18 +1783,17 @@ def insert_aot_entries(
     capture: _SourceCapture | None = None,
 ) -> None:
     """Capture all entry sources before publishing any new occurrences."""
-    capture = _SourceCapture((aot,), capture, aot)
-    prepared = [_prepare_entry(aot, body, capture) for body in bodies]
-    capture.release()
-    for offset, entry in enumerate(prepared):
-        _install_entry(
-            aot,
-            entry,
-            capture,
-            preserve_source_separator=preserve_source_separator,
-            index=None if index is None else index + offset,
-        )
-        _populate_prepared_entry(entry, capture)
+    with _SourceCapture((aot,), capture, aot) as capture:
+        prepared = [_prepare_entry(aot, body, capture) for body in bodies]
+        capture.release()
+        for offset, entry in enumerate(prepared):
+            _install_entry(
+                aot,
+                entry,
+                preserve_source_separator=preserve_source_separator,
+                index=None if index is None else index + offset,
+            )
+            _populate_prepared_entry(entry, capture)
 
 
 def prepare_promoted_inline_entries(
@@ -2910,73 +2911,8 @@ def _orphan_aot_entries(aot: AoT, entries: Sequence[Table]) -> None:
 
 
 def stable_snapshot(view: Container | AoT) -> Container | AoT:
-    """``view`` as it is now, safe to read across a write to its document.
-
-    For a source an install would otherwise damage or grow while
-    reading it.
-    """
-    return _snapshot_in_copy(view, {})
-
-
-class _SourceSnapshot:
-    """A pre-edit document copy indexed by its source views' identities."""
-
-    __slots__ = ("source", "views")
-
-    def __init__(self, source: Document) -> None:
-        self.source = source
-        self.views: dict[int, Container | AoT] = {id(source): copy.copy(source)}
-
-    def resolve(self, view: Container | AoT) -> Container | AoT:
-        """Find a source view's copy, caching the correspondence along its owners."""
-        lineage: list[Container | AoT] = []
-        original = view
-        while id(original) not in self.views:
-            lineage.append(original)
-            host = original._host  # noqa: SLF001
-            assert isinstance(host, (_container.Container, _array.AoT))
-            original = host
-        cloned = self.views[id(original)]
-        for original in reversed(lineage):
-            host = original._host  # noqa: SLF001
-            if isinstance(host, _array.AoT):
-                assert isinstance(cloned, _array.AoT)
-                for entry, copied in zip(host, cloned, strict=True):
-                    self.views[id(entry)] = copied
-                cloned = self.views[id(original)]
-            else:
-                assert isinstance(cloned, _container.Container)
-                cloned = dict.__getitem__(cloned, original._path[-1])  # noqa: SLF001
-                self.views[id(original)] = cloned
-        return cloned
-
-
-def _snapshot_in_copy(
-    view: Container | AoT, snapshots: dict[int, _SourceSnapshot]
-) -> Container | AoT:
-    """``view`` as it is now, in a copy of the document it lives in.
-
-    One copy serves every source taken from the same document, and it
-    is a byte-exact one, so installing from it preserves the source's
-    own trivia exactly as installing from the original would.
-    """
-    root = view._layout_root  # noqa: SLF001
-    assert root is not None, "only an attached view has a document to copy"
-    snapshot = snapshots.get(id(root))
-    if snapshot is None:
-        snapshot = _SourceSnapshot(root)
-        snapshots[id(root)] = snapshot
-    return snapshot.resolve(view)
-
-
-class _SourceRelease:
-    """Repair a source parent after its last claimed child is installed."""
-
-    __slots__ = ("parent", "pending")
-
-    def __init__(self, parent: Container) -> None:
-        self.parent = parent
-        self.pending = 0
+    """Copy a source subtree before a write can change it."""
+    return copy.copy(view)
 
 
 class _SourceCapture:
@@ -2988,9 +2924,10 @@ class _SourceCapture:
         "_claim_ancestors",
         "_claims",
         "_factories",
+        "_outer",
+        "_parents",
         "_released",
         "_sites",
-        "_snapshots",
     )
 
     def __init__(
@@ -3004,13 +2941,29 @@ class _SourceCapture:
         self._ancestor_ids: set[int] | None = None
         self._claims: dict[int, Container | AoT] | None = None
         self._claim_ancestors: set[int] | None = None
-        self._snapshots: dict[int, _SourceSnapshot] = {}
-        self._released: dict[int, tuple[_SourceRelease, list[Slot]]] = (
+        self._outer = outer
+        self._parents: dict[int, Container] = (
+            {} if outer is None else outer._parents  # noqa: SLF001
+        )
+        self._released: dict[int, list[Slot]] = (
             {} if outer is None else outer._released  # noqa: SLF001
         )
         self._factories: dict[int, Container | AoT] = (
             {} if outer is None else outer._factories  # noqa: SLF001
         )
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        if self._outer is None:
+            for parent in self._parents.values():
+                synthesise_header_for_emptied(parent)
 
     def _contains_write_site(self, view: Container | AoT) -> bool:
         ancestors = self._ancestor_ids
@@ -3053,7 +3006,6 @@ class _SourceCapture:
         """Release claimed bindings in bulk after every overlap is captured."""
         if self._claims is None:
             return
-        parents: dict[int, _SourceRelease] = {}
         sources: list[tuple[Container | AoT, list[Slot]]] = []
         for view in self._claims.values():
             if view._layout_root is None or view._host is None:  # noqa: SLF001
@@ -3062,33 +3014,20 @@ class _SourceCapture:
                 view._host if isinstance(view, _array.AoT) else view._parent  # noqa: SLF001
             )
             assert parent is not None
-            release = parents.get(id(parent))
-            if release is None:
-                release = parents[id(parent)] = _SourceRelease(parent)
-            release.pending += 1
+            self._parents[id(parent)] = parent
             slots: list[Slot] = owned_slots(view)
             if isinstance(view, _array.AoT) and not view:
                 placeholder = _empty_aot_placeholder_slot(view)
                 assert placeholder is not None
                 slots = [placeholder]
             sources.append((view, slots))
-            self._released[id(view)] = release, slots
+            self._released[id(view)] = slots
         if sources:
             _release_private_bindings(sources)
 
     def slots(self, view: Container | AoT) -> list[Slot] | None:
         """Return captured binding slots after their source refs are released."""
-        released = self._released.get(id(view))
-        return None if released is None else released[1]
-
-    def finish(self, view: Container | AoT) -> None:
-        """Complete a source install at its existing parent-repair point."""
-        released = self._released.pop(id(view), None)
-        if released is not None:
-            release = released[0]
-            release.pending -= 1
-            if release.pending == 0:
-                synthesise_header_for_emptied(release.parent)
+        return self._released.get(id(view))
 
     def _reusable(self, view: Container | AoT) -> bool:
         aot = self._aot
@@ -3141,7 +3080,7 @@ class _SourceCapture:
                 )
                 and (not self._reusable(value) or not self._claim(value))
             ):
-                return _snapshot_in_copy(value, self._snapshots)
+                return stable_snapshot(value)
             return value
         if is_inline_value(value):
             return value
@@ -3346,7 +3285,6 @@ def _insert_entry_header(
 def _install_entry(
     aot: AoT,
     prepared: _PreparedEntry,
-    capture: _SourceCapture,
     *,
     preserve_source_separator: bool = False,
     index: int | None = None,
@@ -3400,7 +3338,6 @@ def _install_entry(
         _file_header_binding_chain(parent, header)
         list.insert(aot, len(aot) if index is None else index, table)
     _maybe_demote_synthetic_empty_header(parent)
-    capture.finish(table)
 
 
 def _populate_prepared_entry(prepared: _PreparedEntry, capture: _SourceCapture) -> None:
@@ -3470,52 +3407,52 @@ def assign_aot_entries(
     sites: list[Container | AoT] = list(departing)
     if len(bodies) > len(indices):
         sites.append(aot)
-    capture = _SourceCapture(sites, aot=aot)
     body_indent = None
     if len(bodies) > len(indices) and aot:
         tail = _last_body_kv(aot[min(start, len(aot) - 1)])
         if tail is not None:
             body_indent = trailing_ws(tail.leading)
     selected = [aot[index] for index in indices[: len(bodies)]]
-    prepared = [
-        (
-            offset,
+    with _SourceCapture(sites, aot=aot) as capture:
+        prepared = [
+            (
+                offset,
+                _prepare_entry(
+                    aot,
+                    bodies[offset],
+                    capture,
+                    previous=aot[index],
+                ),
+            )
+            for offset, index in changed
+        ]
+        added = [
             _prepare_entry(
                 aot,
-                bodies[offset],
+                body,
                 capture,
-                previous=aot[index],
-            ),
-        )
-        for offset, index in changed
-    ]
-    added = [
-        _prepare_entry(
-            aot,
-            body,
-            capture,
-            body_indent=body_indent,
-        )
-        for body in bodies[len(indices) :]
-    ]
-    capture.release()
-    for offset, entry in prepared:
-        _install_entry(aot, entry, capture, previous=selected[offset])
-        selected[offset] = entry.table
-    if departing:
-        _orphan_aot_entries(aot, departing)
-    if isinstance(index, slice):
-        list.__setitem__(aot, index, selected)
-    else:
-        list.__setitem__(aot, start, selected[0])
-    if departing and not aot:
-        _materialise_empty_aot(aot)
-    with _container._sources_kept_intact(aot._layout_root, departing):  # noqa: SLF001
-        for _offset, entry in prepared:
-            _populate_prepared_entry(entry, capture)
-        for offset, entry in enumerate(added, start=start + len(indices)):
-            _install_entry(aot, entry, capture, index=offset)
-            _populate_prepared_entry(entry, capture)
+                body_indent=body_indent,
+            )
+            for body in bodies[len(indices) :]
+        ]
+        capture.release()
+        for offset, entry in prepared:
+            _install_entry(aot, entry, previous=selected[offset])
+            selected[offset] = entry.table
+        if departing:
+            _orphan_aot_entries(aot, departing)
+        if isinstance(index, slice):
+            list.__setitem__(aot, index, selected)
+        else:
+            list.__setitem__(aot, start, selected[0])
+        if departing and not aot:
+            _materialise_empty_aot(aot)
+        with _container._sources_kept_intact(aot._layout_root, departing):  # noqa: SLF001
+            for _offset, entry in prepared:
+                _populate_prepared_entry(entry, capture)
+            for offset, entry in enumerate(added, start=start + len(indices)):
+                _install_entry(aot, entry, index=offset)
+                _populate_prepared_entry(entry, capture)
 
 
 def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:

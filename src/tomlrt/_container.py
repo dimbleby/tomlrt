@@ -661,8 +661,6 @@ class Container(_View, dict[str, Any]):
         list.clear(value)
         dict.__setitem__(self, key, value)
         _layout_ops.synthesise_header_for_emptied(emptied)
-        if capture is not None:
-            capture.finish(value)
         _layout_ops.insert_aot_entries(
             value,
             existing_entries,
@@ -698,8 +696,6 @@ class Container(_View, dict[str, Any]):
             _layout_ops.clone_section(self, key, value)
         else:
             _layout_ops.clone_implicit_section(self, key, value)
-        if capture is not None:
-            capture.finish(value)
 
     def _replace_scalar(self, key: str, value: Scalar) -> None:
         """Replace a scalar while preserving its existing KV slot."""
@@ -953,31 +949,35 @@ class Container(_View, dict[str, Any]):
             inline_only=cur._inline and not promote,  # noqa: SLF001
             key=parts[-1],
         )
-        capture = None
-        if promote:
-            prefix = parts[:i]
-            _check_table_promotions(self, prefix)
-            capture = _layout_ops._SourceCapture((cur,))  # noqa: SLF001
-            value = capture.capture(value)
-            cur = _promote_tables(self, prefix)
-        if i == len(parts) - 1:
-            host = cur
-        elif cur._inline:  # noqa: SLF001
-            first, host = _make_inline_chain(parts[i + 1 : -1])
-            # Read the source before publishing any new parents, even
-            # when it contains the inline table being extended.
-            dict.__setitem__(host, parts[-1], value)
-            cur._setitem_validated(parts[i], first)  # noqa: SLF001
+        with (
+            _layout_ops._SourceCapture((cur,))  # noqa: SLF001
+            if promote
+            else contextlib.nullcontext()
+        ) as capture:
+            if promote:
+                prefix = parts[:i]
+                _check_table_promotions(self, prefix)
+                assert capture is not None
+                value = capture.capture(value)
+                cur = _promote_tables(self, prefix)
+            if i == len(parts) - 1:
+                host = cur
+            elif cur._inline:  # noqa: SLF001
+                first, host = _make_inline_chain(parts[i + 1 : -1])
+                # Read the source before publishing any new parents, even
+                # when it contains the inline table being extended.
+                dict.__setitem__(host, parts[-1], value)
+                cur._setitem_validated(parts[i], first)  # noqa: SLF001
+                return host[parts[-1]]
+            elif self._layout_root is not None and (
+                _is_section(value) or isinstance(value, AoT)
+            ):
+                # Only the installed value needs an explicit header.
+                host = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
+            else:
+                host = cur._create_section_chain(parts[i:-1])  # noqa: SLF001
+            host._setitem_validated(parts[-1], value, capture)  # noqa: SLF001
             return host[parts[-1]]
-        elif self._layout_root is not None and (
-            _is_section(value) or isinstance(value, AoT)
-        ):
-            # Only the installed value needs an explicit header.
-            host = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
-        else:
-            host = cur._create_section_chain(parts[i:-1])  # noqa: SLF001
-        host._setitem_validated(parts[-1], value, capture)  # noqa: SLF001
-        return host[parts[-1]]
 
     def ensure_table(
         self, key: str | Sequence[str], *, promote_inline: bool | None = None
