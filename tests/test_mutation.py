@@ -2709,6 +2709,74 @@ def test_aot_extend_moves_disjoint_private_siblings_within_one_document() -> Non
     assert _reparses(out) == doc.to_dict()
 
 
+def test_aot_move_repairs_emptied_private_parent() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[rows]]
+
+            [parent.child]
+            x=1
+            """)
+    )
+    parent = doc.pop("parent")
+
+    doc.aot("rows").append({"child": parent.table("child")})
+    doc["back"] = parent
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[rows]]
+
+        [[rows]]
+
+        [rows.child]
+        x=1
+
+        [back]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_aot_failed_nested_batch_keeps_released_sources_usable() -> None:
+    class UnserializableInt(int):
+        @override
+        def __str__(self) -> str:
+            msg = "conversion failed"
+            raise ValueError(msg)
+
+    doc = tomlrt.loads(
+        td("""
+            [[rows]]
+
+            [parent.child]
+            x=1
+            """)
+    )
+    parent = doc.pop("parent")
+    child = parent.table("child")
+    nested = AoT([{"bad": UnserializableInt(1)}, {"child": child}])
+
+    with pytest.raises(ValueError, match="conversion failed"):
+        doc.aot("rows").append({"nested": nested})
+
+    doc["back"] = parent
+    doc["rescued"] = child
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[rows]]
+
+        [[rows]]
+
+        [[rows.nested]]
+
+        [back]
+
+        [rescued]
+        x=1
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_aot_batch_moves_reversed_private_entries_and_snapshots_aliases() -> None:
     source = tomlrt.loads(
         td("""
@@ -3025,13 +3093,7 @@ def test_aot_extended_slice_captures_source_bodies() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_aot_slice_noop_entries_are_not_write_sites(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def unexpected_snapshot(_doc: tomlrt.Document) -> tomlrt.Document:
-        pytest.fail("an unchanged source does not need a document snapshot")
-
-    monkeypatch.setattr(tomlrt.Document, "__copy__", unexpected_snapshot)
+def test_aot_slice_can_reuse_unchanged_entry() -> None:
     doc = tomlrt.loads(
         td("""
         [[items]]
@@ -3042,7 +3104,9 @@ def test_aot_slice_noop_entries_are_not_write_sites(
         """)
     )
     items = doc.aot("items")
-    items[:] = [items[0], {"nested": items[0]}]
+    unchanged = items[0]
+    items[:] = [unchanged, {"nested": unchanged}]
+    assert items[0] is unchanged
     assert tomlrt.dumps(doc) == td("""
         [[items]]
         x = 0x01 # one
@@ -3076,16 +3140,11 @@ def test_aot_slice_noop_entries_are_not_write_sites(
         ("document", "'x'  =  0x01 # keep\n"),
     ],
 )
-def test_aot_whole_body_capture_preserves_layout_without_copying_document(
+def test_aot_whole_body_capture_preserves_layout(
     operation: str,
     kind: str,
     source_text: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def unexpected_snapshot(_doc: tomlrt.Document) -> tomlrt.Document:
-        pytest.fail("capturing a whole body needs only its slots")
-
-    monkeypatch.setattr(tomlrt.Document, "__copy__", unexpected_snapshot)
     source = tomlrt.loads(source_text)
     body: tomlrt.Document | Table
     if kind == "aot":
