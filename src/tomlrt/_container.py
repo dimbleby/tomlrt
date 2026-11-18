@@ -648,18 +648,18 @@ class Container(_View, dict[str, Any]):
         if snapshot is not value:
             assert isinstance(snapshot, AoT)
             return _layout_ops.clone_aot(self, key, snapshot)
-        src_root = value._layout_root  # noqa: SLF001
         if not _can_adopt(value, self._attached_doc):
             return _layout_ops.clone_aot(self, key, value)
+        if value._layout_root is not None and value:  # noqa: SLF001
+            _layout_ops.adopt_private_block(self, key, value)
+            return None
         existing_entries: list[Table] = list(value)
-        _layout_ops.detach_aot_from_orphan(value)
         promotion = _layout_ops.attach_aot(self, key, value)
         list.clear(value)
         dict.__setitem__(self, key, value)
         _layout_ops.insert_aot_entries(
             value,
             existing_entries,
-            preserve_source_separator=src_root is not None,
             capture=capture,
         )
         return promotion
@@ -682,7 +682,7 @@ class Container(_View, dict[str, Any]):
         elif _can_adopt(value, self._attached_doc):
             assert value._refs, "a private section owns slots"
             if value._header is not None:
-                _layout_ops.adopt_private_section(self, key, value)
+                _layout_ops.adopt_private_block(self, key, value)
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
         elif value._header is not None or isinstance(value, Document):

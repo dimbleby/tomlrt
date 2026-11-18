@@ -590,16 +590,6 @@ class AoT(_View, list["Table"]):
             e = _validate_mapping(entry, label="AoT entry")
             list.append(self, _make_unattached_entry(e))
 
-    def _unbind_from_document(self) -> None:
-        """Detach from the owning document.
-
-        Called once this AoT has left its document, so a caller still
-        holding the view can no longer write through it.
-        """
-        self._layout_root = None
-        self._host = None
-        self._path = ()
-
     def to_list(self) -> list[dict[str, Any]]:
         """Return a deep copy as a list of plain Python dictionaries."""
         out = _container._to_python(self)  # noqa: SLF001
