@@ -1525,6 +1525,27 @@ def test_array_extend_empty_multiline_uses_consistent_indentation() -> None:
         """)
 
 
+def test_array_extend_resamples_after_moving_closing_comment() -> None:
+    doc = tomlrt.loads(
+        td("""
+        xs = [-1,-1
+          ,
+         # closing
+          ]
+        """)
+    )
+    doc.array("xs").extend([-1, -1])
+    expected = td("""
+        xs = [-1,-1
+         # closing
+          ,  -1,
+         -1,
+          ]
+        """)
+    assert tomlrt.dumps(doc) == expected
+    assert _reparses(expected) == doc.to_dict() == {"xs": [-1, -1, -1, -1]}
+
+
 def test_array_extend_rejects_aot_atomically() -> None:
     doc = tomlrt.loads("xs = [1]\n")
     with pytest.raises(tomlrt.TOMLError):

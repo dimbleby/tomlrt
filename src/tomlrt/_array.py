@@ -336,11 +336,12 @@ class Array(_View, list[Any]):
         list.append(self, decoded)
 
     def _extend_prepared(self, prepared: Iterable[tuple[Value, DecodedValue]]) -> None:
-        """Append a batch; the first two items establish bracket pad and separator."""
+        """Append a batch, resampling while its layout settles."""
         style = self._style()
-        for cst, decoded in prepared:
+        for offset, (cst, decoded) in enumerate(prepared):
             self._append_with_style(cst, decoded, style)
-            if len(self) <= 2:
+            # The first append relocates closing trivia; two items establish pads.
+            if offset == 0 or len(self) <= 2:
                 style = self._style()
 
     @override
