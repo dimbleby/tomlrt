@@ -34,26 +34,14 @@ from tomlrt._comment_text import (
 )
 from tomlrt._errors import TOMLError
 from tomlrt._kind import _Kind
-from tomlrt._slots import KVSlot, ensure_terminator
+from tomlrt._slots import ensure_terminator
 from tomlrt._trivia import split_line, split_lines
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from tomlrt._container import Container, Document
-    from tomlrt._slots import Slot, StructuralHeaderSlot
-
-
-def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
-    """Return the primary direct-KV slot for ``key`` in ``c``, or None."""
-    refs = c._index.get(key)  # noqa: SLF001
-    if not refs:
-        return None
-    target = (*c._path, key)  # noqa: SLF001
-    for slot in refs:
-        if isinstance(slot, KVSlot) and slot.host_path + slot.key_path == target:
-            return slot
-    return None
+    from tomlrt._slots import KVSlot, Slot, StructuralHeaderSlot
 
 
 _T = TypeVar("_T")
@@ -75,7 +63,7 @@ class _SlotKeyedView(MutableMapping[str, _T]):
         self._c = container
 
     def _slot(self, key: str) -> KVSlot | None:
-        return _direct_kv_slot(self._c, key)
+        return self._c._bindings.get(key)  # noqa: SLF001
 
     def _require_slot(self, key: str) -> KVSlot:
         slot = self._slot(key)

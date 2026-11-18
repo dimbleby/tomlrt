@@ -39,7 +39,7 @@ import tomli
 import tomlrt
 from tomlrt import AoT, Array, Table
 from tomlrt._container import _is_section
-from tomlrt._slots import KVSlot, StructuralHeaderSlot, slot_local_key
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -222,7 +222,7 @@ def _expected_body_tail(c: Container) -> Slot | None:
 def check_view_caches(doc: Document, ctx: str) -> None:
     """Assert every container's projections of the slot stream agree with it.
 
-    ``_refs``, ``_index`` and ``_body_tail`` are caches over the one
+    ``_refs``, ``_bindings`` and ``_body_tail`` are caches over the one
     source of physical order, the doc-stream linked list. A mutation
     that files a ref out of order, or leaves a bucket naming a slot the
     walk no longer reaches, still renders correctly -- the renderer
@@ -261,14 +261,10 @@ def check_view_caches(doc: Document, ctx: str) -> None:
             )
             assert own_header.key_path == own_path, f"{where}: _header path mismatch"
 
-        for key, bucket in c._index.items():  # noqa: SLF001
-            expected = [s for s in c._refs if slot_local_key(s, c) == key]  # noqa: SLF001
-            assert bucket == expected, f"{where}: _index[{key!r}] is not its projection"
-        for slot in c._refs:  # noqa: SLF001
-            local = slot_local_key(slot, c)
-            if local is None:
-                # The one ref with no local key is the container's own
-                # header, which lives in `_header`, not `_index`.
-                assert c._header is slot, f"{where}: keyless ref is not the header"  # noqa: SLF001
-                continue
-            assert slot in c._index.get(local, []), f"{where}: ref missing from _index"  # noqa: SLF001
+        expected = {
+            slot.key_path[-1]: slot
+            for slot in c._refs  # noqa: SLF001
+            if isinstance(slot, KVSlot)
+            and slot.host_path + slot.key_path[:-1] == c._path  # noqa: SLF001
+        }
+        assert c._bindings == expected, f"{where}: stale direct KV bindings"  # noqa: SLF001

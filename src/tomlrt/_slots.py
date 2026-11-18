@@ -436,25 +436,6 @@ def _respread(left: Slot, right: Slot, count: int) -> None:
         cur = cur._next  # noqa: SLF001
 
 
-# ---------------------------------------------------------------------------
-# Per-container slot geometry
-# ---------------------------------------------------------------------------
-
-
-def slot_local_key(slot: Slot, container: Container) -> str | None:
-    """Derive a slot's key in ``container._index`` from their paths.
-
-    The container's own header has no local key; it lives in ``_refs``
-    and ``_header``, not ``_index``.
-    """
-    depth = len(container._path)  # noqa: SLF001
-    if isinstance(slot, KVSlot):
-        return slot.key_path[depth - len(slot.host_path)]
-    assert isinstance(slot, StructuralHeaderSlot)
-    path = slot.key_path
-    return path[depth] if len(path) > depth else None
-
-
 def ensure_terminator(slot: Slot, nl: str) -> None:
     """Give ``slot`` a trailing ``nl`` if it lacks one.
 
@@ -485,6 +466,5 @@ __all__ = [
     "StructuralHeaderSlot",
     "ensure_terminator",
     "retarget_slot_newlines",
-    "slot_local_key",
     "stitch_run",
 ]

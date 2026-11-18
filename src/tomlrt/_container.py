@@ -2,7 +2,7 @@
 
 `Container(dict)` backs `Document` and `Table`. Dict storage follows
 doc-stream first-occurrence order; mutations update the slot stream
-through `_index`, `_refs`, `_header`, and `_body_tail`.
+through `_bindings`, `_refs`, `_header`, and `_body_tail`.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ from tomlrt._comments import (
     EolCommentView,
     LeadingBlockView,
     LeadingCommentView,
-    _direct_kv_slot,
     _doc_epilogue_get,
     _doc_epilogue_set,
     _doc_preamble_get,
@@ -117,16 +116,16 @@ class Container(_View, dict[str, Any]):
     """Dict-typed base for `Document` and `Table` views.
 
     Reads are pure dict operations. Section mutations use the
-    per-container cache (`_index`, `_refs`, `_header`,
+    per-container cache (`_bindings`, `_refs`, `_header`,
     `_body_tail`). Inline tables keep those caches empty and mutate
     the backing `InlineTableValue` in `_value`.
     """
 
     __slots__ = (
+        "_bindings",
         "_body_tail",
         "_header",
         "_host",
-        "_index",
         "_inline",
         "_layout_root",
         "_owner_aot_entry",
@@ -153,7 +152,7 @@ class Container(_View, dict[str, Any]):
         self._inline = False
         self._host: Array | AoT | Container | None = None
         self._owner_aot_entry: AoTEntry | None = None
-        self._index: dict[str, list[Slot]] = {}
+        self._bindings: dict[str, KVSlot] = {}
         self._refs: list[Slot] = []
         self._header: StructuralHeaderSlot | None = None
         self._body_tail: Slot | None = None
@@ -692,10 +691,7 @@ class Container(_View, dict[str, Any]):
 
     def _replace_scalar(self, key: str, value: Scalar) -> None:
         """Replace a scalar while preserving its existing KV slot."""
-        refs = self._index.get(key)
-        assert refs is not None, "scalar value must have a slot"
-        slot = refs[0]
-        assert isinstance(slot, KVSlot), "scalar value must have a KV slot"
+        slot = self._bindings[key]
         slot.value = coerce_scalar(value)
         dict.__setitem__(self, key, value)
 
@@ -718,11 +714,7 @@ class Container(_View, dict[str, Any]):
                 )
                 dict.__setitem__(self, key, decoded)
             return
-        refs = self._index.get(key)
-        assert refs is not None, "inline value must have a slot"
-        assert len(refs) == 1, "inline value must be backed by exactly one slot"
-        slot = refs[0]
-        assert isinstance(slot, KVSlot), "inline value must be backed by a KV slot"
+        slot = self._bindings[key]
         slot.value = cst
         dict.__setitem__(self, key, decoded)
         _layout_ops.reset_displaced_views(old)
@@ -831,7 +823,7 @@ class Container(_View, dict[str, Any]):
             for k in current:
                 has_leaf = False
                 has_header = False
-                for slot in self._index.get(k, ()):
+                for slot in _layout_ops.binding_refs(self, k):
                     if isinstance(slot, KVSlot):
                         has_leaf = True
                     else:
@@ -863,10 +855,7 @@ class Container(_View, dict[str, Any]):
         though ``a`` has no header of its own. Returns ``False`` for missing
         keys and values written entirely as key-value lines.
         """
-        refs = self._index.get(key, ())
-        # A plain loop measurably beats any()+generator here; sort()
-        # calls this once per key, so it's hot for wide containers.
-        for slot in refs:  # noqa: SIM110
+        for slot in _layout_ops.binding_refs(self, key):
             if isinstance(slot, StructuralHeaderSlot):
                 return True
         return False
@@ -1127,8 +1116,7 @@ def _direct_kv_trivia(c: Container, key: str) -> tuple[str, str]:
     Both fields are non-Optional on `KVSlot`, so the result is never
     ``None`` in either component.
     """
-    slot = _direct_kv_slot(c, key)
-    assert slot is not None, "inline promotion source must have a direct KV slot"
+    slot = c._bindings[key]  # noqa: SLF001
     return slot.leading, slot.eol
 
 
@@ -1808,9 +1796,7 @@ def _host_kv_slot(view: Array | Container) -> KVSlot | None:
         up = cur._host  # noqa: SLF001
     assert isinstance(up, Container), "internal: attached value has no host container"
     leaf = cur._name if isinstance(cur, Array) else cur._path[-1]  # noqa: SLF001
-    kv = _direct_kv_slot(up, leaf)
-    assert kv is not None, "internal: host key is absent from its container index"
-    return kv
+    return up._bindings[leaf]  # noqa: SLF001
 
 
 def _synth_value(

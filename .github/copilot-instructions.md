@@ -187,9 +187,8 @@ them. Read roughly in this order:
     `entry` is the discriminator: `None` for a plain table header.
   - `AoTEntry` — ownership marker for an `[[a]]` entry, retaining only
     its own header; slot membership and ordering come from the linked stream.
-  - `slot_local_key(slot, container)` derives the key under which
-    a slot is indexed from their paths. Containers index slots directly;
-    there is no per-membership record.
+  Containers retain ordered slot references directly; there is no
+  per-membership record.
 
 ### Parser
 
@@ -225,7 +224,7 @@ them. Read roughly in this order:
   Serialization consumes synthesized or extracted slot runs directly;
   only document construction builds logical views over them.
 - **`_layout_ops.py`** — section-side mutation primitives: insert
-  / delete / sort on the doc-stream linked list; `_index` and `_refs`
+  / delete / sort on the doc-stream linked list; `_bindings` and `_refs`
   bookkeeping; KV / section / AoT-entry append; subtree rehome.
   Header-bearing section copies and private section / whole-AoT moves
   prepare their slot runs separately, then share `_install_headered_layout`:
@@ -264,8 +263,8 @@ them. Read roughly in this order:
   the callers.
   By far the largest file. Internal hot-path conventions:
   - **Ordered slot filing** goes through `record_slot`, which places a
-    slot in `_refs` and its `_index` bucket and advances `_body_tail`
-    for a same-owner KV. Single and bulk unfiling repair departing
+    slot in `_refs`, indexes exact leaf KVs in `_bindings`, and advances
+    `_body_tail` for a same-owner KV. Single and bulk unfiling repair departing
     tails directly. A physical change to a region of the stream is
     wrapped in `_refile_region_refs`, which refreshes projections and
     body anchors together. Mutation callers never invalidate tails.
@@ -346,7 +345,7 @@ them. Read roughly in this order:
 ### Logical views
 
 - **`_container.py`** — `Container` (the abstract base, a `dict`
-  subclass), `Document`, and `Table`. Holds `_refs`, `_index`,
+  subclass), `Document`, and `Table`. Holds `_refs`, `_bindings`,
   `_path`, `_host`, `_layout_root`, `_owner_aot_entry`,
   `_body_tail`, `_value`, `_header`, `_inline`. Exposes
   `_wire(layout_root=, parent=, path=, owner=)` — every container
@@ -453,19 +452,18 @@ wrong.
   than a walk. Keys are laid out with gaps, a whole run at a time,
   and a local window is relabelled when a seam runs out of room;
   they are arbitrary and meaningless for an unlinked slot.
-- **`slot_local_key(slot, container)` is derived** from their paths —
-  never store a second copy of that key.
 - **Key layout uses parallel tuples**, shared by KV slots, headers and
   inline entries: `key_parts` contains raw strings, `key_path` their decoded
   names, and `key_seps` the intervening text. Rebase all three together;
   formatting changes only separators. Bare keys may share the parts/path
   tuple, but no behavior depends on that identity.
-- **`Container._index[k]`** is the in-order list of slots in
-  `_refs` whose `slot_local_key(slot, container) == k`. Both it and
-  `_refs` are sorted by `Slot._order`: file slots through `record_slot`,
-  and make physical
-  changes to a region inside `_refile_region_refs`, which re-files
-  the region's contiguous run in each projection.
+- **`Container._bindings[k]`** names only the exact leaf KV for `k`,
+  including inline values and empty-AoT placeholders. Structural binding
+  projections are derived by `binding_refs` from child `_refs`, filtered
+  by actual parent back-pointers; they are not ordered. `_refs` stays sorted
+  by `Slot._order`: file slots through `record_slot`, and make physical
+  changes inside `_refile_region_refs`, which re-files the region's
+  contiguous run in each container.
 - **`Container._body_tail`** is the last same-owner KV in `_refs`, or
   `_header` when the body is empty. Ref filing, unfiling and region
   refiling maintain it centrally; no ancestor invalidation is needed.
@@ -483,7 +481,7 @@ wrong.
   and `unfile_slot`. Compare containers by **identity**, never dict
   equality. AoT removal uses it to scrub memberships in O(depth) per
   slot instead of O(siblings) per container — don't bypass it
-  with ad-hoc walks of ancestor `_index` buckets.
+  with ad-hoc walks of ancestor `_refs`.
 - **AoT entry membership and order live only in the linked stream.**
   `AoTEntry` retains its own `[[a]]` header for path derivation, while
   subtree membership/order comes from slot ownership plus

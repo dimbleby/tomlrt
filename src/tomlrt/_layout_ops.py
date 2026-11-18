@@ -39,7 +39,6 @@ from tomlrt._slots import (
     StructuralHeaderSlot,
     ensure_terminator,
     retarget_slot_newlines,
-    slot_local_key,
     stitch_run,
 )
 from tomlrt._trivia import (
@@ -215,7 +214,32 @@ def _binding_slots(parent: Container, key: str) -> list[Slot]:
     value = dict.__getitem__(parent, key)
     if _container._is_section(value) or isinstance(value, _array.AoT):  # noqa: SLF001
         return owned_slots(value)
-    return list(parent._index[key])  # noqa: SLF001
+    return [parent._bindings[key]]  # noqa: SLF001
+
+
+def binding_refs(parent: Container, key: str) -> Iterator[Slot]:
+    """Yield a binding's parent projections, without guaranteeing order."""
+    direct = parent._bindings.get(key)  # noqa: SLF001
+    if direct is not None:
+        yield direct
+        return
+    if parent._layout_root is None:  # noqa: SLF001
+        return
+    value = dict.get(parent, key)
+    if _container._is_section(value):  # noqa: SLF001
+        candidates: Iterable[Slot] = value._refs  # noqa: SLF001
+    elif isinstance(value, _array.AoT):
+        candidates = itertools.chain.from_iterable(
+            entry._refs  # noqa: SLF001
+            for entry in value
+        )
+    else:
+        return
+    for slot in candidates:
+        for owner in slot._containers:  # noqa: SLF001
+            if owner is parent:
+                yield slot
+                break
 
 
 def _installed_span(slots: list[Slot]) -> list[Slot] | None:
@@ -310,28 +334,24 @@ def _ordered_index(refs: list[Slot], order: int) -> int:
 def record_slot(c: Container, slot: Slot) -> None:
     """File ``slot`` in doc order on ``c`` and register the back-pointer.
 
-    The ``_index`` key is derived by :func:`slot_local_key` from
-    ``(slot, container)`` geometry, so callers cannot file under a
-    disagreeing key. ``slot`` must already be linked into the
-    doc-stream, since its order key is what places the ref.
+    ``slot`` must already be linked into the doc-stream, since its
+    order key is what places the ref. Only exact leaf KVs are indexed.
 
     A KV can be filed through a differently owned container; only
     matching owners advance its body tail.
     """
     slot._containers.append(c)  # noqa: SLF001
     order = slot._order  # noqa: SLF001
-    key = slot_local_key(slot, c)
-    bucket = c._index.setdefault(key, []) if key is not None else None  # noqa: SLF001
     refs = c._refs  # noqa: SLF001
     if not refs or refs[-1]._order < order:  # noqa: SLF001
-        # Each key bucket is an ordered subset of refs.
         refs.append(slot)
-        if bucket is not None:
-            bucket.append(slot)
     else:
         refs.insert(_ordered_index(refs, order), slot)
-        if bucket is not None:
-            bucket.insert(_ordered_index(bucket, order), slot)
+    if (
+        isinstance(slot, KVSlot)
+        and len(slot.host_path) + len(slot.key_path) == len(c._path) + 1  # noqa: SLF001
+    ):
+        c._bindings[slot.key_path[-1]] = slot  # noqa: SLF001
     if isinstance(slot, KVSlot) and slot.owner_aot_entry is c._owner_aot_entry:  # noqa: SLF001
         tail = c._body_tail  # noqa: SLF001
         if tail is None or tail._order < order:  # noqa: SLF001
@@ -347,9 +367,8 @@ def _refile_region_refs(
     """Re-file the refs of a doc-stream region around a physical change to it.
 
     The region is the open interval between two slots that stay put.
-    Every doc-ordered projection it appears in — a container's ``_refs``
-    and each of its ``_index`` buckets — holds its refs as one
-    contiguous run, so each run is put back in the order, and at the
+    Every container's ``_refs`` holds the region as one contiguous
+    run, so each run is put back in the order, and at the
     position, the refreshed order keys imply once the change is done.
     Cost is proportional to the region rather than to the document, and
     one mechanism serves every flavour of change: moving the region
@@ -365,13 +384,10 @@ def _refile_slot_refs(slots: Iterable[Slot]) -> Generator[None]:
     runs: dict[int, tuple[Container, list[Slot], list[Slot]]] = {}
     for slot in slots:
         for c in slot._containers:  # noqa: SLF001
-            key = slot_local_key(slot, c)
-            projections = (c._refs,) if key is None else (c._refs, c._index[key])  # noqa: SLF001
-            for refs in projections:
-                # A projection holding this ref alone has nothing to
-                # reorder and nowhere else to sit.
-                if len(refs) > 1:
-                    runs.setdefault(id(refs), (c, refs, []))[2].append(slot)
+            refs = c._refs  # noqa: SLF001
+            # A projection holding this ref alone has nothing to reorder.
+            if len(refs) > 1:
+                runs.setdefault(id(c), (c, refs, []))[2].append(slot)
     placed = [
         (c, refs, run, _ordered_index(refs, _slot_order(run[0])))
         for c, refs, run in runs.values()
@@ -382,8 +398,7 @@ def _refile_slot_refs(slots: Iterable[Slot]) -> Generator[None]:
     for c, refs, run, start in placed:
         _replace_ordered_run(refs, run, start)
         if (
-            refs is c._refs  # noqa: SLF001
-            and isinstance(c._body_tail, KVSlot)  # noqa: SLF001
+            isinstance(c._body_tail, KVSlot)  # noqa: SLF001
             and c._body_tail is not refs[-1]  # noqa: SLF001
             and (
                 len(run) == len(refs)
@@ -456,7 +471,7 @@ def _file_synthetic_header_and_kv(
 
     Files ``c``'s own-header ref, inserts ``key = value`` directly
     after ``header_slot``, files the KV ref, and updates
-    ``c._header`` / ``c._index[key]`` / ``c._body_tail``.
+    ``c._header`` / ``c._body_tail``.
 
     Anchoring and ancestor binding-ref filing stay explicit in callers;
     both are highly position-sensitive and not safe to share.
@@ -660,7 +675,7 @@ def append_direct_kv(
 ) -> PromotedHeader | None:
     """Append a fresh direct (non-dotted) KV to ``c``.
 
-    Updates ``c._refs`` / ``_index`` / ``_body_tail`` and dict storage.
+    Updates ``c._refs`` / ``_bindings`` / ``_body_tail`` and dict storage.
     Implicit headerless containers route through dotted-KV synthesis;
     AoT-entry sub-table bodies are not yet supported.
     """
@@ -833,7 +848,7 @@ def _clear_child_refs(c: Container) -> None:
     c._refs.clear()  # noqa: SLF001
     if header is not None:
         c._refs.append(header)  # noqa: SLF001
-    c._index.clear()  # noqa: SLF001
+    c._bindings.clear()  # noqa: SLF001
     c._body_tail = _recompute_body_tail(c)  # noqa: SLF001
 
 
@@ -887,12 +902,11 @@ def _materialise_empty_inline_table(
     # ``primary``'s doc-stream position before the scrub removes
     # ``primary``'s own refs.
     chain = _dotted_chain(host, parent)
-    for i, anc in enumerate(chain):
+    for anc in chain:
         record_slot(anc, kv)
-        assert slot_local_key(kv, anc) == key_path[i]
 
     # ``c`` becomes an inline-root table, which keeps no ``_refs`` /
-    # ``_index`` of its own (the binding lives on the parent chain, and
+    # ``_bindings`` of its own (the binding lives on the parent chain, and
     # entries live in ``val.items``). Unfile its remaining
     # descendant-binding refs first — this also unregisters their slot
     # back-pointers, so the later scrub no longer reaches ``c``.
@@ -977,11 +991,12 @@ def delete_keys(
     views: list[_View] = []
     for key in keys:
         value = dict.__getitem__(c, key)  # raises KeyError if absent
+        child_slots: list[Slot]
         if _container._is_section(value) or isinstance(value, _array.AoT):  # noqa: SLF001
             child_slots = owned_slots(value)
             child_views = list(_walk_views((value,)))
         else:
-            child_slots = list(c._index.get(key, ()))  # noqa: SLF001
+            child_slots = [c._bindings[key]]  # noqa: SLF001
             child_views = []
         plans.append((key, value, child_slots, child_views))
         slots.extend(child_slots)
@@ -998,7 +1013,7 @@ def delete_keys(
         and c._header is None  # noqa: SLF001
         and clear_all
     ):
-        primary = c._index[keys[-1]][0]  # noqa: SLF001
+        primary = min(binding_refs(c, keys[-1]), key=_slot_order)
         if isinstance(primary, KVSlot):
             _materialise_empty_inline_table(c, primary, doc)
         else:
@@ -1300,9 +1315,8 @@ def install_dotted_kv_slot(
         doc=doc,
     )
 
-    for i, anc in enumerate(chain):
+    for anc in chain:
         record_slot(anc, new_slot)
-        assert slot_local_key(new_slot, anc) == leaf_keypath[i]
 
 
 def _synthesise_header_then_insert_kv(
@@ -1445,7 +1459,7 @@ def _belongs_to_parent_extent(
     — otherwise it is a sibling AoT entry at the same level.
 
     Valid only while walking a physically contiguous doc-stream region;
-    must not filter an ``_index`` bucket, which can interleave
+    must not filter an ancestor projection, which can interleave
     descendants from sibling AoT entries.
     """
     if isinstance(slot, KVSlot):
@@ -1678,8 +1692,7 @@ def _materialise_empty_aot(aot: AoT) -> PromotedHeader | None:
 def _empty_aot_placeholder_slot(aot: AoT) -> KVSlot | None:
     """Return the ``key = []`` placeholder backing an empty AoT, if any.
 
-    Derived from the parent's ``_index[key]``: an empty AoT's only
-    physical presence is one ``KVSlot`` whose value is an empty
+    An empty AoT's only physical presence is one ``KVSlot`` whose value is an empty
     ``EmptyAoTValue``. Returns ``None`` before a fresh AoT has received
     its first entry or placeholder.
     """
@@ -1687,11 +1700,9 @@ def _empty_aot_placeholder_slot(aot: AoT) -> KVSlot | None:
     parent = aot._host  # noqa: SLF001
     assert parent is not None
     key = aot._path[-1]  # noqa: SLF001
-    bucket = parent._index.get(key)  # noqa: SLF001
-    if not bucket:
+    slot = parent._bindings.get(key)  # noqa: SLF001
+    if slot is None:
         return None
-    slot = bucket[0]
-    assert isinstance(slot, KVSlot), "empty AoT placeholder must be a KV slot"
     assert isinstance(slot.value, EmptyAoTValue), (
         "empty AoT key must be bound to an array placeholder"
     )
@@ -2099,7 +2110,7 @@ def _release_private_binding(value: Container | AoT, slots: list[Slot]) -> None:
     while node is not None:
         stale_ids.add(id(node))
         node._refs.clear()  # noqa: SLF001
-        node._index.clear()  # noqa: SLF001
+        node._bindings.clear()  # noqa: SLF001
         node._body_tail = None  # noqa: SLF001
         node = node._parent  # noqa: SLF001
     for slot in slots:
@@ -2655,6 +2666,8 @@ def _unfile_container(slot: Slot, c: Container) -> None:
     while containers[i] is not c:
         i += 1
     del containers[i]
+    if isinstance(slot, KVSlot) and c._bindings.get(slot.key_path[-1]) is slot:  # noqa: SLF001
+        del c._bindings[slot.key_path[-1]]  # noqa: SLF001
 
 
 def unfile_slot(c: Container, slot: Slot) -> None:
@@ -2664,15 +2677,8 @@ def unfile_slot(c: Container, slot: Slot) -> None:
     """
     assert not c._inline, "inline containers do not file refs"  # noqa: SLF001
     _unfile_ordered(c._refs, slot)  # noqa: SLF001
-    local_key = slot_local_key(slot, c)
-    if local_key is None:
-        assert c._header is slot  # noqa: SLF001
+    if c._header is slot:  # noqa: SLF001
         c._header = None  # noqa: SLF001
-    else:
-        bucket = c._index[local_key]  # noqa: SLF001
-        _unfile_ordered(bucket, slot)
-        if not bucket:
-            del c._index[local_key]  # noqa: SLF001
     if c._body_tail is slot:  # noqa: SLF001
         c._body_tail = _recompute_body_tail(c, below=slot)  # noqa: SLF001
     _unfile_container(slot, c)
@@ -2687,7 +2693,7 @@ def _scrub_owned_slots_via_backptrs(
 
     Walks ``slot._containers`` directly (length ≤ path depth, bounded
     independent of doc size) instead of scanning ancestor containers'
-    ``_index``/``_refs`` lists. Refs are grouped by container so each
+    ``_refs`` lists. Refs are grouped by container so each
     affected projection can be spliced in one operation.
 
     ``skip_container_ids`` names containers whose internal refs to
@@ -2714,16 +2720,6 @@ def _scrub_owned_slots_via_backptrs(
             by_container.setdefault(container_id, (c, []))[1].append(s)
     for c, removed in by_container.values():
         _unfile_ordered_many(c._refs, removed)  # noqa: SLF001
-        by_key: dict[str, list[Slot]] = {}
-        for slot in removed:
-            key = slot_local_key(slot, c)
-            assert key is not None, "bulk removal retains subtree containers' own refs"
-            by_key.setdefault(key, []).append(slot)
-        for key, key_slots in by_key.items():
-            bucket = c._index[key]  # noqa: SLF001
-            _unfile_ordered_many(bucket, key_slots)
-            if not bucket:
-                del c._index[key]  # noqa: SLF001
         tail = c._body_tail  # noqa: SLF001
         for slot in removed:
             _unfile_container(slot, c)
@@ -2770,7 +2766,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     delete_runs(aot, index_runs(idx_list))
 
     last_key = aot._path[-1]  # noqa: SLF001
-    if len(aot) == 0 and not parent._index.get(last_key):  # noqa: SLF001
+    if len(aot) == 0 and last_key not in parent._bindings:  # noqa: SLF001
         _materialise_empty_aot(aot)
 
     return popped_entries
@@ -3187,12 +3183,10 @@ def _replace_entry_header(previous: Table, header: StructuralHeaderSlot) -> None
     for container in tuple(old._containers):  # noqa: SLF001
         if container is previous:
             continue
-        key = slot_local_key(old, container)
-        assert key is not None
-        for refs in (container._refs, container._index[key]):  # noqa: SLF001
-            at = _ordered_index(refs, old._order)  # noqa: SLF001
-            assert refs[at] is old
-            refs[at] = header
+        refs = container._refs  # noqa: SLF001
+        at = _ordered_index(refs, old._order)  # noqa: SLF001
+        assert refs[at] is old
+        refs[at] = header
         _unfile_container(old, container)
         header._containers.append(container)  # noqa: SLF001
 
@@ -3430,7 +3424,7 @@ def _binding_run_neighbours(
 ) -> tuple[Slot | None, Slot | None]:
     """Return the slots immediately outside ``parent[key]``'s first physical run.
 
-    Slots in the run can be absent from ``parent._index[key]`` when a
+    Slots in the run can be absent from ``parent._refs`` when a
     dotted KV is hosted below ``parent``, so both boundaries are found
     by path rather than by treating the first indexed ref as the run head.
     """
@@ -3453,7 +3447,7 @@ def _binding_run_neighbours(
 
 def _binding_primary_slot(parent: Container, key: str) -> Slot:
     """Return a binding's direct slot, or its first descendant when implicit."""
-    refs = parent._index.get(key)  # noqa: SLF001
+    refs = sorted(binding_refs(parent, key), key=_slot_order)
     assert refs, "bound key must have refs"
     path = (*parent._path, key)  # noqa: SLF001
     return next(

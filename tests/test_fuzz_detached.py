@@ -434,7 +434,7 @@ def test_writing_to_a_popped_subtree_leaves_no_ref_behind() -> None:
     orphan["n"] = 1
 
     assert foreign_refs(doc) == []
-    assert "root" not in doc._index  # noqa: SLF001
+    check_view_caches(doc, "popped subtree mutation")
 
 
 def test_adopting_a_slotless_orphan_root_unbinds_it() -> None:
