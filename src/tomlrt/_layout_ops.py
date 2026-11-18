@@ -245,15 +245,8 @@ def _anchor_accepts_install(
     ``slots`` is the nonempty, ordered, contiguous run verified by
     `_installed_span`.
 
-    False either because the anchor is inside the block itself, or
-    because the move would change the block's TOML scope.
+    False if the move would change the block's TOML scope.
     """
-    if anchor is not None and anchor in slots:
-        # The reinstall took over the slot the anchor named — it can
-        # happen when the new value is a sibling that physically
-        # preceded the binding being replaced. "Sit after yourself" has
-        # no answer, so leave the block where the reinstall put it.
-        return False
     if not any(isinstance(s, StructuralHeaderSlot) for s in slots):
         return in_parent_body
 
