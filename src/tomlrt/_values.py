@@ -93,6 +93,10 @@ class ScalarValue(Generic[_ScalarT]):
     def render(self) -> str:
         return self.lexeme
 
+    def render_into(self, out: list[str]) -> None:
+        # Honor formatting hooks on lexeme subclasses.
+        out.append(f"{self.lexeme}")
+
     @property
     def is_shareable(self) -> bool:
         """Whether both fields are known to be transitively immutable.
@@ -262,8 +266,9 @@ class CommaItem:
             return f"{self.before},{self.after}{self.following}"
         return f"{self.before}{self.following}"
 
-    def render(self) -> str:
-        return f"{self.value.render()}{self.render_tail()}"
+    def render_into(self, out: list[str]) -> None:
+        self.value.render_into(out)
+        out.append(self.render_tail())
 
 
 class ArrayItem(CommaItem):
@@ -323,12 +328,13 @@ class InlineTableEntry(CommaItem):
         return new
 
     @override
-    def render(self) -> str:
-        return (
+    def render_into(self, out: list[str]) -> None:
+        out.append(
             f"{render_dotted(self.key_parts, self.key_seps)}"
             f"{self.pre_eq}={self.post_eq}"
-            f"{self.value.render()}{self.render_tail()}"
         )
+        self.value.render_into(out)
+        out.append(self.render_tail())
 
 
 _ItemT = TypeVar("_ItemT", bound=CommaItem)
@@ -376,8 +382,15 @@ class CommaValue(Generic[_ItemT]):
         return new
 
     def render(self) -> str:
-        body = "".join([item.render() for item in self.items])
-        return f"{self._open}{self.opening}{body}{self._close}"
+        out: list[str] = []
+        self.render_into(out)
+        return "".join(out)
+
+    def render_into(self, out: list[str]) -> None:
+        out.append(f"{self._open}{self.opening}")
+        for item in self.items:
+            item.render_into(out)
+        out.append(f"{self._close}")
 
     def is_multiline(self) -> bool:
         """Whether this value's own trivia contains a row break.

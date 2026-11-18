@@ -72,12 +72,7 @@ def _parsed(src: str) -> Callable[[], tuple[tuple[Document], dict[str, object]]]
     return setup
 
 
-# --- parse / render workflows (no per-round state) -------------------------
-
-
-def test_render_only_pyproject(benchmark: BenchmarkFixture, pyproject_src: str) -> None:
-    doc = tomlrt.loads(pyproject_src)
-    benchmark(tomlrt.dumps, doc)
+# --- document workflows and views (no per-round state) ---------------------
 
 
 @pytest.mark.parametrize("operation", ["copy", "export"])
