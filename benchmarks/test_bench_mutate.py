@@ -222,6 +222,21 @@ def test_attach_aot_factory(
     benchmark.pedantic(work, setup=setup, rounds=100)
 
 
+def test_reattach_whole_aot(benchmark: BenchmarkFixture) -> None:
+    src = _aot_doc(4000)
+
+    def setup() -> tuple[tuple[Document, tomlrt.AoT], dict[str, object]]:
+        source = tomlrt.loads(src)
+        rows = source.aot("items")
+        del source["items"]
+        return (tomlrt.Document(), rows), {}
+
+    def work(doc: Document, rows: tomlrt.AoT) -> None:
+        doc["rows"] = rows
+
+    benchmark.pedantic(work, setup=setup, rounds=20)
+
+
 def test_clone_implicit_with_empty_aot_entries(benchmark: BenchmarkFixture) -> None:
     source = tomlrt.loads(
         "source.marker = 0\n" + _aot_doc(1000).replace("[[items]]", "[[source.rows]]")

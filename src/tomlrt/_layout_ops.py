@@ -1643,6 +1643,9 @@ def attach_aot(parent: Container, key: str, source_aot: AoT) -> PromotedHeader |
     Populated sources receive their physical layout from their entries.
     The ``source_aot`` is rehomed in place (identity preserved).
     """
+    if source_aot._layout_root is not None:  # noqa: SLF001
+        assert not source_aot, "populated private AoTs move as whole blocks"
+        _release_private_binding(source_aot, owned_slots(source_aot))
     _bind_aot(parent, key, source_aot)
     if not source_aot:
         return _materialise_empty_aot(source_aot)
@@ -1835,14 +1838,14 @@ def populate_promoted_inline_entries(
         dict.__setitem__(leaf_parent, leaf, decoded)
 
 
-def _install_section_layout(
+def _install_headered_layout(
     parent: Container,
     slots: list[Slot],
     *,
     doc: Document,
     target_path: tuple[str, ...],
-    existing: Container | None = None,
-) -> Container:
+    existing: Container | AoT | None = None,
+) -> Container | AoT:
     """Install a destination-ready, header-bearing slot run.
 
     An adopted ``existing`` view is already rehomed and retains its refs.
@@ -1860,6 +1863,7 @@ def _install_section_layout(
         )
     _splice_block_after(slots, _child_header_anchor(parent), doc)
     if existing is None:
+        assert isinstance(section, _container.Container)
         _populate_entry_views(
             entry_table=section,
             cloned_slots=slots,
@@ -2040,7 +2044,6 @@ def clone_section(
     """
     doc = parent._attached_doc  # noqa: SLF001
     target_path = (*parent._path, key)  # noqa: SLF001
-    # Snapshot membership before destination-key spelling can run user code.
     src_slots = owned_slots(source)
     source_header = source._header  # noqa: SLF001
     header = (
@@ -2069,31 +2072,16 @@ def clone_section(
         first = cloned_slots[0]
         assert isinstance(first, StructuralHeaderSlot)
         _retarget_separator(first, _build_section_leading(doc))
-    section = _install_section_layout(
+    section = _install_headered_layout(
         parent,
         cloned_slots,
         doc=doc,
         target_path=target_path,
     )
+    assert isinstance(section, _container.Container)
     _maybe_demote_synthetic_empty_header(parent)
     dict.__setitem__(parent, key, section)
     return section
-
-
-def detach_aot_from_orphan(value: AoT) -> None:
-    """Release a detached AoT's entries as independent roots for installation."""
-    if value._layout_root is None:  # noqa: SLF001
-        return
-    slots: list[Slot]
-    if value:
-        _orphan_aot_entries(value, list(value))
-        slots = []
-    else:
-        slot = _empty_aot_placeholder_slot(value)
-        assert slot is not None, "an attached empty AoT renders as `k = []`"
-        slots = [slot]
-    _release_private_binding(value, slots)
-    value._unbind_from_document()  # noqa: SLF001
 
 
 def _release_private_binding(value: Container | AoT, slots: list[Slot]) -> None:
@@ -2120,19 +2108,18 @@ def _release_private_binding(value: Container | AoT, slots: list[Slot]) -> None:
     value._host = None  # noqa: SLF001
 
 
-def adopt_private_section(
+def adopt_private_block(
     dest_parent: Container,
     key: str,
-    value: Container,
-) -> Container:
-    """Rehome a private-orphan section under ``dest_parent[key]`` in place.
+    value: Container | AoT,
+) -> Container | AoT:
+    """Rehome a detached header-bearing block under ``dest_parent[key]``.
 
     Moves and rebases the existing slot/view subtree, preserving identity
     and trivia. An AoT-entry orphan becomes a plain section; slots owned
     by its stale entry are transferred to the destination's entry.
 
-    Pre-condition (checked by the caller): ``value`` is a header-bearing
-    section attached to a private orphan with intact slots.
+    The source is a section with a header or a populated AoT.
     """
     doc = dest_parent._attached_doc  # noqa: SLF001
     new_prefix = (*dest_parent._path, key)  # noqa: SLF001
@@ -2147,7 +2134,7 @@ def adopt_private_section(
     first = slots[0]
     assert isinstance(first, StructuralHeaderSlot)
     _retarget_separator(first, _build_section_leading(doc))
-    _install_section_layout(
+    _install_headered_layout(
         dest_parent,
         slots,
         doc=doc,
@@ -2160,7 +2147,7 @@ def adopt_private_section(
 
 
 def _move_private_subtree(
-    value: Container,
+    value: Container | AoT,
     dest_host: Container | AoT,
     new_prefix: tuple[str, ...],
     *,
@@ -2170,7 +2157,9 @@ def _move_private_subtree(
     """Detach and rebase private layout, leaving publication to the caller."""
     doc = dest_host._attached_doc  # noqa: SLF001
     old_prefix = value._path  # noqa: SLF001
-    stale_owner = value._owner_aot_entry  # noqa: SLF001
+    stale_owner = (
+        value._owner_aot_entry if isinstance(value, _container.Container) else None  # noqa: SLF001
+    )
     slots = owned_slots(value)
     _release_private_binding(value, slots)
     if host_path is None:
@@ -2196,7 +2185,7 @@ def _move_private_subtree(
 
 
 def _rehome_view_tree(
-    root: Container,
+    root: Container | AoT,
     dest_host: Container | AoT,
     new_prefix: tuple[str, ...],
     doc: Document,
@@ -2211,7 +2200,11 @@ def _rehome_view_tree(
     entry; nested AoT entries retain their own owners. Array elements
     start relative paths, even when their keys resemble the moved section.
     """
-    root._host = dest_host  # noqa: SLF001
+    if isinstance(root, _array.AoT):
+        assert isinstance(dest_host, _container.Container)
+        root._host = dest_host  # noqa: SLF001
+    else:
+        root._host = dest_host  # noqa: SLF001
     root._path = new_prefix  # noqa: SLF001
     for node in _walk_views((root,)):
         # Narrows for the assignments below; `_View` has no other subclass.

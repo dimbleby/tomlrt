@@ -123,8 +123,7 @@ them. Read roughly in this order:
   rather than silently fall back to `dict` / `list` copying, which
   would drag the whole source document along. It imports nothing, so a
   traversal in `_layout_ops` can recognise and walk a view without a
-  deferred import of the three concrete classes. `_unbind_from_document`
-  is **not** here — only `AoT` needs it.
+  deferred import of the three concrete classes.
 - **`_paths.py`** — key-path argument parsing and validation
   (the `t["a", "b"]` / `t[("a", "b")]` shapes used by the public
   API).
@@ -228,11 +227,11 @@ them. Read roughly in this order:
 - **`_layout_ops.py`** — section-side mutation primitives: insert
   / delete / sort on the doc-stream linked list; `_index` and `_refs`
   bookkeeping; KV / section / AoT-entry append; subtree rehome.
-  Header-bearing section copies and private moves prepare their slot
-  runs separately, then share `_install_section_layout`: one destination
-  splice, building copied views afterward while retaining adopted views
-  and refs. Dictionary binding and parent-header demotion stay in the
-  callers to preserve their callback-visible order.
+  Header-bearing section copies and private section / whole-AoT moves
+  prepare their slot runs separately, then share `_install_headered_layout`:
+  one destination splice, building copied views afterward while retaining
+  adopted views and refs. Dictionary binding and parent-header demotion
+  stay in the callers to preserve their callback-visible order.
   `reposition_install` gathers the completed replacement's owned slots once,
   then restores its position when its footprint is contiguous and scope-safe.
   Direct KV replacements use the saved body anchor on their first splice,
@@ -427,9 +426,9 @@ wrong.
   view's storage.
   Source protection can therefore capture a materialized subtree's root once;
   plain wrappers and rootless factories are still walked for borrowed views.
-  Whole-AoT transfers clear entry hosts after bulk ancestor scrubbing;
-  source roots and slots remain available until each entry is adopted.
-  The enclosing transfer repairs the old parent after each adoption.
+  Detached whole AoTs move through the same header-bearing block installer
+  as sections, retaining entry hosts and ownership tokens without creating
+  intermediate private documents.
 - **Comma-value boundaries** live in exactly one predecessor record (or
   in `opening` at the head). Its `before`,
   `after`, and `following` channels retain the raw comma location. EOL
