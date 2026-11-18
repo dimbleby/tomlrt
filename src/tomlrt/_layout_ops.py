@@ -2097,17 +2097,17 @@ def detach_aot_from_orphan(value: AoT) -> None:
         slot = _empty_aot_placeholder_slot(value)
         assert slot is not None, "an attached empty AoT renders as `k = []`"
         slots = [slot]
-        _detach_from_source_doc(value, slots)
     _release_private_binding(value, slots)
     value._unbind_from_document()  # noqa: SLF001
 
 
 def _release_private_binding(value: Container | AoT, slots: list[Slot]) -> None:
-    """Remove a detached root's synthetic holder binding and ancestor refs."""
+    """Discard a detached root's holder, retaining only subtree back-pointers."""
     root = value._layout_root  # noqa: SLF001
     assert root is not None
     assert root._detached_root is value  # noqa: SLF001
     root._detached_root = None  # noqa: SLF001
+    root._head = root._tail = None  # noqa: SLF001
     parent = value._host  # noqa: SLF001
     assert isinstance(parent, _container.Container)
     dict.__delitem__(parent, value._path[-1])  # noqa: SLF001
@@ -2115,14 +2115,13 @@ def _release_private_binding(value: Container | AoT, slots: list[Slot]) -> None:
     node: Container | None = parent
     while node is not None:
         stale_ids.add(id(node))
+        node._refs.clear()  # noqa: SLF001
+        node._index.clear()  # noqa: SLF001
+        node._body_tail = None  # noqa: SLF001
         node = node._parent  # noqa: SLF001
-    retained = frozenset(
-        id(c)
-        for slot in slots
-        for c in slot._containers  # noqa: SLF001
-        if id(c) not in stale_ids
-    )
-    _scrub_owned_slots_via_backptrs(slots, skip_container_ids=retained)
+    for slot in slots:
+        containers = slot._containers  # noqa: SLF001
+        containers[:] = [c for c in containers if id(c) not in stale_ids]
     value._host = None  # noqa: SLF001
 
 
@@ -2178,7 +2177,6 @@ def _move_private_subtree(
     old_prefix = value._path  # noqa: SLF001
     stale_owner = value._owner_aot_entry  # noqa: SLF001
     slots = owned_slots(value)
-    _detach_from_source_doc(value, slots)
     _release_private_binding(value, slots)
     if host_path is None:
         host_path = new_prefix
@@ -2239,23 +2237,6 @@ def _rehome_view_tree(
                 and node._owner_aot_entry is stale_owner  # noqa: SLF001
             ):
                 node._owner_aot_entry = new_owner  # noqa: SLF001
-
-
-def _detach_from_source_doc(value: Container | AoT, slots: list[Slot]) -> None:
-    """Unlink ``slots`` from the private orphan they currently live in.
-
-    The adopt paths splice the block into the destination document, which
-    rewrites each slot's own links but leaves the orphan's surviving
-    neighbours pointing at it. That cross-links the two documents, so a
-    later walk of the orphan wanders into the destination — and any
-    subsequent adopt of a remaining orphan branch collects slots it can no
-    longer reach. Leading trivia is preserved: the orphan is scratch space
-    and the destination sets the new block's separator itself.
-    """
-    src_doc = value._layout_root  # noqa: SLF001
-    assert src_doc is not None, "private orphan section must be attached"
-    for s in reversed(slots):
-        unlink_slot(s, src_doc, strip_new_head_leading=False)
 
 
 def adopt_private_implicit(
