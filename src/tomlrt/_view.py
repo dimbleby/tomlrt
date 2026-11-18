@@ -44,16 +44,6 @@ class _View:
     """
 
     @property
-    def _attached(self) -> bool:
-        """True iff this view is wired to a user-visible document.
-
-        Attached means the layout root is a real document: not ``None``
-        (factory mode) and not a private orphan root.
-        """
-        lr = self._layout_root
-        return lr is not None and not lr._is_private  # noqa: SLF001
-
-    @property
     def _attached_doc(self) -> Document:
         """The backing document, including private orphan roots.
 

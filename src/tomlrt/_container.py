@@ -1321,7 +1321,6 @@ class Document(Container):
     __slots__ = (
         "_detached_root",
         "_head",
-        "_is_private",
         "_newline",
         "_preamble",
         "_protected_source_roots",
@@ -1353,7 +1352,6 @@ class Document(Container):
         self._trailing: str = ""
         self._preamble: str = ""
         self._newline: str = DEFAULT_NEWLINE
-        self._is_private: bool = False
         self._detached_root: Container | AoT | None = None
         self._protected_source_roots: dict[int, Document] | None = None
         self._section_blank_separated = True
@@ -1471,7 +1469,6 @@ def _detached_inline_value(v: Container | Array) -> Value | None:
 def _clone_private_layout(value: Container | AoT) -> Table | AoT:
     """Copy structural layout into a private holder without taking its source."""
     holder = Document()
-    holder._is_private = True  # noqa: SLF001
     holder._newline = value._doc_newline  # noqa: SLF001
     with _sources_kept_intact(holder, (value,)):
         holder._setitem_validated("", value)  # noqa: SLF001
@@ -1594,7 +1591,7 @@ def _collect_private_roots(value: object, found: dict[int, Document]) -> None:
     if isinstance(value, _View):
         root = value._layout_root  # noqa: SLF001
         if root is not None:
-            if root._is_private:  # noqa: SLF001
+            if root._detached_root is not None:  # noqa: SLF001
                 found[id(root)] = root
             return
     if isinstance(value, Mapping):

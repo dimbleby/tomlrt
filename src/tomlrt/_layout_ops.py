@@ -1070,7 +1070,6 @@ def _transplant_to_orphan(
     """
     orphan = _container.Document()
     orphan._newline = nl  # noqa: SLF001
-    orphan._is_private = True  # noqa: SLF001
     orphan._detached_root = val  # noqa: SLF001
     _link_run_between(None, slots, None, orphan)
     for view in views:
@@ -2552,7 +2551,6 @@ def _populate_entry_views(
 def materialise_section(source: Table, *, preserve_header: bool) -> None:
     """Give a validated section factory private layout until its first attachment."""
     holder = _container.Document()
-    holder._is_private = True  # noqa: SLF001
     attach_section_at(holder, ("",), source, preserve_header=preserve_header)
     holder._detached_root = source  # noqa: SLF001
 

@@ -5652,8 +5652,6 @@ def test_reassign_orphan_section_repoints_array_nested_views() -> None:
     doc["a"] = held
     assert doc["a"]["arr"][0] is item
     assert doc["a"]["arr"][1] is nested
-    assert item._attached  # re-pointed to the live doc, not the orphan  # noqa: SLF001
-    assert nested._attached  # noqa: SLF001
     item["x"] = 7
     nested.append(30)
     assert _reparses(tomlrt.dumps(doc)) == {"a": {"arr": [{"x": 7}, [10, 20, 30]]}}
