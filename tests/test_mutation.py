@@ -6880,9 +6880,8 @@ def test_aot_append_with_no_sibling_indent_stays_flush() -> None:
         """)
 
 
-def test_aot_append_skips_structural_only_sibling_when_inheriting_indent() -> None:
-    """A new entry's first KV inherits indent from the nearest earlier
-    sibling that actually has a direct KV."""
+def test_aot_body_indent_does_not_skip_structural_only_neighbor() -> None:
+    """A distant entry does not set the indentation across an empty body."""
     src = td("""
         [[t]]
             z = 0
@@ -6905,7 +6904,7 @@ def test_aot_append_skips_structural_only_sibling_when_inheriting_indent() -> No
         x = 1
 
         [[t]]
-            y = 2
+        y = 2
         """)
     assert _reparses(out) == doc.to_dict()
 
