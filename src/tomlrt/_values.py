@@ -189,7 +189,7 @@ del _c
 
 def quote_basic_key(s: str) -> str:
     """Encode ``s`` as a basic-quoted TOML key (escaping where required)."""
-    return f'"{s.translate(_KEY_ESCAPES)}"'
+    return f'"{str.translate(s, _KEY_ESCAPES)}"'
 
 
 _RE_BARE_KEY_FULL = re.compile(r"\A[A-Za-z0-9_\-]+\Z")
