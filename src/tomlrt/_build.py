@@ -201,7 +201,7 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
 
     Refs propagate **only** along the slot's logical path starting at
     the host container, not from the document root. A KV under ``[a]``
-    contributes to ``a._index["x"]``, not ``doc._index["a"]``.
+    contributes to ``a._refs``, not ``doc._refs``.
 
     ``host`` is the pre-resolved container for ``slot.host_path``,
     threaded from the most recent header; decoded value attachment
