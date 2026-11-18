@@ -1134,28 +1134,23 @@ def _last_body_kv(c: Container) -> KVSlot | None:
 
 
 def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
-    """Prefer a preceding AoT sibling's body, then the nearest following one.
-
-    Used to inherit indent when ``c`` is an AoT entry root with no body
-    KV of its own yet. The entry is already published in its AoT.
-    """
+    """Sample the immediately preceding entry's body, then the following one."""
     aot = c._host  # noqa: SLF001
     if not isinstance(aot, _array.AoT):
         return None
-    siblings = reversed(aot)
-    while next(siblings) is not c:
-        pass
-    for entry_table in siblings:
-        sib = _last_body_kv(entry_table)
-        if sib is not None:
-            return sib
-    following = iter(aot)
-    while next(following) is not c:
-        pass
-    for entry_table in following:
-        sib = _last_body_kv(entry_table)
-        if sib is not None:
-            return sib
+    header = c._header  # noqa: SLF001
+    assert header is not None
+    index = bisect.bisect_left(
+        aot,
+        header._order,  # noqa: SLF001
+        key=operator.attrgetter("_header._order"),
+    )
+    assert aot[index] is c
+    for neighbor in (index - 1, index + 1):
+        if 0 <= neighbor < len(aot):
+            slot = _last_body_kv(aot[neighbor])
+            if slot is not None:
+                return slot
     return None
 
 
@@ -1195,14 +1190,16 @@ def _kv_separator_leading(c: Container, doc: Document) -> str:
     The new slot lands straight after ``c``'s body tail, so that KV is
     the peer whose indent and blank-gap it continues — the same
     question `install_dotted_kv_slot` asks, and neither cares whether
-    the peer is dotted. For an AoT entry with no body KV of its own
-    yet, falls back to inheriting indent (only) from a sibling entry.
+    the peer is dotted. An empty body samples its adjacent AoT entries,
+    falling back to its own header's indentation.
     """
     last = _last_body_kv(c)
     if last is not None:
         return _kv_leading_after(last, doc)
-    sibling = _aot_sibling_last_kv(c)
-    fallback = trailing_ws(sibling.leading) if sibling is not None else ""
+    peer: Slot | None = _aot_sibling_last_kv(c)
+    if peer is None:
+        peer = c._header  # noqa: SLF001
+    fallback = trailing_ws(peer.leading) if peer is not None else ""
     return _kv_leading_after(None, doc, fallback_indent=fallback)
 
 

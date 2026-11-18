@@ -118,6 +118,9 @@ entry["version"] = "1.0"
 An array-of-tables with no entries has no `[[key]]` syntax, so it serialises as
 `key = []` — which re-parses as an empty inline `Array`, not an `AoT`.
 
+The first key in an empty table borrows body indentation from an adjacent
+AoT entry, preferring the preceding one, or falls back to its own header.
+
 ## Reshaping the layout
 
 See [Layout](layout.md) to sort keys, change table and array layout, or format

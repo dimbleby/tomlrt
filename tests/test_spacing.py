@@ -319,6 +319,33 @@ def test_aot_entry_inherits_indent_from_dotted_sibling() -> None:
         """)
 
 
+def test_aot_empty_body_uses_header_indent_past_an_empty_neighbor() -> None:
+    doc = tomlrt.loads(
+        td("""
+        version = 1
+
+          [[items]]
+
+          [[items]]
+
+          [[items]]
+            x = 1
+        """)
+    )
+    doc.aot("items")[0]["x"] = 2
+    assert tomlrt.dumps(doc) == td("""
+        version = 1
+
+          [[items]]
+          x = 2
+
+          [[items]]
+
+          [[items]]
+            x = 1
+        """)
+
+
 def test_aot_append_and_extend_inherit_header_indent() -> None:
     doc = tomlrt.loads(
         td("""

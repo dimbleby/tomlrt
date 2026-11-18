@@ -167,6 +167,18 @@ def test_clear_aot_before_sections(benchmark: BenchmarkFixture, size: int) -> No
     benchmark.pedantic(work, setup=_parsed(src), rounds=10)
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_populate_empty_aot_entries(
+    benchmark: BenchmarkFixture, *, reverse: bool
+) -> None:
+    def work(doc: Document) -> None:
+        entries = doc.aot("items")
+        for entry in reversed(entries) if reverse else entries:
+            entry["x"] = 1
+
+    benchmark.pedantic(work, setup=_parsed("[[items]]\n" * 4000), rounds=15)
+
+
 def test_replace_aot_slice(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         doc.aot("items")[150:350] = (
