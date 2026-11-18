@@ -1756,7 +1756,6 @@ def add_aot_entry(
     aot: AoT,
     body: Mapping[str, TomlInput] | None,
     *,
-    preserve_source_separator: bool = False,
     index: int | None = None,
     capture: _SourceCapture | None = None,
 ) -> Table:
@@ -1765,7 +1764,6 @@ def add_aot_entry(
         aot,
         ({} if body is None else body,),
         index=index,
-        preserve_source_separator=preserve_source_separator,
         capture=capture,
     )
     return aot[-1 if index is None else index]
@@ -1776,7 +1774,6 @@ def insert_aot_entries(
     bodies: Sequence[Mapping[str, TomlInput]],
     *,
     index: int | None = None,
-    preserve_source_separator: bool = False,
     capture: _SourceCapture | None = None,
 ) -> None:
     """Capture all entry sources before publishing any new occurrences."""
@@ -1786,7 +1783,6 @@ def insert_aot_entries(
         _install_entry(
             aot,
             entry,
-            preserve_source_separator=preserve_source_separator,
             index=None if index is None else index + offset,
         )
         _populate_prepared_entry(entry, capture)
@@ -1847,42 +1843,6 @@ def populate_promoted_inline_entries(
                 key_seps=source.key_seps,
             )
         dict.__setitem__(leaf_parent, leaf, decoded)
-
-
-def _install_headered_layout(
-    parent: Container,
-    slots: list[Slot],
-    *,
-    doc: Document,
-    target_path: tuple[str, ...],
-    existing: Container | AoT | None = None,
-) -> Container | AoT:
-    """Install a destination-ready, header-bearing slot run.
-
-    An adopted ``existing`` view is already rehomed and retains its refs.
-    Copies acquire fresh views after linking, when slots have order keys.
-    The section's own header may follow forward-declared descendants.
-    """
-    section = existing
-    if section is None:
-        section = _container.Table.section()
-        section._wire(  # noqa: SLF001
-            layout_root=doc,
-            path=target_path,
-            parent=parent,
-            owner=parent._owner_aot_entry,  # noqa: SLF001
-        )
-    _splice_block_after(slots, _child_header_anchor(parent), doc)
-    if existing is None:
-        assert isinstance(section, _container.Container)
-        _populate_entry_views(
-            entry_table=section,
-            cloned_slots=slots,
-            target_prefix=target_path,
-            doc=doc,
-        )
-    _extend_header_bindings_to_root(parent, slots)
-    return section
 
 
 def clone_graft_slots(
@@ -2042,57 +2002,46 @@ def extract_subtree_slots(src_table: Container) -> tuple[list[Slot], str]:
     return cloned, promoted
 
 
-def clone_section(
+def clone_headered_layout(
     parent: Container,
     key: str,
-    source: Container,
-) -> Container:
-    """Clone a header-bearing table or document under ``parent[key]``.
+    source: Container | AoT,
+) -> PromotedHeader | None:
+    """Clone a header-bearing section, document, or AoT under ``parent[key]``.
 
     A table keeps its physical order and spelling, with an AoT entry's
     own header normalised to a section. A document supplies its body,
     without its file envelope, beneath a fresh destination header.
     """
+    if isinstance(source, _array.AoT) and not source:
+        empty = _array.AoT()
+        _bind_aot(parent, key, empty)
+        dict.__setitem__(parent, key, empty)
+        return _materialise_empty_aot(empty)
     doc = parent._attached_doc  # noqa: SLF001
     target_path = (*parent._path, key)  # noqa: SLF001
-    src_slots = owned_slots(source)
-    source_header = source._header  # noqa: SLF001
-    header = (
-        _new_section_header(
+    slots = clone_graft_slots(
+        source,
+        target_path=target_path,
+        host_path=target_path,
+        owner=parent._owner_aot_entry,  # noqa: SLF001
+        nl=doc._newline,  # noqa: SLF001
+    )
+    if isinstance(source, _container.Document):
+        header = _new_section_header(
             target_path,
-            leading=_build_section_leading(doc),
+            leading="",
             doc=doc,
             owner_aot_entry=parent._owner_aot_entry,  # noqa: SLF001
         )
-        if isinstance(source, _container.Document)
-        else None
-    )
-    cloned_slots, cloned_head = _clone_entry_slots(
-        src_slots,
-        new_entry=None,
-        body_owner=parent._owner_aot_entry,  # noqa: SLF001
-        src_prefix=source._path,  # noqa: SLF001
-        target_prefix=target_path,
-        dst_newline=doc._newline,  # noqa: SLF001
-        head=source_header,
-    )
-    if header is not None:
-        cloned_slots.insert(0, header)
-    else:
-        assert cloned_head is not None
-        first = cloned_slots[0]
-        assert isinstance(first, StructuralHeaderSlot)
-        _retarget_separator(first, _build_section_leading(doc))
-    section = _install_headered_layout(
-        parent,
-        cloned_slots,
-        doc=doc,
-        target_path=target_path,
-    )
-    assert isinstance(section, _container.Container)
+        slots.insert(0, header)
+    first = slots[0]
+    assert isinstance(first, StructuralHeaderSlot)
+    _retarget_separator(first, _build_section_leading(doc))
+    _splice_block_after(slots, _child_header_anchor(parent), doc)
+    _build_cloned_views(parent, slots)
     _maybe_demote_synthetic_empty_header(parent)
-    dict.__setitem__(parent, key, section)
-    return section
+    return None
 
 
 def _release_private_binding(value: Container | AoT, slots: list[Slot]) -> None:
@@ -2145,13 +2094,8 @@ def adopt_private_block(
     first = slots[0]
     assert isinstance(first, StructuralHeaderSlot)
     _retarget_separator(first, _build_section_leading(doc))
-    _install_headered_layout(
-        dest_parent,
-        slots,
-        doc=doc,
-        target_path=new_prefix,
-        existing=value,
-    )
+    _splice_block_after(slots, _child_header_anchor(dest_parent), doc)
+    _extend_header_bindings_to_root(dest_parent, slots)
     dict.__setitem__(dest_parent, key, value)
     _maybe_demote_synthetic_empty_header(dest_parent)
     return value
@@ -2300,15 +2244,7 @@ def clone_implicit_section(
         nl=doc._newline,  # noqa: SLF001
     )
     slots = _splice_implicit_run(dest_parent, host, slots)
-    _populate_entry_views(
-        entry_table=host,
-        cloned_slots=slots,
-        target_prefix=host._path,  # noqa: SLF001
-        doc=doc,
-    )
-    # The builder files through its root; only ancestors above it remain.
-    if host._parent is not None:  # noqa: SLF001
-        _extend_header_bindings_to_root(host._parent, slots)  # noqa: SLF001
+    _build_cloned_views(host, slots)
     result = dict.__getitem__(dest_parent, key)
     assert isinstance(result, _container.Container)
     return result
@@ -2406,30 +2342,6 @@ def _rebase_slot(
     )
 
 
-def clone_aot(
-    parent: Container,
-    key: str,
-    src_aot: AoT,
-) -> PromotedHeader | None:
-    """Install ``src_aot`` (an attached AoT) under ``parent[key]``.
-
-    Each entry is deep-cloned with path-rebasing so any nested
-    sub-sections stay logically inside the new key.
-    """
-    new_aot = _array.AoT()
-    _bind_aot(parent, key, new_aot)
-    dict.__setitem__(parent, key, new_aot)
-    for src_entry_table in list(src_aot):
-        add_aot_entry(
-            new_aot,
-            src_entry_table,
-            preserve_source_separator=True,
-        )
-    if len(new_aot) == 0:
-        return _materialise_empty_aot(new_aot)
-    return None
-
-
 def _clone_entry_slots(
     src_slots: list[Slot],
     *,
@@ -2457,7 +2369,7 @@ def _clone_entry_slots(
 
     Nested aot-entry headers inside the body keep their AoT shape: a
     fresh `AoTEntry` is allocated per unique source entry, and cloned
-    slots repointed to it, so ``_populate_entry_views`` can rebuild the
+    slots repointed to it, so ``_build_cloned_views`` can rebuild the
     AoT view. Without this, cross-doc whole-section copy would downgrade
     a nested ``[[a.x]]`` to a duplicated ``[a.x]`` (issue #108).
 
@@ -2508,14 +2420,8 @@ def _clone_entry_slots(
     return cloned, cloned_head
 
 
-def _populate_entry_views(
-    *,
-    entry_table: Container,
-    cloned_slots: list[Slot],
-    target_prefix: tuple[str, ...],
-    doc: Document,
-) -> None:
-    """Build child views from a cloned subtree's non-root slots.
+def _build_cloned_views(root: Container, slots: list[Slot]) -> None:
+    """Build cloned views and file headers through the document root.
 
     The same root-relative slot builder handles initial parses and cloned
     structural blocks, so path creation, AoT descent, ref filing, and value
@@ -2523,9 +2429,9 @@ def _populate_entry_views(
     """
     from tomlrt._build import _build_containers  # noqa: PLC0415
 
-    assert entry_table._path == target_prefix  # noqa: SLF001
-    assert entry_table._layout_root is doc  # noqa: SLF001
-    _build_containers(entry_table, cloned_slots)
+    _build_containers(root, slots)
+    if root._parent is not None:  # noqa: SLF001
+        _extend_header_bindings_to_root(root._parent, slots)  # noqa: SLF001
 
 
 def materialise_section(source: Table, *, preserve_header: bool) -> None:
@@ -3056,15 +2962,12 @@ def _insert_entry_header(
     aot: AoT,
     header: StructuralHeaderSlot,
     *,
-    preserve_source_separator: bool,
     index: int | None = None,
 ) -> None:
     """Splice a new entry's header at its logical position.
 
-    Appending a bulk clone may keep its source separators, but the first
-    entry always takes the destination's own section spacing: it is the
-    one being positioned, not spaced from a predecessor. Positional
-    insertion uses the destination seam regardless of source spacing.
+    The first entry takes the destination's section spacing. Later
+    entries and positional insertions use their local AoT seam.
     """
     doc = aot._attached_doc  # noqa: SLF001
     length = len(aot)
@@ -3081,7 +2984,7 @@ def _insert_entry_header(
     else:
         if ordinal == 0:
             _retarget_separator(header, _build_section_leading(doc))
-        elif not preserve_source_separator:
+        else:
             _retarget_separator(header, _aot_separator(aot, doc))
         predecessor = _aot_append_anchor(aot) or doc._tail  # noqa: SLF001
         target = predecessor._next if predecessor is not None else doc._head  # noqa: SLF001
@@ -3092,7 +2995,6 @@ def _install_entry(
     aot: AoT,
     prepared: _PreparedEntry,
     *,
-    preserve_source_separator: bool = False,
     index: int | None = None,
     previous: Table | None = None,
 ) -> None:
@@ -3127,7 +3029,6 @@ def _install_entry(
         _insert_entry_header(
             aot,
             header,
-            preserve_source_separator=preserve_source_separator,
             index=index,
         )
     else:
@@ -3163,15 +3064,7 @@ def _populate_prepared_entry(prepared: _PreparedEntry, capture: _SourceCapture) 
         header = prepared.owner.header
         doc = table._attached_doc  # noqa: SLF001
         _splice_block_after(prepared.body, header, doc)
-        _populate_entry_views(
-            entry_table=table,
-            cloned_slots=prepared.body,
-            target_prefix=table._path,  # noqa: SLF001
-            doc=doc,
-        )
-        parent = table._parent  # noqa: SLF001
-        assert parent is not None
-        _extend_header_bindings_to_root(parent, prepared.body)
+        _build_cloned_views(table, prepared.body)
 
 
 def _replace_entry_header(previous: Table, header: StructuralHeaderSlot) -> None:

@@ -226,11 +226,11 @@ them. Read roughly in this order:
 - **`_layout_ops.py`** — section-side mutation primitives: insert
   / delete / sort on the doc-stream linked list; `_bindings` and `_refs`
   bookkeeping; KV / section / AoT-entry append; subtree rehome.
-  Header-bearing section copies and private section / whole-AoT moves
-  prepare their slot runs separately, then share `_install_headered_layout`:
-  one destination splice, building copied views afterward while retaining
-  adopted views and refs. Dictionary binding and parent-header demotion
-  stay in the callers to preserve their callback-visible order.
+  Header-bearing sections and whole AoTs share `clone_headered_layout`:
+  clone the whole slot run, splice once, then build beneath the destination
+  parent. `_build_cloned_views` also serves implicit-section and entry copies,
+  filing headers above the builder's root. Private section / whole-AoT moves
+  retain their views and refs rather than rebuilding them.
   `reposition_install` gathers the completed replacement's owned slots once,
   then restores its position when its footprint is contiguous and scope-safe.
   Direct KV replacements use the saved body anchor on their first splice,

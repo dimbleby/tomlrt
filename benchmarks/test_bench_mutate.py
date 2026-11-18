@@ -143,6 +143,15 @@ def test_clone_large_aot_entry(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_large_aot_entry(500)), rounds=50)
 
 
+def test_clone_whole_aot(benchmark: BenchmarkFixture) -> None:
+    source = tomlrt.loads(_aot_doc(4_000)).aot("items")
+
+    def work(doc: Document) -> None:
+        doc["copy"] = source
+
+    benchmark.pedantic(work, setup=_parsed(""), rounds=20)
+
+
 @pytest.mark.parametrize("trailing_kvs", [0, 10_000])
 def test_clone_forward_declared_table(
     benchmark: BenchmarkFixture, trailing_kvs: int

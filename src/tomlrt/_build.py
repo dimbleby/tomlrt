@@ -44,22 +44,13 @@ def _build_containers(root: Container, slots: list[Slot]) -> None:
     ``slot.host_path`` equals the most recent header path (or the
     supplied root's path for a cloned subtree).
 
-    A header whose path equals ``root``'s own can appear mid-body
-    rather than as ``slots[0]`` (see :func:`tomlrt._layout_ops.owned_slots`
-    for why); it cannot be reopened via ``_apply_header`` (``root`` is
-    already wired, not a fresh child to create/find), so it is handled
-    as a pure host-context reset back to ``root``.
+    Structural slots introduce descendants of ``root``; its own header,
+    if any, is already filed.
     """
     current_host = root
     for slot in slots:
         if isinstance(slot, StructuralHeaderSlot):
-            path = slot.key_path
-            if path == root._path:  # noqa: SLF001
-                assert root._header is None  # noqa: SLF001
-                file_own_header(root, slot)
-                current_host = root
-            else:
-                current_host = _apply_header(root, slot, path)
+            current_host = _apply_header(root, slot, slot.key_path)
         else:
             assert isinstance(slot, KVSlot)
             assert slot.host_path == current_host._path, (  # noqa: SLF001

@@ -646,9 +646,9 @@ class Container(_View, dict[str, Any]):
         snapshot = _snapshot_for_overlapping_install(self, key, value)
         if snapshot is not value:
             assert isinstance(snapshot, AoT)
-            return _layout_ops.clone_aot(self, key, snapshot)
+            return _layout_ops.clone_headered_layout(self, key, snapshot)
         if not _can_adopt(value, self._attached_doc):
-            return _layout_ops.clone_aot(self, key, value)
+            return _layout_ops.clone_headered_layout(self, key, value)
         if value._layout_root is not None and value:  # noqa: SLF001
             _layout_ops.adopt_private_block(self, key, value)
             return None
@@ -685,7 +685,7 @@ class Container(_View, dict[str, Any]):
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
         elif value._header is not None or isinstance(value, Document):
-            _layout_ops.clone_section(self, key, value)
+            _layout_ops.clone_headered_layout(self, key, value)
         else:
             _layout_ops.clone_implicit_section(self, key, value)
 
