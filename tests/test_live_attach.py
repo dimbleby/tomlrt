@@ -861,6 +861,57 @@ def test_detached_aot_reattaches_live() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("src", "expected"),
+    [
+        (
+            td("""
+            [[old]]
+            x = 1
+            """),
+            td("""
+            [["new rows"]]
+            x = 1
+            """),
+        ),
+        (
+            td("""
+            [old]
+            x = 1
+            """),
+            td("""
+            ["new rows"]
+            x = 1
+            """),
+        ),
+        (
+            "old.x = 1\n",
+            td("""
+            "new rows".x = 1
+            """),
+        ),
+    ],
+)
+def test_key_encoding_uses_string_contents(src: str, expected: str) -> None:
+    source = tomlrt.loads(src)
+    value = source.pop("old")
+    assert isinstance(value, (Table, AoT))
+
+    class Key(str):
+        __slots__ = ()
+
+        @override
+        def translate(self, table: Any) -> str:
+            return "different key"
+
+    dest = Document()
+    dest[Key("new rows")] = value
+    assert dest["new rows"] is value
+    assert tomlrt.dumps(dest) == expected
+    assert _reparses(expected) == dest.to_dict()
+    assert tomlrt.dumps(source) == ""
+
+
 def test_private_ancestor_aot_is_copied_before_nested_install() -> None:
     source = tomlrt.loads("[[items]]\nx = 1\n")
     items = source.pop("items")

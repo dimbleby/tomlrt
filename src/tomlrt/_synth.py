@@ -296,7 +296,6 @@ def _plan(
             continue
         else:
             value = _inline_value(raw, nl, scalar_memo, key=key)
-        # Key spelling stays in emission: it can invoke str-subclass hooks.
         plan.add_value(KVSlot("", owner, nl, path, (), (), (key,), " ", " ", value))
     return plan
 
