@@ -428,12 +428,23 @@ def test_build_section_1000_new_keys(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed("[t]\n"), rounds=100)
 
 
-def test_delete_root_kvs_tail_first(benchmark: BenchmarkFixture) -> None:
-    """Delete the root body backwards, under a pile of section headers.
+@pytest.mark.parametrize("size", [2_000, 32_000])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_delete_section_keys(
+    benchmark: BenchmarkFixture, size: int, *, reverse: bool
+) -> None:
+    def work(doc: Document) -> None:
+        section = doc.table("t")
+        indices = range(size)
+        for i in reversed(indices) if reverse else indices:
+            del section[f"k{i}"]
 
-    Every deletion changes the body anchor. The document root also
-    holds a ref per section header, and those sit past the body.
-    """
+    src = "[t]\n" + "".join(f"k{i} = {i}\n" for i in range(size))
+    benchmark.pedantic(work, setup=_parsed(src), rounds=10)
+
+
+def test_delete_root_kvs_tail_first(benchmark: BenchmarkFixture) -> None:
+    """Repair the body's tail without walking the later sections."""
 
     def work(doc: Document) -> None:
         for i in reversed(range(1_000)):
@@ -446,7 +457,29 @@ def test_delete_root_kvs_tail_first(benchmark: BenchmarkFixture) -> None:
 # --- sorting ---------------------------------------------------------------
 
 
-def test_sort_nested_sections(benchmark: BenchmarkFixture) -> None:
+@pytest.mark.parametrize("layout", ["headered", "dotted"])
+@pytest.mark.parametrize("size", [500, 2_000])
+def test_delete_last_body_key(
+    benchmark: BenchmarkFixture, layout: str, size: int
+) -> None:
+    if layout == "headered":
+        src = "".join(f"[s{i}]\nx = 1\n[s{i}.child]\ny = 1\n" for i in range(size))
+    else:
+        src = (
+            "".join(f"foreign{i} = {i}\n" for i in range(size))
+            + "".join(f"s{i}.x = 1\n" for i in range(size))
+            + "".join(f"[s{i}.child]\ny = 1\n" for i in range(size))
+        )
+
+    def work(doc: Document) -> None:
+        for i in range(size):
+            del doc.table(f"s{i}")["x"]
+
+    benchmark.pedantic(work, setup=_parsed(src), rounds=10)
+
+
+@pytest.mark.parametrize("size", [100, 400])
+def test_sort_nested_sections(benchmark: BenchmarkFixture, size: int) -> None:
     def work(doc: Document) -> None:
         for section in doc.values():
             assert isinstance(section, tomlrt.Table)
@@ -454,7 +487,7 @@ def test_sort_nested_sections(benchmark: BenchmarkFixture) -> None:
 
     src = "".join(
         f"[s{s}]\nleaf = 1\n[s{s}.z]\nvalue = 1\n[s{s}.a]\nvalue = 2\n"
-        for s in range(400)
+        for s in range(size)
     )
     benchmark.pedantic(work, setup=_parsed(src), rounds=20)
 
