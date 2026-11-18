@@ -213,9 +213,7 @@ def reposition_install(parent: Container, key: str) -> Generator[Replacement]:
 def _binding_slots(parent: Container, key: str) -> list[Slot]:
     """Gather the completed binding's linked slots in document order."""
     value = dict.__getitem__(parent, key)
-    if (
-        isinstance(value, _container.Container) and not value._inline  # noqa: SLF001
-    ) or (isinstance(value, _array.AoT) and value):
+    if _container._is_section(value) or isinstance(value, _array.AoT):  # noqa: SLF001
         return owned_slots(value)
     return list(parent._index[key])  # noqa: SLF001
 
@@ -979,14 +977,11 @@ def delete_keys(
     views: list[_View] = []
     for key in keys:
         value = dict.__getitem__(c, key)  # raises KeyError if absent
-        child_slots = list(c._index.get(key, ()))  # noqa: SLF001
         if _container._is_section(value) or isinstance(value, _array.AoT):  # noqa: SLF001
-            owned = set(child_slots)
-            owned.update(owned_slots(value))
-            child_slots = sorted(owned, key=_slot_order)
-            del owned
+            child_slots = owned_slots(value)
             child_views = list(_walk_views((value,)))
         else:
+            child_slots = list(c._index.get(key, ()))  # noqa: SLF001
             child_views = []
         plans.append((key, value, child_slots, child_views))
         slots.extend(child_slots)
@@ -1918,6 +1913,9 @@ def owned_slots(view: Container | AoT) -> list[Slot]:
     ends a run because a private orphan can omit an enclosing header.
     """
     if isinstance(view, _array.AoT):
+        if not view and view._layout_root is not None:  # noqa: SLF001
+            placeholder = _empty_aot_placeholder_slot(view)
+            return [] if placeholder is None else [placeholder]
         return [s for entry in view for s in owned_slots(entry)]
     if isinstance(view, _container.Document):
         slots: list[Slot] = []
