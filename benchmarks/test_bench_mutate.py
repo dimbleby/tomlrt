@@ -492,6 +492,40 @@ def test_sort_nested_sections(benchmark: BenchmarkFixture, size: int) -> None:
     benchmark.pedantic(work, setup=_parsed(src), rounds=20)
 
 
+@pytest.mark.parametrize("size", [500, 2_000])
+@pytest.mark.parametrize("nested", [False, True])
+def test_delete_interleaved_tail(
+    benchmark: BenchmarkFixture, size: int, *, nested: bool
+) -> None:
+    prefix = "s." if nested else ""
+    src = "".join(f"{prefix}k{i}.first = 1\n" for i in range(size))
+    src += "".join(f"foreign{i} = {i}\n{prefix}k{i}.last = 2\n" for i in range(size))
+
+    def work(doc: Document) -> None:
+        section = doc.table("s") if nested else doc
+        for i in reversed(range(size)):
+            del section.table(f"k{i}")["last"]
+
+    benchmark.pedantic(work, setup=_parsed(src), rounds=10)
+
+
+@pytest.mark.parametrize("size", [500, 2_000])
+def test_replace_dotted_tail_across_gap(benchmark: BenchmarkFixture, size: int) -> None:
+    src = (
+        "scope.first = 1\n"
+        + "".join(f"foreign{i} = {i}\n" for i in range(size))
+        + "scope.last = 2\n"
+    )
+
+    def work(doc: Document) -> None:
+        scope = doc.table("scope")
+        for i in range(size):
+            del scope["last"]
+            scope["last"] = i
+
+    benchmark.pedantic(work, setup=_parsed(src), rounds=10)
+
+
 def test_sort_forward_declared_table(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         doc.table("target.inner").sort()
