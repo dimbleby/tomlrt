@@ -161,6 +161,8 @@ them. Read roughly in this order:
   concrete leaf when the code is flavour-specific —
   `ArrayValue.items: list[ArrayItem]` narrows away
   `InlineTableEntry` at the type level.
+  Nodes emit through class-specific `render_into` methods into one shared
+  fragment buffer, joined once per outer value rather than at every depth.
   Comma records copy their fields explicitly in `__deepcopy__`, avoiding
   per-field reflection. Keep these methods in sync with their slots and
   register each clone in the memo before copying children.
