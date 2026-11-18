@@ -5659,13 +5659,8 @@ def test_reassign_orphan_section_repoints_array_nested_views() -> None:
     assert _reparses(tomlrt.dumps(doc)) == {"a": {"arr": [{"x": 7}, [10, 20, 30]]}}
 
 
-def test_reassign_nested_orphan_section_detaches_from_old_parent() -> None:
-    """Moving a nested child out of a private orphan scrubs the stale parent.
-
-    Rehoming ``orphan["child"]`` should remove the old ``child`` binding
-    from the orphan before wiring the section into its new parent, while
-    keeping the held view live at the destination.
-    """
+def test_reassign_child_popped_from_detached_parent() -> None:
+    """Explicitly removing a child makes it available for adoption."""
     doc = tomlrt.loads(
         td("""
         [root.child]
@@ -5676,7 +5671,7 @@ def test_reassign_nested_orphan_section_detaches_from_old_parent() -> None:
         """)
     )
     orphan = doc.pop("root")
-    child = orphan["child"]
+    child = orphan.pop("child")
     doc["dest"]["moved"] = child
     child["z"] = 3
     out = tomlrt.dumps(doc)
@@ -5703,7 +5698,7 @@ def test_reassign_nested_orphan_section_with_array_item_inline_view() -> None:
         """)
     )
     orphan = doc.pop("root")
-    child = orphan["child"]
+    child = orphan.pop("child")
     item = child["arr"][0]
     doc["dest"]["moved"] = child
     assert doc["dest"]["moved"]["arr"][0] is item
@@ -5737,7 +5732,7 @@ def test_adopt_orphan_implicit_into_aot_entry_joins_entry_body() -> None:
         """)
     )
     orphan = doc.pop("a")
-    doc.aot("t")[0]["moved"] = orphan["b"]
+    doc.aot("t")[0]["moved"] = orphan.pop("b")
     doc.aot("t")[0]["after"] = 99
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -5802,8 +5797,8 @@ def test_reassign_aot_entry_orphan_as_section_preserves_trivia() -> None:
         k = 1
         """)
     )
-    entry = doc["srv"][0]
-    del doc["srv"]
+    entries = doc.pop("srv")
+    entry = entries.pop(0)
     doc["x"] = entry
     assert doc["x"] is entry
     assert tomlrt.dumps(doc) == td("""
@@ -6055,13 +6050,7 @@ def test_comma_first_insert_uses_the_comma_row_indent() -> None:
 
 
 def test_adopt_two_branches_of_same_orphan() -> None:
-    """Adopting one orphan branch leaves the rest of the orphan walkable.
-
-    The adopt paths splice the moved block into the destination but used
-    to leave the orphan's surviving neighbours pointing at it, so the two
-    documents became cross-linked. A second adopt then gathered slots it
-    could no longer reach from its own anchor.
-    """
+    """Separately popped branches retain independent layout."""
     doc = tomlrt.loads(
         td("""
         [root.a]
@@ -6075,8 +6064,8 @@ def test_adopt_two_branches_of_same_orphan() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m1"] = orphan["a"]["b"]
-    doc["m2"] = orphan["a"]
+    doc["m1"] = orphan["a"].pop("b")
+    doc["m2"] = orphan.pop("a")
     out = tomlrt.dumps(doc)
     assert out == td("""
         m1.c = 1
@@ -6108,8 +6097,8 @@ def test_adopt_nested_orphan_branch_then_its_parent() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m1"] = orphan["a"]["e"]
-    doc["m2"] = orphan["a"]
+    doc["m1"] = orphan["a"].pop("e")
+    doc["m2"] = orphan.pop("a")
     out = tomlrt.dumps(doc)
     assert out == td("""
         [dest]
@@ -6143,8 +6132,8 @@ def test_adopt_orphan_branch_into_aot_entry_destination() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m1"] = orphan["a"]["b"]
-    doc.aot("t")[0]["m2"] = orphan["a"]
+    doc["m1"] = orphan["a"].pop("b")
+    doc.aot("t")[0]["m2"] = orphan.pop("a")
     out = tomlrt.dumps(doc)
     assert out == td("""
         m1.c = 1
@@ -6161,12 +6150,7 @@ def test_adopt_orphan_branch_into_aot_entry_destination() -> None:
 
 
 def test_adopt_orphan_branch_keeps_surviving_branch_trivia() -> None:
-    """Removing the orphan's head must not restyle what stays behind.
-
-    The orphan is scratch space, so unlinking preserves the leading
-    trivia of the slots that remain: the blank line and comment above
-    ``c`` still separate it from its new neighbour once adopted.
-    """
+    """Copying branches preserves each branch's trivia."""
     doc = tomlrt.loads(
         td("""
         root.b.x = 1
@@ -6188,13 +6172,8 @@ def test_adopt_orphan_branch_keeps_surviving_branch_trivia() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_adopt_orphan_emptied_by_adopting_its_last_child() -> None:
-    """An orphan with no slots left is synthesised, not moved.
-
-    Adopting the last child away leaves the orphan pointing at its now
-    empty private document. There is no longer any trivia to preserve,
-    so it takes the same path as a source that was never attached.
-    """
+def test_adopt_orphan_emptied_by_popping_its_last_child() -> None:
+    """An emptied detached parent can still be attached."""
     doc = tomlrt.loads(
         td("""
         [root.a]
@@ -6205,7 +6184,7 @@ def test_adopt_orphan_emptied_by_adopting_its_last_child() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m1"] = orphan["a"]
+    doc["m1"] = orphan.pop("a")
     doc["m2"] = orphan
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -6221,14 +6200,8 @@ def test_adopt_orphan_emptied_by_adopting_its_last_child() -> None:
     assert doc.to_dict() == {"dest": {"z": 0}, "m1": {"x": 1}, "m2": {}}
 
 
-def test_adopt_orphan_branch_repairs_ancestor_body_tail() -> None:
-    """Scrubbing an orphan's refs must not strand its cached body tail.
-
-    Adopting ``a``'s dotted KV away left ``a._body_tail`` naming a slot
-    no longer filed on it. Adopting ``a`` itself carried that stale
-    cache into the document, where the next append used it as an anchor
-    and failed to find it.
-    """
+def test_adopt_orphan_after_popping_its_body_tail() -> None:
+    """A detached table remains writable after its last dotted KV leaves."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6239,8 +6212,8 @@ def test_adopt_orphan_branch_repairs_ancestor_body_tail() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m0"] = orphan["a"]["b"]
-    doc["m1"] = orphan["a"]
+    doc["m0"] = orphan["a"].pop("b")
+    doc["m1"] = orphan.pop("a")
     doc["m1"]["appended"] = 5
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -6253,12 +6226,7 @@ def test_adopt_orphan_branch_repairs_ancestor_body_tail() -> None:
 
 
 def test_adopt_orphan_aot_then_the_orphan_itself() -> None:
-    """Cloning an orphan's AoT out must unbind it from the orphan.
-
-    The AoT attach path left the orphan still pointing at an AoT that
-    had moved into this document, so adopting the orphan afterwards
-    gathered slots belonging to a different document.
-    """
+    """A popped AoT moves independently of its former parent."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6272,7 +6240,7 @@ def test_adopt_orphan_aot_then_the_orphan_itself() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m0"] = orphan["t"]
+    doc["m0"] = orphan.pop("t")
     doc["m1"] = orphan
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -6292,12 +6260,7 @@ def test_adopt_orphan_aot_then_the_orphan_itself() -> None:
 
 
 def test_adopt_two_entries_of_the_same_orphan_aot() -> None:
-    """Moving an entry out of an orphan AoT removes it from that AoT.
-
-    An entry's path names the AoT rather than itself, so the binding has
-    to survive the departure of any one entry: the array shrinks, the
-    survivors stay bound, and only the last one to leave unbinds ``t``.
-    """
+    """Explicitly popped entries can be moved independently."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6312,9 +6275,9 @@ def test_adopt_two_entries_of_the_same_orphan_aot() -> None:
     )
     orphan = doc.pop("root")
     entries = orphan.aot("t")
-    doc["m0"] = entries[0]
+    doc["m0"] = entries.pop(0)
     assert len(entries) == 1
-    doc["m1"] = entries[0]
+    doc["m1"] = entries.pop(0)
     assert len(entries) == 0
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -6349,8 +6312,8 @@ def test_adopt_orphan_aot_entry_then_the_whole_aot() -> None:
         """)
     )
     orphan = doc.pop("root")
-    entries = orphan.aot("t")
-    doc["m0"] = entries[0]
+    entries = orphan.pop("t")
+    doc["m0"] = entries.pop(0)
     doc["m1"] = entries
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -6404,13 +6367,7 @@ def test_overwrite_key_inside_popped_orphan_leaves_document_alone() -> None:
 
 
 def test_mutating_orphan_after_adopting_its_aot_does_not_leak() -> None:
-    """Orphan writes after an adopt must stay out of the destination.
-
-    Scrubbing the orphan's binding empties its ref cache, so the next
-    write there synthesises a header. That synthesis must anchor inside
-    the orphan and not climb the stale parent link into the document the
-    subtree was popped from.
-    """
+    """A detached parent stays independent after its AoT is popped and moved."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6421,7 +6378,7 @@ def test_mutating_orphan_after_adopting_its_aot_does_not_leak() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["dest"]["m0"] = orphan["t"]
+    doc["dest"]["m0"] = orphan.pop("t")
     orphan["n3"] = 1
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -6435,12 +6392,7 @@ def test_mutating_orphan_after_adopting_its_aot_does_not_leak() -> None:
 
 
 def test_adopt_orphan_repopulated_after_being_emptied() -> None:
-    """An orphan can be written to again after losing its last child.
-
-    Adopting ``a`` away leaves the orphan empty but still usable; the
-    later write lands in the orphan, and adopting the orphan itself
-    carries that content into the document.
-    """
+    """A detached parent can be repopulated after its last child is popped."""
     doc = tomlrt.loads(
         td("""
         [root.a]
@@ -6451,7 +6403,7 @@ def test_adopt_orphan_repopulated_after_being_emptied() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m1"] = orphan["a"]
+    doc["m1"] = orphan.pop("a")
     orphan["k"] = 7
     doc["m2"] = orphan
     out = tomlrt.dumps(doc)
@@ -6533,7 +6485,7 @@ def test_write_to_popped_dotted_orphan_then_adopt_it() -> None:
 
 
 def test_write_to_popped_orphan_then_adopt_a_child() -> None:
-    """Writing to an orphan leaves its children adoptable."""
+    """A child popped after writing to a detached parent remains adoptable."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6545,7 +6497,7 @@ def test_write_to_popped_orphan_then_adopt_a_child() -> None:
     )
     orphan = doc.pop("root")
     orphan["n0"] = 0
-    doc["m1"] = orphan["a"]
+    doc["m1"] = orphan.pop("a")
     out = tomlrt.dumps(doc)
     assert out == td("""
         [m1]
@@ -6585,12 +6537,7 @@ def test_delete_dotted_leaf_inside_a_popped_orphan() -> None:
 
 
 def test_write_to_orphan_aot_entry_after_its_sibling_is_adopted() -> None:
-    """An orphan AoT entry stays writable once a sibling is adopted away.
-
-    Adopting one entry unbinds the whole AoT key from the orphan, so the
-    indent-inheriting lookup for the remaining entry must cope with its
-    key no longer being bound in its parent.
-    """
+    """An AoT entry stays writable after a sibling is popped and moved."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6603,7 +6550,7 @@ def test_write_to_orphan_aot_entry_after_its_sibling_is_adopted() -> None:
     )
     orphan = doc.pop("root")
     first = orphan.aot("t")[0]
-    doc["m"] = orphan.aot("t")[1]
+    doc["m"] = orphan.aot("t").pop(1)
     first["q"] = 9
 
     assert dict(first) == {"q": 9}
@@ -6675,13 +6622,7 @@ def test_install_a_popped_orphan_into_its_own_descendant() -> None:
 
 
 def test_adopting_each_level_of_a_popped_chain_leaves_no_phantom() -> None:
-    """Adopting a level away unbinds it from what used to hold it.
-
-    Each adopt empties its parent, so the next one synthesises rather
-    than moves. That path has to unbind the value it took, or the level
-    above still names a table that now lives elsewhere — and renders it
-    a second time.
-    """
+    """Each explicitly popped level can be reattached independently."""
     doc = tomlrt.loads(
         td("""
         [root.a.b.c]
@@ -6692,9 +6633,9 @@ def test_adopting_each_level_of_a_popped_chain_leaves_no_phantom() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m0"] = orphan["a"]["b"]["c"]
-    doc["m1"] = orphan["a"]["b"]
-    doc["m2"] = orphan["a"]
+    doc["m0"] = orphan["a"]["b"].pop("c")
+    doc["m1"] = orphan["a"].pop("b")
+    doc["m2"] = orphan.pop("a")
 
     assert orphan.to_dict() == {}
     out = tomlrt.dumps(doc)
@@ -6713,13 +6654,7 @@ def test_adopting_each_level_of_a_popped_chain_leaves_no_phantom() -> None:
 
 
 def test_overwrite_a_key_inside_an_orphan_with_an_earlier_sibling() -> None:
-    """The replacement may be the very slot the old binding sat after.
-
-    Repositioning asks for the new block to be placed after whatever
-    preceded the old one — but here that predecessor is part of the
-    block being placed, so there is nowhere to move it to and it stays
-    where the reinstall put it.
-    """
+    """A popped sibling can replace an existing detached binding."""
     doc = tomlrt.loads(
         td("""
         [root.a]
@@ -6733,8 +6668,8 @@ def test_overwrite_a_key_inside_an_orphan_with_an_earlier_sibling() -> None:
         """)
     )
     orphan = doc.pop("root")
-    orphan["k3"] = orphan["a"]["e"]
-    orphan["k3"] = orphan["a"]
+    orphan["k3"] = orphan["a"].pop("e")
+    orphan["k3"] = orphan.pop("a")
 
     assert orphan.to_dict() == {"k3": {"b": {"c": 1}}}
     assert tomlrt.dumps(doc) == td("""
@@ -6755,12 +6690,7 @@ def test_overwrite_a_key_inside_an_orphan_with_an_earlier_sibling() -> None:
 
 
 def test_adopt_the_only_child_of_a_headered_orphan_section() -> None:
-    """Taking a section's only child leaves the section behind.
-
-    The parent's whole physical presence was its child's header, so
-    without a replacement it would be bound but backed by nothing —
-    unable to render, and unable to accept a later write.
-    """
+    """Popping a section's only child leaves a writable empty parent."""
     doc = tomlrt.loads(
         td("""
         [root.c.y]
@@ -6771,7 +6701,7 @@ def test_adopt_the_only_child_of_a_headered_orphan_section() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m1"] = orphan["c"]["y"]
+    doc["m1"] = orphan["c"].pop("y")
 
     assert orphan.to_dict() == {"c": {}}
     orphan["c"] = 2
@@ -6789,12 +6719,7 @@ def test_adopt_the_only_child_of_a_headered_orphan_section() -> None:
 
 
 def test_adopt_both_entries_of_an_orphan_aot_beside_a_dotted_sibling() -> None:
-    """An AoT emptied entry-by-entry must not orphan its dotted sibling.
-
-    The last entry to leave unbinds ``t``, and the parent must not read
-    that as "the parent is now empty" — it still owns a dotted key of
-    its own, and giving it a header would declare it twice.
-    """
+    """An AoT emptied entry-by-entry retains its dotted sibling."""
     doc = tomlrt.loads(
         td("""
         [root]
@@ -6809,8 +6734,8 @@ def test_adopt_both_entries_of_an_orphan_aot_beside_a_dotted_sibling() -> None:
     )
     orphan = doc.pop("root")
     entries = orphan["c"].aot("t")
-    doc["m0"] = entries[0]
-    doc["m1"] = entries[0]
+    doc["m0"] = entries.pop(0)
+    doc["m1"] = entries.pop(0)
     doc["back"] = orphan
 
     out = tomlrt.dumps(doc)
@@ -6823,37 +6748,28 @@ def test_adopt_both_entries_of_an_orphan_aot_beside_a_dotted_sibling() -> None:
 
         [back]
         c.q = 5
+        c.t = []
         """)
     assert _reparses(out) == doc.to_dict()
 
 
 def test_adopt_the_only_child_of_a_dotted_orphan_section() -> None:
-    """A parent that only ever existed as a dotted prefix still renders.
-
-    `c` has no presence of its own — it is spelled only as part of
-    `root.c.y.x`. Adopting `y` takes that spelling away, so `c` grows a
-    header to keep the key it still holds.
-    """
+    """A dotted parent still renders after its only child is popped."""
     doc = tomlrt.loads("root.c.y.x = 1\n")
     orphan = doc.pop("root")
-    doc["moved"] = orphan.table("c").table("y")
+    doc["moved"] = orphan.table("c").pop("y")
     doc["back"] = orphan
 
     out = tomlrt.dumps(doc)
     assert out == td("""
         moved.x = 1
-
-        [back.c]
+        back.c = {}
         """)
     assert _reparses(out) == doc.to_dict()
 
 
 def test_adopt_an_aot_out_of_a_dotted_orphan_parent() -> None:
-    """Adopting an AoT away empties its parent just as a table does.
-
-    The AoT is the only thing giving `b` a spelling, so taking it has
-    to leave `b` a header of its own.
-    """
+    """A dotted parent remains writable after its AoT is popped."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6864,9 +6780,9 @@ def test_adopt_an_aot_out_of_a_dotted_orphan_parent() -> None:
         """)
     )
     orphan = doc.pop("root")
-    orphan.table("a").table("b")["c"] = orphan.aot("t")
-    doc["moved"] = orphan.table("a").table("b").aot("c")
-    doc["back"] = orphan["a"]
+    orphan.table("a").table("b")["c"] = orphan.pop("t")
+    doc["moved"] = orphan.table("a").table("b").pop("c")
+    doc["back"] = orphan.pop("a")
 
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -6892,7 +6808,7 @@ def test_adopt_out_of_a_dotted_parent_that_keeps_a_sibling() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["moved"] = orphan.table("a").table("b")
+    doc["moved"] = orphan.table("a").pop("b")
     doc["back"] = orphan
 
     out = tomlrt.dumps(doc)
@@ -6906,14 +6822,8 @@ def test_adopt_out_of_a_dotted_parent_that_keeps_a_sibling() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_repair_of_an_emptied_parent_does_not_move_an_in_place_overwrite() -> None:
-    """Repairing a parent must not disturb the install that emptied it.
-
-    `orphan["z"] = orphan["a"]["b"]` replaces `z` where it stands, which
-    is a repositioned install; the header `a` grows to stay renderable
-    is not part of that install and must not travel to its anchor. `z`
-    therefore keeps its original place ahead of `q`.
-    """
+def test_copy_from_detached_parent_keeps_overwrite_position() -> None:
+    """Copying a nested child preserves the source and replacement position."""
     doc = tomlrt.loads(
         td("""
         root.z = 9
@@ -6931,9 +6841,8 @@ def test_repair_of_an_emptied_parent_does_not_move_an_in_place_overwrite() -> No
     out = tomlrt.dumps(doc)
     assert out == td("""
         back.z.c = 1
+        back.a.b.c = 1
         back.q = 7
-
-        [back.a]
 
         [dest]
         w = 0
@@ -6942,12 +6851,7 @@ def test_repair_of_an_emptied_parent_does_not_move_an_in_place_overwrite() -> No
 
 
 def test_move_one_entry_out_of_an_orphan_aot_keeps_the_rest() -> None:
-    """Taking one entry shrinks the array; it does not unbind it.
-
-    An entry's path names the array, so unbinding on that path would
-    take the survivors' text with it while dropping them from the
-    model.
-    """
+    """Popping one entry leaves the others attached to their array."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6962,7 +6866,7 @@ def test_move_one_entry_out_of_an_orphan_aot_keeps_the_rest() -> None:
     )
     orphan = doc.pop("root")
     entries = orphan.aot("t")
-    doc["m0"] = entries[0]
+    doc["m0"] = entries.pop(0)
 
     assert [dict(e) for e in entries] == [{"x": 2}]
     assert orphan.to_dict() == {"t": [{"x": 2}]}
@@ -6982,13 +6886,8 @@ def test_move_one_entry_out_of_an_orphan_aot_keeps_the_rest() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_move_the_last_entry_out_of_an_orphan_aot_detaches_it() -> None:
-    """An array emptied by a move stops being a view onto the orphan.
-
-    Its key is gone from the model, so a caller still holding the array
-    must not be able to write through it into a document that no longer
-    names it.
-    """
+def test_move_last_entry_from_explicitly_detached_aot() -> None:
+    """A detached AoT can be emptied, repopulated, and moved."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -6999,8 +6898,8 @@ def test_move_the_last_entry_out_of_an_orphan_aot_detaches_it() -> None:
         """)
     )
     orphan = doc.pop("root")
-    entries = orphan.aot("t")
-    doc["m"] = entries[0]
+    entries = orphan.pop("t")
+    doc["m"] = entries.pop(0)
 
     assert orphan.to_dict() == {}
     entries.add({"y": 2})
@@ -7025,11 +6924,7 @@ def test_move_the_last_entry_out_of_an_orphan_aot_detaches_it() -> None:
 
 
 def test_adopting_a_whole_orphan_aot_leaves_no_text_behind() -> None:
-    """The entries are copied out, so the originals leave the orphan.
-
-    Left linked they would be text the orphan's model no longer claims,
-    and adopting the orphan afterwards would carry them along twice.
-    """
+    """A popped AoT moves without leaving text in its former parent."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -7043,7 +6938,7 @@ def test_adopting_a_whole_orphan_aot_leaves_no_text_behind() -> None:
         """)
     )
     orphan = doc.pop("root")
-    doc["m"] = orphan.aot("t")
+    doc["m"] = orphan.pop("t")
 
     assert orphan.to_dict() == {}
 
@@ -7065,12 +6960,7 @@ def test_adopting_a_whole_orphan_aot_leaves_no_text_behind() -> None:
 
 
 def test_adopt_an_orphan_array_emptied_by_popping_its_last_entry() -> None:
-    """An array emptied by `pop` takes its own slot with it when it goes.
-
-    Emptying it leaves the key bound, rendering `t = []`, which is what
-    the model says at that point. Moving it away unbinds the key — and
-    with no entries left, nothing else would carry that slot out.
-    """
+    """A popped empty AoT moves its placeholder without unrelated sections."""
     doc = tomlrt.loads(
         td("""
         [[root.t]]
@@ -7082,7 +6972,7 @@ def test_adopt_an_orphan_array_emptied_by_popping_its_last_entry() -> None:
     )
     orphan = doc.pop("root")
     orphan.aot("t").pop(0)
-    doc["m"] = orphan.aot("t")
+    doc["m"] = orphan.pop("t")
     doc["back"] = orphan
 
     out = tomlrt.dumps(doc)
@@ -7112,7 +7002,7 @@ def test_adopt_onto_the_document_head_needs_no_separator() -> None:
     doc = tomlrt.loads(src)
     orphan = doc.pop("root")
     dest = tomlrt.Document()
-    dest["moved"] = orphan["c"]
+    dest["moved"] = orphan.pop("c")
 
     out = tomlrt.dumps(dest)
     assert out == td("""

@@ -66,8 +66,9 @@ assert doc["xs"] is xs
 Plain dictionaries and lists are copied on assignment. Changing the original
 afterward does not affect the document.
 
-A tomlrt table or array that already belongs to a document is also copied,
-retaining its comments and formatting. For example, `doc["b"] = doc["a"]`
+A tomlrt table or array that already belongs to another table or array is
+copied, retaining its comments and formatting. This also applies when its
+owner has been removed from a document. For example, `doc["b"] = doc["a"]`
 creates an independent copy of `a`.
 
 Assigning a whole [`Document`][tomlrt.Document] adds its contents as a section:
@@ -99,6 +100,8 @@ old["debug"] = True          # does NOT affect doc
 ```
 
 Assign it elsewhere to add it to a document again.
+The removed value retains its identity, including its descendants. To move
+one of those descendants independently, remove it from its owner first.
 
 ## Arrays-of-tables
 

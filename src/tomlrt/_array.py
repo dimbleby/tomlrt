@@ -826,7 +826,7 @@ def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
 
     # Keep ordinary mappings free of cold-path imports and helper calls.
     if isinstance(body, Table) and not body._inline:  # noqa: SLF001
-        if body._layout_root is None or body._layout_root._is_private:  # noqa: SLF001
+        if _container._can_adopt(body):  # noqa: SLF001
             return body
         from tomlrt._container import _clone_private_layout  # noqa: PLC0415
 

@@ -2634,7 +2634,7 @@ def test_aot_extend_copies_child_of_already_claimed_parent() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_aot_batch_captures_private_children_inside_factories() -> None:
+def test_aot_batch_copies_owned_children_inside_factories() -> None:
     source = tomlrt.loads(
         td("""
             [parent]
@@ -2651,8 +2651,9 @@ def test_aot_batch_captures_private_children_inside_factories() -> None:
     doc = tomlrt.Document()
     doc["rows"] = rows
 
-    assert rows[0].table(("wrapped", "child")) is child
-    assert rows[1] is not parent
+    assert rows[0].table(("wrapped", "child")) is not child
+    assert rows[1] is parent
+    assert parent.table("child") is child
     out = tomlrt.dumps(doc)
     assert out == td("""
         [[rows]]
@@ -2668,48 +2669,7 @@ def test_aot_batch_captures_private_children_inside_factories() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_aot_extend_moves_disjoint_private_siblings_within_one_document() -> None:
-    doc = tomlrt.loads(
-        td("""
-            [parent.left]
-            x=1
-            [[parent.rows]]
-            x=0
-            [parent.right]
-            x=2
-            """)
-    )
-    parent = doc.table("parent")
-    left, right = parent.table("left"), parent.table("right")
-    parent["empty"] = empty = AoT()
-    del doc["parent"]
-    rows = parent.aot("rows")
-
-    rows.extend([left, right, {"nested": empty}])
-
-    assert rows[1] is left
-    assert rows[2] is right
-    assert rows[3].aot("nested") is empty
-    doc["parent"] = parent
-    out = tomlrt.dumps(doc)
-    assert out == td("""
-        [parent]
-        [[parent.rows]]
-        x=0
-
-        [[parent.rows]]
-        x=1
-
-        [[parent.rows]]
-        x=2
-
-        [[parent.rows]]
-        nested = []
-        """)
-    assert _reparses(out) == doc.to_dict()
-
-
-def test_aot_move_repairs_emptied_private_parent() -> None:
+def test_aot_append_copies_child_of_detached_parent() -> None:
     doc = tomlrt.loads(
         td("""
             [[rows]]
@@ -2719,8 +2679,12 @@ def test_aot_move_repairs_emptied_private_parent() -> None:
             """)
     )
     parent = doc.pop("parent")
+    assert isinstance(parent, Table)
+    child = parent.table("child")
 
-    doc.aot("rows").append({"child": parent.table("child")})
+    doc.aot("rows").append({"child": child})
+    assert doc.aot("rows")[1].table("child") is not child
+    assert parent.table("child") is child
     doc["back"] = parent
 
     out = tomlrt.dumps(doc)
@@ -2732,94 +2696,87 @@ def test_aot_move_repairs_emptied_private_parent() -> None:
         [rows.child]
         x=1
 
-        [back]
-        """)
-    assert _reparses(out) == doc.to_dict()
-
-
-def test_aot_failed_nested_batch_keeps_released_sources_usable() -> None:
-    class UnserializableInt(int):
-        @override
-        def __str__(self) -> str:
-            msg = "conversion failed"
-            raise ValueError(msg)
-
-    doc = tomlrt.loads(
-        td("""
-            [[rows]]
-
-            [parent.child]
-            x=1
-            """)
-    )
-    parent = doc.pop("parent")
-    child = parent.table("child")
-    nested = AoT([{"bad": UnserializableInt(1)}, {"child": child}])
-
-    with pytest.raises(ValueError, match="conversion failed"):
-        doc.aot("rows").append({"nested": nested})
-
-    doc["back"] = parent
-    doc["rescued"] = child
-    out = tomlrt.dumps(doc)
-    assert out == td("""
-        [[rows]]
-
-        [[rows]]
-
-        [[rows.nested]]
-
-        [back]
-
-        [rescued]
+        [back.child]
         x=1
         """)
     assert _reparses(out) == doc.to_dict()
 
 
-def test_aot_batch_moves_reversed_private_entries_and_snapshots_aliases() -> None:
+@pytest.mark.parametrize(
+    "operation", ["construct", "add", "append", "extend", "insert", "replace", "slice"]
+)
+def test_aot_operations_copy_still_owned_private_table(operation: str) -> None:
     source = tomlrt.loads(
         td("""
-            [[items]] # first
-            x=0
-            [[items]] # middle
-            x=1
-            [[items]] # last
-            x=2
+            [parent.child]
+            'x' = 0x01 # keep
             """)
     )
-    private = source.aot("items")
-    del source["items"]
-    first, middle, last = private
-    doc = tomlrt.Document({"rows": AoT()})
-    rows = doc.aot("rows")
+    parent = source.pop("parent")
+    assert isinstance(parent, Table)
+    child = parent.table("child")
+    doc = tomlrt.Document()
+    rows = AoT()
+    if operation == "construct":
+        rows = AoT([child])
+        doc["rows"] = rows
+    else:
+        doc["rows"] = rows
+        if operation == "add":
+            rows.add(child)
+        elif operation == "append":
+            rows.append(child)
+        elif operation == "extend":
+            rows.extend([child])
+        elif operation == "insert":
+            rows.insert(0, child)
+        elif operation == "replace":
+            rows.add()
+            rows[0] = child
+        else:
+            rows[:] = [child]
 
-    rows.extend([last, first, {"copy": last, "other": first}])
-
-    assert rows[0] is last
-    assert rows[1] is first
-    assert private[0] is middle
-    middle["x"] = 3
-    source["items"] = private
+    assert rows[0] is not child
+    assert parent.table("child") is child
+    child["x"] = 2
+    source["back"] = parent
     assert tomlrt.dumps(source) == td("""
-        [[items]] # middle
-        x=3
+        [back.child]
+        'x' = 2 # keep
         """)
     out = tomlrt.dumps(doc)
     assert out == td("""
-        [[rows]] # last
-        x=2
+        [[rows]]
+        'x' = 0x01 # keep
+        """)
+    assert _reparses(out) == doc.to_dict()
 
-        [[rows]] # first
-        x=0
+
+def test_aot_removed_entries_can_be_reattached_independently() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[rows]]
+            x = 1
+            [[rows]]
+            x = 2
+            """)
+    )
+    rows = doc.aot("rows")
+    first, second = rows
+
+    rows.clear()
+    rows.extend([second, first])
+
+    assert rows[0] is second
+    assert rows[1] is first
+    first["x"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[rows]]
+        x = 2
 
         [[rows]]
-
-        [rows.copy] # last
-        x=2
-
-        [rows.other] # first
-        x=0
+        x = 3
         """)
     assert _reparses(out) == doc.to_dict()
 
@@ -13332,9 +13289,7 @@ def test_implicit_clone_keeps_its_aot_block_with_its_body() -> None:
 
 
 @pytest.mark.parametrize("sibling", [False, True])
-def test_factory_replacement_includes_repaired_borrowed_parent(
-    *, sibling: bool
-) -> None:
+def test_factory_replacement_preserves_borrowed_parent(*, sibling: bool) -> None:
     old_doc = tomlrt.loads(
         td("""
         [old.child]
@@ -13366,15 +13321,17 @@ def test_factory_replacement_includes_repaired_borrowed_parent(
     assert doc.table("result") is dest
     assert doc.table("result.a") is factory
     assert doc.table("result.a.parent") is old
-    assert doc.table("result.a.child") is child
+    assert doc.table("result.a.child") is not child
+    assert old.table("child") is child
     assert doc.table("result.a.third") is third
     expected = td("""
         [result]
 
-        [result.a.child]
+        [result.a.parent.child]
         x=1
 
-        [result.a.parent]
+        [result.a.child]
+        x=1
 
         [result.a.third]
         z = 2
@@ -13392,11 +13349,14 @@ def test_factory_replacement_includes_repaired_borrowed_parent(
     expected = td("""
         [result]
 
-        [result.a.child]
-        x=4
-
         [result.a.parent]
         y = 3
+
+        [result.a.parent.child]
+        x=4
+
+        [result.a.child]
+        x=1
 
         [result.a.third]
         z = 5
