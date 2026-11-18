@@ -58,14 +58,22 @@ def _entry_key_path(t: Container, leaf: str) -> tuple[str, ...]:
     return (*suffix, leaf)
 
 
-def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> list[int]:
-    """Return indices of entries whose ``key_parts`` start with ``key_path``."""
-    n = len(key_path)
-    out: list[int] = []
-    for i, e in enumerate(iv.items):
-        if len(e.key_path) > n and e.key_path[:n] == key_path:
-            out.append(i)
-    return out
+def _subtree_entry_indices(
+    iv: InlineTableValue, key_path: tuple[str, ...], table: Container
+) -> list[int]:
+    """Resolve a dotted subtree's entries without scanning unrelated siblings."""
+    pending = [(key_path, table)]
+    entries: list[InlineTableEntry] = []
+    while pending:
+        prefix, current = pending.pop()
+        for key, child in dict.items(current):
+            path = (*prefix, key)
+            entry = iv._key_index.get(path)  # noqa: SLF001
+            if entry is None:
+                pending.append((path, child))
+            else:
+                entries.append(entry)
+    return iv.entry_indices(entries)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +164,8 @@ def overwrite_entry(t: Container, key: str, new_value: Value) -> None:
         entry.value = new_value
         return
     keep_pad = None if iv.is_multiline() else (iv.opening, iv.items[-1].following)
-    _remove_entries(iv, _find_prefix_entries(iv, full_path), root._doc_newline)  # noqa: SLF001
+    indices = _subtree_entry_indices(iv, full_path, dict.__getitem__(t, key))
+    _remove_entries(iv, indices, root._doc_newline)  # noqa: SLF001
     append_entry(t, key, new_value)
     if keep_pad is not None:
         iv.opening, iv.items[-1].following = keep_pad
@@ -180,7 +189,7 @@ def delete_entry(t: Container, key: str) -> None:
     if found is not None:
         indices: list[int] = [found[0]]
     else:
-        indices = _find_prefix_entries(iv, full_path)
+        indices = _subtree_entry_indices(iv, full_path, dict.__getitem__(t, key))
     if t._kind is _Kind.INLINE_DOTTED_INNER and len(t) == 1:  # noqa: SLF001
         # Keep the last owned entry's position and trivia for the empty table.
         entry = iv.items[indices[-1]]

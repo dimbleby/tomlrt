@@ -167,7 +167,9 @@ them. Read roughly in this order:
   `InlineTableValue` indexes keys directly to entries. Entry order labels
   locate their positions without renumbering on deletion. File appended
   entries through `record_entry`; copying, reordering and key rebasing
-  call `reindex`. Arrays carry no key index or entry order labels.
+  call `reindex`. Batch entry location uses ordered exponential search,
+  linear for adjacent entries while skipping unrelated gaps.
+  Arrays carry no key index or entry order labels.
 - **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
   helpers (`is_scalar`, etc.). Depends on `_values` only.
 - **`_slots.py`** — the **physical slot stream**:
@@ -290,7 +292,9 @@ them. Read roughly in this order:
   one canonical implementation; this module just resolves the
   outermost inline-table for a dotted key, files / unfiles the
   matching `InlineTableEntry`, and forwards to `splice_in` /
-  `splice_out` / `reorder_owned`. Also exposes the inline-table
+  `splice_out` / `reorder_owned`. Dotted-prefix removal resolves the
+  logical subtree's indexed entries without scanning unrelated siblings.
+  Also exposes the inline-table
   multi-line control (`set_inline_multiline` / `ensure_inline_multiline`)
   backing `Table.multiline` / `Table.set_multiline`, delegating the
   actual expand / collapse to `_format.set_comma_value_multiline`.

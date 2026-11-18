@@ -309,6 +309,32 @@ def test_promote_large_inline_array(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(src), rounds=100)
 
 
+# --- inline tables ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", [1_000, 4_000])
+def test_delete_inline_dotted_groups_tail_first(
+    benchmark: BenchmarkFixture, size: int
+) -> None:
+    src = "items = {" + ", ".join(f"g{i}.x = {i}" for i in range(size)) + "}\n"
+
+    def work(doc: Document) -> None:
+        table = doc.table("items")
+        for i in reversed(range(size)):
+            del table[f"g{i}"]
+
+    benchmark.pedantic(work, setup=_parsed(src), rounds=10)
+
+
+def test_delete_wide_inline_dotted_group(benchmark: BenchmarkFixture) -> None:
+    src = "items = {" + ", ".join(f"group.x{i} = {i}" for i in range(16_000)) + "}\n"
+
+    def work(doc: Document) -> None:
+        del doc.table("items")["group"]
+
+    benchmark.pedantic(work, setup=_parsed(src), rounds=20)
+
+
 # --- inline arrays ---------------------------------------------------------
 
 

@@ -479,6 +479,31 @@ class InlineTableValue(CommaValue[InlineTableEntry]):
         assert self.items[position] is entry, "inline entry index is stale"
         return position, entry
 
+    def entry_indices(self, entries: list[InlineTableEntry]) -> list[int]:
+        """Locate indexed entries, skipping unrelated gaps by exponential search."""
+        items = self.items
+        indices: list[int] = []
+        position = 0
+        for entry in sorted(entries, key=_entry_order):
+            step = 1
+            while items[position] is not entry:
+                hi = min(position + step, len(items) - 1)
+                if items[hi]._order >= entry._order:  # noqa: SLF001
+                    position = bisect.bisect_left(
+                        items,
+                        entry._order,  # noqa: SLF001
+                        position + 1,
+                        hi + 1,
+                        key=_entry_order,
+                    )
+                    assert items[position] is entry, "inline entry index is stale"
+                    break
+                position = hi
+                step *= 2
+            indices.append(position)
+            position += 1
+        return indices
+
     def record_entry(self, entry: InlineTableEntry) -> None:
         """Index an entry just appended to ``items``."""
         entry._order = self.items[-2]._order + 1 if len(self.items) > 1 else 0  # noqa: SLF001

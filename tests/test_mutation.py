@@ -2145,13 +2145,16 @@ def test_inline_prefix_removal_keeps_disjoint_survivor_runs() -> None:
     doc = tomlrt.loads(
         td("""
         t = {
+            head = 5,
+            extra = 6,
             drop.a = 0,
             # above keep
             keep = 1, # keep
-            drop.b = 2,
+            between = 7,
+            drop.inner.b = {value = 2},
             # above another
             another = 3, # another
-            drop.c = 4,
+            drop.c = [4],
             # dangling
         }
         """)
@@ -2159,8 +2162,11 @@ def test_inline_prefix_removal_keeps_disjoint_survivor_runs() -> None:
     del doc.table("t")["drop"]
     expected = td("""
         t = {
+            head = 5,
+            extra = 6,
             # above keep
             keep = 1, # keep
+            between = 7,
             # above another
             another = 3, # another
             # dangling
