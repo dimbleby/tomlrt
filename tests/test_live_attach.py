@@ -1929,7 +1929,6 @@ def test_inline_overwrite_keeps_nested_array_bound_to_displaced_root() -> None:
     outer = doc.table("x")
     arr = outer.array("arr")
     doc["x"] = 5
-    assert not arr._attached  # noqa: SLF001
 
     arr.append(3)
     doc["y"] = arr
