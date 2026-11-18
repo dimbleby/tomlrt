@@ -1079,7 +1079,7 @@ def _transplant_to_orphan(
     orphan._newline = nl  # noqa: SLF001
     orphan._is_private = True  # noqa: SLF001
     orphan._detached_root = val  # noqa: SLF001
-    _splice_block_after(slots, None, orphan)
+    _link_run_between(None, slots, None, orphan)
     for view in views:
         assert isinstance(view, (_container.Container, _array.AoT, _array.Array))
         view._layout_root = orphan  # noqa: SLF001
