@@ -919,7 +919,7 @@ def test_public_ancestor_aot_is_copied_before_nested_install() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
-def test_whole_aot_transfer_preserves_emptied_parent_header_block() -> None:
+def test_owned_aot_is_copied_from_detached_parent() -> None:
     source = tomlrt.loads(
         td("""
             [[parent.rows]]
@@ -934,9 +934,8 @@ def test_whole_aot_transfer_preserves_emptied_parent_header_block() -> None:
     target = tomlrt.Document()
     target["moved"] = rows
 
-    assert parent.header_leading_block == (None,)
-    assert parent.to_dict() == {}
-    assert target.aot("moved") is rows
+    assert parent.aot("rows") is rows
+    assert target.aot("moved") is not rows
     out = tomlrt.dumps(target)
     assert out == td("""
         [[moved]]
@@ -945,7 +944,13 @@ def test_whole_aot_transfer_preserves_emptied_parent_header_block() -> None:
         x = 1
         """)
     assert _reparses(out) == target.to_dict()
-    assert tomlrt.dumps(source) == ""
+    source["back"] = parent
+    assert tomlrt.dumps(source) == td("""
+        [[back.rows]]
+        x = 0
+        [[back.rows]]
+        x = 1
+        """)
 
 
 def test_populated_aot_stays_with_implicit_parent() -> None:
@@ -2546,14 +2551,14 @@ def test_nested_update_protection_is_scoped_to_its_destination() -> None:
     assert tomlrt.dumps(inner_doc) == ""
 
 
-def test_update_adopts_roots_orphaned_by_the_current_write() -> None:
+def test_update_copies_child_of_parent_orphaned_by_the_current_write() -> None:
     source = tomlrt.loads("[template]\nvalue = 9\n")
     private = source.table("template")
     del source["template"]
     doc = tomlrt.loads("[outer]\n[outer.child]\nx = 1\n")
     child = doc.table("outer.child")
     doc.update({"private": private, "outer": child})
-    assert doc.table("outer") is child
+    assert doc.table("outer") is not child
     assert doc.table("private") is not private
     expected = td("""
         [outer]

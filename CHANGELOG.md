@@ -9,9 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Preserve fresh and privately owned table identities consistently across
-  array-of-tables insertion and replacement, and capture overlapping batch
-  inputs before moving them.
+- Preserve identity when adding new or removed tables to arrays of tables.
 
 ## [2.3.3] - 2026-10-31
 

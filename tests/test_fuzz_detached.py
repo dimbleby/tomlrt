@@ -78,8 +78,7 @@ _SHAPES = (
     "[[root.t]]\nx = 1\n\n[[root.t.n]]\ny = 2\n\n[dest]\nz = 0\n",
     "[root.a]\nv = { p = 1, q = [1, 2] }\n\n[dest]\nz = 0\n",
     "[root.a]\narr = [ { m = 1 }, 2 ]\n\n[dest]\nz = 0\n",
-    # Adopting out of these empties a purely dotted ancestor, which then
-    # has to grow a header of its own to stay renderable.
+    # Popping a child can empty a purely dotted ancestor.
     "root.c.y.x = 1\n",
     "root.a.b.c = 1\nroot.a.b.d = 2\n\n[dest]\nz = 0\n",
     "root.a.b.c = 1\n\n# comment\nroot.e.f = 2\n\n[dest]\nz = 0\n",
@@ -114,12 +113,9 @@ _SHAPES = (
         """),
 )
 
-# One random operation per step, drawn uniformly; ``adopt`` appears
-# twice because every other op is most interesting on a document an
-# adopt has already reshaped.
 _OPS = (
     "adopt",
-    "adopt",
+    "pop_and_adopt",
     "write_orphan",
     "write_doc",
     "hold",
@@ -186,8 +182,13 @@ def _run_program(src: str, seed: int) -> None:
     for step in range(rng.randint(1, _MAX_STEPS)):
         op = rng.choice(_OPS)
         paths = _view_paths(orphan)
-        if op == "adopt":
-            target = _resolve(orphan, rng.choice([*paths, ()]))
+        if op in {"adopt", "pop_and_adopt"}:
+            path = rng.choice([*paths, ()])
+            target = (
+                _resolve(orphan, path[:-1]).pop(path[-1])
+                if path and op == "pop_and_adopt"
+                else _resolve(orphan, path)
+            )
             doc[f"m{step}"] = target
         elif op == "write_orphan":
             target = _resolve(orphan, rng.choice([*paths, ()]))
@@ -200,9 +201,6 @@ def _run_program(src: str, seed: int) -> None:
             if isinstance(target, Container):
                 target[f"h{step}"] = step
             elif isinstance(target, AoT):
-                # A held array may have been emptied by its last entry
-                # being moved away, which detaches it; writing through
-                # it must not reach the document that dropped it.
                 target.add({f"h{step}": step})
             elif isinstance(target, Array):
                 target.append(step)
@@ -212,8 +210,7 @@ def _run_program(src: str, seed: int) -> None:
             target = _resolve(orphan, rng.choice([*paths, ()]))
             if isinstance(target, Container) and list(target.keys()):
                 key = rng.choice(list(target.keys()))
-                # Replacing a key with an existing sibling view reaches
-                # the same-document adopt; a fresh value never does.
+                # Include source/destination overlap, not just fresh inputs.
                 cands: list[Any] = [step, {"r": step}]
                 if paths:
                     cands.append(_resolve(orphan, rng.choice(paths)))
@@ -230,13 +227,13 @@ def _run_program(src: str, seed: int) -> None:
             if isinstance(target, Container) and list(target.keys()):
                 del target[rng.choice(list(target.keys()))]
         elif op == "adopt_aot_entry":
-            # An entry detaches separately from the AoT that holds it,
-            # and its `_path` names the array rather than the entry.
             aots = _typed_paths(orphan, AoT)
             if aots:
                 aot = _resolve(orphan, rng.choice(aots))
                 if len(aot):
-                    doc[f"m{step}"] = aot[rng.randrange(len(aot))]
+                    index = rng.randrange(len(aot))
+                    entry = aot.pop(index) if rng.getrandbits(1) else aot[index]
+                    doc[f"m{step}"] = entry
         elif op == "adopt_into_section":
             # Adopting below the destination root exercises a different
             # host / anchor than adopting at top level.
@@ -441,19 +438,13 @@ def test_writing_to_a_popped_subtree_leaves_no_ref_behind() -> None:
 
 
 def test_adopting_a_slotless_orphan_root_unbinds_it() -> None:
-    """Adopting an emptied orphan leaves nothing behind in it.
-
-    The orphan is emptied by adopting its last slot-owning child away,
-    so the root itself is synthesised at its new home rather than
-    moved. That path still has to unbind it from the document it came
-    from, exactly as the move paths do.
-    """
+    """Adopting an explicitly emptied root leaves no holder binding."""
     doc = tomlrt.loads("[root.a]\nb.c = 1\n\n[root.a.e]\nq = 1\n\n[dest]\nz = 0\n")
     orphan = doc.pop("root")
     private = orphan._layout_root  # noqa: SLF001
     assert private is not None
 
-    doc["m0"] = orphan["a"]
+    doc["m0"] = orphan.pop("a")
     doc["m1"] = orphan
 
     assert dict.keys(private) == {}.keys()

@@ -210,26 +210,6 @@ def test_attach_aot_factory(
     benchmark.pedantic(work, setup=setup, rounds=100)
 
 
-def test_attach_repeated_private_sources(benchmark: BenchmarkFixture) -> None:
-    src = "".join(f"[[items]]\nx={i}\n" for i in range(2_000))
-
-    def setup() -> tuple[
-        tuple[tomlrt.AoT, list[dict[str, tomlrt.Table]]], dict[str, object]
-    ]:
-        doc = tomlrt.loads(src)
-        source = doc.aot("items")
-        del doc["items"]
-        entries = list(reversed(source))
-        bodies = [{"child": entry} for entry in entries * 2]
-        target = tomlrt.Document({"rows": tomlrt.AoT()}).aot("rows")
-        return (target, bodies), {}
-
-    def work(target: tomlrt.AoT, bodies: list[dict[str, tomlrt.Table]]) -> None:
-        target.extend(bodies)
-
-    benchmark.pedantic(work, setup=setup, rounds=5)
-
-
 def test_clone_implicit_with_empty_aot_entries(benchmark: BenchmarkFixture) -> None:
     source = tomlrt.loads(
         "source.marker = 0\n" + _aot_doc(1000).replace("[[items]]", "[[source.rows]]")

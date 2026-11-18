@@ -1063,7 +1063,7 @@ def test_typed_container_assign_now_clones_from_other_doc() -> None:
     assert dst["a"]["x"] == 1
 
 
-def test_copy_callback_can_adopt_a_sibling_into_another_document() -> None:
+def test_copy_callback_copies_an_owned_sibling_into_another_document() -> None:
     other = Document()
 
     class MovingInt(int):
@@ -1084,7 +1084,7 @@ def test_copy_callback_can_adopt_a_sibling_into_another_document() -> None:
     del source["parent"]
     sibling = held.table("b")
     copied = copy(held.table("a"))
-    assert other.table("moved") is sibling
+    assert other.table("moved") is not sibling
     sibling["x"] = 3
     held.table("a")["value"] = 2
     target = Document()
@@ -1092,7 +1092,7 @@ def test_copy_callback_can_adopt_a_sibling_into_another_document() -> None:
     source["remaining"] = held
     assert tomlrt.dumps(other) == td("""
         [moved]
-        x = 3
+        x = 2
         """)
     assert tomlrt.dumps(target) == td("""
         [copy]
@@ -1101,4 +1101,6 @@ def test_copy_callback_can_adopt_a_sibling_into_another_document() -> None:
     assert tomlrt.dumps(source) == td("""
         [remaining.a]
         value = 2
+        [remaining.b]
+        x = 3
         """)

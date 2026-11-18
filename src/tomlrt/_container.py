@@ -642,25 +642,20 @@ class Container(_View, dict[str, Any]):
     ) -> _layout_ops.PromotedHeader | None:
         """Install ``value`` (an AoT) under ``key``.
 
-        Public sources are copied. Private layout moves with its live
-        views; entries without layout are synthesized in place.
+        Detached roots move with their live views; owned sources are copied.
         """
         snapshot = _snapshot_for_overlapping_install(self, key, value)
         if snapshot is not value:
             assert isinstance(snapshot, AoT)
             return _layout_ops.clone_aot(self, key, snapshot)
         src_root = value._layout_root  # noqa: SLF001
-        if src_root is not None and not _can_adopt_from(src_root, self._attached_doc):
+        if not _can_adopt(value, self._attached_doc):
             return _layout_ops.clone_aot(self, key, value)
-        emptied = value._host  # noqa: SLF001
         existing_entries: list[Table] = list(value)
-        _layout_ops.detach_aot_from_orphan(
-            value, None if capture is None else capture.slots(value)
-        )
+        _layout_ops.detach_aot_from_orphan(value)
         promotion = _layout_ops.attach_aot(self, key, value)
         list.clear(value)
         dict.__setitem__(self, key, value)
-        _layout_ops.synthesise_header_for_emptied(emptied)
         _layout_ops.insert_aot_entries(
             value,
             existing_entries,
@@ -684,14 +679,12 @@ class Container(_View, dict[str, Any]):
         if src_root is None:
             assert isinstance(value, Table), "a section factory must be a Table"
             _layout_ops.attach_section_at(self, (key,), value, capture=capture)
-        elif _can_adopt_from(src_root, self._attached_doc):
+        elif _can_adopt(value, self._attached_doc):
             assert value._refs, "a private section owns slots"
-            emptied = value._parent
             if value._header is not None:
                 _layout_ops.adopt_private_section(self, key, value)
             else:
                 _layout_ops.adopt_private_implicit(self, key, value)
-            _layout_ops.synthesise_header_for_emptied(emptied)
         elif value._header is not None or isinstance(value, Document):
             _layout_ops.clone_section(self, key, value)
         else:
@@ -949,35 +942,31 @@ class Container(_View, dict[str, Any]):
             inline_only=cur._inline and not promote,  # noqa: SLF001
             key=parts[-1],
         )
-        with (
-            _layout_ops._SourceCapture((cur,))  # noqa: SLF001
-            if promote
-            else contextlib.nullcontext()
-        ) as capture:
-            if promote:
-                prefix = parts[:i]
-                _check_table_promotions(self, prefix)
-                assert capture is not None
-                value = capture.capture(value)
-                cur = _promote_tables(self, prefix)
-            if i == len(parts) - 1:
-                host = cur
-            elif cur._inline:  # noqa: SLF001
-                first, host = _make_inline_chain(parts[i + 1 : -1])
-                # Read the source before publishing any new parents, even
-                # when it contains the inline table being extended.
-                dict.__setitem__(host, parts[-1], value)
-                cur._setitem_validated(parts[i], first)  # noqa: SLF001
-                return host[parts[-1]]
-            elif self._layout_root is not None and (
-                _is_section(value) or isinstance(value, AoT)
-            ):
-                # Only the installed value needs an explicit header.
-                host = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
-            else:
-                host = cur._create_section_chain(parts[i:-1])  # noqa: SLF001
-            host._setitem_validated(parts[-1], value, capture)  # noqa: SLF001
+        capture = None
+        if promote:
+            prefix = parts[:i]
+            _check_table_promotions(self, prefix)
+            capture = _layout_ops._SourceCapture((cur,))  # noqa: SLF001
+            value = capture.capture(value)
+            cur = _promote_tables(self, prefix)
+        if i == len(parts) - 1:
+            host = cur
+        elif cur._inline:  # noqa: SLF001
+            first, host = _make_inline_chain(parts[i + 1 : -1])
+            # Read the source before publishing any new parents, even
+            # when it contains the inline table being extended.
+            dict.__setitem__(host, parts[-1], value)
+            cur._setitem_validated(parts[i], first)  # noqa: SLF001
             return host[parts[-1]]
+        elif self._layout_root is not None and (
+            _is_section(value) or isinstance(value, AoT)
+        ):
+            # Only the installed value needs an explicit header.
+            host = _layout_ops.ensure_implicit_chain(cur, tuple(parts[i:-1]))
+        else:
+            host = cur._create_section_chain(parts[i:-1])  # noqa: SLF001
+        host._setitem_validated(parts[-1], value, capture)  # noqa: SLF001
+        return host[parts[-1]]
 
     def ensure_table(
         self, key: str | Sequence[str], *, promote_inline: bool | None = None
@@ -1330,6 +1319,7 @@ class Document(Container):
     """
 
     __slots__ = (
+        "_detached_root",
         "_head",
         "_is_private",
         "_newline",
@@ -1364,6 +1354,7 @@ class Document(Container):
         self._preamble: str = ""
         self._newline: str = DEFAULT_NEWLINE
         self._is_private: bool = False
+        self._detached_root: Container | AoT | None = None
         self._protected_source_roots: dict[int, Document] | None = None
         self._section_blank_separated = True
         self._layout_root = self
@@ -1486,6 +1477,7 @@ def _clone_private_layout(value: Container | AoT) -> Table | AoT:
         holder._setitem_validated("", value)  # noqa: SLF001
     result = dict.__getitem__(holder, "")
     assert isinstance(result, (Table, AoT))
+    holder._detached_root = result  # noqa: SLF001
     return result
 
 
@@ -1613,10 +1605,17 @@ def _collect_private_roots(value: object, found: dict[int, Document]) -> None:
             _collect_private_roots(sub, found)
 
 
-def _can_adopt_from(source: Document, destination: Document) -> bool:
-    """Whether this destination may consume the source root's layout."""
-    protected = destination._protected_source_roots  # noqa: SLF001
-    return source._is_private and (protected is None or id(source) not in protected)  # noqa: SLF001
+def _can_adopt(value: Container | AoT, destination: Document | None = None) -> bool:
+    """Whether ``value`` is an unowned structural root available for attachment."""
+    source = value._layout_root  # noqa: SLF001
+    if source is None:
+        return value._host is None  # noqa: SLF001
+    if source._detached_root is not value:  # noqa: SLF001
+        return False
+    protected = (
+        None if destination is None else destination._protected_source_roots  # noqa: SLF001
+    )
+    return protected is None or id(source) not in protected
 
 
 @contextlib.contextmanager
