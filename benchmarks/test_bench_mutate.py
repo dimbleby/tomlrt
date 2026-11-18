@@ -275,6 +275,23 @@ def test_install_new_sections(benchmark: BenchmarkFixture) -> None:
     benchmark.pedantic(work, setup=_parsed(_section_doc(50, 20)), rounds=200)
 
 
+@pytest.mark.parametrize("trailing_kvs", [0, 10_000])
+def test_add_remove_implicit_child(
+    benchmark: BenchmarkFixture, trailing_kvs: int
+) -> None:
+    src = "[scope.first]\nx = 0\n[other]\n" + "".join(
+        f"k{i} = {i}\n" for i in range(trailing_kvs)
+    )
+
+    def work(doc: Document) -> None:
+        parent = doc.table("scope")
+        for i in range(20):
+            parent["last"] = tomlrt.Table.section({"x": i})
+            del parent["last"]
+
+    benchmark.pedantic(work, setup=_parsed(src), rounds=20)
+
+
 def test_promote_large_inline_array(benchmark: BenchmarkFixture) -> None:
     def work(doc: Document) -> None:
         doc.promote_array("items")

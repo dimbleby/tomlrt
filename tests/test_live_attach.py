@@ -1004,6 +1004,72 @@ def test_owned_aot_is_copied_from_detached_parent() -> None:
         """)
 
 
+def test_fresh_section_stays_with_implicit_parent() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [a.mid.first]
+            x = 1
+
+            # Later sibling
+            [a.later]
+            y = 2
+            """)
+    )
+    parent = doc.table("a.mid")
+    for i in range(3):
+        parent["last"] = Table.section({"z": i})
+        if i < 2:
+            del parent["last"]
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a.mid.first]
+        x = 1
+
+        [a.mid.last]
+        z = 2
+
+        # Later sibling
+        [a.later]
+        y = 2
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_fresh_section_stays_with_implicit_aot_parent() -> None:
+    doc = tomlrt.loads(
+        td("""
+            [[items]]
+            [items.scope.first]
+            x = 1
+
+            [items.other]
+            y = 2
+
+            [[items]]
+            z = 3
+            """)
+    )
+    doc.aot("items")[0].table("scope")["last"] = Table.section({"w": 4})
+
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [[items]]
+        [items.scope.first]
+        x = 1
+
+        [items.scope.last]
+        w = 4
+
+        [items.other]
+        y = 2
+
+        [[items]]
+        z = 3
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_populated_aot_stays_with_implicit_parent() -> None:
     doc = tomlrt.loads(
         td("""

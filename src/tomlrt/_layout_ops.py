@@ -2532,7 +2532,7 @@ def attach_section_at(
     preserve_header: bool = False,
     capture: _SourceCapture | None = None,
 ) -> Table:
-    """Synthesise ``[parent_path.sub_path]`` (multi-component) at end-of-doc.
+    """Synthesise ``[parent_path.sub_path]`` beside the parent's children.
 
     Intermediate components in ``sub_path[:-1]`` become implicit tables;
     the deepest component gets the explicit header. ``source`` is a validated,
@@ -2573,13 +2573,9 @@ def attach_section_at(
         parent=deepest_parent,
         owner=owner,
     )
-    # Anchor past the whole subtree of the nearest header-bearing
-    # ancestor: a header re-parents everything after it, so landing it
-    # mid-section would capture that host's trailing KVs (e.g. a ``d = 4``
-    # sibling of an implicit ``parent``) under the new header on re-parse.
     # Splice before filing: a ref is placed by its slot's order key, so
     # the slot has to be in the doc-stream first.
-    _splice_block_after([header], _nearest_header_host_tail(parent), doc)
+    _splice_block_after([header], _child_header_anchor(parent), doc)
     file_own_header(section, header)
     # File the binding ref under the deepest implicit parent and
     # propagate ancestor-prefix bindings up to the doc root.
