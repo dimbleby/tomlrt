@@ -352,26 +352,6 @@ def record_slot(c: Container, slot: Slot) -> None:
 
 
 @contextlib.contextmanager
-def _refile_region_refs(
-    doc: Document,
-    predecessor: Slot | None,
-    successor: Slot | None,
-) -> Generator[None]:
-    """Re-file the refs of a doc-stream region around a physical change to it.
-
-    The region is the open interval between two slots that stay put.
-    Every container's ``_refs`` holds the region as one contiguous
-    run, so each run is put back in the order, and at the
-    position, the refreshed order keys imply once the change is done.
-    Cost is proportional to the region rather than to the document, and
-    one mechanism serves every flavour of change: moving the region
-    elsewhere, permuting it in place, or both.
-    """
-    with _refile_slot_refs(_slots_between(doc, predecessor, successor)):
-        yield
-
-
-@contextlib.contextmanager
 def _refile_slot_refs(slots: Iterable[Slot]) -> Generator[None]:
     """Keep retained projections ordered while a slot run is moved or split."""
     runs: dict[int, tuple[Container, list[Slot], list[Slot]]] = {}
@@ -533,17 +513,6 @@ def _link_run_between(
         doc._head = run[0] if run else nxt  # noqa: SLF001
     if nxt is None:
         doc._tail = run[-1] if run else prev  # noqa: SLF001
-
-
-def _relink_run_after(
-    anchor: Slot | None, slots: Sequence[Slot], doc: Document
-) -> None:
-    """Link an unlinked run of slots back into ``doc``, in order, after ``anchor``.
-
-    The shared re-splice of the two block-permutation paths.
-    """
-    nxt = anchor._next if anchor is not None else doc._head  # noqa: SLF001
-    _link_run_between(anchor, slots, nxt, doc)
 
 
 def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
@@ -3165,10 +3134,9 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
             if not foreign_run:
                 placements.append((foreign_run, slot.leading))
             foreign_run.append(slot)
-    with _refile_slot_refs(movable_slots):
-        _splice_blocks_in_order(
-            doc, movable_slots, placements, anchor_prev=region_predecessor
-        )
+    _splice_blocks_in_order(
+        doc, movable_slots, placements, anchor_prev=region_predecessor
+    )
 
     # Reflect the new order in the AoT's own list view.
     list.__setitem__(aot, slice(None), new_logical_order)
@@ -3241,32 +3209,37 @@ def _splice_blocks_in_order(
     *,
     anchor_prev: Slot | None,
 ) -> None:
-    """Reorder movable layout blocks within the doc-stream.
+    """Publish a block permutation as one completed physical region.
 
-    ``movable_slots`` is in original physical order. ``placements`` is
-    the block grouping, order, and head leading to reinsert; callers may
-    split an original logical block when its binding order must change.
-
-    ``anchor_prev`` stays linked and names a position in the output's
-    containing scope. Terminates the anchor and former final movable
-    slot if they gain successors. Trivia policy (positional
-    vs slot-attached) is the caller's responsibility — see
-    ``renormalise_aot_order`` and ``reorder_container`` for the two
-    existing flavours.
+    Foreign slots retain their relative order; ``anchor_prev`` names
+    the surviving slot after which the gathered blocks belong. An anchor
+    beyond the movable span extends the region through that anchor.
     """
     assert movable_slots, "both callers permute a non-empty set of blocks"
 
+    predecessor = movable_slots[0]._prev  # noqa: SLF001
     former_region_tail = movable_slots[-1]
-    for slot in movable_slots:
-        unlink_slot(slot, doc, strip_new_head_leading=False)
+    successor = former_region_tail._next  # noqa: SLF001
+    if anchor_prev is not None and anchor_prev._order > former_region_tail._order:  # noqa: SLF001
+        successor = anchor_prev._next  # noqa: SLF001
+    region = _slots_between(doc, predecessor, successor)
+    movable = set(movable_slots)
+    final = [slot for slot in region if slot not in movable]
+    at = 0
+    if anchor_prev is not predecessor:
+        assert anchor_prev is not None
+        at = final.index(anchor_prev) + 1
 
     ordered: list[Slot] = []
     for block, leading in placements:
         block[0].leading = leading
         ordered.extend(block)
+    final[at:at] = ordered
+    assert len(final) == len(region)
     if anchor_prev is not None:
         ensure_terminator(anchor_prev, doc._newline)  # noqa: SLF001
-    _relink_run_after(anchor_prev, ordered, doc)
+    with _refile_slot_refs(region):
+        _link_run_between(predecessor, final, successor, doc)
 
     _terminate_unless_tail(former_region_tail, doc)
 
@@ -3339,10 +3312,15 @@ def _move_slots_to_anchor(
     tail = slots[-1]
 
     if head._prev is not saved_anchor_prev:  # noqa: SLF001
-        with _refile_region_refs(doc, head._prev, tail._next):  # noqa: SLF001
+        with _refile_slot_refs(slots):
             for slot in slots:
                 unlink_slot(slot, doc, strip_new_head_leading=False)
-            _relink_run_after(saved_anchor_prev, slots, doc)
+            nxt = (
+                saved_anchor_prev._next  # noqa: SLF001
+                if saved_anchor_prev is not None
+                else doc._head  # noqa: SLF001
+            )
+            _link_run_between(saved_anchor_prev, slots, nxt, doc)
 
     restore_captured_leading(head, saved_leading, from_kv=from_kv)
     _terminate_unless_tail(tail, doc)
@@ -3376,10 +3354,9 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     with their unit.
 
     Non-contiguous keys (e.g. ``[a]; [other]; [a.sub]``, where ``a`` has
-    two runs at root) are handled by collecting both runs and splicing
-    them together. A foreign slot interleaved in the owned span is
-    first hoisted to the region head — gathering owned blocks across it
-    would shove it past a header and silently change its re-parse scope.
+    two runs at root) are gathered together. Interleaved foreign KVs
+    still in the containing scope stay ahead of the gathered blocks,
+    so a moved header cannot silently change their re-parse scope.
 
     An explicit ``[c]`` header moves to the start of the reordered
     region so direct KVs stay bound to ``c``. An implicit table's dotted
@@ -3432,9 +3409,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     movable_ids = set(movable_slots)
     earliest_owned = movable_slots[0]
-    latest_owned = movable_slots[-1]
     region_predecessor = earliest_owned._prev  # noqa: SLF001
-    region_successor = latest_owned._next  # noqa: SLF001
 
     # Foreign slots interleaved in c's owned span must keep their
     # re-parse scope. Hoist foreign KVs that still belong to c's
@@ -3455,10 +3430,6 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     if front_foreign:
         head_structural, head_remainder = _split_leading_trivia(earliest_owned)
         earliest_owned.leading = head_remainder
-        with _refile_region_refs(doc, region_predecessor, region_successor):
-            for f in front_foreign:
-                unlink_slot(f, doc, strip_new_head_leading=False)
-            _relink_run_after(region_predecessor, front_foreign, doc)
         front_foreign[0].leading = head_structural + front_foreign[0].leading
 
     key_rank = {key: rank for rank, key in enumerate(new_key_order)}
@@ -3506,7 +3477,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         prefix = next(prefix_iterators[(unit.structural, unit.mixed)])
         placements.append((unit.slots, prefix + unit.remainder))
 
-    anchor_prev = earliest_owned._prev  # noqa: SLF001
+    anchor_prev = front_foreign[-1] if front_foreign else region_predecessor
     first_slot = placements[0][0][0]
     if isinstance(first_slot, KVSlot):
         host = _nearest_header_host(c)
@@ -3522,11 +3493,8 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             while anchor_prev in movable_ids:
                 anchor_prev = anchor_prev._prev  # noqa: SLF001
                 assert anchor_prev is not None
-            if anchor_prev._order > latest_owned._order:  # noqa: SLF001
-                region_successor = anchor_prev._next  # noqa: SLF001
 
-    with _refile_region_refs(doc, region_predecessor, region_successor):
-        _splice_blocks_in_order(doc, movable_slots, placements, anchor_prev=anchor_prev)
+    _splice_blocks_in_order(doc, movable_slots, placements, anchor_prev=anchor_prev)
 
 
 __all__ = [
