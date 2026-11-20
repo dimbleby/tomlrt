@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-11-20
+
 ### Fixed
 
 - Preserve identity when adding new or removed tables to arrays of tables.
