@@ -162,7 +162,10 @@ def reposition_install(parent: Container, key: str) -> Generator[Replacement]:
     Precondition: ``key`` is currently bound under ``parent``.
     """
     old_primary = _binding_primary_slot(parent, key)
-    saved_anchor_prev, successor_slot = _binding_run_neighbours(parent, key)
+    saved_anchor_prev, successor_slot = _binding_run_neighbours(
+        old_primary,
+        (*parent._path, key),  # noqa: SLF001
+    )
     saved_leading = old_primary.leading
     successor_leading = successor_slot.leading if successor_slot is not None else None
     # The header-less safety check reads the doc-stream around the
@@ -3283,17 +3286,15 @@ def _slot_binding_root(slot: Slot) -> tuple[str, ...]:
 
 
 def _binding_run_neighbours(
-    parent: Container, key: str
+    primary: Slot, path_prefix: tuple[str, ...]
 ) -> tuple[Slot | None, Slot | None]:
-    """Return the slots immediately outside ``parent[key]``'s first physical run.
+    """Return the slots immediately outside a binding's first physical run.
 
     Slots in the run can be absent from ``parent._refs`` when a
     dotted KV is hosted below ``parent``, so both boundaries are found
     by path rather than by treating the first indexed ref as the run head.
     """
-    path_prefix = (*parent._path, key)  # noqa: SLF001
     plen = len(path_prefix)
-    primary = _binding_primary_slot(parent, key)
 
     predecessor = primary._prev  # noqa: SLF001
     while (
