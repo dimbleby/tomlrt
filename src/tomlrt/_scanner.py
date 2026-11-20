@@ -13,7 +13,7 @@ raw lexeme while preserving the decoded value.
 from __future__ import annotations
 
 import re
-from datetime import UTC, date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time
 from typing import TYPE_CHECKING, Final
 
 from tomlrt._errors import TOMLParseError
@@ -49,16 +49,24 @@ _ML_FLAVOURS: Final = {
 }
 
 _HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
-_OCT_DIGITS: Final[frozenset[str]] = frozenset("01234567")
-_BIN_DIGITS: Final[frozenset[str]] = frozenset("01")
 _DEC_DIGITS: Final[frozenset[str]] = frozenset("0123456789")
 
-_RADIX: Final[dict[str, tuple[frozenset[str], int]]] = {
-    "0x": (_HEX_DIGITS, 16),
-    "0o": (_OCT_DIGITS, 8),
-    "0b": (_BIN_DIGITS, 2),
-}
-"""Digit set and base of each integer radix prefix."""
+_DECIMAL: Final = r"(?:0|[1-9][0-9]*(?:_[0-9]+)*)"
+_DIGITS: Final = r"[0-9]+(?:_[0-9]+)*"
+_EXPONENT: Final = rf"[eE][+-]?{_DIGITS}"
+_RE_INTEGER: Final = re.compile(
+    rf"[+-]?{_DECIMAL}|0x[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*"
+    r"|0o[0-7]+(?:_[0-7]+)*|0b[01]+(?:_[01]+)*",
+)
+_RE_FLOAT: Final = re.compile(
+    rf"[+-]?{_DECIMAL}(?:\.{_DIGITS}(?:{_EXPONENT})?|{_EXPONENT})",
+)
+_DATE: Final = r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
+_HOUR_MINUTE: Final = r"(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+_TIME: Final = rf"{_HOUR_MINUTE}(?::[0-5][0-9](?:\.[0-9]+)?)?"
+# fromisoformat normalizes offset minutes >= 60 and, on Python 3.15, hour 24.
+_OFFSET: Final = rf"(?:[Zz]|[+-]{_HOUR_MINUTE})"
+_RE_DATETIME: Final = re.compile(rf"{_DATE}(?:[Tt ]{_TIME}{_OFFSET}?)?|{_TIME}")
 
 
 def _is_ascii_digits(s: str) -> bool:
@@ -567,111 +575,21 @@ class _Scanner:
         return "." in body or "e" in body or "E" in body
 
     def _parse_integer_token(self, token: str, *, at: int) -> IntegerValue:
-        body = token
-        if body.startswith(("0x", "0o", "0b")):
-            allowed, base = _RADIX[body[:2]]
-            digits = body[2:]
-            if not digits or digits.startswith("_") or digits.endswith("_"):
-                msg = f"invalid integer {token!r}"
-                raise self.error(msg, at=at)
-            for c in digits:
-                if c == "_":
-                    continue
-                if c not in allowed:
-                    msg = f"invalid digit {c!r} in {token!r}"
-                    raise self.error(msg, at=at)
-            if "__" in digits:
-                msg = f"consecutive underscores in {token!r}"
-                raise self.error(msg, at=at)
-            value = int(digits.replace("_", ""), base)
-            return IntegerValue(token, value)
-
-        sign = ""
-        if body[0] in "+-":
-            sign = body[0]
-            body = body[1:]
-        if not body:
+        if _RE_INTEGER.fullmatch(token) is None:
             msg = f"invalid integer {token!r}"
-            raise self.error(msg, at=at)
-        digits_only = body
-        if "_" in body:
-            if body.startswith("_") or body.endswith("_"):
-                msg = f"invalid integer {token!r}"
-                raise self.error(msg, at=at)
-            if "__" in body:
-                msg = f"consecutive underscores in {token!r}"
-                raise self.error(msg, at=at)
-            digits_only = body.replace("_", "")
-        if not _is_ascii_digits(digits_only):
-            msg = f"invalid integer {token!r}"
-            raise self.error(msg, at=at)
-        if len(digits_only) > 1 and digits_only[0] == "0":
-            msg = f"leading zeros are not allowed in {token!r}"
             raise self.error(msg, at=at)
         try:
-            value = int(sign + digits_only)
+            value = int(token, 0)
         except ValueError as exc:
             msg = f"invalid integer {token!r}: {exc}"
             raise self.error(msg, at=at) from exc
         return IntegerValue(token, value)
 
     def _parse_float_token(self, token: str, *, at: int) -> FloatValue:
-        body = token
-        sign = ""
-        if body[0] in "+-":
-            sign = body[0]
-            body = body[1:]
-        norm = body
-        if "_" in body:
-            if "__" in body:
-                msg = f"consecutive underscores in {token!r}"
-                raise self.error(msg, at=at)
-            for i, c in enumerate(body):
-                if c == "_" and not (
-                    0 < i < len(body) - 1
-                    and body[i - 1] in _DEC_DIGITS
-                    and body[i + 1] in _DEC_DIGITS
-                ):
-                    msg = f"misplaced underscore in {token!r}"
-                    raise self.error(msg, at=at)
-            norm = body.replace("_", "")
-
-        # Validate structure manually; ``float`` accepts forms TOML doesn't.
-        # A decimal float carries at most one ``e``/``E`` marker.
-        mantissa, marker, exponent = norm.partition("e")
-        if not marker:
-            mantissa, marker, exponent = norm.partition("E")
-        if marker:
-            if not exponent or (exponent[0] in "+-" and len(exponent) == 1):
-                msg = f"invalid float exponent in {token!r}"
-                raise self.error(msg, at=at)
-            if exponent[0] in "+-":
-                exponent = exponent[1:]
-            if not _is_ascii_digits(exponent):
-                msg = f"invalid float exponent in {token!r}"
-                raise self.error(msg, at=at)
-
-        if "." in mantissa:
-            int_part, _, frac_part = mantissa.partition(".")
-            if not int_part or not frac_part:
-                msg = f"invalid float {token!r}"
-                raise self.error(msg, at=at)
-            if not _is_ascii_digits(int_part) or not _is_ascii_digits(frac_part):
-                msg = f"invalid float {token!r}"
-                raise self.error(msg, at=at)
-            if len(int_part) > 1 and int_part.startswith("0"):
-                msg = f"leading zeros not allowed in float {token!r}"
-                raise self.error(msg, at=at)
-        else:
-            if not _is_ascii_digits(mantissa):
-                msg = f"invalid float {token!r}"
-                raise self.error(msg, at=at)
-            if len(mantissa) > 1 and mantissa.startswith("0"):
-                msg = f"leading zeros not allowed in float {token!r}"
-                raise self.error(msg, at=at)
-
-        value = float(sign + norm)
-        return FloatValue(token, value)
+        if _RE_FLOAT.fullmatch(token) is None:
+            msg = f"invalid float {token!r}"
+            raise self.error(msg, at=at)
+        return FloatValue(token, float(token))
 
     def _parse_datetime_token(self, token: str, *, at: int) -> DateTimeValue:
         # Fold a TOML date followed by ``" HH:..."`` into one
@@ -692,119 +610,23 @@ class _Scanner:
         return self._parse_datetime_text(token, at=at)
 
     def _parse_datetime_text(self, text: str, *, at: int) -> DateTimeValue:
-        if len(text) >= 3 and text[2] == ":":
-            try:
-                value = self._parse_time_text(text)
-            except ValueError as exc:
-                msg = f"invalid time {text!r}: {exc}"
-                raise self.error(msg, at=at) from exc
-            return DateTimeValue(text, value)
-
-        if len(text) < 10 or text[4] != "-" or text[7] != "-":
-            msg = f"invalid date/datetime {text!r}"
-            raise self.error(msg, at=at)
-        date_part = text[:10]
-        year_s, month_s, day_s = date_part[:4], date_part[5:7], date_part[8:10]
-        if not (
-            _is_ascii_digits(year_s)
-            and _is_ascii_digits(month_s)
-            and _is_ascii_digits(day_s)
-        ):
-            msg = f"invalid date {date_part!r}"
+        local_time = text[2] == ":"
+        category = "time" if local_time else "date/datetime"
+        if _RE_DATETIME.fullmatch(text) is None:
+            msg = f"invalid {category} {text!r}"
             raise self.error(msg, at=at)
         try:
-            d = date(int(year_s), int(month_s), int(day_s))
+            value: date | time
+            if local_time:
+                value = time.fromisoformat(text)
+            elif len(text) == 10:
+                value = date.fromisoformat(text)
+            else:
+                value = datetime.fromisoformat(text.replace("t", "T").replace("z", "Z"))
         except ValueError as exc:
-            msg = f"invalid date {date_part!r}: {exc}"
+            msg = f"invalid {category} {text!r}: {exc}"
             raise self.error(msg, at=at) from exc
-
-        rest = text[10:]
-        if not rest:
-            return DateTimeValue(text, d)
-        if rest[0] not in ("T", "t", " "):
-            msg = f"expected date/time separator, got {rest[0]!r}"
-            raise self.error(msg, at=at)
-        time_part = rest[1:]
-        offset_pos = -1
-        for i, c in enumerate(time_part):
-            if c in ("Z", "z", "+", "-") and i >= 1:
-                offset_pos = i
-                break
-        if offset_pos == -1:
-            try:
-                t = self._parse_time_text(time_part)
-            except ValueError as exc:
-                msg = f"invalid time {time_part!r}: {exc}"
-                raise self.error(msg, at=at) from exc
-            return DateTimeValue(text, datetime.combine(d, t))
-        try:
-            t = self._parse_time_text(time_part[:offset_pos])
-            tz = self._parse_offset(time_part[offset_pos:])
-        except ValueError as exc:
-            msg = f"invalid datetime {text!r}: {exc}"
-            raise self.error(msg, at=at) from exc
-        dt = datetime.combine(d, t).replace(tzinfo=tz)
-        return DateTimeValue(text, dt)
-
-    @staticmethod
-    def _parse_time_text(text: str) -> time:
-        # TOML 1.1: seconds are optional; ``HH:MM`` defaults to ``:00``.
-        if len(text) < 5 or text[2] != ":":
-            msg = f"bad time format: {text!r}"
-            raise ValueError(msg)
-        hh_s, mm_s = text[:2], text[3:5]
-        if not (_is_ascii_digits(hh_s) and _is_ascii_digits(mm_s)):
-            msg = f"bad time format: {text!r}"
-            raise ValueError(msg)
-        hh = int(hh_s)
-        mm = int(mm_s)
-        rest = text[5:]
-        if not rest:
-            return time(hh, mm, 0, 0)
-        if rest[0] != ":":
-            msg = f"bad time format: {text!r}"
-            raise ValueError(msg)
-        if len(rest) < 3:
-            msg = f"bad seconds in {text!r}"
-            raise ValueError(msg)
-        ss_s = rest[1:3]
-        if not _is_ascii_digits(ss_s):
-            msg = f"bad seconds in {text!r}"
-            raise ValueError(msg)
-        ss = int(ss_s)
-        rest = rest[3:]
-        usec = 0
-        if rest:
-            if rest[0] != ".":
-                msg = f"bad fractional seconds in {text!r}"
-                raise ValueError(msg)
-            frac = rest[1:]
-            if not frac or not _is_ascii_digits(frac):
-                msg = f"bad fractional seconds in {text!r}"
-                raise ValueError(msg)
-            digits = (frac + "000000")[:6]
-            usec = int(digits)
-        return time(hh, mm, ss, usec)
-
-    @staticmethod
-    def _parse_offset(text: str) -> timezone:
-        if text in ("Z", "z"):
-            return UTC
-        if len(text) != 6 or text[0] not in "+-" or text[3] != ":":
-            msg = f"bad timezone offset: {text!r}"
-            raise ValueError(msg)
-        hh_s, mm_s = text[1:3], text[4:6]
-        if not (_is_ascii_digits(hh_s) and _is_ascii_digits(mm_s)):
-            msg = f"bad timezone offset: {text!r}"
-            raise ValueError(msg)
-        sign = 1 if text[0] == "+" else -1
-        hh = int(hh_s)
-        mm = int(mm_s)
-        if hh > 23 or mm > 59:
-            msg = f"timezone offset out of range: {text!r}"
-            raise ValueError(msg)
-        delta = timedelta(hours=hh, minutes=mm) * sign
-        return timezone(delta)
+        return DateTimeValue(text, value)
 
 
 __all__ = ["_Scanner"]

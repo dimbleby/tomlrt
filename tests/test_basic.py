@@ -376,6 +376,37 @@ def test_overlong_integer_raises_parse_error_not_valueerror() -> None:
     assert isinstance(exc_info.value.__cause__, ValueError)
 
 
+def test_datetime_conversion_preserves_lexemes_and_truncates_fractions() -> None:
+    src = td("""
+        lower = 2024-02-29t07:32:00.123456789z
+        negative_zero = 2024-02-29 07:32-00:00
+        maximum_offset = 2024-02-29T07:32+23:59
+        date_only = 2024-02-29 # not followed by a time
+        """)
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src
+    expected = reparses(src)
+    assert doc.to_dict() == expected
+    assert doc["lower"] == datetime(2024, 2, 29, 7, 32, 0, 123456, tzinfo=UTC)
+    assert doc["negative_zero"] == datetime(2024, 2, 29, 7, 32, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "2024-02-29T07:32+00:60",
+        "2024-02-29 07:32-23:60",
+        "2024-02-29T07:32+24:00",
+        "07:32+00:00",
+        "07:32.123",
+    ],
+)
+def test_datetime_rejects_non_toml_iso_forms_at_token_start(token: str) -> None:
+    with pytest.raises(tomlrt.TOMLParseError) as exc_info:
+        tomlrt.loads(f"x = {token}\n")
+    assert exc_info.value.offset == 4
+
+
 def test_inline_table_dotted_key_conflict_reports_inline_position() -> None:
     # The conflict between `x = 1` and `x.y = 2` lives on line 1 inside
     # the inline table; the error must point there, not at the start of
@@ -555,7 +586,7 @@ def test_parse_error_is_value_error() -> None:
             r"key 'a\.b\.x' already defined as a table",
         ),
         # Datetime / time value errors.
-        ("t = 07:32:00x\n", r"bad fractional seconds"),
+        ("t = 07:32:00x\n", r"invalid time"),
         # Inline-table key conflicts.
         ("t = { x = 1, x = 2 }\n", r"duplicate key 'x' in inline table"),
         (
