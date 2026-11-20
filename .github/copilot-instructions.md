@@ -197,29 +197,29 @@ them. Read roughly in this order:
 ### Parser
 
 - **`_parser.py`** — hand-written recursive-descent parser,
-  TOML 1.0 + 1.1, that drives `_Scanner` to produce a flat slot
-  stream and feeds each header / `key = value` / inline-table key
-  into `_Validator`.
+  TOML 1.0 + 1.1, that drives `_Scanner` and builds logical views
+  as it gathers slots in source order. The views and their ordered
+  projections stay private until the slot run is linked.
 - **`_validator.py`** — semantic validator for the cross-section /
   cross-line rules that the per-line slot stream cannot express on
   its own (a key bound as a value cannot later be opened as a
   table, `[H]` cannot redefine an already-opened table, dotted
   keys cannot extend an explicitly defined table / AoT, inline-
-  table local key rules). Table-local namespaces hold declaration
-  kinds; each new AoT entry clears its namespace and uses the parser's
-  fresh ownership token. Valid key declarations traverse their path once;
-  only a forbidden dotted prefix needs a suffix lookup to preserve
-  terminal-conflict diagnostic precedence. Owned and invoked by `_parser.py`.
+  table local key rules). Structural checks use the views being built,
+  not a separate namespace: headers identify explicit tables, body slots
+  identify dotted declarations in headerless tables, and each new AoT
+  entry opens a fresh scope. Only a forbidden dotted prefix needs a
+  suffix lookup to preserve terminal-conflict diagnostic precedence.
   Separate from `_typecheck.py`, which is the runtime
   input-validation layer for the public mutation API.
 
 ### Logical view construction & mutation
 
-- **`_build.py`** — single linear pass over the parser's slot
-  stream that constructs the `Document` body and all nested
-  `Table` / `Array` / `AoT` views, populating dict storage in
-  doc-stream-first-occurrence order. The *one* place that derives
-  implicit containers from slot paths.
+- **`_build.py`** — constructs `Document`, `Table`, `Array`, and `AoT`
+  views in doc-stream-first-occurrence order. Parsing checks declarations
+  while applying each slot; trusted clone and extraction paths replay
+  already linked slots through the same construction helpers. The *one*
+  place that derives implicit containers from slot paths.
 - **`_synth.py`** — plans Python mappings in input order, then emits
   body-before-subsection layout. Plans hold the eventual KV slots,
   section/AoT subplans, and deferred source-layout grafts. KV key spelling
@@ -266,9 +266,10 @@ them. Read roughly in this order:
   reverse-order unlinking; logical deletion and orphan shape stay in
   the callers.
   By far the largest file. Internal hot-path conventions:
-  - **Ordered slot filing** goes through `record_slot`, which places a
+  - **Ordered slot filing** normally goes through `record_slot`, which places a
     slot in `_refs`, indexes exact leaf KVs in `_bindings`, and advances
-    `_body_tail` for a same-owner KV. Single and bulk unfiling repair departing
+    `_body_tail` for a same-owner KV. The parser appends its private projections
+    in source order before linking assigns order keys. Single and bulk unfiling repair departing
     tails directly. A physical change to a region of the stream is
     wrapped in `_refile_region_refs`, which refreshes projections and
     body anchors together. Mutation callers never invalidate tails.

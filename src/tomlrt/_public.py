@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import IO, TYPE_CHECKING, Any
 
-from tomlrt._build import build_from_parse
 from tomlrt._container import Document
 from tomlrt._errors import TOMLParseError
 from tomlrt._parser import _Parser
@@ -16,9 +15,7 @@ if TYPE_CHECKING:
 
 def loads(text: str) -> Document:
     """Parse a TOML document string into a [`Document`][tomlrt.Document]."""
-    # Avoid retaining parser-only state while building logical views.
-    result = _Parser(text).parse()
-    return build_from_parse(result)
+    return _Parser(text).parse()
 
 
 def load(fp: IO[bytes]) -> Document:

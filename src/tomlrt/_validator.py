@@ -1,23 +1,18 @@
-"""Semantic validator for parsed TOML.
-
-The parser calls this for headers, key/value lines, and inline-table
-local duplicate / dotted-prefix checks.
-
-It also tracks the active ``AoTEntry`` per AoT path so the parser can
-attach the correct owner to each physical slot.
-"""
+"""Semantic checks and diagnostics over the namespaces being parsed."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-from tomlrt._slots import AoTEntry
+from tomlrt._array import AoT
+from tomlrt._container import Table
 
 if TYPE_CHECKING:
     from collections.abc import Container
     from typing import Protocol
 
     from tomlrt._errors import TOMLParseError
+    from tomlrt._slots import AoTEntry
 
     class ErrorBuilder(Protocol):
         """Build a parse error at a known source offset."""
@@ -25,191 +20,110 @@ if TYPE_CHECKING:
         def __call__(self, message: str, *, at: int) -> TOMLParseError: ...
 
 
-_ScopeKind = Literal["dotted", "explicit", "implicit"] | AoTEntry
-
-
-class _Scope:
-    """A table namespace; an AoT token selects its current entry."""
-
-    __slots__ = ("children", "kind")
-
-    def __init__(self, kind: _ScopeKind) -> None:
-        self.children: dict[str, _Scope | Literal["value"]] = {}
-        self.kind = kind
-
-
-def _lookup(scope: _Scope, path: tuple[str, ...]) -> _Scope | Literal["value"] | None:
-    """Look up a diagnostic's remaining path without enforcing declaration kinds."""
-    for name in path[:-1]:
-        child = scope.children.get(name)
-        if not isinstance(child, _Scope):
-            return None
-        scope = child
-    return scope.children.get(path[-1])
-
-
-class _Validator:
-    __slots__ = (
-        "_current",
-        "_error",
-        "_root",
-        "current_owner_aot_entry",
-        "current_section",
-    )
-
-    def __init__(self, error_builder: ErrorBuilder) -> None:
-        self._error = error_builder
-        self._root = _Scope("implicit")
-        self._current = self._root
-        self.current_section: tuple[str, ...] = ()
-        self.current_owner_aot_entry: AoTEntry | None = None
-
-    def enter_header(
-        self, path: tuple[str, ...], new_entry: AoTEntry | None, *, at: int
-    ) -> None:
-        """Validate a ``[H]`` / ``[[H]]`` header.
-
-        The parser supplies the entry it will bind, or ``None`` for a plain table.
-        """
-        parent = self._root
-        owner: AoTEntry | None = None
-        for i, name in enumerate(path[:-1], start=1):
-            child = parent.children.get(name)
-            if child == "value":
-                joined = ".".join(path[:i])
-                msg = f"cannot use {joined!r} as a table: already defined as a value"
-                raise self._error(msg, at=at)
-            if child is None:
-                child = _Scope("implicit")
-                parent.children[name] = child
-            parent = child
-            if isinstance(parent.kind, AoTEntry):
-                owner = parent.kind
-        name = path[-1]
-        current = parent.children.get(name)
-        if current == "value":
-            joined = ".".join(path)
-            msg = f"cannot define {joined!r} as a table: already defined as a value"
-            raise self._error(msg, at=at)
-        current_kind = current.kind if current is not None else None
-        if current_kind == "dotted":
-            joined = ".".join(path)
-            msg = (
-                f"cannot define {joined!r} as a table: already created via dotted keys"
-            )
-            raise self._error(msg, at=at)
-
-        next_kind: _ScopeKind
-        if new_entry is None:
-            if current_kind == "explicit":
-                msg = f"redefinition of table {'.'.join(path)!r}"
-                raise self._error(msg, at=at)
-            if isinstance(current_kind, AoTEntry):
-                joined = ".".join(path)
-                msg = f"cannot redefine array-of-tables {joined!r} as a normal table"
-                raise self._error(msg, at=at)
-            next_kind = "explicit"
-        else:  # aot-entry
-            if current_kind == "explicit":
-                msg = f"cannot redefine table {'.'.join(path)!r} as an array-of-tables"
-                raise self._error(msg, at=at)
-            if current_kind == "implicit":
-                msg = (
-                    f"cannot define {'.'.join(path)!r} as an array-of-tables: "
-                    "already used as an implicit table"
-                )
-                raise self._error(msg, at=at)
-            next_kind = owner = new_entry
-
-        if current is None:
-            current = _Scope(next_kind)
-            parent.children[name] = current
-        else:
-            current.kind = next_kind
-            if new_entry is not None:
-                current.children.clear()
-        self._current = current
-        self.current_section = path
-        self.current_owner_aot_entry = owner
-
-    def record_keyvalue(self, key_path: tuple[str, ...], *, at: int) -> None:
-        """Bind a value, sealing its path against subsequent extension.
-
-        Inline-table contents are checked in their own local scope;
-        recording the complete value here closes all its descendants.
-        """
-        section = self.current_section
-        scope = self._current
-        if len(key_path) > 1:
-            for i, name in enumerate(key_path[:-1], start=1):
-                child = scope.children.get(name)
-                if child is None:
-                    child = _Scope("dotted")
-                    scope.children[name] = child
-                elif child == "value":
-                    msg = (
-                        f"key {'.'.join(section + key_path[:i])!r} "
-                        "already defined as a value"
-                    )
-                    raise self._error(msg, at=at)
-                elif child.kind == "explicit" or isinstance(child.kind, AoTEntry):
-                    raise self._dotted_conflict(child, key_path, i, at=at)
-                else:
-                    child.kind = "dotted"
-                scope = child
-        existing = scope.children.get(key_path[-1])
-        if existing is not None:
-            raise self._key_conflict(existing, key_path, at=at)
-        scope.children[key_path[-1]] = "value"
-
-    def _key_conflict(
-        self, existing: _Scope | Literal["value"], key_path: tuple[str, ...], *, at: int
-    ) -> TOMLParseError:
-        joined = ".".join(self.current_section + key_path)
-        if existing == "value":
-            msg = f"duplicate key {joined!r}"
-        else:
-            msg = f"key {joined!r} already defined as a table"
-        return self._error(msg, at=at)
-
-    def _dotted_conflict(
-        self, child: _Scope, key_path: tuple[str, ...], depth: int, *, at: int
-    ) -> TOMLParseError:
-        """A terminal conflict outranks the first forbidden dotted prefix."""
-        existing = _lookup(child, key_path[depth:])
-        if existing is not None:
-            return self._key_conflict(existing, key_path, at=at)
-        what = (
-            "explicitly-defined table"
-            if child.kind == "explicit"
-            else "array-of-tables"
+def check_header(
+    current: object,
+    path: tuple[str, ...],
+    entry: AoTEntry | None,
+    error: ErrorBuilder,
+    *,
+    at: int,
+) -> None:
+    if isinstance(current, AoT):
+        msg = f"cannot redefine array-of-tables {'.'.join(path)!r} as a normal table"
+    elif not isinstance(current, Table) or current._inline:  # noqa: SLF001
+        msg = f"cannot define {'.'.join(path)!r} as a table: already defined as a value"
+    elif current._header is not None:  # noqa: SLF001
+        joined = ".".join(path)
+        msg = (
+            f"redefinition of table {joined!r}"
+            if entry is None
+            else f"cannot redefine table {joined!r} as an array-of-tables"
         )
-        joined = ".".join(self.current_section + key_path[:depth])
-        return self._error(f"cannot extend {what} {joined!r} via dotted keys", at=at)
-
-    def check_inline_key_conflict(
-        self,
-        path: tuple[str, ...],
-        seen_values: Container[tuple[str, ...]],
-        seen_prefixes: set[tuple[str, ...]],
-        *,
-        at: int,
-    ) -> None:
-        if path in seen_values:
-            msg = f"duplicate key {'.'.join(path)!r} in inline table"
-            raise self._error(msg, at=at)
-        if path in seen_prefixes:
-            msg = (
-                f"key {'.'.join(path)!r} in inline table conflicts with "
-                "an existing dotted-key prefix"
-            )
-            raise self._error(msg, at=at)
-        for i in range(1, len(path)):
-            sub = path[:i]
-            if sub in seen_values:
-                msg = f"inline-table key {'.'.join(sub)!r} already defined as a value"
-                raise self._error(msg, at=at)
-            seen_prefixes.add(sub)
+    # During parsing a headerless table can acquire body slots only
+    # through a dotted declaration, which seals it against its own header.
+    elif current._body_tail is not None:  # noqa: SLF001
+        joined = ".".join(path)
+        msg = f"cannot define {joined!r} as a table: already created via dotted keys"
+    elif entry is not None:
+        msg = (
+            f"cannot define {'.'.join(path)!r} as an array-of-tables: "
+            "already used as an implicit table"
+        )
+    else:
+        return
+    raise error(msg, at=at)
 
 
-__all__ = ["_Validator"]
+def _namespace(value: object) -> Table | None:
+    if isinstance(value, AoT):
+        return value[-1]
+    if isinstance(value, Table) and not value._inline:  # noqa: SLF001
+        return value
+    return None
+
+
+def key_conflict(
+    current: object, path: tuple[str, ...], error: ErrorBuilder, *, at: int
+) -> TOMLParseError:
+    joined = ".".join(path)
+    if _namespace(current) is None:
+        msg = f"duplicate key {joined!r}"
+    else:
+        msg = f"key {joined!r} already defined as a table"
+    return error(msg, at=at)
+
+
+def dotted_conflict(
+    child: Table | AoT,
+    host_path: tuple[str, ...],
+    key_path: tuple[str, ...],
+    depth: int,
+    error: ErrorBuilder,
+    *,
+    at: int,
+) -> TOMLParseError:
+    """A terminal conflict outranks the first forbidden dotted prefix."""
+    current = _namespace(child)
+    for name in key_path[depth:-1]:
+        assert current is not None
+        current = _namespace(current.get(name))
+        if current is None:
+            break
+    if current is not None and key_path[-1] in current:
+        return key_conflict(current[key_path[-1]], host_path + key_path, error, at=at)
+    what = "array-of-tables" if isinstance(child, AoT) else "explicitly-defined table"
+    joined = ".".join(host_path + key_path[:depth])
+    return error(f"cannot extend {what} {joined!r} via dotted keys", at=at)
+
+
+def check_inline_key_conflict(
+    path: tuple[str, ...],
+    seen_values: Container[tuple[str, ...]],
+    seen_prefixes: set[tuple[str, ...]],
+    error: ErrorBuilder,
+    *,
+    at: int,
+) -> None:
+    if path in seen_values:
+        msg = f"duplicate key {'.'.join(path)!r} in inline table"
+        raise error(msg, at=at)
+    if path in seen_prefixes:
+        msg = (
+            f"key {'.'.join(path)!r} in inline table conflicts with "
+            "an existing dotted-key prefix"
+        )
+        raise error(msg, at=at)
+    for i in range(1, len(path)):
+        sub = path[:i]
+        if sub in seen_values:
+            msg = f"inline-table key {'.'.join(sub)!r} already defined as a value"
+            raise error(msg, at=at)
+        seen_prefixes.add(sub)
+
+
+__all__ = [
+    "check_header",
+    "check_inline_key_conflict",
+    "dotted_conflict",
+    "key_conflict",
+]

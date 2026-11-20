@@ -497,6 +497,10 @@ def test_parse_error_is_value_error() -> None:
             "[x]\na.b = 1\n[x.a.e]\n[x.a]\n",
             r"cannot define 'x\.a' as a table: already created via dotted keys",
         ),
+        (
+            "[x.a.e]\n[x]\na.b = 1\n[x.a]\n",
+            r"cannot define 'x\.a' as a table: already created via dotted keys",
+        ),
         # Header / value-path conflicts.
         ("a = 1\n[a]\n", r"cannot define 'a' as a table: already defined as a value"),
         ("a = 1\n[a.b]\n", r"cannot use 'a' as a table: already defined as a value"),
@@ -575,6 +579,17 @@ def test_parse_error_is_value_error() -> None:
                 b.c.x = 2
                 """),
             r"duplicate key 'a\.b\.c\.x'",
+        ),
+        (
+            td("""
+                    [[a.b]]
+                    x = 1
+                    [[a.b]]
+                    y = 2
+                    [a]
+                    b.x = 3
+                    """),
+            r"cannot extend array-of-tables 'a\.b' via dotted keys",
         ),
         (
             td("""

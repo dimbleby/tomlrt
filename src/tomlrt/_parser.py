@@ -1,18 +1,19 @@
 """Hand-written recursive-descent parser.
 
-Walks source via `_Scanner` and emits physical slots plus trailing
-trivia. Drives `_Validator` for headers, key/value lines, and
-inline-table keys.
+Walks source via `_Scanner`, building the physical slot run and
+validating declarations against the logical views as they are opened.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tomlrt._build import _apply_header, _apply_kv, _finish_document
+from tomlrt._container import Document
 from tomlrt._scanner import _Scanner
 from tomlrt._slots import AoTEntry, KVSlot, StructuralHeaderSlot, stitch_run
 from tomlrt._trivia import leading_has_blank_line, split_eol_section
-from tomlrt._validator import _Validator
+from tomlrt._validator import check_inline_key_conflict
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -21,38 +22,26 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
+    from tomlrt._container import Container
     from tomlrt._slots import Slot
     from tomlrt._values import Value
 
 
-class ParseResult:
-    """The output of `_Parser.parse`.
-
-    `slots` is in physical document order. `trailing` is EOF trivia;
-    `newline` is the scanner-detected document-wide line ending.
-    """
-
-    __slots__ = ("newline", "section_blank_separated", "slots", "trailing")
-
-    def __init__(self) -> None:
-        self.slots: list[Slot] = []
-        self.trailing = ""
-        self.newline = "\n"
-        self.section_blank_separated = True
-
-
 class _Parser:
-    __slots__ = ("_sc", "_validator", "_value_depth")
+    __slots__ = ("_doc", "_error", "_host", "_sc", "_value_depth")
 
     _MAX_VALUE_DEPTH = 100
 
     def __init__(self, src: str) -> None:
         self._sc = _Scanner(src)
-        self._validator = _Validator(self._sc.error)
+        self._error = self._sc.error
+        self._doc = Document()
+        self._host: Container = self._doc
         self._value_depth = 0
 
-    def parse(self) -> ParseResult:
-        result = ParseResult()
+    def parse(self) -> Document:
+        slots: list[Slot] = []
+        trailing = ""
         sc = self._sc
         src = sc.src
         end = sc.end
@@ -66,7 +55,7 @@ class _Parser:
             leading = sc.scan_doc_trivia()
             pos = sc.pos
             if pos >= end:
-                result.trailing += leading
+                trailing = leading
                 break
 
             ch = src[pos]
@@ -78,14 +67,19 @@ class _Parser:
                 seen_header = True
             else:
                 slot = self._parse_key_value(leading)
-            result.slots.append(slot)
+            slots.append(slot)
 
-        stitch_run(None, result.slots, None)
-
-        if latest_section_gap is not None:
-            result.section_blank_separated = leading_has_blank_line(latest_section_gap)
-        result.newline = sc.detected_newline()
-        return result
+        stitch_run(None, slots, None)
+        _finish_document(
+            self._doc,
+            slots,
+            trailing=trailing,
+            newline=sc.detected_newline(),
+            section_blank_separated=(
+                latest_section_gap is None or leading_has_blank_line(latest_section_gap)
+            ),
+        )
+        return self._doc
 
     def _parse_header(self, leading: str) -> StructuralHeaderSlot:
         """Parse a ``[a.b]`` / ``[[a.b]]`` header.
@@ -114,12 +108,9 @@ class _Parser:
         sc.pos += len(closer)
 
         eol = sc.scan_eol()
-        self._validator.enter_header(path, new_entry, at=header_at)
-        owner = self._validator.current_owner_aot_entry
-
         slot = StructuralHeaderSlot(
             leading,
-            owner,
+            None,
             eol,
             key_parts,
             key_seps,
@@ -131,6 +122,7 @@ class _Parser:
         )
         if new_entry is not None:
             new_entry.bind_header(slot)
+        self._host = _apply_header(self._doc, slot, self._error, header_at)
         return slot
 
     def _parse_key_value(self, leading: str) -> KVSlot:
@@ -152,14 +144,12 @@ class _Parser:
         value = self._parse_value()
         eol = sc.scan_eol()
 
-        self._validator.record_keyvalue(key_path, at=key_at)
-        host_path = self._validator.current_section
-        owner = self._validator.current_owner_aot_entry
-        return KVSlot(
+        host = self._host
+        slot = KVSlot(
             leading,
-            owner,
+            host._owner_aot_entry,  # noqa: SLF001
             eol,
-            host_path,
+            host._path,  # noqa: SLF001
             key_parts,
             key_seps,
             key_path,
@@ -167,6 +157,8 @@ class _Parser:
             post_eq,
             value,
         )
+        _apply_kv(slot, host, self._error, key_at)
+        return slot
 
     def _parse_value(self) -> Value:
         sc = self._sc
@@ -246,10 +238,11 @@ class _Parser:
         while True:
             key_at = sc.pos
             key_parts, key_seps, pre_eq, key_path = sc.scan_key()
-            self._validator.check_inline_key_conflict(
+            check_inline_key_conflict(
                 key_path,
                 node._key_index,  # noqa: SLF001
                 seen_prefixes,
+                self._error,
                 at=key_at,
             )
             ch = src[sc.pos] if sc.pos < end else ""
@@ -290,4 +283,4 @@ class _Parser:
                 return node
 
 
-__all__ = ["ParseResult", "_Parser"]
+__all__ = ["_Parser"]
