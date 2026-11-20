@@ -3135,10 +3135,6 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     entries (same set of `Table` objects, possibly reordered).
     """
     if len(aot) <= 1:
-        # Reverse / sort on 0 or 1 elements is a no-op.
-        list.clear(aot)
-        for t in new_logical_order:
-            list.append(aot, t)
         return
     doc = aot._attached_doc  # noqa: SLF001
 
@@ -3175,9 +3171,7 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         )
 
     # Reflect the new order in the AoT's own list view.
-    list.clear(aot)
-    for t in new_logical_order:
-        list.append(aot, t)
+    list.__setitem__(aot, slice(None), new_logical_order)
 
 
 def _slots_between(
