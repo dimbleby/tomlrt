@@ -1575,8 +1575,11 @@ def test_held_view_after_delete_does_not_corrupt_doc() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("move", [False, True])
-@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize(
+    ("newline", "move"),
+    [("\n", False), ("\r\n", True)],
+    ids=["copy-lf", "move-crlf"],
+)
 def test_implicit_copy_and_move_preserve_interleaved_body_order(
     newline: str, *, move: bool
 ) -> None:

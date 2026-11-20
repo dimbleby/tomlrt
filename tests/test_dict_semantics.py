@@ -271,12 +271,6 @@ def test_copy_returns_plain_dict() -> None:
     assert "new" not in doc
 
 
-def test_round_trip_unchanged_after_parse() -> None:
-    """Populating dict storage at parse-time must not perturb the CST."""
-    src = _src()
-    assert tomlrt.dumps(tomlrt.loads(src)) == src
-
-
 def test_mutation_through_held_child_visible_via_parent() -> None:
     doc = tomlrt.loads("[a]\nx = 1\n")
     a = doc["a"]

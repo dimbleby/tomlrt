@@ -597,7 +597,7 @@ def test_cross_doc_aot_assign_deep_clones() -> None:
 
 def test_cross_doc_array_assign_deep_clones() -> None:
     src1 = "ports = [80, 443]\n"
-    src2 = ""
+    src2 = "ports = []\n"
     a = tomlrt.loads(src1)
     b = tomlrt.loads(src2)
     b["ports"] = a["ports"]

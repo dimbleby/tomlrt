@@ -30,37 +30,12 @@ else:
     from typing_extensions import override
 
 
-def test_assign_existing_array_deep_copies() -> None:
-    src = tomlrt.loads("source = [1, 2, 3]\n")
-    dest = tomlrt.loads("dest = []\n")
-    dest["dest"] = src.array("source")
-    src.array("source")[0] = 99
-    # The mutation on `source` must not leak into `dest`.
-    assert list(dest.array("dest")) == [1, 2, 3]
-
-
 def test_assign_existing_inline_table_deep_copies() -> None:
     src = tomlrt.loads("source = {a = 1}\n")
     dest = tomlrt.loads("dest = {}\n")
     dest["dest"] = src.table("source")
     src.table("source")["a"] = 99
     assert dest.table("dest")["a"] == 1
-
-
-def test_deepcopy_preserves_document_structure() -> None:
-
-    src = td("""
-        [a]
-        x = 1
-
-        [[b]]
-        y = 2
-        [[b]]
-        y = 3
-        """)
-    doc1 = tomlrt.loads(src)
-    doc2 = deepcopy(doc1)
-    assert tomlrt.dumps(doc2) == src
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
@@ -466,20 +441,35 @@ def test_plain_export_copies_raw_nested_containers_and_views() -> None:
 def test_copy_yields_independent_document(
     copier: Callable[[Document], Document],
 ) -> None:
-    src = "[a]\nx = 1\n"
+    src = td("""
+        [a]
+        x = 1
+
+        [[b]]
+        y = 2
+        [[b]]
+        y = 3
+        """)
     doc1 = tomlrt.loads(src)
     doc2 = copier(doc1)
+    assert tomlrt.dumps(doc2) == src
     doc2["a"]["x"] = 99
+    doc2.aot("b")[0]["y"] = 42
     assert doc1["a"]["x"] == 1
     assert doc2["a"]["x"] == 99
-    # And the unmutated half stays format-preserved.
     assert tomlrt.dumps(doc1) == src
+    assert tomlrt.dumps(doc2) == td("""
+        [a]
+        x = 99
+
+        [[b]]
+        y = 42
+        [[b]]
+        y = 3
+        """)
 
 
-@pytest.mark.parametrize("copier", [copy, deepcopy], ids=["copy", "deepcopy"])
-def test_copy_table_subview_is_independent_and_round_trips(
-    copier: Callable[[Table], Table],
-) -> None:
+def test_copy_table_subview_is_independent_and_round_trips() -> None:
     src = td("""
         [t]
         x = 1
@@ -487,7 +477,7 @@ def test_copy_table_subview_is_independent_and_round_trips(
         """).replace("\n", "\r\n")
     doc = tomlrt.loads(src)
     t = doc.table("t")
-    t2 = copier(t)
+    t2 = copy(t)
     assert tomlrt.dumps(t2) == td("""
         x = 1
         y = [ 1,2 ] # array

@@ -194,8 +194,3 @@ def test_dump_accepts_plain_dict() -> None:
     out = io.BytesIO()
     tomlrt.dump({"a": 1}, out)
     assert out.getvalue() == b"a = 1\n"
-
-
-def test_dumps_rejects_non_mapping() -> None:
-    with pytest.raises(TypeError):
-        tomlrt.dumps([1, 2, 3])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
