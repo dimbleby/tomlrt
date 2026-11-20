@@ -285,16 +285,6 @@ def _anchor_accepts_install(
     )
 
 
-def _ancestor_chain(c: Container) -> list[Container]:
-    """Ancestors from ``c._parent`` up to (and including) the document root."""
-    out: list[Container] = []
-    cur = c._parent  # noqa: SLF001
-    while cur is not None:
-        out.append(cur)
-        cur = cur._parent  # noqa: SLF001
-    return out
-
-
 def _anchor_in_parent_direct_body(parent: Container, anchor_prev: Slot | None) -> bool:
     """True iff a direct KV spliced after ``anchor_prev`` would belong to ``parent``.
 
@@ -444,8 +434,10 @@ def _file_header_binding_chain(
     header: StructuralHeaderSlot,
 ) -> None:
     """File ``header`` in doc order on ``deepest`` and every ancestor."""
-    for c in [deepest, *_ancestor_chain(deepest)]:
+    c: Container | None = deepest
+    while c is not None:
         record_slot(c, header)
+        c = c._parent  # noqa: SLF001
 
 
 def _extend_header_bindings_to_root(
@@ -1909,21 +1901,6 @@ def owned_slots(view: Container | AoT) -> list[Slot]:
     return owned
 
 
-def _gather_headered_subtree_slots(
-    src_table: Container,
-) -> tuple[StructuralHeaderSlot, list[Slot]]:
-    """Collect ``src_table``'s subtree slots plus its own header, by identity.
-
-    ``src_table._header`` — not ``src_slots[0]`` — is the
-    container's own header: doc-stream order may put a forward-declared
-    nested descendant's header earlier in the returned list.
-    """
-    src_slots = owned_slots(src_table)
-    head = src_table._header  # noqa: SLF001
-    assert head is not None
-    return head, src_slots
-
-
 def _hoist_root_level_kvs(run: list[Slot], doc: Document) -> list[Slot]:
     """Move the document root's own keys ahead of any header in ``run``.
 
@@ -1968,14 +1945,10 @@ def extract_subtree_slots(src_table: Container) -> tuple[list[Slot], str]:
     doc = src_table._layout_root  # noqa: SLF001
     assert doc is not None, "subtree extraction requires an attached container"
     nl = doc._newline  # noqa: SLF001
-    if src_table._header is not None:  # noqa: SLF001
-        head, src_slots = _gather_headered_subtree_slots(src_table)
-    else:
-        # A header-less section is bound by its descendants' slots, and
-        # an attached one always has at least one.
-        assert src_table._refs, "implicit section has no slots"  # noqa: SLF001
-        head = None
-        src_slots = owned_slots(src_table)
+    # A forward-declared descendant can precede the table's own header.
+    head = src_table._header  # noqa: SLF001
+    assert head is not None or src_table._refs, "implicit section has no slots"  # noqa: SLF001
+    src_slots = owned_slots(src_table)
 
     cloned, cloned_head = _clone_entry_slots(
         src_slots,
