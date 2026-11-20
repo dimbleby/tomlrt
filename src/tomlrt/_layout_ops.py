@@ -404,9 +404,29 @@ def _replace_ordered_run(refs: list[Slot], run: list[Slot], start: int) -> None:
     refs[at:at] = run
 
 
-def file_own_header(c: Container, header: StructuralHeaderSlot) -> None:
+def append_parsed_ref(c: Container, slot: Slot) -> None:
+    """File a parse-time ref before the source-order run has been linked."""
+    slot._containers.append(c)  # noqa: SLF001
+    c._refs.append(slot)  # noqa: SLF001
+
+
+def append_parsed_kv(c: Container, slot: KVSlot, leaf: str | None = None) -> None:
+    """Append a same-owner KV in source order, naming its binding only at the leaf."""
+    slot._containers.append(c)  # noqa: SLF001
+    c._refs.append(slot)  # noqa: SLF001
+    c._body_tail = slot  # noqa: SLF001
+    if leaf is not None:
+        c._bindings[leaf] = slot  # noqa: SLF001
+
+
+def file_own_header(
+    c: Container, header: StructuralHeaderSlot, *, parsed: bool = False
+) -> None:
     """File ``header`` as ``c``'s own physical presence and empty-body anchor."""
-    record_slot(c, header)
+    if parsed:
+        append_parsed_ref(c, header)
+    else:
+        record_slot(c, header)
     c._header = header  # noqa: SLF001
     if not isinstance(c._body_tail, KVSlot):  # noqa: SLF001
         c._body_tail = header  # noqa: SLF001
