@@ -2288,11 +2288,8 @@ def _splice_implicit_run(
         if anchor is None and doc._head is not None:  # noqa: SLF001
             old_head = doc._head  # noqa: SLF001
             _retarget_separator(body[0], "")
-            insert_before_head(body[0], doc)
-            for prev, slot in itertools.pairwise(body):
-                insert_after(prev, slot, doc)
+            _splice_block_between(body, None, old_head, doc)
             _ensure_leading_blank_line(old_head, doc)
-            _terminate_unless_tail(body[-1], doc)
         else:
             _splice_block_after(body, anchor, doc)
     if blocks:
