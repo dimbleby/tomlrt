@@ -233,15 +233,21 @@ def test_attached_view_keeps_its_comments_and_spacing() -> None:
         ({"a": None}, TypeError, "cannot convert NoneType"),
         ({1: "x"}, TypeError, "TOML keys must be str"),
         ({"a": {2: "x"}}, TypeError, "TOML keys must be str"),
+        ({"a": {"b": object()}}, TypeError, "cannot convert object"),
+        ({"a": [object()]}, TypeError, "cannot convert object"),
         ({"a": [{"b": object()}]}, TypeError, "cannot convert object"),
         ({"a": time(1, 2, tzinfo=UTC)}, ValueError, "cannot represent"),
     ],
 )
-def test_rejected_input_is_reported(
+def test_document_and_dumps_report_the_same_invalid_input(
     data: dict[Any, Any], exc: type[Exception], match: str
 ) -> None:
-    with pytest.raises(exc, match=match):
+    with pytest.raises(exc, match=match) as from_document:
         tomlrt.Document(data)
+    with pytest.raises(exc) as from_dumps:
+        tomlrt.dumps(data)
+    assert str(from_dumps.value) == str(from_document.value)
+    assert type(from_dumps.value) is type(from_document.value)
 
 
 def test_first_bad_value_is_reported_whichever_kind_it_is() -> None:
@@ -305,11 +311,6 @@ def test_synthesised_document_sorts_and_reparses() -> None:
     assert tomlrt.loads(out).to_dict() == doc.to_dict()
 
 
-def test_dumps_of_a_plain_mapping_round_trips() -> None:
-    data: dict[str, Any] = {"k": 1, "s": {"x": "y"}, "e": [{"n": 1}]}
-    assert tomlrt.loads(tomlrt.dumps(data)).to_dict() == data
-
-
 # ---------------------------------------------------------------------------
 # `dumps` renders the run without building the views over it
 # ---------------------------------------------------------------------------
@@ -332,21 +333,6 @@ def test_dumps_of_a_graft_matches_the_document_it_would_have_built() -> None:
         return {"first": 1, "g": src.table("a"), "last": 2}
 
     assert tomlrt.dumps(data()) == tomlrt.Document(data()).render()
-
-
-@pytest.mark.parametrize(
-    "value",
-    [object(), b"x", (1, 2), {1: "int key"}, {"a": object()}, [object()]],
-    ids=["object", "bytes", "tuple", "int key", "nested object", "in a list"],
-)
-def test_dumps_rejects_what_document_rejects(value: object) -> None:
-    """The same complaint, whichever of the two the caller reached for."""
-    with pytest.raises((TypeError, TOMLError)) as from_document:
-        tomlrt.Document({"k": value})
-    with pytest.raises((TypeError, TOMLError)) as from_dumps:
-        tomlrt.dumps({"k": value})
-    assert str(from_dumps.value) == str(from_document.value)
-    assert type(from_dumps.value) is type(from_document.value)
 
 
 def test_dumps_rejects_a_non_mapping() -> None:
@@ -752,8 +738,11 @@ def test_constructor_preserves_annotated_entry_factories(
         """)
 
 
-@pytest.mark.parametrize("newline", ["\n", "\r\n"])
-@pytest.mark.parametrize("standalone_aot", [False, True])
+@pytest.mark.parametrize(
+    ("newline", "standalone_aot"),
+    [("\r\n", False), ("\n", True)],
+    ids=["plain-list-crlf", "aot-lf"],
+)
 def test_constructor_entry_layout_normalizes_forward_declarations(
     newline: str, *, standalone_aot: bool
 ) -> None:

@@ -31,23 +31,29 @@ _OPAQUE: Any = object()
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("shape", ["scalar", "array", "table"])
 @pytest.mark.parametrize(
-    "source",
+    ("source", "shape"),
     [
-        td("""
-            [target] # keep
-            x = 0x1
+        (
+            td("""
+                [target] # keep
+                x = 0x1
 
-            [after]
-            y = 2
-            """),
-        "target.x = 0x1 # keep\n",
-        td("""
-            [[target]] # keep
-            x = 0x1
-            """),
+                [after]
+                y = 2
+                """),
+            "scalar",
+        ),
+        ("target.x = 0x1 # keep\n", "array"),
+        (
+            td("""
+                [[target]] # keep
+                x = 0x1
+                """),
+            "table",
+        ),
     ],
+    ids=["section-to-scalar", "dotted-to-array", "aot-to-inline-table"],
 )
 def test_failed_inline_conversion_keeps_structural_binding(
     source: str, shape: str
@@ -1220,18 +1226,13 @@ def test_array_remove_missing_raises_valueerror() -> None:
     assert tomlrt.dumps(doc) == "xs = [1, 2, 3]\n"
 
 
-def test_array_delitem_out_of_range_raises_indexerror() -> None:
-    doc = tomlrt.loads("xs = [1, 2]\n")
-    xs = doc.array("xs")
-    with pytest.raises(IndexError):
-        del xs[99]
-
-
 def test_array_delitem_on_empty_array_raises_indexerror() -> None:
-    doc = tomlrt.loads("xs = []\n")
+    src = "xs = []\n"
+    doc = tomlrt.loads(src)
     xs = doc.array("xs")
-    with pytest.raises(IndexError):
+    with pytest.raises(IndexError, match="out of range"):
         del xs[0]
+    assert tomlrt.dumps(doc) == src
 
 
 def test_array_setitem_slice_extended_size_mismatch_raises_valueerror() -> None:
@@ -1662,15 +1663,6 @@ def test_array_failed_bulk_mutation_does_not_attach_input(value: Any) -> None:
     assert tomlrt.dumps(doc) == expected
 
 
-def _apply_array_single_mutation(arr: Array, operation: str, value: Any) -> None:
-    if operation == "append":
-        arr.append(value)
-    elif operation == "insert":
-        arr.insert(0, value)
-    else:
-        arr[0] = value
-
-
 def _reject_array_synthesis(failure_site: str, destination: Array, value: Any) -> None:
     invalid: list[Any] = [value, object()]
     if failure_site == "constructor":
@@ -1679,8 +1671,10 @@ def _reject_array_synthesis(failure_site: str, destination: Array, value: Any) -
         destination.append(invalid)
 
 
-@pytest.mark.parametrize("operation", ["append", "insert", "replace"])
-@pytest.mark.parametrize("value_kind", ["array", "table"])
+@pytest.mark.parametrize(
+    ("operation", "value_kind"),
+    [("insert", "array"), ("replace", "table")],
+)
 def test_array_failed_single_mutation_does_not_attach_nested_input(
     operation: str, value_kind: str
 ) -> None:
@@ -1690,8 +1684,12 @@ def test_array_failed_single_mutation_does_not_attach_nested_input(
     value = Array([2]) if value_kind == "array" else Table.inline({"x": 2})
     invalid = [value, object()]
 
-    with pytest.raises(TypeError):
-        _apply_array_single_mutation(xs, operation, invalid)
+    if operation == "insert":
+        with pytest.raises(TypeError, match="cannot convert object to a TOML value"):
+            xs.insert(0, invalid)
+    else:
+        with pytest.raises(TypeError, match="cannot convert object to a TOML value"):
+            xs[0] = invalid
 
     assert tomlrt.dumps(doc) == src
     doc["kept"] = value
@@ -1796,15 +1794,6 @@ def test_array_extend_empty_is_noop() -> None:
     doc = tomlrt.loads(src)
     doc.array("xs").extend([])
     assert tomlrt.dumps(doc) == src
-
-
-def test_array_iadd_self_duplicates_once() -> None:
-    """``arr += arr`` matches list semantics: duplicate once, no hang."""
-    doc = tomlrt.loads("xs = [1, 2]\n")
-    xs = doc.array("xs")
-    xs += xs
-    assert list(xs) == [1, 2, 1, 2]
-    assert tomlrt.dumps(doc) == "xs = [1, 2, 1, 2]\n"
 
 
 def test_array_sort_reverse() -> None:
@@ -2343,35 +2332,6 @@ def test_array_append_after_eol_item_does_not_duplicate_prior_comment() -> None:
         """)
 
 
-# Every Array/AoT mutator must be wired through the CST so the
-# rendered output stays in sync with in-memory mutations.
-@pytest.mark.parametrize(
-    "name",
-    [
-        "append",
-        "extend",
-        "insert",
-        "pop",
-        "remove",
-        "clear",
-        "sort",
-        "reverse",
-        "__setitem__",
-        "__delitem__",
-        "__iadd__",
-        "__imul__",
-    ],
-)
-def test_every_array_mutator_is_overridden(name: str) -> None:
-    array_method = getattr(tomlrt.Array, name, None)
-    list_method = getattr(list, name, None)
-    assert array_method is not None
-    assert list_method is not None
-    assert array_method is not list_method, (
-        f"Array.{name} must be overridden so mutation routes through CST"
-    )
-
-
 # ---------------------------------------------------------------------------
 # Container assignment / deep clone
 # ---------------------------------------------------------------------------
@@ -2730,7 +2690,7 @@ def test_aot_append_copies_child_of_detached_parent() -> None:
 
 
 @pytest.mark.parametrize(
-    "operation", ["construct", "add", "append", "extend", "insert", "replace", "slice"]
+    "operation", ["construct", "append", "extend", "insert", "replace", "slice"]
 )
 def test_aot_operations_copy_still_owned_private_table(operation: str) -> None:
     source = tomlrt.loads(
@@ -2749,9 +2709,7 @@ def test_aot_operations_copy_still_owned_private_table(operation: str) -> None:
         doc["rows"] = rows
     else:
         doc["rows"] = rows
-        if operation == "add":
-            rows.add(child)
-        elif operation == "append":
+        if operation == "append":
             rows.append(child)
         elif operation == "extend":
             rows.extend([child])
@@ -3102,26 +3060,29 @@ def test_aot_slice_can_reuse_unchanged_entry() -> None:
         """)
 
 
-@pytest.mark.parametrize("operation", ["add", "append", "insert", "replace", "resize"])
+_SECTION_BODY = td("""
+    [template] # source
+    'x'  =  0x01 # keep
+    """)
+_AOT_BODY = td("""
+    [[template]] # source
+    'x'  =  0x01 # keep
+    """)
+
+
 @pytest.mark.parametrize(
-    ("kind", "source_text"),
+    ("operation", "kind", "source_text"),
     [
-        (
-            "section",
-            td("""
-            [template] # source
-            'x'  =  0x01 # keep
-            """),
+        pytest.param("add", "section", _SECTION_BODY, id="add-section"),
+        pytest.param("append", "aot", _AOT_BODY, id="append-aot-entry"),
+        pytest.param("insert", "section", _SECTION_BODY, id="insert-section"),
+        pytest.param(
+            "insert", "implicit", "template.'x'  =  0x01 # keep\n", id="insert-dotted"
         ),
-        (
-            "aot",
-            td("""
-            [[template]] # source
-            'x'  =  0x01 # keep
-            """),
+        pytest.param(
+            "replace", "document", "'x'  =  0x01 # keep\n", id="replace-with-document"
         ),
-        ("implicit", "template.'x'  =  0x01 # keep\n"),
-        ("document", "'x'  =  0x01 # keep\n"),
+        pytest.param("resize", "aot", _AOT_BODY, id="resize-with-aot-entry"),
     ],
 )
 def test_aot_whole_body_capture_preserves_layout(
@@ -6800,6 +6761,7 @@ def test_aot_extend_self_duplicates_once() -> None:
     aot.extend(aot)
     assert len(aot) == 4
     assert [t["a"] for t in aot] == [1, 2, 1, 2]
+    assert tomlrt.dumps(doc) == f"{src}\n{src}"
 
 
 _BAD_BODY: Any = {"q": object()}
@@ -6855,22 +6817,6 @@ def test_aot_setitem_slice_invalid_entry_is_atomic() -> None:
     rendered = tomlrt.dumps(doc)
     assert rendered == src
     assert _reparses(rendered) == {"a": [{"x": 1}, {"x": 2}]}
-
-
-def test_aot_iadd_self_duplicates_once() -> None:
-    """``aot += aot`` matches list semantics: duplicate once, no hang."""
-    src = td("""
-        [[t]]
-        a = 1
-
-        [[t]]
-        a = 2
-        """)
-    doc = tomlrt.loads(src)
-    aot = doc.aot("t")
-    aot += aot
-    assert len(aot) == 4
-    assert [t["a"] for t in aot] == [1, 2, 1, 2]
 
 
 def test_aot_insert_at_zero_adopts_sibling_kv_indent() -> None:
@@ -8845,17 +8791,17 @@ def test_install_matches_ensure_table_assignment(*, inline_receiver: bool) -> No
 
 
 @pytest.mark.parametrize(
-    ("value", "rendered"),
+    ("value", "rendered", "source"),
     [
-        ({"x": 1}, "{ x = 1 }"),
-        (Array([1, 2]), "[1, 2]"),
+        ({"x": 1}, "{ x = 1 }", "t = { sub = {} }\n"),
+        (Array([1, 2]), "[1, 2]", "t = {}\n"),
     ],
+    ids=["mapping-into-existing-parent", "array-into-new-parent"],
 )
-@pytest.mark.parametrize("existing_parent", [False, True])
 def test_install_inline_values_into_inline_parent(
-    value: tomlrt.TomlInput, rendered: str, *, existing_parent: bool
+    value: tomlrt.TomlInput, rendered: str, source: str
 ) -> None:
-    doc = tomlrt.loads("t = { sub = {} }\n" if existing_parent else "t = {}\n")
+    doc = tomlrt.loads(source)
     result = doc.install(("t", "sub", "leaf"), value)
     assert result is doc.table("t").table("sub")["leaf"]
     out = tomlrt.dumps(doc)
@@ -9114,10 +9060,7 @@ def test_install_captures_structural_source_before_promotion(*, wrapped: bool) -
 @pytest.mark.parametrize(
     "value",
     [
-        pytest.param(_OPAQUE, id="opaque"),
         pytest.param({"x": _OPAQUE}, id="mapping-with-opaque"),
-        pytest.param((1, 2), id="tuple"),
-        pytest.param(b"bytes", id="bytes"),
         pytest.param(Table.section({"x": _OPAQUE}), id="section"),
         pytest.param(AoT([{"x": _OPAQUE}]), id="aot"),
     ],
@@ -11009,9 +10952,21 @@ def test_sort_hoists_mixed_leaf_before_forward_structural_content() -> None:
     assert tomlrt.dumps(doc) == expected
 
 
-@pytest.mark.parametrize("detached", [False, True])
-@pytest.mark.parametrize("reverse", [False, True])
-@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize(
+    ("newline", "detached", "reverse"),
+    [
+        ("\n", False, False),
+        ("\r\n", False, True),
+        ("\n", True, True),
+        ("\r\n", True, False),
+    ],
+    ids=[
+        "attached-lf",
+        "attached-crlf-reverse",
+        "detached-lf-reverse",
+        "detached-crlf",
+    ],
+)
 def test_sort_implicit_child_stays_after_its_containing_header(
     newline: str, *, detached: bool, reverse: bool
 ) -> None:

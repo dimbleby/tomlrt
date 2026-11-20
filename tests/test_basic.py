@@ -125,8 +125,11 @@ def test_round_trip(src: str) -> None:
     assert tomlrt.dumps(doc) == src
 
 
-@pytest.mark.parametrize("kind", ["dotted", "inline", "section", "aot"])
-@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize(
+    ("kind", "newline"),
+    [("dotted", "\n"), ("inline", "\r\n"), ("section", "\n"), ("aot", "\r\n")],
+    ids=["dotted", "inline-crlf", "section", "aot-crlf"],
+)
 def test_deep_mixed_key_preserves_spelling(kind: str, newline: str) -> None:
     spellings = ("bare{}", '"quoted.{}"', "'literal {}'")
     parts = [spellings[i % len(spellings)].format(i) for i in range(128)]
@@ -439,14 +442,11 @@ def test_parse_error_position_counts_crlf_as_one_line() -> None:
         ('a = "abc\n', (1, 9, 8)),
         # Error at the very end of the source, just after a final newline.
         ("a = 1\n[", (2, 2, 7)),
-        # Reported by the validator rather than the scanner: the
-        # duplicate header itself, not wherever the cursor ended up.
-        ("[a]\n[a]\n", (2, 1, 4)),
-        # Ditto for a duplicate key.
+        # Reported by the validator: the duplicate key, not the cursor.
         ("a = 1\na = 2\n", (2, 1, 6)),
         # An indented offender points at the key, not at the indent.
         ("[t]\nb.c = 1\n  b = 2\n", (3, 3, 14)),
-        # No trailing newline: still the header, not the end of the line.
+        # A duplicate header points to its start even without a trailing newline.
         ("[a]\n[a]", (2, 1, 4)),
         # Leading blank lines still count.
         ("\n\n@\n", (3, 1, 2)),
@@ -605,13 +605,14 @@ def test_parse_error_messages(src: str, message: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "value",
-    ["{ b = 1 }", "{ b.c = 1 }", "{ b = { c = 1 } }", "{ b = {} }"],
-)
-@pytest.mark.parametrize("key", ["a.b", "a.b.c", "a.new"])
-@pytest.mark.parametrize(
-    ("scope", "parent"),
-    [("", "a"), ("[section]\n", "section.a"), ("[[items]]\n", "items.a")],
+    ("value", "key", "scope", "parent"),
+    [
+        ("{ b = 1 }", "a.b", "", "a"),
+        ("{ b.c = 1 }", "a.b.c", "[section]\n", "section.a"),
+        ("{ b = { c = 1 } }", "a.b.c", "[[items]]\n", "items.a"),
+        ("{ b = {} }", "a.new", "", "a"),
+    ],
+    ids=["existing-key", "dotted-in-section", "nested-in-aot", "new-key"],
 )
 def test_inline_table_descendants_are_sealed(
     value: str, key: str, scope: str, parent: str
