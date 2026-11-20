@@ -1106,8 +1106,7 @@ def _reorder_dict_storage(c: Container, new_key_order: list[str]) -> None:
     """
     values = [(k, dict.__getitem__(c, k)) for k in new_key_order]
     dict.clear(c)
-    for k, v in values:
-        dict.__setitem__(c, k, v)
+    dict.update(c, values)
 
 
 def _direct_kv_trivia(c: Container, key: str) -> tuple[str, str]:
@@ -1177,8 +1176,7 @@ def _make_inline_chain(parts: Sequence[str]) -> tuple[Table, Table]:
 
 def _populate_unattached(t: Container, mapping: Mapping[str, TomlInput]) -> None:
     """Populate an unattached ``Container`` whose keys are already validated."""
-    for k, v in _mapping_items(mapping):
-        dict.__setitem__(t, k, v)
+    dict.update(t, _mapping_items(mapping))
 
 
 class Table(Container):
