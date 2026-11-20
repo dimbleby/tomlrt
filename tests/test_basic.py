@@ -410,6 +410,14 @@ def test_datetime_rejects_non_toml_iso_forms_at_token_start(token: str) -> None:
     assert exc_info.value.offset == 4
 
 
+def test_invalid_space_separated_datetime_reports_entire_token() -> None:
+    with pytest.raises(
+        tomlrt.TOMLParseError, match=r"invalid date/datetime '2024-02-29 12:99'"
+    ) as exc_info:
+        tomlrt.loads("x = 2024-02-29 12:99 # keep the error at the date\n")
+    assert exc_info.value.offset == 4
+
+
 def test_inline_table_dotted_key_conflict_reports_inline_position() -> None:
     # The conflict between `x = 1` and `x.y = 2` lives on line 1 inside
     # the inline table; the error must point there, not at the start of

@@ -49,24 +49,32 @@ _ML_FLAVOURS: Final = {
 }
 
 _HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
-_DEC_DIGITS: Final[frozenset[str]] = frozenset("0123456789")
-
 _DECIMAL: Final = r"(?:0|[1-9][0-9]*(?:_[0-9]+)*)"
 _DIGITS: Final = r"[0-9]+(?:_[0-9]+)*"
 _EXPONENT: Final = rf"[eE][+-]?{_DIGITS}"
-_RE_INTEGER: Final = re.compile(
-    rf"[+-]?{_DECIMAL}|0x[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*"
-    r"|0o[0-7]+(?:_[0-7]+)*|0b[01]+(?:_[01]+)*",
-)
-_RE_FLOAT: Final = re.compile(
-    rf"[+-]?{_DECIMAL}(?:\.{_DIGITS}(?:{_EXPONENT})?|{_EXPONENT})",
-)
 _DATE: Final = r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
 _HOUR_MINUTE: Final = r"(?:[01][0-9]|2[0-3]):[0-5][0-9]"
 _TIME: Final = rf"{_HOUR_MINUTE}(?::[0-5][0-9](?:\.[0-9]+)?)?"
 # fromisoformat normalizes offset minutes >= 60 and, on Python 3.15, hour 24.
 _OFFSET: Final = rf"(?:[Zz]|[+-]{_HOUR_MINUTE})"
-_RE_DATETIME: Final = re.compile(rf"{_DATE}(?:[Tt ]{_TIME}{_OFFSET}?)?|{_TIME}")
+_RE_TIME_CONTINUATION: Final = re.compile(r" [0-9][\s\S]:")
+_VALUE_DELIMITER: Final = r" \t\n\r,\]}#"
+_RE_ATOM: Final = re.compile(
+    rf"""
+    (?:
+        [+-]?{_DECIMAL}(?P<float>\.{_DIGITS}(?:{_EXPONENT})?|{_EXPONENT})?
+      | 0x[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*
+      | 0o[0-7]+(?:_[0-7]+)*
+      | 0b[01]+(?:_[01]+)*
+      | (?P<boolean>true|false)
+      | (?P<infinity>[+-]?inf)
+      | (?P<nan>[+-]?nan)
+      | (?P<datetime>{_DATE}(?:[Tt ]{_TIME}{_OFFSET}?)?|{_TIME})
+    )
+    (?=[{_VALUE_DELIMITER}]|\Z)
+    """,
+    re.VERBOSE,
+)
 
 
 def _is_ascii_digits(s: str) -> bool:
@@ -80,7 +88,7 @@ def _is_ascii_digits(s: str) -> bool:
 
 # A bare-value token: everything up to the first character that can end
 # one. Matches empty, which the caller reports as a missing value.
-_RE_VALUE_TOKEN: Final = re.compile(r"[^ \t\n\r,\]}#]*")
+_RE_VALUE_TOKEN: Final = re.compile(rf"[^{_VALUE_DELIMITER}]*")
 
 # Shared simple backslash-escape map.
 _SIMPLE_ESCAPES: Final[dict[str, str]] = {
@@ -518,37 +526,41 @@ class _Scanner:
     # dispatches strings, arrays and inline tables itself.
 
     def scan_value_atom(self) -> Value:
-        """Scan a non-container, non-string value at the cursor.
-
-        Bool and special-float keywords are whole-token matches, so
-        ``trueish`` / ``infinity`` error rather than parsing as
-        ``true`` / ``inf`` followed by garbage.
-        """
+        """Recognize a complete bare value directly in the source."""
         start = self.pos
-        token = self._scan_value_token()
+        match = _RE_ATOM.match(self.src, start)
+        if match is not None:
+            self.pos = match.end()
+            token = match[0]
+            kind = match.lastgroup
+            if kind is None:
+                return self._convert_integer(token, at=start)
+            if kind == "boolean":
+                return BoolValue(token, token == "true")  # noqa: S105
+            if kind == "datetime":
+                # The match may have backed off to a date before a
+                # malformed space-separated time. Report the whole token.
+                if len(token) == 10 and _RE_TIME_CONTINUATION.match(self.src, self.pos):
+                    raise self._invalid_atom(token, at=start)
+                return self._convert_datetime(token, at=start)
+            return FloatValue(token, float("nan" if kind == "nan" else token))
+
+        raise self._invalid_atom(self._scan_value_token(), at=start)
+
+    def _invalid_atom(self, token: str, *, at: int) -> TOMLParseError:
         if not token:
-            msg = f"expected value, got {self.src[start : start + 1]!r}"
-            raise self.error(msg)
+            msg = f"expected value, got {self.src[at : at + 1]!r}"
+            return self.error(msg, at=at)
 
-        if token in ("true", "false"):
-            return BoolValue(token, token == "true")  # noqa: S105
-        if token in ("inf", "+inf"):
-            return FloatValue(token, float("inf"))
-        if token == "-inf":  # noqa: S105
-            return FloatValue(token, float("-inf"))
-        if token in ("nan", "+nan", "-nan"):
-            return FloatValue(token, float("nan"))
-
-        # Date/time literals always carry a fixed punctuation char in
-        # a known position. Try them before numbers so e.g. ``1979-…``
-        # is not mistaken for an integer.
         if self._looks_like_datetime(token):
-            return self._parse_datetime_token(token, at=start)
-
-        if self._looks_like_float(token):
-            return self._parse_float_token(token, at=start)
-
-        return self._parse_integer_token(token, at=start)
+            category = "time" if token[2] == ":" else "date/datetime"
+            if len(token) == 10 and _RE_TIME_CONTINUATION.match(self.src, self.pos):
+                self.pos += 1
+                token += " " + self._scan_value_token()
+        else:
+            category = "float" if self._looks_like_float(token) else "integer"
+        msg = f"invalid {category} {token!r}"
+        return self.error(msg, at=at)
 
     def _scan_value_token(self) -> str:
         """Consume the bare-value token at the cursor and return its text."""
@@ -574,10 +586,7 @@ class _Scanner:
             return False
         return "." in body or "e" in body or "E" in body
 
-    def _parse_integer_token(self, token: str, *, at: int) -> IntegerValue:
-        if _RE_INTEGER.fullmatch(token) is None:
-            msg = f"invalid integer {token!r}"
-            raise self.error(msg, at=at)
+    def _convert_integer(self, token: str, *, at: int) -> IntegerValue:
         try:
             value = int(token, 0)
         except ValueError as exc:
@@ -585,36 +594,8 @@ class _Scanner:
             raise self.error(msg, at=at) from exc
         return IntegerValue(token, value)
 
-    def _parse_float_token(self, token: str, *, at: int) -> FloatValue:
-        if _RE_FLOAT.fullmatch(token) is None:
-            msg = f"invalid float {token!r}"
-            raise self.error(msg, at=at)
-        return FloatValue(token, float(token))
-
-    def _parse_datetime_token(self, token: str, *, at: int) -> DateTimeValue:
-        # Fold a TOML date followed by ``" HH:..."`` into one
-        # local-datetime token.
-        src = self.src
-        pos = self.pos
-        if (
-            len(token) == 10
-            and pos < len(src)
-            and src[pos] == " "
-            and pos + 3 < len(src)
-            and src[pos + 1] in _DEC_DIGITS
-            and src[pos + 3] == ":"
-        ):
-            self.pos = pos + 1
-            extra = self._scan_value_token()
-            return self._parse_datetime_text(token + " " + extra, at=at)
-        return self._parse_datetime_text(token, at=at)
-
-    def _parse_datetime_text(self, text: str, *, at: int) -> DateTimeValue:
+    def _convert_datetime(self, text: str, *, at: int) -> DateTimeValue:
         local_time = text[2] == ":"
-        category = "time" if local_time else "date/datetime"
-        if _RE_DATETIME.fullmatch(text) is None:
-            msg = f"invalid {category} {text!r}"
-            raise self.error(msg, at=at)
         try:
             value: date | time
             if local_time:
@@ -624,6 +605,7 @@ class _Scanner:
             else:
                 value = datetime.fromisoformat(text.replace("t", "T").replace("z", "Z"))
         except ValueError as exc:
+            category = "time" if local_time else "date/datetime"
             msg = f"invalid {category} {text!r}: {exc}"
             raise self.error(msg, at=at) from exc
         return DateTimeValue(text, value)
