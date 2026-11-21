@@ -392,7 +392,7 @@ class Container(_View, dict[str, Any]):
         self,
         *,
         layout_root: Document | None,
-        parent: Container | AoT | None,
+        parent: Container | AoT | Array | None,
         path: tuple[str, ...],
         owner: AoTEntry | None,
     ) -> None:
@@ -505,20 +505,14 @@ class Container(_View, dict[str, Any]):
         self, key: str, value: TomlInput
     ) -> tuple[Value, DecodedValue]:
         """Synthesise ``value`` for direct storage under ``key`` on ``self``."""
-        return _synth_value(
-            value,
-            layout_root=self._layout_root,
-            parent=self,
-            name=key,
-            owner=self._owner_aot_entry,
-        )
+        return _synth_value(value, self._layout_root, self, key, self._owner_aot_entry)
 
     def _materialise_layout(self, *, preserve_header: bool = False) -> None:
         """Give a factory backing layout without changing its public identity."""
         assert self._needs_layout
         _validate_input(self, inline_only=self._inline)
         if self._inline:
-            _synth_value(self, layout_root=None, parent=None, name=None, owner=None)
+            _synth_value(self, None, None)
         else:
             assert isinstance(self, Table)
             _layout_ops.materialise_section(self, preserve_header=preserve_header)
@@ -1477,7 +1471,7 @@ def _copy_input(value: TomlInput, memo: dict[int, object] | None = None) -> Toml
         if cst is not None:
             from tomlrt._build import _decode_value  # noqa: PLC0415
 
-            cloned = _decode_value(cst, None, None, None, None)
+            cloned = _decode_value(cst, None, None)
             assert isinstance(cloned, (Table, Array))
             return cloned
     if (
@@ -1757,21 +1751,6 @@ def _validate_mapping_items(
         _validate_input(value, inline_only=inline_only, key=key)
 
 
-def _file_host(
-    view: Array | Container, parent: Container | None, array_host: Array | None
-) -> None:
-    """Stamp where ``view`` is bound.
-
-    ``array_host`` is the array ``view`` is an element of, or ``None``
-    when ``view`` is key-hosted under ``parent``. Called from the single
-    tail of the ``_synth_value`` / ``_decode_value`` funnels, so no
-    construction site has to remember the choice. Synthesis reaches
-    this point with either a free view or a clone, so an existing
-    materialised binding is never overwritten.
-    """
-    view._host = array_host if array_host is not None else parent  # noqa: SLF001
-
-
 def _is_adoptable_inline(view: Array | Container) -> bool:
     """Whether ``view`` has no current document or materialised owner."""
     return view._layout_root is None and view._host is None  # noqa: SLF001
@@ -1799,26 +1778,19 @@ def _host_kv_slot(view: Array | Container) -> KVSlot | None:
 
 def _synth_value(
     v: TomlInput,
-    *,
     layout_root: Document | None,
-    parent: Container | None,
-    name: str | None,
-    owner: AoTEntry | None,
-    array_host: Array | None = None,
+    host: Container | Array | None,
+    name: str | None = None,
+    owner: AoTEntry | None = None,
 ) -> tuple[Value, DecodedValue]:
-    """Synthesise a validated (CST value, decoded view) pair from ``v``.
+    """Synthesise validated input at a binding in the captured destination document.
 
-    Plain ``dict`` / ``Mapping`` → ``InlineTableValue`` + inline ``Table``.
-    ``list`` / ``Array`` view → ``ArrayValue`` + ``Array``.
-
-    ``parent``/``name`` are the container and key ``v`` is bound under,
-    driving a key-hosted view's binding and name. ``array_host`` is the
-    array ``v`` is an element of, if any; the resulting view's binding is
-    filed at the single funnel tail via `_file_host`, so no site
-    has to remember.
+    Retain ``layout_root`` across child conversions: user scalar and copy hooks
+    can reattach the host while an unpublished subtree is being built.
     """
     if is_scalar(v):
         return coerce_scalar(v), v
+    parent = host if isinstance(host, Container) else None
     # Adopt only a free inline value. A view already owned by any
     # materialised container is cloned, even when neither belongs to a
     # document: one view cannot represent two CST occurrences.
@@ -1854,10 +1826,7 @@ def _synth_value(
         from tomlrt._build import _decode_value  # noqa: PLC0415
 
         _retarget_to_doc(own, layout_root)
-        cst = own
-        decoded = _decode_value(own, layout_root, parent, name, owner)
-        assert isinstance(decoded, (Array, Container)), "inline CST decodes to a view"
-        view = decoded
+        return own, _decode_value(own, layout_root, host, name, owner)
     elif isinstance(v, Mapping):
         cst, view = _populate_inline_table(
             Table(),
@@ -1871,14 +1840,10 @@ def _synth_value(
         assert isinstance(v, list), "validated inline value expected"
         val = ArrayValue()
         arr = Array._view(val, layout_root, name)  # noqa: SLF001
-        _fill_inline_array(
-            arr,
-            v,
-            layout_root=layout_root,
-            owner=owner,
-        )
+        _fill_inline_array(arr, v, layout_root, owner)
         cst, view = val, arr
-    _file_host(view, parent, array_host)
+    # An array occurrence is claimed only once its contents have been built.
+    view._host = host  # noqa: SLF001
     return cst, view
 
 
@@ -1901,7 +1866,7 @@ def _attach_inline_view(
 ) -> None:
     """Reattach an inline tree whose internal hosts and local names are preserved.
 
-    The root is still hostless; `_synth_value` files its new host afterward.
+    The root is still hostless; `_synth_value` sets its new host afterward.
     Preorder rebases each parent before its keyed descendants.
     """
     for node in _layout_ops._walk_views((value,)):  # noqa: SLF001
@@ -1947,13 +1912,7 @@ def _populate_inline_table(
 
     last = len(items) - 1
     for i, (k, sub) in enumerate(items):
-        sub_cst, sub_dec = _synth_value(
-            sub,
-            layout_root=layout_root,
-            parent=table,
-            name=k,
-            owner=owner,
-        )
+        sub_cst, sub_dec = _synth_value(sub, layout_root, table, k, owner)
         key_path = (k,)
         entry = InlineTableEntry(
             sub_cst,
@@ -1978,7 +1937,6 @@ def _populate_inline_table(
 def _fill_inline_array(
     arr: Array,
     items: Sequence[TomlInput],
-    *,
     layout_root: Document | None,
     owner: AoTEntry | None,
 ) -> None:
@@ -1990,14 +1948,7 @@ def _fill_inline_array(
     val = arr._value  # noqa: SLF001
     last = len(items) - 1
     for i, sub in enumerate(items):
-        sub_cst, sub_dec = _synth_value(
-            sub,
-            layout_root=layout_root,
-            parent=None,
-            name=None,
-            owner=owner,
-            array_host=arr,
-        )
+        sub_cst, sub_dec = _synth_value(sub, layout_root, arr, None, owner)
         item = ArrayItem(sub_cst, "", i != last, "", " " if i != last else "")
         val.items.append(item)
         list.append(arr, sub_dec)

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
 from tomlrt._comment_text import _split_preamble
-from tomlrt._container import Table, _file_host, _reorder_dict_storage
+from tomlrt._container import Container, Table, _reorder_dict_storage
 from tomlrt._layout_ops import (
     _bind_aot,
     _clone_entry_slots,
@@ -31,7 +31,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from tomlrt._container import Container, DecodedValue, Document
+    from tomlrt._container import DecodedValue, Document
     from tomlrt._slots import AoTEntry, Slot
     from tomlrt._validator import ErrorBuilder
     from tomlrt._values import (
@@ -240,101 +240,60 @@ def _walk_dotted_kv(
 def _decode_value(
     value: Value,
     layout_root: Document | None,
-    parent: Container | None,
-    name: str | None,
-    owner: AoTEntry | None,
-    array_host: Array | None = None,
+    host: Container | Array | None,
+    name: str | None = None,
+    owner: AoTEntry | None = None,
 ) -> DecodedValue:
-    """Decode any TOML value to its Python representation.
-
-    ``parent``/``name`` -- the container and key ``value`` is bound
-    under -- give a key-hosted ``Array`` / ``Table`` view a real binding
-    and name for its own navigation and host lookup. ``array_host`` is
-    the array ``value`` is an element of, if any; the decoded view's
-    binding is filed here in one place so a decode site cannot forget,
-    and it derives its host from the array object. Pass ``parent=None``
-    (with ``name=None``) for a value with no key binding -- either an
-    array element or a wholly detached value.
-
-    An `Array` takes its binding at construction rather than by a stamp
-    afterwards: this runs once per element of every array in the
-    document, so the funnel hands `Array._view` the two fields it would
-    otherwise write twice. The decode helpers take their arguments
-    positionally for the same reason -- a keyword argument costs more
-    per call than a positional one, and this is the hottest path in the
-    build.
-    """
+    """Decode a value at its keyed, array-element or detached binding."""
     if isinstance(value, ArrayValue):
         if isinstance(value, EmptyAoTValue):
             assert not value.items
-            assert parent is not None
-            assert not parent._inline  # noqa: SLF001
+            assert isinstance(host, Container)
+            assert not host._inline  # noqa: SLF001
             assert name is not None
-            assert array_host is None
             aot = AoT()
-            _bind_aot(parent, name, aot)
+            _bind_aot(host, name, aot)
             return aot
-        return _decode_array(
-            value,
-            layout_root,
-            name,
-            owner,
-            array_host if array_host is not None else parent,
-        )
+        arr = Array._view(value, layout_root, name, host)  # noqa: SLF001
+        for item in value.items:
+            list.append(arr, _decode_value(item.value, layout_root, arr, None, owner))
+        return arr
     if isinstance(value, InlineTableValue):
-        if parent is None:
-            path: tuple[str, ...] = ()
-        else:
-            assert name is not None, "name is required whenever parent is given"
-            path = (*parent._path, name)  # noqa: SLF001
-        table = _decode_inline_table(value, layout_root, parent, path, owner)
-        _file_host(table, parent, array_host)
-        return table
+        return _decode_inline_table(value, layout_root, host, name, owner)
     return value.value
-
-
-def _decode_array(
-    value: ArrayValue,
-    layout_root: Document | None,
-    name: str | None,
-    owner: AoTEntry | None,
-    host: Array | Container | None,
-) -> Array:
-    arr = Array._view(value, layout_root, name, host)  # noqa: SLF001
-    for item in value.items:
-        list.append(
-            arr,
-            _decode_value(item.value, layout_root, None, None, owner, arr),
-        )
-    return arr
 
 
 def _decode_inline_table(
     value: InlineTableValue,
     layout_root: Document | None,
-    parent: Container | None,
-    path: tuple[str, ...],
+    host: Container | Array | None,
+    name: str | None,
     owner: AoTEntry | None,
 ) -> Table:
     table = Table()
+    path: tuple[str, ...] = ()
+    if isinstance(host, Container):
+        assert name is not None
+        path = (*host._path, name)  # noqa: SLF001
     table._wire(  # noqa: SLF001
-        layout_root=layout_root, parent=parent, path=path, owner=owner
+        layout_root=layout_root,
+        parent=host,
+        path=path,
+        owner=owner,
     )
     table._inline = True  # noqa: SLF001
     table._value = value  # noqa: SLF001
     for entry in value.items:
         decoded_key = entry.key_path
         cur = table
-        for name in decoded_key[:-1]:
-            cur = _resolve_inline_child(cur, name, owner)
+        for part in decoded_key[:-1]:
+            cur = _resolve_inline_child(cur, part, owner)
         leaf = decoded_key[-1]
         assert leaf not in cur, (
             f"duplicate inline-table key {leaf!r} reached builder; validator drift"
         )
         dict.__setitem__(
-            cur,
-            leaf,
-            _decode_value(entry.value, layout_root, cur, leaf, owner),
+            cur, leaf, _decode_value(entry.value, layout_root, cur, leaf, owner)
         )
     return table
 

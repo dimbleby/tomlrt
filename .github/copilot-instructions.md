@@ -419,8 +419,11 @@ wrong.
   `Container`. `Container._parent` projects the path parent, skipping the
   AoT, and is `None` for inline array elements. Assign `_host`, not
   `_parent`. Factory storage can merely reference independently owned
-  views, so it does not establish ownership. `_file_host` stamps inline
-  bindings at the tail of the `_decode_value` / `_synth_value` funnels.
+  views, so it does not establish ownership. `_decode_value` and `_synth_value`
+  receive one immediate host, not separate array and table parents. Decoding
+  binds fresh views directly; synthesis claims array elements after conversion.
+  Pass the destination document through nested conversions: a user hook may
+  temporarily reattach the host before the new value has been published.
   Reattaching materialized inline trees preserves child hosts and local names;
   only document ownership and keyed table paths need refreshing, in preorder.
   Structural moves derive descendant paths from their owners as well; inline
