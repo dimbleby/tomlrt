@@ -186,8 +186,8 @@ them. Read roughly in this order:
   - `StructuralHeaderSlot` — one `[a.b]` / `[[a.b]]` header
     (`key_parts`, `key_seps`, `key_path`, `entry`, `synthetic`);
     `entry` is the discriminator: `None` for a plain table header.
-  - `AoTEntry` — ownership marker for an `[[a]]` entry, retaining only
-    its own header; slot membership and ordering come from the linked stream.
+  - `AoTEntry` — identity-only ownership marker for an `[[a]]` entry.
+    The entry table holds its own header; the token indexes nothing.
   Containers retain ordered slot references directly; there is no
   per-membership record.
 
@@ -490,9 +490,8 @@ wrong.
   slot instead of O(siblings) per container — don't bypass it
   with ad-hoc walks of ancestor `_refs`.
 - **AoT entry membership and order live only in the linked stream.**
-  `AoTEntry` retains its own `[[a]]` header for path derivation, while
-  subtree membership/order comes from slot ownership plus
-  `_owned_slots_ordered`, `_parent_subtree_tail`, and `_aot_append_anchor`.
+  `AoTEntry` distinguishes siblings at the same path. Read the header from
+  the entry table; `owned_slots` derives its ordered subtree from the stream.
 - **Container shape** is named explicitly by the `_Kind` enum in
   `_kind.py` and surfaced as `Container._kind`. The six kinds —
   `DOCUMENT`, `SECTION`, `IMPLICIT_SECTION`, `INLINE_ROOT`,

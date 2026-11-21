@@ -53,9 +53,9 @@ from tomlrt._scalar import coerce_scalar, is_scalar
 from tomlrt._slots import (
     AoTEntry,
     KVSlot,
-    StructuralHeaderSlot,
     ensure_terminator,
     stitch_run,
+    synthetic_header,
 )
 from tomlrt._typecheck import _mapping_items, _require_mapping, _validate_key
 from tomlrt._values import (
@@ -393,7 +393,7 @@ def _emit(
     """Write ``plan``'s slots, in document order, onto ``out``."""
     path, owner = plan.path, plan.owner
     if header and plan.needs_header:
-        out.append(_header_slot(path, "" if not out else nl, owner, None, nl))
+        out.append(synthetic_header(path, "" if not out else nl, nl, owner))
 
     for graft in plan.grafts:
         graft.body, graft.blocks = _graft_segments(graft, path, owner, nl)
@@ -430,8 +430,9 @@ def _emit(
                 entry_owner = entry.owner
                 assert entry_owner is not None
             if entry_header is None:
-                entry_header = _header_slot(sub, "", entry_owner, entry_owner, nl)
-                entry_owner.bind_header(entry_header)
+                entry_header = synthetic_header(
+                    sub, "", nl, entry_owner, opens_entry=True
+                )
             _retarget_separator(entry_header, "" if not out else nl)
             out.append(entry_header)
             if body is None:
@@ -439,28 +440,6 @@ def _emit(
                 _emit(entry, out, nl, header=False)
             else:
                 out.extend(body)
-
-
-def _header_slot(
-    path: tuple[str, ...],
-    leading: str,
-    owner: AoTEntry | None,
-    entry: AoTEntry | None,
-    nl: str,
-) -> StructuralHeaderSlot:
-    """A synthesised ``[path]`` / ``[[path]]`` header line."""
-    return StructuralHeaderSlot(
-        leading,
-        owner,
-        nl,
-        make_keyparts(path),
-        (".",) * (len(path) - 1),
-        path,
-        "",
-        "",
-        entry,
-        synthetic=True,
-    )
 
 
 def _graft_segments(
@@ -478,7 +457,7 @@ def _graft_segments(
     )
     body, blocks = split_subtree_slots(cloned, len(target))
     if isinstance(view, Document):
-        blocks.insert(0, _header_slot(target, "", owner, None, nl))
+        blocks.insert(0, synthetic_header(target, "", nl, owner))
     assert (bool(body), bool(blocks)) == _graft_regions(view), (
         "cloned regions disagree with the ones the plan filed the key under"
     )

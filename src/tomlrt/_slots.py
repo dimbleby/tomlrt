@@ -25,7 +25,12 @@ else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
 from tomlrt._trivia import retarget_newlines
-from tomlrt._values import ScalarValue, render_dotted, retarget_value_newlines
+from tomlrt._values import (
+    ScalarValue,
+    make_keyparts,
+    render_dotted,
+    retarget_value_newlines,
+)
 
 # ---------------------------------------------------------------------------
 # AoT entry token (physical ownership marker)
@@ -33,29 +38,9 @@ from tomlrt._values import ScalarValue, render_dotted, retarget_value_newlines
 
 
 class AoTEntry:
-    """Identifies one entry of an array-of-tables.
+    """Identity shared by the slots and containers of one array-of-tables entry."""
 
-    Carried by every physical slot in that entry. The linked slot stream
-    owns membership and order; this marker retains only the entry's own
-    ``[[a]]`` header.
-    """
-
-    __slots__ = ("_header",)
-
-    def __init__(self) -> None:
-        self._header: StructuralHeaderSlot | None = None
-
-    def bind_header(self, header: StructuralHeaderSlot) -> None:
-        """Record the unique ``[[a]]`` header that introduces this entry."""
-        assert self._header is None, "AoT entry already has a header"
-        self._header = header
-
-    @property
-    def header(self) -> StructuralHeaderSlot:
-        """The entry's ``[[a]]`` header."""
-        header = self._header
-        assert header is not None, "AoT entry header has not been bound"
-        return header
+    __slots__ = ()
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +290,29 @@ class StructuralHeaderSlot(Slot):
         )
 
 
+def synthetic_header(
+    path: tuple[str, ...],
+    leading: str,
+    nl: str,
+    owner: AoTEntry | None,
+    *,
+    opens_entry: bool = False,
+) -> StructuralHeaderSlot:
+    """Spell a new section or entry header in its destination's physical scope."""
+    return StructuralHeaderSlot(
+        leading,
+        owner,
+        nl,
+        make_keyparts(path),
+        (".",) * (len(path) - 1),
+        path,
+        "",
+        "",
+        owner if opens_entry else None,
+        synthetic=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Doc-stream order keys
 #
@@ -467,4 +475,5 @@ __all__ = [
     "ensure_terminator",
     "retarget_slot_newlines",
     "stitch_run",
+    "synthetic_header",
 ]
