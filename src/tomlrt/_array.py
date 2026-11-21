@@ -97,7 +97,7 @@ class Array(_View, list[Any]):
         under and ``host`` is where it is bound -- its containing array
         when it is an element, else its hosting container. A caller that
         does not yet know where the array lands leaves ``host`` unset for
-        the value funnel to stamp later (see `_file_host`).
+        synthesis to set after building the items.
         """
         arr = cls.__new__(cls)
         arr._value = value  # noqa: SLF001
@@ -132,7 +132,7 @@ class Array(_View, list[Any]):
         if items_list:
             from tomlrt._container import _fill_inline_array  # noqa: PLC0415
 
-            _fill_inline_array(self, items_list, layout_root=None, owner=None)
+            _fill_inline_array(self, items_list, None, None)
         if not multiline:
             return
         set_comma_value_multiline(
@@ -296,14 +296,7 @@ class Array(_View, list[Any]):
         """Synthesise one validated value for this inline array."""
         from tomlrt._container import _synth_value  # noqa: PLC0415
 
-        return _synth_value(
-            value,
-            layout_root=self._layout_root,
-            parent=None,
-            name=None,
-            owner=None,
-            array_host=self,
-        )
+        return _synth_value(value, self._layout_root, self)
 
     def _prepare_item(self, value: TomlInput) -> tuple[Value, DecodedValue]:
         """Validate and synthesise one value."""
@@ -527,10 +520,7 @@ class Array(_View, list[Any]):
             for _ in range(n - 1):
                 for src in src_items:
                     cst = deepcopy(src.value)
-                    yield (
-                        cst,
-                        _decode_value(cst, self._layout_root, None, None, None, self),
-                    )
+                    yield cst, _decode_value(cst, self._layout_root, self)
 
         self._extend_prepared(copies())
         return self
