@@ -1751,9 +1751,22 @@ def _validate_mapping_items(
         _validate_input(value, inline_only=inline_only, key=key)
 
 
-def _is_adoptable_inline(view: Array | Container) -> bool:
-    """Whether ``view`` has no current document or materialised owner."""
-    return view._layout_root is None and view._host is None  # noqa: SLF001
+def _adoptable_inline_views(
+    view: Array | Container, site: Array | Container | None
+) -> Iterable[_View] | None:
+    """Views to rebind, or None if this materialized occurrence must be copied."""
+    if view._layout_root is not None or view._host is not None or view is site:  # noqa: SLF001
+        return None
+    views = _layout_ops._walk_views((view,))  # noqa: SLF001
+    if site is None or site._host is None:  # noqa: SLF001
+        return views
+    # Check stored children, not backlinks left by an unpublished conversion.
+    subtree = []
+    for node in views:
+        if node is site:
+            return None
+        subtree.append(node)
+    return subtree
 
 
 def _host_kv_slot(view: Array | Container) -> KVSlot | None:
@@ -1782,6 +1795,7 @@ def _synth_value(
     host: Container | Array | None,
     name: str | None = None,
     owner: AoTEntry | None = None,
+    site: Container | Array | None = None,
 ) -> tuple[Value, DecodedValue]:
     """Synthesise validated input at a binding in the captured destination document.
 
@@ -1790,57 +1804,47 @@ def _synth_value(
     """
     if is_scalar(v):
         return coerce_scalar(v), v
+    if layout_root is None and site is None:
+        # New list/mapping wrappers are not the receiver of the original edit.
+        site = host
     parent = host if isinstance(host, Container) else None
-    # Adopt only a free inline value. A view already owned by any
-    # materialised container is cloned, even when neither belongs to a
-    # document: one view cannot represent two CST occurrences.
     cst: Value
     view: Array | Container
-    if is_inline_value(v) and _is_adoptable_inline(v):
-        if isinstance(v, Container) and v._value is None:  # noqa: SLF001
-            cst, view = _populate_inline_table(
-                v,
-                list(_mapping_items(v)),
-                layout_root=layout_root,
-                parent=parent,
-                name=name,
-                owner=owner,
-            )
-        else:
-            owned = v._value  # noqa: SLF001
-            assert owned is not None
-            cst = owned
-            _retarget_to_doc(cst, layout_root)
-            if isinstance(v, Array):
-                v._name = name or ""  # noqa: SLF001
-            elif parent is None:
-                v._path = ()  # noqa: SLF001
-            else:
-                assert name is not None, "name is required with a parent"
-                v._path = (*parent._path, name)  # noqa: SLF001
-            _attach_inline_view(v, layout_root, owner)
-            view = v
-    # Cross-document / same-doc live inline values clone CST so source
-    # formatting survives; plain Mapping / list inputs have none.
-    elif is_inline_value(v) and (own := _detached_inline_value(v)) is not None:
-        from tomlrt._build import _decode_value  # noqa: PLC0415
+    if is_inline_value(v) and not (
+        isinstance(v, Container) and v._kind is _Kind.INLINE_FACTORY  # noqa: SLF001
+    ):
+        views = _adoptable_inline_views(v, site)
+        value = v._value if views is not None else _detached_inline_value(v)  # noqa: SLF001
+        assert value is not None
+        _retarget_to_doc(value, layout_root)
+        if views is None:
+            from tomlrt._build import _decode_value  # noqa: PLC0415
 
-        _retarget_to_doc(own, layout_root)
-        return own, _decode_value(own, layout_root, host, name, owner)
-    elif isinstance(v, Mapping):
+            return value, _decode_value(value, layout_root, host, name, owner)
+        if isinstance(v, Array):
+            v._name = name or ""  # noqa: SLF001
+        elif parent is None:
+            v._path = ()  # noqa: SLF001
+        else:
+            assert name is not None
+            v._path = (*parent._path, name)  # noqa: SLF001
+        _attach_inline_view(views, layout_root, owner)
+        cst, view = value, v
+    elif isinstance(v, (dict, Mapping)):
         cst, view = _populate_inline_table(
-            Table(),
+            v if isinstance(v, Container) else Table(),
             list(_mapping_items(v)),
             layout_root=layout_root,
             parent=parent,
             name=name,
             owner=owner,
+            site=site,
         )
     else:
         assert isinstance(v, list), "validated inline value expected"
         val = ArrayValue()
         arr = Array._view(val, layout_root, name)  # noqa: SLF001
-        _fill_inline_array(arr, v, layout_root, owner)
+        _fill_inline_array(arr, v, layout_root, owner, site)
         cst, view = val, arr
     # An array occurrence is claimed only once its contents have been built.
     view._host = host  # noqa: SLF001
@@ -1860,7 +1864,7 @@ def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
 
 
 def _attach_inline_view(
-    value: Array | Container,
+    views: Iterable[_View],
     layout_root: Document | None,
     owner: AoTEntry | None,
 ) -> None:
@@ -1869,7 +1873,7 @@ def _attach_inline_view(
     The root is still hostless; `_synth_value` sets its new host afterward.
     Preorder rebases each parent before its keyed descendants.
     """
-    for node in _layout_ops._walk_views((value,)):  # noqa: SLF001
+    for node in views:
         if isinstance(node, Container):
             node._layout_root = layout_root  # noqa: SLF001
             node._owner_aot_entry = owner  # noqa: SLF001
@@ -1889,6 +1893,7 @@ def _populate_inline_table(
     parent: Container | None,
     name: str | None,
     owner: AoTEntry | None,
+    site: Container | Array | None,
 ) -> tuple[InlineTableValue, Container]:
     """Wire ``table`` as an inline view and populate its entries.
 
@@ -1912,7 +1917,7 @@ def _populate_inline_table(
 
     last = len(items) - 1
     for i, (k, sub) in enumerate(items):
-        sub_cst, sub_dec = _synth_value(sub, layout_root, table, k, owner)
+        sub_cst, sub_dec = _synth_value(sub, layout_root, table, k, owner, site)
         key_path = (k,)
         entry = InlineTableEntry(
             sub_cst,
@@ -1939,6 +1944,7 @@ def _fill_inline_array(
     items: Sequence[TomlInput],
     layout_root: Document | None,
     owner: AoTEntry | None,
+    site: Container | Array | None = None,
 ) -> None:
     """Append ``items`` to ``arr`` and to the `ArrayValue` behind it.
 
@@ -1948,7 +1954,7 @@ def _fill_inline_array(
     val = arr._value  # noqa: SLF001
     last = len(items) - 1
     for i, sub in enumerate(items):
-        sub_cst, sub_dec = _synth_value(sub, layout_root, arr, None, owner)
+        sub_cst, sub_dec = _synth_value(sub, layout_root, arr, None, owner, site)
         item = ArrayItem(sub_cst, "", i != last, "", " " if i != last else "")
         val.items.append(item)
         list.append(arr, sub_dec)

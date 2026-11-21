@@ -26,6 +26,14 @@ else:
 # A value with no TOML representation, for rejection tests.
 _OPAQUE: Any = object()
 
+
+class _UnserializableInt(int):
+    @override
+    def __str__(self) -> str:
+        msg = "conversion failed"
+        raise ValueError(msg)
+
+
 # ---------------------------------------------------------------------------
 # Scalar set/get/del
 # ---------------------------------------------------------------------------
@@ -58,13 +66,7 @@ _OPAQUE: Any = object()
 def test_failed_inline_conversion_keeps_structural_binding(
     source: str, shape: str
 ) -> None:
-    class UnserializableInt(int):
-        @override
-        def __str__(self) -> str:
-            msg = "conversion failed"
-            raise ValueError(msg)
-
-    bad = UnserializableInt(2)
+    bad = _UnserializableInt(2)
     value = {"scalar": bad, "array": [bad], "table": {"x": bad}}[shape]
     doc = tomlrt.loads(source)
     held = doc["target"]
@@ -72,6 +74,18 @@ def test_failed_inline_conversion_keeps_structural_binding(
         doc["target"] = value
     assert doc["target"] is held
     assert tomlrt.dumps(doc) == source
+
+
+def test_failed_extend_does_not_make_the_receiver_a_stored_ancestor() -> None:
+    target, held = Array(), Array()
+    with pytest.raises(ValueError, match="conversion failed"):
+        target.extend([held, _UnserializableInt(2)])
+    held.append(target)
+    assert held.array(0) is target
+    target.append(7)
+    out = tomlrt.dumps({"held": held})
+    assert out == "held = [[7]]\n"
+    assert _reparses(out) == {"held": [[7]]}
 
 
 def test_replace_scalar_preserves_surrounding_format() -> None:

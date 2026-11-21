@@ -147,6 +147,42 @@ def test_assigned_inline_is_user_reference() -> None:
     assert doc["foo"] is t
 
 
+def test_detached_array_appends_a_copy_of_itself() -> None:
+    values = Array([1])
+    values.append(values)
+    assert values.array(1) is not values
+    values[0] = 2
+    doc = Document()
+    doc["values"] = values
+    assert tomlrt.dumps(doc) == "values = [2, [1]]\n"
+
+
+def test_factory_retains_identity_when_it_wraps_a_detached_ancestor() -> None:
+    outer = Array([{"x": 1}])
+    child = outer.table(0)
+    wrapper = Table.inline({"via": [outer]})
+    child["copy"] = wrapper
+    assert child.table("copy") is wrapper
+    assert wrapper.array("via").array(0) is not outer
+    child["x"] = 2
+    doc = Document()
+    doc["out"] = outer
+    out = tomlrt.dumps(doc)
+    assert out == "out = [{ x = 2, copy = { via = [[{ x = 1 }]] } }]\n"
+    assert _reparses(out) == doc.to_dict()
+
+
+def test_removed_inline_table_keeps_its_layout_when_copied_into_child() -> None:
+    doc = tomlrt.loads("t = {n=0xF, children=[ ]}\n")
+    table = doc.table("t")
+    del doc["t"]
+    table.array("children").append(table)
+    assert table.array("children").table(0) is not table
+    table["n"] = 2
+    doc["back"] = table
+    assert tomlrt.dumps(doc) == "back = {n=2, children=[ {n=0xF, children=[ ]} ]}\n"
+
+
 def test_incremental_population_then_assign_then_more_mutations() -> None:
     doc = tomlrt.loads("")
     t = Table.inline()
