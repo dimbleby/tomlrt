@@ -24,7 +24,7 @@ from tomlrt._values import (
 if TYPE_CHECKING:
     from tomlrt._container import Container
     from tomlrt._slots import Slot
-    from tomlrt._values import Value
+    from tomlrt._values import CommaItem, Value
 
 
 class _Parser:
@@ -52,7 +52,7 @@ class _Parser:
         seen_header = False
 
         while sc.pos < end:
-            leading = sc.scan_doc_trivia()
+            leading = sc.scan_trivia()
             pos = sc.pos
             if pos >= end:
                 trailing = leading
@@ -65,6 +65,9 @@ class _Parser:
                 if seen_header:
                     latest_section_gap = leading
                 seen_header = True
+            elif ch == "\r":
+                msg = "stray carriage return"
+                raise sc.error(msg)
             else:
                 slot = self._parse_key_value(leading)
             slots.append(slot)
@@ -179,63 +182,46 @@ class _Parser:
                 self._value_depth -= 1
         return sc.scan_value_atom()
 
-    def _parse_array(self) -> ArrayValue:
-        """Parse a ``[...]`` inline array.
-
-        Precondition: cursor is at ``[``.
-        """
+    def _finish_gap(self, item: CommaItem, closer: str) -> None:
+        """Read one outgoing gap, leaving the closing bracket for the caller."""
         sc = self._sc
-        src = sc.src
+        src, end = sc.src, sc.end
+        ch = src[sc.pos] if sc.pos < end else ""
+        if ch != "," and ch != closer:
+            item.before = sc.scan_trivia()
+            ch = src[sc.pos] if sc.pos < end else ""
+        if ch == ",":
+            sc.pos += 1
+            item.has_comma = True
+            item.after, item.following = split_eol_section(sc.scan_trivia())
+        elif ch == closer:
+            item.before, item.following = split_eol_section(item.before)
+        else:
+            kind = "array" if closer == "]" else "inline table"
+            msg = f"expected ',' or {closer!r} in {kind}, got {ch!r}"
+            raise sc.error(msg)
+
+    def _parse_array(self) -> ArrayValue:
+        sc = self._sc
+        src, end = sc.src, sc.end
         sc.pos += 1
         node = ArrayValue()
-        head = sc.scan_array_trivia()
-        end = sc.end
-        if sc.pos < end and src[sc.pos] == "]":
-            # Empty array: head trivia is the canonical pre-`]` slot.
-            node.opening = head
-            sc.pos += 1
-            return node
-        node.opening = head
-        items = node.items
-        while True:
-            value = self._parse_value()
-            trailing = sc.scan_array_trivia()
-            ch = src[sc.pos] if sc.pos < end else ""
-            if ch == ",":
-                sc.pos += 1
-                post_comma, next_leading = split_eol_section(sc.scan_array_trivia())
-            elif ch == "]":
-                post_comma = next_leading = ""
-            else:
-                msg = f"expected ',' or ']' in array, got {ch!r}"
-                raise sc.error(msg)
-            item = ArrayItem(value, trailing, ch == ",", post_comma, next_leading)
-            items.append(item)
-            if sc.pos < end and src[sc.pos] == "]":
-                if not item.has_comma:
-                    item.before, item.following = split_eol_section(trailing)
-                sc.pos += 1
-                return node
+        node.opening = sc.scan_trivia()
+        while sc.pos >= end or src[sc.pos] != "]":
+            item = ArrayItem(self._parse_value())
+            self._finish_gap(item, "]")
+            node.items.append(item)
+        sc.pos += 1
+        return node
 
     def _parse_inline_table(self) -> InlineTableValue:
-        """Parse a ``{...}`` inline table.
-
-        Precondition: cursor is at ``{``.
-        """
         sc = self._sc
-        src = sc.src
-        end = sc.end
+        src, end = sc.src, sc.end
         sc.pos += 1
         node = InlineTableValue()
-        head = sc.scan_array_trivia()
-        if sc.pos < end and src[sc.pos] == "}":
-            node.opening = head
-            sc.pos += 1
-            return node
-        node.opening = head
+        node.opening = sc.scan_trivia()
         seen_prefixes: set[tuple[str, ...]] = set()
-        entries = node.items
-        while True:
+        while sc.pos >= end or src[sc.pos] != "}":
             key_at = sc.pos
             key_parts, key_seps, pre_eq, key_path = sc.scan_key()
             check_inline_key_conflict(
@@ -251,36 +237,14 @@ class _Parser:
                 raise sc.error(msg)
             sc.pos += 1
             post_eq = sc.scan_inline_ws_text()
-            value = self._parse_value()
-            trailing = sc.scan_array_trivia()
-            ch = src[sc.pos] if sc.pos < end else ""
-            if ch == ",":
-                sc.pos += 1
-                post_comma, next_leading = split_eol_section(sc.scan_array_trivia())
-            elif ch == "}":
-                post_comma = next_leading = ""
-            else:
-                msg = f"expected ',' or '}}' in inline table, got {ch!r}"
-                raise sc.error(msg)
             entry = InlineTableEntry(
-                value,
-                key_parts,
-                key_seps,
-                key_path,
-                pre_eq,
-                post_eq,
-                trailing,
-                ch == ",",
-                post_comma,
-                next_leading,
+                self._parse_value(), key_parts, key_seps, key_path, pre_eq, post_eq
             )
-            entries.append(entry)
+            self._finish_gap(entry, "}")
+            node.items.append(entry)
             node.record_entry(entry)
-            if sc.pos < end and src[sc.pos] == "}":
-                if not entry.has_comma:
-                    entry.before, entry.following = split_eol_section(trailing)
-                sc.pos += 1
-                return node
+        sc.pos += 1
+        return node
 
 
 __all__ = ["_Parser"]
