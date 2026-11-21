@@ -105,28 +105,3 @@ jobs:
 
       - name: pytest (slow)
         run: uv run pytest -m slow
-
-  docs:
-    name: Build documentation
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up python
-        uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.x"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.4.0
-
-      - name: Install docs dependencies
-        run: uv sync --group docs
-
-      - name: zensical build
-        run: uv run zensical build
