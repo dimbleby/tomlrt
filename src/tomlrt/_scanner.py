@@ -163,39 +163,10 @@ class _Scanner:
                 raise self.error(msg)
         self.pos = end_pos
 
-    def scan_doc_trivia(self) -> str:
-        """Consume whitespace, blank lines and comments up to the next token."""
-        start = self.pos
-        src = self.src
-        end = self.end
-        pos = self.pos
-        while pos < end:
-            ch = src[pos]
-            if ch in {" ", "\t"}:
-                pos += 1
-            elif ch == "#":
-                self.pos = pos
-                self.scan_comment()
-                pos = self.pos
-            elif ch == "\n":
-                pos += 1
-                self._seen_lf = True
-            elif ch == "\r":
-                if pos + 1 >= end or src[pos + 1] != "\n":
-                    self.pos = pos
-                    msg = "stray carriage return"
-                    raise self.error(msg)
-                pos += 2
-                self._seen_crlf = True
-            else:
-                break
-        self.pos = pos
-        return src[start:pos]
-
     def skip_inline_ws(self) -> int:
         """Consume a run of spaces/tabs; return the position it started at.
 
-        Unlike `scan_array_trivia`, newlines and comments don't count here.
+        Unlike `scan_trivia`, newlines and comments don't count here.
         """
         src = self.src
         end = self.end
@@ -213,11 +184,8 @@ class _Scanner:
         start = self.skip_inline_ws()
         return self.src[start : self.pos]
 
-    def scan_array_trivia(self) -> str:
-        """Consume trivia inside an array (or TOML 1.1 inline table).
-
-        Unlike `scan_inline_ws_text`, newlines and comments are permitted.
-        """
+    def scan_trivia(self) -> str:
+        """Consume spaces, tabs, comments and LF or CRLF line endings."""
         start = self.pos
         src = self.src
         end = self.end
