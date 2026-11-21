@@ -26,6 +26,7 @@ import contextlib
 import copy
 import itertools
 import operator
+from collections import deque
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -1582,15 +1583,18 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     _scrub_owned_slots_via_backptrs([header])
 
 
-def _split_leading_trivia(slot: Slot) -> tuple[str, str]:
-    """Split positional blank space from the slot's full comment block.
+def _separator_end(leading: str) -> int:
+    """End of the positional blank lines before the first comment or indent."""
+    comment = leading.find("#")
+    return leading.rfind("\n", 0, None if comment < 0 else comment) + 1
 
-    Comment groups and their intervening blank lines belong to the slot
-    when it is copied, moved or reordered.
-    """
-    leading = slot.leading
-    cut = leading.split("#", 1)[0].rfind("\n") + 1
-    return leading[:cut], leading[cut:]
+
+def _leading_at(slot: Slot, position: Slot) -> str:
+    """Keep the position's separator and the moving slot's attached comments."""
+    source, target = slot.leading, position.leading
+    if source == target:
+        return source
+    return target[: _separator_end(target)] + source[_separator_end(source) :]
 
 
 def _retarget_separator(slot: Slot, new_separator: str) -> None:
@@ -1599,8 +1603,7 @@ def _retarget_separator(slot: Slot, new_separator: str) -> None:
     Keep all comment groups and their indentation; only the blank
     separator before them is replaced.
     """
-    remainder = _split_leading_trivia(slot)[1] if slot.leading else ""
-    slot.leading = new_separator + remainder
+    slot.leading = new_separator + slot.leading[_separator_end(slot.leading) :]
 
 
 def restore_captured_leading(slot: Slot, saved: str, *, from_kv: bool) -> None:
@@ -1916,7 +1919,7 @@ def _promoted_header_comments(head: StructuralHeaderSlot, nl: str) -> str:
     become the extracted document's opening block instead. The trailing
     blank keeps that block from attaching itself to the first construct.
     """
-    _positional, above = _split_leading_trivia(head)
+    above = head.leading[_separator_end(head.leading) :]
     # Any trailing indent belonged to the header's own line, which is gone.
     above = strip_trailing_ws(above)
     if "#" in head.eol:
@@ -2938,8 +2941,7 @@ def _insert_entry_header(
     if ordinal < length:
         target: Slot | None = aot[ordinal]._header  # noqa: SLF001
         assert target is not None
-        prefix, _attached = _split_leading_trivia(target)
-        _retarget_separator(header, prefix)
+        header.leading = _leading_at(header, target)
         if ordinal == 0:
             _retarget_separator(target, _aot_separator(aot, doc))
         predecessor = target._prev  # noqa: SLF001
@@ -3137,13 +3139,10 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     region_successor = physical_blocks[-1][-1]._next  # noqa: SLF001
     movable_slots = _slots_between(doc, region_predecessor, region_successor)
     owned = {slot for block in physical_blocks for slot in block}
-    entry_placements = dict(
-        zip(
-            (block[0] for block in physical_blocks),
-            _peer_placements(physical_blocks, output_blocks),
-            strict=True,
-        )
-    )
+    entry_placements = {
+        position[0]: (block, _leading_at(block[0], position[0]))
+        for position, block in zip(physical_blocks, output_blocks, strict=True)
+    }
     placements: list[tuple[list[Slot], str]] = []
     foreign_run: list[Slot] = []
     for slot in movable_slots:
@@ -3175,51 +3174,6 @@ def _slots_between(
         out.append(cur)
         cur = cur._next  # noqa: SLF001
     return out
-
-
-class _ReorderUnit:
-    """One independently sortable slot block and its leading-trivia state."""
-
-    __slots__ = (
-        "key_rank",
-        "mixed",
-        "prefix",
-        "remainder",
-        "slots",
-        "structural",
-    )
-
-    def __init__(
-        self,
-        slots: list[Slot],
-        key_rank: int,
-        structural: bool,  # noqa: FBT001
-        mixed: bool,  # noqa: FBT001
-        prefix: str,
-        remainder: str,
-    ) -> None:
-        self.slots = slots
-        self.key_rank = key_rank
-        self.structural = structural
-        self.mixed = mixed
-        self.prefix = prefix
-        self.remainder = remainder
-
-
-def _peer_placements(
-    physical_blocks: list[list[Slot]], output_blocks: list[list[Slot]]
-) -> list[tuple[list[Slot], str]]:
-    """Pair peer blocks with positional prefixes and attached remainders."""
-    prefixes: list[str] = []
-    remainder_by_head: dict[Slot, str] = {}
-    for block in physical_blocks:
-        prefix, remainder = _split_leading_trivia(block[0])
-        prefixes.append(prefix)
-        remainder_by_head[block[0]] = remainder
-    return [
-        (block, prefixes[position] + remainder_by_head[block[0]])
-        for position, block in enumerate(output_blocks)
-    ]
 
 
 def _splice_blocks_in_order(
@@ -3406,22 +3360,18 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
     ):
         header_slot = header
 
-    ordered_slots = owned_slots(c)
-
-    key_blocks: dict[str, list[Slot]] = {k: [] for k in new_key_order}
-    child_keys_in_phys_order: list[str] = []
+    leaves: dict[str, list[Slot]] = {}
+    sections: dict[str, list[Slot]] = {}
+    keys = set(new_key_order)
     movable_slots: list[Slot] = []
-
-    for cur in ordered_slots:
-        is_header = cur is header_slot
-        bind_key = None if is_header else _owned_child_key(cur, c_plen)
-        if is_header:
-            movable_slots.append(cur)
-        elif bind_key is not None and bind_key in key_blocks:
-            if not key_blocks[bind_key]:
-                child_keys_in_phys_order.append(bind_key)
-            key_blocks[bind_key].append(cur)
-            movable_slots.append(cur)
+    for slot in owned_slots(c):
+        if slot is not header_slot:
+            name = _owned_child_key(slot, c_plen)
+            if name is None or name not in keys:
+                continue
+            groups = leaves if _spells_own_key(slot, c_plen + 1) else sections
+            groups.setdefault(name, []).append(slot)
+        movable_slots.append(slot)
 
     # `Container.sort` only calls in with at least two keys, each
     # contributing a slot.
@@ -3448,54 +3398,28 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             front_foreign.append(scan)
         scan = scan._next  # noqa: SLF001
     if front_foreign:
-        head_structural, head_remainder = _split_leading_trivia(earliest_owned)
-        earliest_owned.leading = head_remainder
-        front_foreign[0].leading = head_structural + front_foreign[0].leading
-
-    key_rank = {key: rank for rank, key in enumerate(new_key_order)}
-    units: list[_ReorderUnit] = []
-    for key in child_keys_in_phys_order:
-        leaves, structural = split_subtree_slots(key_blocks[key], c_plen + 1)
-        mixed = bool(leaves and structural)
-        for slots, is_structural in ((leaves, False), (structural, True)):
-            if not slots:
-                continue
-            prefix, remainder = _split_leading_trivia(slots[0])
-            units.append(
-                _ReorderUnit(
-                    slots,
-                    key_rank[key],
-                    is_structural,
-                    mixed,
-                    prefix,
-                    remainder,
-                )
-            )
-
-    header_prefix = ""
-    header_remainder = ""
-    if header_slot is not None:
-        header_prefix, header_remainder = _split_leading_trivia(header_slot)
-        if header_slot is not earliest_owned:
-            first_unit = min(units, key=lambda unit: unit.slots[0]._order)  # noqa: SLF001
-            header_prefix, first_unit.prefix = first_unit.prefix, header_prefix
-
-    prefixes_by_kind: dict[tuple[bool, bool], list[str]] = {}
-    for unit in sorted(units, key=lambda item: item.slots[0]._order):  # noqa: SLF001
-        prefixes_by_kind.setdefault((unit.structural, unit.mixed), []).append(
-            unit.prefix
-        )
-    prefix_iterators = {
-        kind: iter(prefixes) for kind, prefixes in prefixes_by_kind.items()
-    }
-    output_units = sorted(units, key=lambda unit: (unit.structural, unit.key_rank))
+        leading = earliest_owned.leading
+        cut = _separator_end(leading)
+        earliest_owned.leading = leading[cut:]
+        front_foreign[0].leading = leading[:cut] + front_foreign[0].leading
 
     placements: list[tuple[list[Slot], str]] = []
     if header_slot is not None:
-        placements.append(([header_slot], header_prefix + header_remainder))
-    for unit in output_units:
-        prefix = next(prefix_iterators[(unit.structural, unit.mixed)])
-        placements.append((unit.slots, prefix + unit.remainder))
+        placements.append(([header_slot], _leading_at(header_slot, earliest_owned)))
+        if header_slot is not earliest_owned:
+            earliest_owned.leading = _leading_at(earliest_owned, header_slot)
+    for groups, other in ((leaves, sections), (sections, leaves)):
+        # Dict insertion order is physical order within this partition.
+        # Mixed keys exchange separators only with other mixed keys.
+        pure: deque[Slot] = deque()
+        mixed: deque[Slot] = deque()
+        for name, block in groups.items():
+            (mixed if name in other else pure).append(block[0])
+        for name in new_key_order:
+            if name in groups:
+                block = groups[name]
+                position = (mixed if name in other else pure).popleft()
+                placements.append((block, _leading_at(block[0], position)))
 
     anchor_prev = front_foreign[-1] if front_foreign else region_predecessor
     first_slot = placements[0][0][0]
