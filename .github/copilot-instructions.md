@@ -72,14 +72,11 @@ Python 3.11–3.15. `ty` is a second, independent type-checker (run via
   costs. Field-adding subclasses on hot paths initialize inherited
   fields directly, without extra base-initializer calls.
 - **Construct hot-path records positionally.** `Slot`, `CommaItem`
-  and the internal layout records (`CommaStyle`, `Boundary`,
-  `_ReorderUnit`) are built once per line, item, sorted
-  block or inline edit. A constructor call carrying *any* keyword falls
+  and the internal layout records (`CommaStyle`, `Boundary`) are built
+  once per line, item or inline edit. A constructor call carrying *any* keyword falls
   off CPython's alloc-and-enter-init specialisation and costs roughly
-  twice as much, measurably: `test_sort_wide_section` is ~6% faster
-  for this alone, and `test_insert_into_inline_array` ~13%. Both are
-  in `benchmarks/`,
-  so the claim stays checkable. Keywords are fine anywhere else —
+  twice as much, measurably: `test_insert_into_inline_array` in
+  `benchmarks/` is ~13% faster for this alone. Keywords are fine anywhere else —
   an ordinary function call loses only a few ns to them, well below what
   any benchmark here can resolve. At call sites, ruff `FBT003` rejects
   a bare boolean *literal* (a name is fine);
@@ -276,8 +273,8 @@ them. Read roughly in this order:
   - **Container sorting is region-local** and keeps leaf / dotted-KV
     blocks before structural section / AoT blocks so re-parsing cannot
     change ownership. `key` / `reverse` apply within those partitions.
-    Known-owned slots are classified by depth; reorder units read
-    `Slot._order` before splicing rather than storing a second position.
+    Group owned slots by child key in physical insertion order. Within each
+    partition, mixed keys exchange positional separators only with other mixed keys.
   - **Bulk ref removal** walks each slot's back-pointers through
     `_scrub_owned_slots_via_backptrs`, not ancestor-wide cache scans.
   - **`Container._body_tail`** caches the last body slot, falling back

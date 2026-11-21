@@ -11168,6 +11168,34 @@ def test_sort_groups_all_mixed_leaves_before_their_structural_content() -> None:
     assert _reparses(out) == doc.to_dict()
 
 
+def test_sort_keeps_pure_and_mixed_peer_spacing_separate() -> None:
+    doc = tomlrt.loads(
+        td("""
+        [t]
+        mixed.value = 1
+
+        leaf = 2
+        [t.section]
+
+        # mixed child
+        [t.mixed.child]
+        """)
+    )
+    doc.table("t").sort()
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [t]
+
+        leaf = 2
+        mixed.value = 1
+
+        # mixed child
+        [t.mixed.child]
+        [t.section]
+        """)
+    assert _reparses(out) == doc.to_dict()
+
+
 def test_sort_groups_mixed_parts_when_parent_header_is_already_first() -> None:
     doc = tomlrt.loads(
         td("""
