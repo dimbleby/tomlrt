@@ -107,7 +107,7 @@ jobs:
         run: uv run pytest -m slow
 
   docs:
-    name: docs build
+    name: Build documentation
     runs-on: ubuntu-latest
     permissions:
       contents: read
