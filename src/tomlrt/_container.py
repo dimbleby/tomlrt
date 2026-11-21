@@ -1078,11 +1078,9 @@ class Container(_View, dict[str, Any]):
             _layout_ops.populate_promoted_inline_entries(entry, body)
         # Apply saved leading to the first entry header and saved eol to
         # the last entry's last slot.
-        first_record = result[0]._owner_aot_entry  # noqa: SLF001
-        assert first_record is not None
-        _layout_ops.restore_captured_leading(
-            first_record.header, saved_leading, from_kv=True
-        )
+        first_header = result[0]._header  # noqa: SLF001
+        assert first_header is not None
+        _layout_ops.restore_captured_leading(first_header, saved_leading, from_kv=True)
         last_slot = result[-1]._body_tail  # noqa: SLF001
         assert last_slot is not None
         if "#" in saved_eol and "#" not in last_slot.eol:

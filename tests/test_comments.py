@@ -2569,9 +2569,7 @@ def test_aot_insert_preserves_source_table_comments() -> None:
 
 
 def test_aot_setitem_preserves_source_table_and_slot_leading() -> None:
-    """``aot[i] = other_aot[j]`` must preserve the source's per-KV trivia
-    and the destination slot's header leading (the comments above the
-    original ``[[path]]`` line)."""
+    """Replacement combines the destination header with the source's body."""
     src = tomlrt.loads(
         td("""
         [[a]]
@@ -2582,7 +2580,7 @@ def test_aot_setitem_preserves_source_table_and_slot_leading() -> None:
     dst = tomlrt.loads(
         td("""
         # slot-leading
-        [[a]]
+        [[  'a'  ]]
         old = 1
         """)
     )
@@ -2590,10 +2588,11 @@ def test_aot_setitem_preserves_source_table_and_slot_leading() -> None:
     out = tomlrt.dumps(dst)
     assert out == td("""
         # slot-leading
-        [[a]]
+        [[  'a'  ]]
         # inner
         x = 1  # eol
         """)
+    assert reparses(out) == dst.to_dict()
 
 
 def test_aot_append_same_doc_duplicates_with_comments() -> None:

@@ -41,6 +41,7 @@ from tomlrt._slots import (
     ensure_terminator,
     retarget_slot_newlines,
     stitch_run,
+    synthetic_header,
 )
 from tomlrt._trivia import (
     leading_has_blank_line,
@@ -778,12 +779,7 @@ def _replace_primary_in_place(
 def _new_owned_section_header(
     c: Container, *, leading: str, doc: Document
 ) -> StructuralHeaderSlot:
-    return _new_section_header(
-        c._path,  # noqa: SLF001
-        leading=leading,
-        doc=doc,
-        owner_aot_entry=c._owner_aot_entry,  # noqa: SLF001
-    )
+    return synthetic_header(c._path, leading, doc._newline, c._owner_aot_entry)  # noqa: SLF001
 
 
 def _transfer_stale_owner(
@@ -1404,31 +1400,6 @@ def _recompute_body_tail(c: Container, *, below: Slot | None = None) -> Slot | N
 # ---------------------------------------------------------------------------
 
 
-def _new_section_header(
-    path: tuple[str, ...],
-    *,
-    leading: str,
-    doc: Document,
-    entry: AoTEntry | None = None,
-    owner_aot_entry: AoTEntry | None = None,
-) -> StructuralHeaderSlot:
-    header = StructuralHeaderSlot(
-        leading,
-        owner_aot_entry,
-        doc._newline,  # noqa: SLF001
-        make_keyparts(path),
-        (".",) * (len(path) - 1),
-        path,
-        "",
-        "",
-        entry,
-        synthetic=True,
-    )
-    if entry is not None:
-        entry.bind_header(header)
-    return header
-
-
 def _belongs_to_parent_extent(
     slot: Slot,
     base_path: tuple[str, ...],
@@ -1724,9 +1695,9 @@ def _aot_separator(aot: AoT, doc: Document) -> str:
     """
     if len(aot) <= 1:
         return _peer_separator(None, doc)
-    last_entry = aot[-1]._owner_aot_entry  # noqa: SLF001
-    assert last_entry is not None
-    return _peer_separator(last_entry.header.leading, doc)
+    header = aot[-1]._header  # noqa: SLF001
+    assert header is not None
+    return _peer_separator(header.leading, doc)
 
 
 def _aot_header_indent(aot: AoT, index: int | None = None) -> str:
@@ -1996,11 +1967,11 @@ def clone_headered_layout(
         nl=doc._newline,  # noqa: SLF001
     )
     if isinstance(source, _container.Document):
-        header = _new_section_header(
+        header = synthetic_header(
             target_path,
-            leading="",
-            doc=doc,
-            owner_aot_entry=parent._owner_aot_entry,  # noqa: SLF001
+            "",
+            doc._newline,  # noqa: SLF001
+            parent._owner_aot_entry,  # noqa: SLF001
         )
         slots.insert(0, header)
     first = slots[0]
@@ -2368,11 +2339,9 @@ def _clone_entry_slots(
                 cloned_head = c
             elif s.entry is not None:
                 c.entry = AoTEntry()
-            if c.entry is not None:
-                if s.entry is not None:
-                    assert s.entry not in nested_entry_map
-                    nested_entry_map[s.entry] = c.entry
-                c.entry.bind_header(c)
+            if c.entry is not None and s.entry is not None:
+                assert s.entry not in nested_entry_map
+                nested_entry_map[s.entry] = c.entry
         # An AoT header introduces its own owner before any of its body slots.
         src_owner = s.owner_aot_entry
         c.owner_aot_entry = (
@@ -2431,12 +2400,7 @@ def attach_section_at(
 
     leading = _build_section_leading(doc)
     owner = parent._owner_aot_entry  # noqa: SLF001
-    header = _new_section_header(
-        full_path,
-        leading=leading,
-        doc=doc,
-        owner_aot_entry=owner,
-    )
+    header = synthetic_header(full_path, leading, doc._newline, owner)  # noqa: SLF001
     if preserve_header:
         header.synthetic = False
 
@@ -2804,17 +2768,19 @@ def hosts_site(view: Container | AoT, site: Container | AoT) -> bool:
 class _PreparedEntry:
     """Captured input or cloned slots; ``body=None`` retains the table's layout."""
 
-    __slots__ = ("body", "body_indent", "owner", "table")
+    __slots__ = ("body", "body_indent", "header", "owner", "table")
 
     def __init__(
         self,
         table: Table,
         owner: AoTEntry,
+        header: StructuralHeaderSlot | None,
         body: list[Slot] | dict[str, TomlInput] | None,
         body_indent: str | None,
     ) -> None:
         self.table = table
         self.owner = owner
+        self.header = header
         self.body = body
         self.body_indent = body_indent
 
@@ -2898,7 +2864,6 @@ def _prepare_entry(
                 doc._newline,  # noqa: SLF001
             )
         header.entry = header.owner_aot_entry = owner
-        owner.bind_header(header)
     if previous is not None:
         tail = _last_body_kv(previous)
         if tail is not None:
@@ -2911,16 +2876,17 @@ def _prepare_entry(
         and body._layout_root is not None  # noqa: SLF001
         and not body._inline  # noqa: SLF001
     ):
-        _, payload = clone_aot_entry_layout(
+        source_header, payload = clone_aot_entry_layout(
             body,
             path=path,
             owner=owner,
             nl=doc._newline,  # noqa: SLF001
             keep_header=header is None,
         )
+        header = header or source_header
     else:
         payload = capture.capture_items(_mapping_items(body))
-    return _PreparedEntry(table, owner, payload, body_indent)
+    return _PreparedEntry(table, owner, header, payload, body_indent)
 
 
 def _insert_entry_header(
@@ -2968,14 +2934,14 @@ def _install_entry(
     assert parent is not None
     doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
-    header = owner._header  # noqa: SLF001
+    header = prepared.header
     if header is None:
-        header = _new_section_header(
+        header = synthetic_header(
             path,
-            leading=_aot_header_indent(aot, index),
-            doc=doc,
-            entry=owner,
-            owner_aot_entry=owner,
+            _aot_header_indent(aot, index),
+            doc._newline,  # noqa: SLF001
+            owner,
+            opens_entry=True,
         )
     slots: list[Slot] = []
     if prepared.body is None:
@@ -3025,7 +2991,8 @@ def _populate_prepared_entry(prepared: _PreparedEntry, capture: _SourceCapture) 
                     tail.leading = strip_trailing_ws(tail.leading) + body_indent
                     body_indent = None
     elif prepared.body is not None:
-        header = prepared.owner.header
+        header = table._header  # noqa: SLF001
+        assert header is not None
         doc = table._attached_doc  # noqa: SLF001
         _splice_block_after(prepared.body, header, doc)
         _build_cloned_views(table, prepared.body)

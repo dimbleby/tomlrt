@@ -123,8 +123,6 @@ class _Parser:
             new_entry,
             synthetic=False,
         )
-        if new_entry is not None:
-            new_entry.bind_header(slot)
         self._host = _apply_header(self._doc, slot, self._error, header_at)
         return slot
 
