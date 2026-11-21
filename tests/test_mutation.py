@@ -8173,15 +8173,15 @@ def test_inline_delete_head_migrates_above_comment_to_new_head() -> None:
     """)
 
 
-def test_inline_delete_dotted_prefix_removes_all_subentries() -> None:
-    doc = tomlrt.loads("obj = { a.b = 1, a.c = 2, d = 3 }\n")
+def test_inline_delete_scattered_dotted_prefix_after_an_earlier_deletion() -> None:
+    retained = ", ".join(f"k{i} = {i}" for i in range(12))
+    doc = tomlrt.loads(f"obj = {{ before = 0, a.b = 1, {retained}, a.c = 2 }}\n")
     obj = doc.table("obj")
+    del obj["before"]
     del obj["a"]
-    assert "a" not in obj
-    assert obj["d"] == 3
     out = tomlrt.dumps(doc)
-    assert out == "obj = { d = 3 }\n"
-    assert tomlrt.loads(out).table("obj").to_dict() == {"d": 3}
+    assert out == f"obj = {{ {retained} }}\n"
+    assert _reparses(out) == doc.to_dict()
 
 
 @pytest.mark.parametrize(
