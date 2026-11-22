@@ -50,12 +50,12 @@ paths = ["src"]
 
 [project.plugins.mkdocstrings.handlers.python.options]
 docstring_style = "google"
-inherited_members = true
-show_root_heading = true
-show_root_full_path = false
-show_bases = false
-show_source = false
-show_signature_annotations = true
-separate_signature = true
-members_order = "source"
 group_by_category = false
+inherited_members = true
+members_order = "source"
+separate_signature = true
+show_bases = false
+show_root_full_path = false
+show_root_heading = true
+show_signature_annotations = true
+show_source = false
