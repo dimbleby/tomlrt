@@ -93,6 +93,15 @@ _ML_BASIC_ESCAPES = re.compile(
     """,
     re.VERBOSE,
 )
+_LITERAL_DISALLOWED = re.compile(r"['\x00-\x08\x0a-\x1f\x7f]")
+_ML_LITERAL_DISALLOWED = re.compile(
+    r"""
+    '{3}                               # three quotes would close the string
+    | [\x00-\x08\x0b\x0c\x0e-\x1f\x7f] # controls except tab and newlines
+    | \r(?!\n)                         # CR outside a CRLF newline
+    """,
+    re.VERBOSE,
+)
 
 
 def _validate_non_negative(value: int, name: str) -> None:
@@ -303,15 +312,8 @@ def _canon_eol(eol: str, *, nl: str, options: FormatOptions) -> str:
 
 
 def _literal_eligible(value: str, *, multiline: bool) -> bool:
-    if ("'''" if multiline else "'") in value:
-        return False
-    for i, ch in enumerate(value):
-        if ch == "\t" or (ord(ch) >= 0x20 and ch != "\x7f"):
-            continue
-        if multiline and (ch == "\n" or (ch == "\r" and value[i : i + 2] == "\r\n")):
-            continue
-        return False
-    return True
+    pattern = _ML_LITERAL_DISALLOWED if multiline else _LITERAL_DISALLOWED
+    return pattern.search(value) is None
 
 
 def _escape_basic_match(match: re.Match[str]) -> str:

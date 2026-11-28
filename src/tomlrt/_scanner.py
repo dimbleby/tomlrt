@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 # Comment body: anything except newline + control chars (tab is OK).
 _RE_COMMENT_BODY: Final = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
+_RE_INLINE_WS: Final = re.compile(r"[ \t]+")
 
 # Body fragments stop at newlines; string scanners handle or reject them.
 # Basic string: not quote, backslash, newline, or control
@@ -162,15 +163,10 @@ class _Scanner:
 
         Unlike `scan_trivia`, newlines and comments don't count here.
         """
-        src = self.src
-        end = self.end
-        pos = start = self.pos
-        while pos < end:
-            c = src[pos]
-            if c not in {" ", "\t"}:
-                break
-            pos += 1
-        self.pos = pos
+        start = self.pos
+        m = _RE_INLINE_WS.match(self.src, start)
+        if m is not None:
+            self.pos = m.end()
         return start
 
     def scan_inline_ws_text(self) -> str:
