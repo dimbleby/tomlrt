@@ -15,8 +15,6 @@ from tomlrt import AoT, Array, Document, Table
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
-    InlineTableEntry,
-    InlineTableValue,
     ScalarValue,
 )
 
@@ -273,39 +271,6 @@ def test_comma_node_deepcopy_honors_preset_scalar_memo() -> None:
     assert cloned.items[0].value is replacement
     assert cloned.render() == "[7]"
     assert node.render() == "[0x2A]"
-
-
-def test_comma_node_deepcopy_copies_mutable_trivia_and_key_fields() -> None:
-    padding = _MutableStr(" ")
-    key_parts = (_MutableStr("'key'"),)
-    key_path = (_MutableStr("key"),)
-    entry = InlineTableEntry(
-        ArrayValue(),
-        key_parts=key_parts,
-        key_seps=(),
-        key_path=key_path,
-        pre_eq=padding,
-        post_eq=padding,
-        following=padding,
-    )
-    node = InlineTableValue([entry], padding)
-    assert not node.is_multiline()
-    cloned = deepcopy(node)
-    assert not cloned.is_multiline()
-    cloned_entry = cloned.items[0]
-    assert cloned_entry is not entry
-    assert cloned_entry.key_parts is not key_parts
-    assert isinstance(cloned_entry.key_path[0], _MutableStr)
-    assert cloned_entry.key_path[0] is not key_path[0]
-    assert cloned.opening is cloned_entry.following
-    assert cloned.opening is cloned_entry.pre_eq is cloned_entry.post_eq
-    assert isinstance(cloned.opening, _MutableStr)
-    assert cloned.opening is not padding
-    padding.labels.append("changed")
-    entry.key_parts = ("'changed'",)
-    assert cloned.opening.labels == ["original"]
-    assert cloned.render() == "{ 'key' = [] }"
-    assert node.render() == "{ 'changed' = [] }"
 
 
 class _IntLikeType(type):

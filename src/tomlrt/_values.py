@@ -221,10 +221,10 @@ class CommaItem:
         new = object.__new__(type(self))
         memo[id(self)] = new
         new.value = copy.deepcopy(self.value, memo)
-        new.before = copy.deepcopy(self.before, memo)
-        new.has_comma = copy.deepcopy(self.has_comma, memo)
-        new.after = copy.deepcopy(self.after, memo)
-        new.following = copy.deepcopy(self.following, memo)
+        new.before = self.before
+        new.has_comma = self.has_comma
+        new.after = self.after
+        new.following = self.following
         return new
 
     def render_tail(self) -> str:
@@ -285,11 +285,11 @@ class InlineTableEntry(CommaItem):
     @override
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
         new = super().__deepcopy__(memo)
-        new.key_parts = copy.deepcopy(self.key_parts, memo)
-        new.key_path = copy.deepcopy(self.key_path, memo)
-        new.key_seps = copy.deepcopy(self.key_seps, memo)
-        new.post_eq = copy.deepcopy(self.post_eq, memo)
-        new.pre_eq = copy.deepcopy(self.pre_eq, memo)
+        new.key_parts = self.key_parts
+        new.key_path = self.key_path
+        new.key_seps = self.key_seps
+        new.post_eq = self.post_eq
+        new.pre_eq = self.pre_eq
         new._order = self._order  # noqa: SLF001
         return new
 
@@ -342,8 +342,8 @@ class CommaValue(Generic[_ItemT]):
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
         new = object.__new__(type(self))
         memo[id(self)] = new
-        new._ml_cache = copy.deepcopy(self._ml_cache, memo)
-        new.opening = copy.deepcopy(self.opening, memo)
+        new._ml_cache = self._ml_cache
+        new.opening = self.opening
         new.items = copy.deepcopy(self.items, memo)
         return new
 
