@@ -423,7 +423,7 @@ def _canon_inline_value(
     *,
     nl: str,
     options: FormatOptions,
-    parent_indent: str = "",
+    parent_indent: str,
 ) -> None:
     """Canonicalise inline array/table layout while preserving shape."""
     items = v.items
@@ -921,8 +921,6 @@ def format_document_trailing(
 __all__ = [
     "FormatOptions",
     "QuoteStyle",
-    "_canon_inline_value",
-    "_closing_indent",
     "_prepare_indent",
     "_resolve_format_options",
     "format_document_trailing",

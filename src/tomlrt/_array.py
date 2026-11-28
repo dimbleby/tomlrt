@@ -86,7 +86,7 @@ class Array(_View, list[Any]):
         cls,
         value: ArrayValue,
         layout_root: Document | None,
-        name: str | None = None,
+        name: str | None,
         host: Array | Container | None = None,
     ) -> Array:
         """View over existing CST, holding no items yet.
@@ -130,9 +130,7 @@ class Array(_View, list[Any]):
             self._validate_item(item)
         indent_text = _prepare_indent(indent) if multiline else ""
         if items_list:
-            from tomlrt._container import _fill_inline_array  # noqa: PLC0415
-
-            _fill_inline_array(self, items_list, None, None)
+            _container._fill_inline_array(self, items_list, None, None)  # noqa: SLF001
         if not multiline:
             return
         set_comma_value_multiline(
@@ -145,9 +143,7 @@ class Array(_View, list[Any]):
 
     def to_list(self) -> list[Any]:
         """Return a deep copy as a plain Python list."""
-        from tomlrt._container import _to_python  # noqa: PLC0415
-
-        out = _to_python(self)
+        out = _container._to_python(self)  # noqa: SLF001
         assert isinstance(out, list)
         return out
 
@@ -252,13 +248,11 @@ class Array(_View, list[Any]):
         text untouched.
         """
         resolved = _resolve_format_options(options=options)
-        from tomlrt._container import _host_kv_slot  # noqa: PLC0415
-
         format_inline_root(
             self._value,
             nl=self._doc_newline,
             options=resolved,
-            host=_host_kv_slot(self),
+            host=_container._host_kv_slot(self),  # noqa: SLF001
         )
 
     def set_multiline(self, *, multiline: bool, indent: int = 4) -> Array:
@@ -274,29 +268,23 @@ class Array(_View, list[Any]):
 
         Returns ``self`` for chaining.
         """
-        from tomlrt._container import _host_kv_slot  # noqa: PLC0415
-
         set_comma_value_multiline(
             self._value,
             multiline=multiline,
             nl=self._doc_newline,
             indent=_prepare_indent(indent) if multiline else "",
-            host=_host_kv_slot(self),
+            host=_container._host_kv_slot(self),  # noqa: SLF001
         )
         return self
 
     @staticmethod
     def _validate_item(value: object) -> None:
         """Validate one value before synthesis can attach nested views."""
-        from tomlrt._container import _validate_input  # noqa: PLC0415
-
-        _validate_input(value, inline_only=True, inline_kind="array")
+        _container._validate_input(value, inline_only=True, inline_kind="array")  # noqa: SLF001
 
     def _synth_item(self, value: TomlInput) -> tuple[Value, DecodedValue]:
         """Synthesise one validated value for this inline array."""
-        from tomlrt._container import _synth_value  # noqa: PLC0415
-
-        return _synth_value(value, self._layout_root, self)
+        return _container._synth_value(value, self._layout_root, self)  # noqa: SLF001
 
     def _prepare_item(self, value: TomlInput) -> tuple[Value, DecodedValue]:
         """Validate and synthesise one value."""
@@ -545,7 +533,7 @@ def _norm_index(index: SupportsIndex, n: int, action: str) -> int:
 
 
 def _prepare_slice_assignment(
-    target: Sequence[Any], index: slice, value: Any
+    target: Sequence[object], index: slice, value: Any
 ) -> tuple[range, list[Any]]:
     """Materialise slice-assignment values and check extended-slice bounds."""
     try:
@@ -763,13 +751,11 @@ class AoT(_View, list["Table"]):
         if n == 1 or not self:
             return self
         if self._layout_root is None:
-            from tomlrt._container import _copy_input  # noqa: PLC0415
-
             bodies = _prepare_aot_entries(self)
             copies: list[Table] = []
             for _ in range(n - 1):
                 for body in bodies:
-                    entry = _copy_input(body)
+                    entry = _container._copy_input(body)
                     assert isinstance(entry, _container.Table)
                     copies.append(entry)
             list.extend(self, copies)
@@ -785,32 +771,26 @@ def _prepare_aot_entries(
     values: Iterable[Mapping[str, TomlInput]],
 ) -> list[Mapping[str, TomlInput]]:
     """Snapshot entries, checking all mapping shapes before their contents."""
-    from tomlrt._container import _validate_mapping_items  # noqa: PLC0415
-
     entries = list(values)
     for entry in entries:
         _require_mapping(entry, label="AoT entry")
     for entry in entries:
-        _validate_mapping_items(entry, inline_only=False)
+        _container._validate_mapping_items(entry, inline_only=False)  # noqa: SLF001
     return entries
 
 
 def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
     """Keep a section factory or build an independent AoT-entry placeholder."""
-    from tomlrt._container import Table, _populate_unattached  # noqa: PLC0415
-
-    # Keep ordinary mappings free of cold-path imports and helper calls.
-    if isinstance(body, Table) and not body._inline:  # noqa: SLF001
+    # Keep ordinary mappings free of cold-path helper calls.
+    if isinstance(body, _container.Table) and not body._inline:  # noqa: SLF001
         if _container._can_adopt(body):  # noqa: SLF001
             return body
-        from tomlrt._container import _clone_private_layout  # noqa: PLC0415
-
-        entry = _clone_private_layout(body)
-        assert isinstance(entry, Table)
+        entry = _container._clone_private_layout(body)  # noqa: SLF001
+        assert isinstance(entry, _container.Table)
         return entry
-    t = Table()
+    t = _container.Table()
     if body is not None:
-        _populate_unattached(t, body)
+        _container._populate_unattached(t, body)  # noqa: SLF001
     return t
 
 

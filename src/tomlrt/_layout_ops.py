@@ -921,9 +921,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     delete_keys(c, (key,), materialise_empty=materialise_empty)
 
 
-def delete_keys(
-    c: Container, keys: Sequence[str], *, materialise_empty: bool = False
-) -> None:
+def delete_keys(c: Container, keys: Sequence[str], *, materialise_empty: bool) -> None:
     """Delete one child binding or all bindings without pruning empty ancestors.
 
     Structural views retain their layout in private orphan documents.
@@ -1974,7 +1972,7 @@ def adopt_private_block(
     dest_parent: Container,
     key: str,
     value: Container | AoT,
-) -> Container | AoT:
+) -> None:
     """Rehome a detached header-bearing block under ``dest_parent[key]``.
 
     Moves and rebases the existing slot/view subtree, preserving identity
@@ -2000,7 +1998,6 @@ def adopt_private_block(
     _extend_header_bindings_to_root(dest_parent, slots)
     dict.__setitem__(dest_parent, key, value)
     _maybe_demote_synthetic_empty_header(dest_parent)
-    return value
 
 
 def _move_private_subtree(
@@ -2088,7 +2085,7 @@ def adopt_private_implicit(
     dest_parent: Container,
     key: str,
     value: Container,
-) -> Container:
+) -> None:
     """Rehome a header-less (dotted) private-orphan section in place.
 
     The orphan has no header of its own — its content lives in dotted KVs
@@ -2129,12 +2126,9 @@ def adopt_private_implicit(
         for anc in chain:
             record_slot(anc, s)
     dict.__setitem__(dest_parent, key, value)
-    return value
 
 
-def clone_implicit_section(
-    dest_parent: Container, key: str, source: Container
-) -> Container:
+def clone_implicit_section(dest_parent: Container, key: str, source: Container) -> None:
     """Clone an implicit section's physical run, preserving its dotted shape."""
     doc = dest_parent._attached_doc  # noqa: SLF001
     host = _nearest_header_host(dest_parent)
@@ -2147,9 +2141,6 @@ def clone_implicit_section(
     )
     slots = _splice_implicit_run(dest_parent, host, slots)
     _build_cloned_views(host, slots)
-    result = dict.__getitem__(dest_parent, key)
-    assert isinstance(result, _container.Container)
-    return result
 
 
 def _spells_own_key(slot: Slot, depth: int) -> bool:
@@ -2352,8 +2343,6 @@ def attach_section_at(
     the deepest component gets the explicit header. ``source`` is a validated,
     unattached `Table`, rehomed in place.
     """
-    from tomlrt._container import _is_inline_input  # noqa: PLC0415
-
     sub = tuple(sub_path)
     assert sub, "attach_section_at requires a non-empty sub_path"
     assert source._layout_root is None, "attach_section_at requires a detached source"  # noqa: SLF001
@@ -2403,7 +2392,7 @@ def attach_section_at(
     scalars: list[tuple[str, TomlInput]] = []
     structurals: list[tuple[str, TomlInput]] = []
     for k, v in pending:
-        if _is_inline_input(v):
+        if _container._is_inline_input(v):  # noqa: SLF001
             scalars.append((k, v))
         else:
             structurals.append((k, v))

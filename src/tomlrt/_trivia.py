@@ -210,7 +210,6 @@ def split_eol_section(t: str) -> tuple[str, str]:
 
 __all__ = [
     "emptied_bracket_pad",
-    "indent_from_trivia",
     "leading_break",
     "leading_has_blank_line",
     "leading_ws",

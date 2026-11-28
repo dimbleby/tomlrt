@@ -40,13 +40,12 @@ def _validate_comment_content(text: str, newline_msg: str) -> None:
     _validate_comment_controls(text)
 
 
-def _validate_comment_str(value: object, name: str) -> str:
-    """Type-check ``value`` is a str and validate its content; return it."""
+def _validate_comment_str(value: object, name: str) -> None:
+    """Type-check ``value`` is a str and validate its content."""
     if not isinstance(value, str):
         msg = f"{name} must be str, got {type(value).__name__}"
         raise TypeError(msg)
     _validate_comment_content(value, "comment must be single-line")
-    return value
 
 
 def _validate_comment_entries(
@@ -181,8 +180,6 @@ __all__ = [
     "_set_attached_block",
     "_split_attached_block",
     "_split_preamble",
-    "_validate_comment_content",
-    "_validate_comment_controls",
     "_validate_comment_entries",
     "_validate_comment_seq",
     "_validate_comment_str",

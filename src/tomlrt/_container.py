@@ -609,7 +609,7 @@ class Container(_View, dict[str, Any]):
             replacement.promotion = self._insert_new(key, value, capture)
 
     def _insert_new(
-        self, key: str, value: TomlInput, capture: _SourceCapture | None = None
+        self, key: str, value: TomlInput, capture: _SourceCapture | None
     ) -> _layout_ops.PromotedHeader | None:
         """Bind ``key`` for the first time at the document tail."""
         if is_scalar(value):
