@@ -456,40 +456,6 @@ def _extend_header_bindings_to_root(
             _file_header_binding_chain(parent, s)
 
 
-def _file_synthetic_header_and_kv(
-    c: Container,
-    *,
-    header_slot: StructuralHeaderSlot,
-    key: str,
-    value: Value,
-    doc: Document,
-    owner: AoTEntry | None,
-) -> KVSlot:
-    """Common tail of the two header-synthesis paths.
-
-    Files ``c``'s own-header ref, inserts ``key = value`` directly
-    after ``header_slot``, files the KV ref, and updates
-    ``c._header`` / ``c._body_tail``.
-
-    Anchoring and ancestor binding-ref filing stay explicit in callers;
-    both are highly position-sensitive and not safe to share.
-    """
-    record_slot(c, header_slot)
-    c._header = header_slot  # noqa: SLF001
-
-    new_kv = _new_kv_slot(
-        host_path=c._path,  # noqa: SLF001
-        key=(key,),
-        value=value,
-        doc=doc,
-        owner=owner,
-        leading="",
-    )
-    insert_after(header_slot, new_kv, doc)
-    record_slot(c, new_kv)
-    return new_kv
-
-
 def ensure_implicit_chain(
     parent: Container,
     sub_path: tuple[str, ...],
@@ -1341,14 +1307,18 @@ def _synthesise_header_then_insert_kv(
     assert parent is not None
     _file_header_binding_chain(parent, header_slot)
 
-    _file_synthetic_header_and_kv(
-        c,
-        header_slot=header_slot,
-        key=key,
+    record_slot(c, header_slot)
+    c._header = header_slot  # noqa: SLF001
+    new_kv = _new_kv_slot(
+        host_path=c._path,  # noqa: SLF001
+        key=(key,),
         value=value,
         doc=doc,
         owner=owner,
+        leading="",
     )
+    insert_after(header_slot, new_kv, doc)
+    record_slot(c, new_kv)
     return PromotedHeader(header_slot, displaced)
 
 
@@ -1710,14 +1680,12 @@ def add_aot_entry(
     body: Mapping[str, TomlInput] | None,
     *,
     index: int | None = None,
-    capture: _SourceCapture | None = None,
 ) -> Table:
     """Insert one entry through the shared batch preparation path."""
     insert_aot_entries(
         aot,
         ({} if body is None else body,),
         index=index,
-        capture=capture,
     )
     return aot[-1 if index is None else index]
 
