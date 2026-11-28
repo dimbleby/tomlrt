@@ -33,7 +33,7 @@ from tomlrt._format import (
     format_inline_root,
     set_comma_value_multiline,
 )
-from tomlrt._list_ops import replacement_indices
+from tomlrt._list_ops import replace_range, replacement_indices
 from tomlrt._trivia import (
     emptied_bracket_pad,
 )
@@ -436,31 +436,19 @@ class Array(_View, list[Any]):
         value: Any,
     ) -> None:
         if isinstance(index, slice):
-            try:
-                values = list(value)
-            except TypeError as exc:
-                msg = "can only assign an iterable"
-                raise TypeError(msg) from exc
-            start, stop, step = index.indices(len(self))
-            indices = range(start, stop, step)
-            if step != 1 and len(values) != len(indices):
-                msg = (
-                    f"attempt to assign sequence of size {len(values)} "
-                    f"to extended slice of size {len(indices)}"
-                )
-                raise ValueError(msg)
+            indices, values = _prepare_slice_assignment(self, index, value)
             self._validate_values(values)
             prepared = [
-                (index, self._synth_item(values[offset]))
-                for offset, index in replacement_indices(self, indices, values)
+                (idx, self._synth_item(values[offset]))
+                for offset, idx in replacement_indices(self, indices, values)
             ]
             added = [self._synth_item(v) for v in values[len(indices) :]]
-            for index, (cst, decoded) in prepared:
-                self._replace_synthesised(index, cst, decoded)
+            for idx, (cst, decoded) in prepared:
+                self._replace_synthesised(idx, cst, decoded)
             if len(values) < len(indices):
-                del self[start + len(values) : stop]
+                del self[indices.start + len(values) : indices.stop]
             if added:
-                at = start + len(indices)
+                at = indices.start + len(indices)
                 if at == len(self):
                     self._extend_prepared(added)
                 else:
@@ -556,6 +544,26 @@ def _norm_index(index: SupportsIndex, n: int, action: str) -> int:
     return i
 
 
+def _prepare_slice_assignment(
+    target: Sequence[Any], index: slice, value: Any
+) -> tuple[range, list[Any]]:
+    """Materialise slice-assignment values and check extended-slice bounds."""
+    try:
+        values = list(value)
+    except TypeError as exc:
+        msg = "can only assign an iterable"
+        raise TypeError(msg) from exc
+    start, stop, step = index.indices(len(target))
+    indices = range(start, stop, step)
+    if step != 1 and len(values) != len(indices):
+        msg = (
+            f"attempt to assign sequence of size {len(values)} "
+            f"to extended slice of size {len(indices)}"
+        )
+        raise ValueError(msg)
+    return indices, values
+
+
 class AoT(_View, list["Table"]):
     """An array of tables, written as repeated headers such as ``[[products]]``.
 
@@ -614,7 +622,7 @@ class AoT(_View, list["Table"]):
         i = _norm_index(index, len(self), "pop")
         if self._layout_root is None:
             return list.pop(self, i)
-        return _layout_ops.remove_aot_entry(self, i)
+        return _layout_ops.remove_aot_entries(self, (i,))[0]
 
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
@@ -622,14 +630,15 @@ class AoT(_View, list["Table"]):
             if self._layout_root is None:
                 list.__delitem__(self, index)
                 return
-            indices = sorted(set(range(*index.indices(len(self)))))
+            indices = sorted(range(*index.indices(len(self))))
             if indices:
                 _layout_ops.remove_aot_entries(self, indices)
             return
+        i = _norm_index(index, len(self), "list assignment")
         if self._layout_root is None:
-            list.__delitem__(self, index)
+            list.__delitem__(self, i)
             return
-        _layout_ops.remove_aot_entry(self, operator.index(index))
+        _layout_ops.remove_aot_entries(self, (i,))
 
     @override
     def clear(self) -> None:
@@ -655,22 +664,7 @@ class AoT(_View, list["Table"]):
         value: Any,
     ) -> None:
         if isinstance(index, slice):
-            try:
-                values = list(value)
-            except TypeError as exc:
-                msg = "can only assign an iterable"
-                raise TypeError(msg) from exc
-            indices = range(*index.indices(len(self)))
-            if (
-                index.step is not None
-                and index.step != 1
-                and len(values) != len(indices)
-            ):
-                msg = (
-                    f"attempt to assign sequence of size {len(values)} "
-                    f"to extended slice of size {len(indices)}"
-                )
-                raise ValueError(msg)
+            indices, values = _prepare_slice_assignment(self, index, value)
             # Atomicity preflight: validate everything before mutating.
             typed_values = _prepare_aot_entries(values)
             if self._layout_root is None:
@@ -680,17 +674,17 @@ class AoT(_View, list["Table"]):
                     else _make_unattached_entry(body)
                     for offset, body in enumerate(typed_values)
                 ]
-                list.__setitem__(self, index, entries)
+                replace_range(self, indices, entries)
                 return
-            _layout_ops.assign_aot_entries(self, index, typed_values)
+            _layout_ops.assign_aot_entries(self, indices, typed_values)
             return
+        i = _norm_index(index, len(self), "list assignment")
         entry = _prepare_aot_entries((value,))[0]
         if self._layout_root is None:
-            i = _norm_index(index, len(self), "list assignment")
             if self[i] is not entry:
                 list.__setitem__(self, i, _make_unattached_entry(entry))
             return
-        _layout_ops.assign_aot_entries(self, operator.index(index), (entry,))
+        _layout_ops.assign_aot_entries(self, range(i, i + 1), (entry,))
 
     @override
     def append(self, value: Table | Mapping[str, TomlInput]) -> None:

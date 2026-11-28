@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt import _array, _container
 from tomlrt._kind import _Kind
-from tomlrt._list_ops import delete_runs, index_runs, replacement_indices
+from tomlrt._list_ops import delete_runs, index_runs, replace_range, replacement_indices
 from tomlrt._scalar import SCALAR_TYPES
 from tomlrt._slots import (
     AoTEntry,
@@ -2562,25 +2562,6 @@ def _scrub_owned_slots_via_backptrs(
                 c._body_tail = _recompute_body_tail(c, below=slot)  # noqa: SLF001
 
 
-def _norm_aot_index(aot: AoT, index: int) -> int:
-    """Normalise ``index`` to non-negative; raise IndexError if out of range."""
-    n = len(aot)
-    if not -n <= index < n:
-        msg = f"AoT index {index} out of range (len {n})"
-        raise IndexError(msg)
-    return index + n if index < 0 else index
-
-
-def remove_aot_entry(aot: AoT, index: int) -> Table:
-    """Remove ``aot[index]``, unlink its slots, and return it detached.
-
-    Returns the popped entry itself, with its layout preserved in a
-    private document, mirroring ``delete_key``. Held references remain
-    usable without affecting the source document.
-    """
-    return remove_aot_entries(aot, [_norm_aot_index(aot, index)])[0]
-
-
 def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     """Remove ``aot[i]`` for each ``i`` in ``indices`` in one batch.
 
@@ -3016,15 +2997,10 @@ def _replace_entry_header(previous: Table, header: StructuralHeaderSlot) -> None
 
 
 def assign_aot_entries(
-    aot: AoT, index: int | slice, bodies: Sequence[Mapping[str, TomlInput]]
+    aot: AoT, indices: range, bodies: Sequence[Mapping[str, TomlInput]]
 ) -> None:
     """Capture sources, replace changed pairs, then remove or insert excess entries."""
-    if isinstance(index, slice):
-        start, stop, step = index.indices(len(aot))
-        indices = range(start, stop, step)
-    else:
-        start = _norm_aot_index(aot, index)
-        indices = range(start, start + 1)
+    start = indices.start
     changed = replacement_indices(aot, indices, bodies)
     if not changed and len(bodies) == len(indices):
         return
@@ -3068,10 +3044,7 @@ def assign_aot_entries(
         selected[offset] = entry.table
     if departing:
         _orphan_aot_entries(aot, departing)
-    if isinstance(index, slice):
-        list.__setitem__(aot, index, selected)
-    else:
-        list.__setitem__(aot, start, selected[0])
+    replace_range(aot, indices, selected)
     if departing and not aot:
         _materialise_empty_aot(aot)
     with _container._sources_kept_intact(aot._layout_root, departing):  # noqa: SLF001
@@ -3417,7 +3390,6 @@ __all__ = [
     "attach_section_at",
     "delete_key",
     "hosts_site",
-    "remove_aot_entry",
     "renormalise_aot_order",
     "reorder_container",
     "reposition_install",

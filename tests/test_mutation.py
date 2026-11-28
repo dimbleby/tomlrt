@@ -11799,8 +11799,35 @@ def test_aot_pop_negative_out_of_range() -> None:
 
 def test_aot_delitem_out_of_range() -> None:
     doc = tomlrt.loads("[[a]]\nx = 1\n")
-    with pytest.raises(IndexError, match="out of range"):
+    with pytest.raises(IndexError, match="list assignment index out of range"):
         del doc.aot("a")[99]
+
+
+def test_aot_setitem_out_of_range_matches_list_error() -> None:
+    doc = tomlrt.loads("[[a]]\nx = 1\n")
+    bad: Any = "not a mapping"
+    for aot in (doc.aot("a"), AoT([{"x": 1}])):
+        with pytest.raises(IndexError, match="list assignment index out of range"):
+            aot[99] = bad
+
+
+def test_aot_slice_assignment_normalizes_slice_once() -> None:
+    class _StatefulStep:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __index__(self) -> int:
+            self.calls += 1
+            return 1 if self.calls == 1 else 2
+
+    doc = tomlrt.loads("[[a]]\nx = 1\n\n[[a]]\nx = 2\n")
+    step = _StatefulStep()
+    doc.aot("a")[slice(0, 2, step)] = [{"x": 10}]
+    assert step.calls == 1
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 10
+    """)
 
 
 def test_aot_self_assign_is_noop() -> None:
