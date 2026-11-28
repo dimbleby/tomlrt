@@ -60,7 +60,9 @@ from tomlrt._values import (
 from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Iterator, Sequence
+    from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+
+    from _typeshed import SupportsRichComparison
 
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table, TomlInput
@@ -227,8 +229,6 @@ def binding_refs(parent: Container, key: str) -> Iterator[Slot]:
     direct = parent._bindings.get(key)  # noqa: SLF001
     if direct is not None:
         yield direct
-        return
-    if parent._layout_root is None:  # noqa: SLF001
         return
     value = dict.get(parent, key)
     if _container._is_section(value):  # noqa: SLF001
@@ -3257,15 +3257,21 @@ def _owned_child_key(slot: Slot, depth: int) -> str | None:
     return path[depth] if len(path) > depth else None
 
 
-def reorder_container(c: Container, new_key_order: list[str]) -> None:
-    """Reorder ``c``'s direct children to ``new_key_order``.
+def sort_container(
+    c: Container,
+    current: list[str],
+    *,
+    key: Callable[[str], SupportsRichComparison] | None = None,
+    reverse: bool = False,
+) -> list[str]:
+    """Sort and reorder ``c``'s direct children in one slot pass.
 
-    ``new_key_order`` is trusted to be a permutation of
-    ``dict.keys(c)``. A pure leaf or structural key moves as one block;
-    a mixed key splits into leaf and structural units so every mixed
-    leaf stays ahead of every section header after sorting. Positional
-    separators stay within their unit kind; attached comments travel
-    with their unit.
+    A pure leaf or structural key moves as one block; a mixed key splits
+    into leaf and structural units so every mixed leaf stays ahead of
+    every section header after sorting. Keys are sorted within three
+    groups — pure leaves, mixed, then pure sections — so leaf content
+    cannot move past a header. Positional separators stay within their
+    unit kind; attached comments travel with their unit.
 
     Non-contiguous keys (e.g. ``[a]; [other]; [a.sub]``, where ``a`` has
     two runs at root) are gathered together. Interleaved foreign KVs
@@ -3302,7 +3308,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     leaves: dict[str, list[Slot]] = {}
     sections: dict[str, list[Slot]] = {}
-    keys = set(new_key_order)
+    keys = set(current)
     movable_slots: list[Slot] = []
     for slot in owned_slots(c):
         if slot is not header_slot:
@@ -3312,6 +3318,20 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             groups = leaves if _spells_own_key(slot, c_plen + 1) else sections
             groups.setdefault(name, []).append(slot)
         movable_slots.append(slot)
+
+    pure_leaves: list[str] = []
+    mixed_keys: list[str] = []
+    pure_sections: list[str] = []
+    for k in current:
+        if k not in leaves:
+            pure_sections.append(k)
+        elif k in sections:
+            mixed_keys.append(k)
+        else:
+            pure_leaves.append(k)
+    for group in (pure_leaves, mixed_keys, pure_sections):
+        group.sort(key=key, reverse=reverse)
+    new_key_order = pure_leaves + mixed_keys + pure_sections
 
     # `Container.sort` only calls in with at least two keys, each
     # contributing a slot.
@@ -3379,6 +3399,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
                 assert anchor_prev is not None
 
     _splice_blocks_in_order(doc, movable_slots, placements, anchor_prev=anchor_prev)
+    return new_key_order
 
 
 __all__ = [
@@ -3391,7 +3412,7 @@ __all__ = [
     "delete_key",
     "hosts_site",
     "renormalise_aot_order",
-    "reorder_container",
     "reposition_install",
+    "sort_container",
     "stable_snapshot",
 ]
