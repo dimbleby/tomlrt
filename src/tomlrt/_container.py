@@ -68,7 +68,7 @@ from tomlrt._scalar import (
     is_scalar,
     validate_scalar,
 )
-from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._slots import StructuralHeaderSlot
 from tomlrt._trivia import split_line
 from tomlrt._typecheck import (
     _mapping_items,
@@ -102,9 +102,8 @@ if TYPE_CHECKING:
 
     from tomlrt._format import FormatOptions
     from tomlrt._layout_ops import _SourceCapture
-    from tomlrt._scalar import Scalar
-    from tomlrt._slots import AoTEntry, Slot
-    from tomlrt._values import Value
+    from tomlrt._slots import AoTEntry, KVSlot, Slot
+    from tomlrt._values import Scalar, Value
 
 
 _T = TypeVar("_T")
@@ -610,7 +609,7 @@ class Container(_View, dict[str, Any]):
             replacement.promotion = self._insert_new(key, value, capture)
 
     def _insert_new(
-        self, key: str, value: TomlInput, capture: _SourceCapture | None = None
+        self, key: str, value: TomlInput, capture: _SourceCapture | None
     ) -> _layout_ops.PromotedHeader | None:
         """Bind ``key`` for the first time at the document tail."""
         if is_scalar(value):
@@ -802,43 +801,14 @@ class Container(_View, dict[str, Any]):
         current = list(dict.keys(self))
         if len(current) <= 1:
             return
-        if self._inline:
+        if self._inline or self._needs_layout:
             new_order = sorted(current, key=key, reverse=reverse)
-        else:
-            # A key's leaf content must precede every section header.
-            # Keep mixed keys between pure leaves and pure sections so
-            # their leaf part stays ahead of all sections. Each key is
-            # classified in one pass; `has_header` is only consulted for
-            # keys that have a leaf, since it is only needed to tell
-            # pure leaves from mixed ones.
-            pure_leaves: list[str] = []
-            mixed: list[str] = []
-            pure_sections: list[str] = []
-            for k in current:
-                has_leaf = False
-                has_header = False
-                for slot in _layout_ops.binding_refs(self, k):
-                    if isinstance(slot, KVSlot):
-                        has_leaf = True
-                    else:
-                        assert isinstance(slot, StructuralHeaderSlot)
-                        has_header = True
-                    if has_leaf and has_header:
-                        break
-                if not has_leaf:
-                    pure_sections.append(k)
-                elif has_header:
-                    mixed.append(k)
-                else:
-                    pure_leaves.append(k)
-            for group in (pure_leaves, mixed, pure_sections):
-                group.sort(key=key, reverse=reverse)
-            new_order = pure_leaves + mixed + pure_sections
-        if not self._needs_layout:
-            if self._inline:
+            if not self._needs_layout:
                 _inline_ops.reorder_inline(self, new_order)
-            else:
-                _layout_ops.reorder_container(self, new_order)
+        else:
+            new_order = _layout_ops.sort_container(
+                self, current, key=key, reverse=reverse
+            )
         if new_order != current:
             _reorder_dict_storage(self, new_order)
 

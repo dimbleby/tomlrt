@@ -38,19 +38,21 @@ from tomlrt._errors import TOMLError
 from tomlrt._scalar import _STRING_ESCAPES
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
+    leading_break,
     leading_ws,
     retarget_newlines,
-    split_above_block,
+    separator_end,
     split_eol_section,
     split_item_above,
     split_line,
     split_lines,
+    strip_trailing_ws,
 )
 from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
-    StringValue,
+    ScalarValue,
     value_has_any_comment,
 )
 
@@ -88,6 +90,15 @@ _ML_BASIC_ESCAPES = re.compile(
     r"""
     "{3,}                              # three quotes would close the string
     | \\                               # backslash
+    | [\x00-\x08\x0b\x0c\x0e-\x1f\x7f] # controls except tab and newlines
+    | \r(?!\n)                         # CR outside a CRLF newline
+    """,
+    re.VERBOSE,
+)
+_LITERAL_DISALLOWED = re.compile(r"['\x00-\x08\x0a-\x1f\x7f]")
+_ML_LITERAL_DISALLOWED = re.compile(
+    r"""
+    '{3}                               # three quotes would close the string
     | [\x00-\x08\x0b\x0c\x0e-\x1f\x7f] # controls except tab and newlines
     | \r(?!\n)                         # CR outside a CRLF newline
     """,
@@ -256,18 +267,12 @@ def _canon_leading(
     target, so comment-block separation intent survives without
     suppressing structural-header spacing.
     """
-    lines = split_lines(slot.leading)
+    leading = slot.leading
+    cut = separator_end(leading)
+    head_count = leading.count("\n", 0, cut)
+    middle = strip_trailing_ws(leading[cut:])
 
-    if lines and "\n" not in lines[-1] and "#" not in lines[-1]:
-        lines.pop()
-
-    head_count = 0
-    while head_count < len(lines) and "#" not in lines[head_count]:
-        assert "\n" in lines[head_count]
-        head_count += 1
-    middle = lines[head_count:]
-
-    middle_t = retarget_newlines("".join(middle), nl)
+    middle_t = retarget_newlines(middle, nl)
     middle_t = _canon_trivia_text(middle_t, comments=options.normalize_comments)
 
     if target_blanks is None:
@@ -303,15 +308,8 @@ def _canon_eol(eol: str, *, nl: str, options: FormatOptions) -> str:
 
 
 def _literal_eligible(value: str, *, multiline: bool) -> bool:
-    if ("'''" if multiline else "'") in value:
-        return False
-    for i, ch in enumerate(value):
-        if ch == "\t" or (ord(ch) >= 0x20 and ch != "\x7f"):
-            continue
-        if multiline and (ch == "\n" or (ch == "\r" and value[i : i + 2] == "\r\n")):
-            continue
-        return False
-    return True
+    pattern = _ML_LITERAL_DISALLOWED if multiline else _LITERAL_DISALLOWED
+    return pattern.search(value) is None
 
 
 def _escape_basic_match(match: re.Match[str]) -> str:
@@ -425,7 +423,7 @@ def _canon_inline_value(
     *,
     nl: str,
     options: FormatOptions,
-    parent_indent: str = "",
+    parent_indent: str,
 ) -> None:
     """Canonicalise inline array/table layout while preserving shape."""
     items = v.items
@@ -511,8 +509,9 @@ def _canon_multiline_shape(
     else:
         # An empty multi-line value carries all of its trivia
         # (bracket-EOL + above-block + closing pad) in its opening text.
-        final_eol, _ = split_eol_section(v.opening)
-        _, final_above = split_above_block(v.opening)
+        final_eol, rest = split_eol_section(v.opening)
+        body = rest if final_eol else rest[leading_break(rest) :]
+        final_above = _format_above_block(strip_trailing_ws(body))
         v.opening = _compose_pad(
             head_eol=final_eol,
             above=final_above,
@@ -708,13 +707,12 @@ def _canon_value(
     options: FormatOptions,
     parent_indent: str = "",
 ) -> Value:
-    if isinstance(v, StringValue):
-        if options.quote_style is QuoteStyle.PRESERVE:
-            return v
-        lexeme = _quote_lexeme(v.lexeme, v.value, style=options.quote_style)
-        return v if lexeme == v.lexeme else StringValue(lexeme, v.value)
-    if isinstance(v, (ArrayValue, InlineTableValue)):
-        _canon_inline_value(v, nl=nl, options=options, parent_indent=parent_indent)
+    if isinstance(v, ScalarValue):
+        if options.quote_style is not QuoteStyle.PRESERVE and isinstance(v.value, str):
+            lexeme = _quote_lexeme(v.lexeme, v.value, style=options.quote_style)
+            return v if lexeme == v.lexeme else ScalarValue(lexeme, v.value)
+        return v
+    _canon_inline_value(v, nl=nl, options=options, parent_indent=parent_indent)
     return v
 
 
@@ -923,8 +921,6 @@ def format_document_trailing(
 __all__ = [
     "FormatOptions",
     "QuoteStyle",
-    "_canon_inline_value",
-    "_closing_indent",
     "_prepare_indent",
     "_resolve_format_options",
     "format_document_trailing",

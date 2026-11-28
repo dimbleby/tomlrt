@@ -350,7 +350,7 @@ def _assemble_document(
     newline: str,
     section_blank_separated: bool,
     preamble: str | None = None,
-) -> Document:
+) -> None:
     """Wire ``doc`` around a linked slot run and build its views."""
     _finish_document(
         doc,
@@ -361,7 +361,6 @@ def _assemble_document(
         preamble=preamble,
     )
     _build_containers(doc, slots)
-    return doc
 
 
 def _finish_document(

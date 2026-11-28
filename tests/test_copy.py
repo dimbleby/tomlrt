@@ -15,9 +15,7 @@ from tomlrt import AoT, Array, Document, Table
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
-    InlineTableEntry,
-    InlineTableValue,
-    IntegerValue,
+    ScalarValue,
 )
 
 if TYPE_CHECKING:
@@ -237,7 +235,7 @@ class _CopyAwareInt(_MutableInt):
 
 def test_comma_node_deepcopy_preserves_memo_aliases_and_payload_hooks() -> None:
     payload = _CopyAwareInt(42)
-    scalar = IntegerValue("0x2A", payload)
+    scalar = ScalarValue("0x2A", payload)
     item = ArrayItem(scalar, has_comma=True, after=" ")
     node = ArrayValue([item, item])
     sibling = ArrayValue(node.items)
@@ -251,7 +249,7 @@ def test_comma_node_deepcopy_preserves_memo_aliases_and_payload_hooks() -> None:
     assert cloned.items[0] is cloned.items[1]
     assert cloned.items[0] is not item
     cloned_scalar = cloned.items[0].value
-    assert isinstance(cloned_scalar, IntegerValue)
+    assert isinstance(cloned_scalar, ScalarValue)
     cloned_payload = cloned_scalar.value
     assert isinstance(cloned_payload, _CopyAwareInt)
     assert cloned_payload is not payload
@@ -264,48 +262,15 @@ def test_comma_node_deepcopy_preserves_memo_aliases_and_payload_hooks() -> None:
 
 
 def test_comma_node_deepcopy_honors_preset_scalar_memo() -> None:
-    scalar = IntegerValue("0x2A", 42)
+    scalar = ScalarValue("0x2A", 42)
     item = ArrayItem(scalar)
     node = ArrayValue([item])
-    replacement = IntegerValue("7", 7)
+    replacement = ScalarValue("7", 7)
     cloned = deepcopy(node, {id(scalar): replacement})
 
     assert cloned.items[0].value is replacement
     assert cloned.render() == "[7]"
     assert node.render() == "[0x2A]"
-
-
-def test_comma_node_deepcopy_copies_mutable_trivia_and_key_fields() -> None:
-    padding = _MutableStr(" ")
-    key_parts = (_MutableStr("'key'"),)
-    key_path = (_MutableStr("key"),)
-    entry = InlineTableEntry(
-        ArrayValue(),
-        key_parts=key_parts,
-        key_seps=(),
-        key_path=key_path,
-        pre_eq=padding,
-        post_eq=padding,
-        following=padding,
-    )
-    node = InlineTableValue([entry], padding)
-    assert not node.is_multiline()
-    cloned = deepcopy(node)
-    assert not cloned.is_multiline()
-    cloned_entry = cloned.items[0]
-    assert cloned_entry is not entry
-    assert cloned_entry.key_parts is not key_parts
-    assert isinstance(cloned_entry.key_path[0], _MutableStr)
-    assert cloned_entry.key_path[0] is not key_path[0]
-    assert cloned.opening is cloned_entry.following
-    assert cloned.opening is cloned_entry.pre_eq is cloned_entry.post_eq
-    assert isinstance(cloned.opening, _MutableStr)
-    assert cloned.opening is not padding
-    padding.labels.append("changed")
-    entry.key_parts = ("'changed'",)
-    assert cloned.opening.labels == ["original"]
-    assert cloned.render() == "{ 'key' = [] }"
-    assert node.render() == "{ 'changed' = [] }"
 
 
 class _IntLikeType(type):

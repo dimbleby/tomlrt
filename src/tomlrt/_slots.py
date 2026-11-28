@@ -120,39 +120,7 @@ class Slot:
         The clone registers itself in ``memo``; slot-run copying calls
         this method directly.
         """
-        new: Slot
-        if type(self) is KVSlot:
-            value = self.value
-            if not isinstance(value, ScalarValue) or not value.is_shareable:
-                value = copy.deepcopy(value, memo)
-            new = KVSlot(
-                self.leading,
-                None,
-                self.eol,
-                self.host_path,
-                self.key_parts,
-                self.key_seps,
-                self.key_path,
-                self.pre_eq,
-                self.post_eq,
-                value,
-            )
-        else:
-            assert type(self) is StructuralHeaderSlot
-            new = StructuralHeaderSlot(
-                self.leading,
-                None,
-                self.eol,
-                self.key_parts,
-                self.key_seps,
-                self.key_path,
-                self.inner_pre,
-                self.inner_post,
-                None,
-                self.synthetic,
-            )
-        memo[id(self)] = new
-        return new
+        raise NotImplementedError
 
     def render(self) -> str:
         raise NotImplementedError
@@ -214,6 +182,26 @@ class KVSlot(Slot):
         self.pre_eq = pre_eq
         self.post_eq = post_eq
         self.value = value
+
+    @override
+    def __deepcopy__(self, memo: dict[int, object]) -> KVSlot:
+        value = self.value
+        if not isinstance(value, ScalarValue) or not value.is_shareable:
+            value = copy.deepcopy(value, memo)
+        new = KVSlot(
+            self.leading,
+            None,
+            self.eol,
+            self.host_path,
+            self.key_parts,
+            self.key_seps,
+            self.key_path,
+            self.pre_eq,
+            self.post_eq,
+            value,
+        )
+        memo[id(self)] = new
+        return new
 
     @override
     def render(self) -> str:
@@ -279,6 +267,23 @@ class StructuralHeaderSlot(Slot):
         self.inner_post = inner_post
         self.entry = entry
         self.synthetic = synthetic
+
+    @override
+    def __deepcopy__(self, memo: dict[int, object]) -> StructuralHeaderSlot:
+        new = StructuralHeaderSlot(
+            self.leading,
+            None,
+            self.eol,
+            self.key_parts,
+            self.key_seps,
+            self.key_path,
+            self.inner_pre,
+            self.inner_post,
+            None,
+            self.synthetic,
+        )
+        memo[id(self)] = new
+        return new
 
     @override
     def render(self) -> str:

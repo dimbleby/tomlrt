@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt import _array, _container
 from tomlrt._kind import _Kind
-from tomlrt._list_ops import delete_runs, index_runs, replacement_indices
+from tomlrt._list_ops import delete_runs, index_runs, replace_range, replacement_indices
 from tomlrt._scalar import SCALAR_TYPES
 from tomlrt._slots import (
     AoTEntry,
@@ -45,6 +45,7 @@ from tomlrt._slots import (
 )
 from tomlrt._trivia import (
     leading_has_blank_line,
+    separator_end,
     split_line,
     strip_trailing_ws,
     trailing_ws,
@@ -60,7 +61,9 @@ from tomlrt._values import (
 from tomlrt._view import _View, is_inline_value
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Iterator, Sequence
+    from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+
+    from _typeshed import SupportsRichComparison
 
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table, TomlInput
@@ -227,8 +230,6 @@ def binding_refs(parent: Container, key: str) -> Iterator[Slot]:
     direct = parent._bindings.get(key)  # noqa: SLF001
     if direct is not None:
         yield direct
-        return
-    if parent._layout_root is None:  # noqa: SLF001
         return
     value = dict.get(parent, key)
     if _container._is_section(value):  # noqa: SLF001
@@ -453,40 +454,6 @@ def _extend_header_bindings_to_root(
     for s in slots:
         if isinstance(s, StructuralHeaderSlot):
             _file_header_binding_chain(parent, s)
-
-
-def _file_synthetic_header_and_kv(
-    c: Container,
-    *,
-    header_slot: StructuralHeaderSlot,
-    key: str,
-    value: Value,
-    doc: Document,
-    owner: AoTEntry | None,
-) -> KVSlot:
-    """Common tail of the two header-synthesis paths.
-
-    Files ``c``'s own-header ref, inserts ``key = value`` directly
-    after ``header_slot``, files the KV ref, and updates
-    ``c._header`` / ``c._body_tail``.
-
-    Anchoring and ancestor binding-ref filing stay explicit in callers;
-    both are highly position-sensitive and not safe to share.
-    """
-    record_slot(c, header_slot)
-    c._header = header_slot  # noqa: SLF001
-
-    new_kv = _new_kv_slot(
-        host_path=c._path,  # noqa: SLF001
-        key=(key,),
-        value=value,
-        doc=doc,
-        owner=owner,
-        leading="",
-    )
-    insert_after(header_slot, new_kv, doc)
-    record_slot(c, new_kv)
-    return new_kv
 
 
 def ensure_implicit_chain(
@@ -954,9 +921,7 @@ def delete_key(c: Container, key: str, *, materialise_empty: bool = False) -> No
     delete_keys(c, (key,), materialise_empty=materialise_empty)
 
 
-def delete_keys(
-    c: Container, keys: Sequence[str], *, materialise_empty: bool = False
-) -> None:
+def delete_keys(c: Container, keys: Sequence[str], *, materialise_empty: bool) -> None:
     """Delete one child binding or all bindings without pruning empty ancestors.
 
     Structural views retain their layout in private orphan documents.
@@ -1340,14 +1305,18 @@ def _synthesise_header_then_insert_kv(
     assert parent is not None
     _file_header_binding_chain(parent, header_slot)
 
-    _file_synthetic_header_and_kv(
-        c,
-        header_slot=header_slot,
-        key=key,
+    record_slot(c, header_slot)
+    c._header = header_slot  # noqa: SLF001
+    new_kv = _new_kv_slot(
+        host_path=c._path,  # noqa: SLF001
+        key=(key,),
         value=value,
         doc=doc,
         owner=owner,
+        leading="",
     )
+    insert_after(header_slot, new_kv, doc)
+    record_slot(c, new_kv)
     return PromotedHeader(header_slot, displaced)
 
 
@@ -1554,18 +1523,12 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     _scrub_owned_slots_via_backptrs([header])
 
 
-def _separator_end(leading: str) -> int:
-    """End of the positional blank lines before the first comment or indent."""
-    comment = leading.find("#")
-    return leading.rfind("\n", 0, None if comment < 0 else comment) + 1
-
-
 def _leading_at(slot: Slot, position: Slot) -> str:
     """Keep the position's separator and the moving slot's attached comments."""
     source, target = slot.leading, position.leading
     if source == target:
         return source
-    return target[: _separator_end(target)] + source[_separator_end(source) :]
+    return target[: separator_end(target)] + source[separator_end(source) :]
 
 
 def _retarget_separator(slot: Slot, new_separator: str) -> None:
@@ -1574,7 +1537,7 @@ def _retarget_separator(slot: Slot, new_separator: str) -> None:
     Keep all comment groups and their indentation; only the blank
     separator before them is replaced.
     """
-    slot.leading = new_separator + slot.leading[_separator_end(slot.leading) :]
+    slot.leading = new_separator + slot.leading[separator_end(slot.leading) :]
 
 
 def restore_captured_leading(slot: Slot, saved: str, *, from_kv: bool) -> None:
@@ -1715,14 +1678,12 @@ def add_aot_entry(
     body: Mapping[str, TomlInput] | None,
     *,
     index: int | None = None,
-    capture: _SourceCapture | None = None,
 ) -> Table:
     """Insert one entry through the shared batch preparation path."""
     insert_aot_entries(
         aot,
         ({} if body is None else body,),
         index=index,
-        capture=capture,
     )
     return aot[-1 if index is None else index]
 
@@ -1890,7 +1851,7 @@ def _promoted_header_comments(head: StructuralHeaderSlot, nl: str) -> str:
     become the extracted document's opening block instead. The trailing
     blank keeps that block from attaching itself to the first construct.
     """
-    above = head.leading[_separator_end(head.leading) :]
+    above = head.leading[separator_end(head.leading) :]
     # Any trailing indent belonged to the header's own line, which is gone.
     above = strip_trailing_ws(above)
     if "#" in head.eol:
@@ -2011,7 +1972,7 @@ def adopt_private_block(
     dest_parent: Container,
     key: str,
     value: Container | AoT,
-) -> Container | AoT:
+) -> None:
     """Rehome a detached header-bearing block under ``dest_parent[key]``.
 
     Moves and rebases the existing slot/view subtree, preserving identity
@@ -2037,7 +1998,6 @@ def adopt_private_block(
     _extend_header_bindings_to_root(dest_parent, slots)
     dict.__setitem__(dest_parent, key, value)
     _maybe_demote_synthetic_empty_header(dest_parent)
-    return value
 
 
 def _move_private_subtree(
@@ -2125,7 +2085,7 @@ def adopt_private_implicit(
     dest_parent: Container,
     key: str,
     value: Container,
-) -> Container:
+) -> None:
     """Rehome a header-less (dotted) private-orphan section in place.
 
     The orphan has no header of its own — its content lives in dotted KVs
@@ -2166,12 +2126,9 @@ def adopt_private_implicit(
         for anc in chain:
             record_slot(anc, s)
     dict.__setitem__(dest_parent, key, value)
-    return value
 
 
-def clone_implicit_section(
-    dest_parent: Container, key: str, source: Container
-) -> Container:
+def clone_implicit_section(dest_parent: Container, key: str, source: Container) -> None:
     """Clone an implicit section's physical run, preserving its dotted shape."""
     doc = dest_parent._attached_doc  # noqa: SLF001
     host = _nearest_header_host(dest_parent)
@@ -2184,9 +2141,6 @@ def clone_implicit_section(
     )
     slots = _splice_implicit_run(dest_parent, host, slots)
     _build_cloned_views(host, slots)
-    result = dict.__getitem__(dest_parent, key)
-    assert isinstance(result, _container.Container)
-    return result
 
 
 def _spells_own_key(slot: Slot, depth: int) -> bool:
@@ -2389,8 +2343,6 @@ def attach_section_at(
     the deepest component gets the explicit header. ``source`` is a validated,
     unattached `Table`, rehomed in place.
     """
-    from tomlrt._container import _is_inline_input  # noqa: PLC0415
-
     sub = tuple(sub_path)
     assert sub, "attach_section_at requires a non-empty sub_path"
     assert source._layout_root is None, "attach_section_at requires a detached source"  # noqa: SLF001
@@ -2440,7 +2392,7 @@ def attach_section_at(
     scalars: list[tuple[str, TomlInput]] = []
     structurals: list[tuple[str, TomlInput]] = []
     for k, v in pending:
-        if _is_inline_input(v):
+        if _container._is_inline_input(v):  # noqa: SLF001
             scalars.append((k, v))
         else:
             structurals.append((k, v))
@@ -2560,25 +2512,6 @@ def _scrub_owned_slots_via_backptrs(
             _unfile_container(slot, c)
             if slot is tail:
                 c._body_tail = _recompute_body_tail(c, below=slot)  # noqa: SLF001
-
-
-def _norm_aot_index(aot: AoT, index: int) -> int:
-    """Normalise ``index`` to non-negative; raise IndexError if out of range."""
-    n = len(aot)
-    if not -n <= index < n:
-        msg = f"AoT index {index} out of range (len {n})"
-        raise IndexError(msg)
-    return index + n if index < 0 else index
-
-
-def remove_aot_entry(aot: AoT, index: int) -> Table:
-    """Remove ``aot[index]``, unlink its slots, and return it detached.
-
-    Returns the popped entry itself, with its layout preserved in a
-    private document, mirroring ``delete_key``. Held references remain
-    usable without affecting the source document.
-    """
-    return remove_aot_entries(aot, [_norm_aot_index(aot, index)])[0]
 
 
 def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
@@ -3016,15 +2949,10 @@ def _replace_entry_header(previous: Table, header: StructuralHeaderSlot) -> None
 
 
 def assign_aot_entries(
-    aot: AoT, index: int | slice, bodies: Sequence[Mapping[str, TomlInput]]
+    aot: AoT, indices: range, bodies: Sequence[Mapping[str, TomlInput]]
 ) -> None:
     """Capture sources, replace changed pairs, then remove or insert excess entries."""
-    if isinstance(index, slice):
-        start, stop, step = index.indices(len(aot))
-        indices = range(start, stop, step)
-    else:
-        start = _norm_aot_index(aot, index)
-        indices = range(start, start + 1)
+    start = indices.start
     changed = replacement_indices(aot, indices, bodies)
     if not changed and len(bodies) == len(indices):
         return
@@ -3068,10 +2996,7 @@ def assign_aot_entries(
         selected[offset] = entry.table
     if departing:
         _orphan_aot_entries(aot, departing)
-    if isinstance(index, slice):
-        list.__setitem__(aot, index, selected)
-    else:
-        list.__setitem__(aot, start, selected[0])
+    replace_range(aot, indices, selected)
     if departing and not aot:
         _materialise_empty_aot(aot)
     with _container._sources_kept_intact(aot._layout_root, departing):  # noqa: SLF001
@@ -3284,15 +3209,21 @@ def _owned_child_key(slot: Slot, depth: int) -> str | None:
     return path[depth] if len(path) > depth else None
 
 
-def reorder_container(c: Container, new_key_order: list[str]) -> None:
-    """Reorder ``c``'s direct children to ``new_key_order``.
+def sort_container(
+    c: Container,
+    current: list[str],
+    *,
+    key: Callable[[str], SupportsRichComparison] | None = None,
+    reverse: bool = False,
+) -> list[str]:
+    """Sort and reorder ``c``'s direct children in one slot pass.
 
-    ``new_key_order`` is trusted to be a permutation of
-    ``dict.keys(c)``. A pure leaf or structural key moves as one block;
-    a mixed key splits into leaf and structural units so every mixed
-    leaf stays ahead of every section header after sorting. Positional
-    separators stay within their unit kind; attached comments travel
-    with their unit.
+    A pure leaf or structural key moves as one block; a mixed key splits
+    into leaf and structural units so every mixed leaf stays ahead of
+    every section header after sorting. Keys are sorted within three
+    groups — pure leaves, mixed, then pure sections — so leaf content
+    cannot move past a header. Positional separators stay within their
+    unit kind; attached comments travel with their unit.
 
     Non-contiguous keys (e.g. ``[a]; [other]; [a.sub]``, where ``a`` has
     two runs at root) are gathered together. Interleaved foreign KVs
@@ -3329,7 +3260,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
 
     leaves: dict[str, list[Slot]] = {}
     sections: dict[str, list[Slot]] = {}
-    keys = set(new_key_order)
+    keys = set(current)
     movable_slots: list[Slot] = []
     for slot in owned_slots(c):
         if slot is not header_slot:
@@ -3339,6 +3270,20 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
             groups = leaves if _spells_own_key(slot, c_plen + 1) else sections
             groups.setdefault(name, []).append(slot)
         movable_slots.append(slot)
+
+    pure_leaves: list[str] = []
+    mixed_keys: list[str] = []
+    pure_sections: list[str] = []
+    for k in current:
+        if k not in leaves:
+            pure_sections.append(k)
+        elif k in sections:
+            mixed_keys.append(k)
+        else:
+            pure_leaves.append(k)
+    for group in (pure_leaves, mixed_keys, pure_sections):
+        group.sort(key=key, reverse=reverse)
+    new_key_order = pure_leaves + mixed_keys + pure_sections
 
     # `Container.sort` only calls in with at least two keys, each
     # contributing a slot.
@@ -3366,7 +3311,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
         scan = scan._next  # noqa: SLF001
     if front_foreign:
         leading = earliest_owned.leading
-        cut = _separator_end(leading)
+        cut = separator_end(leading)
         earliest_owned.leading = leading[cut:]
         front_foreign[0].leading = leading[:cut] + front_foreign[0].leading
 
@@ -3406,6 +3351,7 @@ def reorder_container(c: Container, new_key_order: list[str]) -> None:
                 assert anchor_prev is not None
 
     _splice_blocks_in_order(doc, movable_slots, placements, anchor_prev=anchor_prev)
+    return new_key_order
 
 
 __all__ = [
@@ -3417,9 +3363,8 @@ __all__ = [
     "attach_section_at",
     "delete_key",
     "hosts_site",
-    "remove_aot_entry",
     "renormalise_aot_order",
-    "reorder_container",
     "reposition_install",
+    "sort_container",
     "stable_snapshot",
 ]

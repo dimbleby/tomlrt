@@ -42,3 +42,12 @@ def replacement_indices(
         for offset, (index, value) in enumerate(zip(indices, values, strict=False))
         if items[index] is not value
     ]
+
+
+def replace_range(items: list[_T], indices: range, values: Sequence[_T]) -> None:
+    """Write ``values`` into ``items`` at already-normalised ``indices``."""
+    if indices.step == 1:
+        list.__setitem__(items, slice(indices.start, indices.stop), values)
+    else:
+        for idx, value in zip(indices, values, strict=True):
+            list.__setitem__(items, idx, value)

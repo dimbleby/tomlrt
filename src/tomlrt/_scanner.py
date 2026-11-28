@@ -17,19 +17,14 @@ from datetime import date, datetime, time
 from typing import TYPE_CHECKING, Final
 
 from tomlrt._errors import TOMLParseError
-from tomlrt._values import (
-    BoolValue,
-    DateTimeValue,
-    FloatValue,
-    IntegerValue,
-    StringValue,
-)
+from tomlrt._values import ScalarValue
 
 if TYPE_CHECKING:
     from tomlrt._values import Value
 
 # Comment body: anything except newline + control chars (tab is OK).
 _RE_COMMENT_BODY: Final = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
+_RE_INLINE_WS: Final = re.compile(r"[ \t]+")
 
 # Body fragments stop at newlines; string scanners handle or reject them.
 # Basic string: not quote, backslash, newline, or control
@@ -168,15 +163,10 @@ class _Scanner:
 
         Unlike `scan_trivia`, newlines and comments don't count here.
         """
-        src = self.src
-        end = self.end
-        pos = start = self.pos
-        while pos < end:
-            c = src[pos]
-            if c not in {" ", "\t"}:
-                break
-            pos += 1
-        self.pos = pos
+        start = self.pos
+        m = _RE_INLINE_WS.match(self.src, start)
+        if m is not None:
+            self.pos = m.end()
         return start
 
     def scan_inline_ws_text(self) -> str:
@@ -238,11 +228,10 @@ class _Scanner:
             raise self.error(msg)
         return src[start : self.pos]
 
-    def scan_string(self, *, allow_multiline: bool = True) -> StringValue:
-        """Scan a string starting at the cursor and return its `StringValue`.
+    def scan_string(self) -> ScalarValue:
+        """Scan a string starting at the cursor and return its `ScalarValue`.
 
-        Dispatches on the opening quote character. Key parsers pass
-        ``allow_multiline=False`` to reject multi-line strings.
+        Dispatches on the opening quote character.
 
         Precondition: cursor is at `"` or `'`; callers check the
         character first, so this only asserts it.
@@ -252,15 +241,20 @@ class _Scanner:
         ch = src[start]
         assert ch in ('"', "'"), f"scan_string called at {ch!r}"
         if ch == '"':
-            ml = allow_multiline and src.startswith('"""', start)
-            node = self._scan_ml_string(ch) if ml else self._scan_basic_string()
+            value = (
+                self._scan_ml_string(ch)
+                if src.startswith('"""', start)
+                else self._scan_basic_string()
+            )
         else:
-            ml = allow_multiline and src.startswith("'''", start)
-            node = self._scan_ml_string(ch) if ml else self._scan_literal_string()
-        node.lexeme = src[start : self.pos]
-        return node
+            value = (
+                self._scan_ml_string(ch)
+                if src.startswith("'''", start)
+                else self._scan_literal_string()
+            )
+        return ScalarValue(src[start : self.pos], value)
 
-    def _scan_basic_string(self) -> StringValue:
+    def _scan_basic_string(self) -> str:
         """Scan a single-line basic string. Precondition: cursor is at `"`."""
         src = self.src
         end = self.end
@@ -271,7 +265,7 @@ class _Scanner:
             body_end = m.end()
             if body_end < end and src[body_end] == '"':
                 self.pos = body_end + 1
-                return StringValue("", src[body_start:body_end])
+                return src[body_start:body_end]
             self.pos = body_end
         else:
             self.pos = body_start
@@ -285,7 +279,7 @@ class _Scanner:
             ch = src[self.pos]
             if ch == '"':
                 self.pos += 1
-                return StringValue("", "".join(out))
+                return "".join(out)
             if ch == "\\":
                 out.append(self._scan_escape())
             elif ch in {"\n", "\r"}:
@@ -299,7 +293,7 @@ class _Scanner:
                 out.append(m.group(0))
                 self.pos = m.end()
 
-    def _scan_ml_string(self, quote: str) -> StringValue:
+    def _scan_ml_string(self, quote: str) -> str:
         """Scan a ``\"\"\"`` / ``\'\'\'``-delimited string.
 
         Precondition: cursor is at the opening delimiter. ``body``
@@ -339,7 +333,7 @@ class _Scanner:
                     pos += 1
                     extras += 1
                 self.pos = pos
-                return StringValue("", "".join(out))
+                return "".join(out)
             ch = src[pos]
             if ch == quote:
                 out.append(quote)
@@ -390,7 +384,7 @@ class _Scanner:
         out.append(self._scan_escape())
         return self.pos
 
-    def _scan_literal_string(self) -> StringValue:
+    def _scan_literal_string(self) -> str:
         """Scan a single-line literal string. Precondition: cursor is at `'`."""
         self.pos += 1
         src = self.src
@@ -406,7 +400,7 @@ class _Scanner:
         if ch == "'":
             value = src[start : self.pos]
             self.pos += 1
-            return StringValue("", value)
+            return value
         if ch in {"\n", "\r"}:
             msg = "newline in literal string"
             raise self.error(msg)
@@ -465,9 +459,12 @@ class _Scanner:
             start = self.pos
             ch = src[start] if start < end else ""
             if ch in {'"', "'"}:
-                quoted = self.scan_string(allow_multiline=False)
-                raw = quoted.lexeme
-                path.append(quoted.value)
+                path.append(
+                    self._scan_basic_string()
+                    if ch == '"'
+                    else self._scan_literal_string()
+                )
+                raw = src[start : self.pos]
                 ws = self.scan_inline_ws_text()
             else:
                 m = _RE_BARE_KEY.match(src, start)
@@ -504,14 +501,14 @@ class _Scanner:
             if kind is None:
                 return self._convert_integer(token, at=start)
             if kind == "boolean":
-                return BoolValue(token, token == "true")  # noqa: S105
+                return ScalarValue(token, token == "true")  # noqa: S105
             if kind == "datetime":
                 # The match may have backed off to a date before a
                 # malformed space-separated time. Report the whole token.
                 if len(token) == 10 and _RE_TIME_CONTINUATION.match(self.src, self.pos):
                     raise self._invalid_atom(token, at=start)
                 return self._convert_datetime(token, at=start)
-            return FloatValue(token, float("nan" if kind == "nan" else token))
+            return ScalarValue(token, float("nan" if kind == "nan" else token))
 
         raise self._invalid_atom(self._scan_value_token(), at=start)
 
@@ -554,15 +551,15 @@ class _Scanner:
             return False
         return "." in body or "e" in body or "E" in body
 
-    def _convert_integer(self, token: str, *, at: int) -> IntegerValue:
+    def _convert_integer(self, token: str, *, at: int) -> ScalarValue:
         try:
             value = int(token, 0)
         except ValueError as exc:
             msg = f"invalid integer {token!r}: {exc}"
             raise self.error(msg, at=at) from exc
-        return IntegerValue(token, value)
+        return ScalarValue(token, value)
 
-    def _convert_datetime(self, text: str, *, at: int) -> DateTimeValue:
+    def _convert_datetime(self, text: str, *, at: int) -> ScalarValue:
         local_time = text[2] == ":"
         try:
             value: date | time
@@ -576,7 +573,7 @@ class _Scanner:
             category = "time" if local_time else "date/datetime"
             msg = f"invalid {category} {text!r}: {exc}"
             raise self.error(msg, at=at) from exc
-        return DateTimeValue(text, value)
+        return ScalarValue(text, value)
 
 
 __all__ = ["_Scanner"]

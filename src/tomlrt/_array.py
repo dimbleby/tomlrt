@@ -33,7 +33,7 @@ from tomlrt._format import (
     format_inline_root,
     set_comma_value_multiline,
 )
-from tomlrt._list_ops import replacement_indices
+from tomlrt._list_ops import replace_range, replacement_indices
 from tomlrt._trivia import (
     emptied_bracket_pad,
 )
@@ -86,7 +86,7 @@ class Array(_View, list[Any]):
         cls,
         value: ArrayValue,
         layout_root: Document | None,
-        name: str | None = None,
+        name: str | None,
         host: Array | Container | None = None,
     ) -> Array:
         """View over existing CST, holding no items yet.
@@ -130,9 +130,7 @@ class Array(_View, list[Any]):
             self._validate_item(item)
         indent_text = _prepare_indent(indent) if multiline else ""
         if items_list:
-            from tomlrt._container import _fill_inline_array  # noqa: PLC0415
-
-            _fill_inline_array(self, items_list, None, None)
+            _container._fill_inline_array(self, items_list, None, None)  # noqa: SLF001
         if not multiline:
             return
         set_comma_value_multiline(
@@ -145,9 +143,7 @@ class Array(_View, list[Any]):
 
     def to_list(self) -> list[Any]:
         """Return a deep copy as a plain Python list."""
-        from tomlrt._container import _to_python  # noqa: PLC0415
-
-        out = _to_python(self)
+        out = _container._to_python(self)  # noqa: SLF001
         assert isinstance(out, list)
         return out
 
@@ -252,13 +248,11 @@ class Array(_View, list[Any]):
         text untouched.
         """
         resolved = _resolve_format_options(options=options)
-        from tomlrt._container import _host_kv_slot  # noqa: PLC0415
-
         format_inline_root(
             self._value,
             nl=self._doc_newline,
             options=resolved,
-            host=_host_kv_slot(self),
+            host=_container._host_kv_slot(self),  # noqa: SLF001
         )
 
     def set_multiline(self, *, multiline: bool, indent: int = 4) -> Array:
@@ -274,29 +268,23 @@ class Array(_View, list[Any]):
 
         Returns ``self`` for chaining.
         """
-        from tomlrt._container import _host_kv_slot  # noqa: PLC0415
-
         set_comma_value_multiline(
             self._value,
             multiline=multiline,
             nl=self._doc_newline,
             indent=_prepare_indent(indent) if multiline else "",
-            host=_host_kv_slot(self),
+            host=_container._host_kv_slot(self),  # noqa: SLF001
         )
         return self
 
     @staticmethod
     def _validate_item(value: object) -> None:
         """Validate one value before synthesis can attach nested views."""
-        from tomlrt._container import _validate_input  # noqa: PLC0415
-
-        _validate_input(value, inline_only=True, inline_kind="array")
+        _container._validate_input(value, inline_only=True, inline_kind="array")  # noqa: SLF001
 
     def _synth_item(self, value: TomlInput) -> tuple[Value, DecodedValue]:
         """Synthesise one validated value for this inline array."""
-        from tomlrt._container import _synth_value  # noqa: PLC0415
-
-        return _synth_value(value, self._layout_root, self)
+        return _container._synth_value(value, self._layout_root, self)  # noqa: SLF001
 
     def _prepare_item(self, value: TomlInput) -> tuple[Value, DecodedValue]:
         """Validate and synthesise one value."""
@@ -436,31 +424,19 @@ class Array(_View, list[Any]):
         value: Any,
     ) -> None:
         if isinstance(index, slice):
-            try:
-                values = list(value)
-            except TypeError as exc:
-                msg = "can only assign an iterable"
-                raise TypeError(msg) from exc
-            start, stop, step = index.indices(len(self))
-            indices = range(start, stop, step)
-            if step != 1 and len(values) != len(indices):
-                msg = (
-                    f"attempt to assign sequence of size {len(values)} "
-                    f"to extended slice of size {len(indices)}"
-                )
-                raise ValueError(msg)
+            indices, values = _prepare_slice_assignment(self, index, value)
             self._validate_values(values)
             prepared = [
-                (index, self._synth_item(values[offset]))
-                for offset, index in replacement_indices(self, indices, values)
+                (idx, self._synth_item(values[offset]))
+                for offset, idx in replacement_indices(self, indices, values)
             ]
             added = [self._synth_item(v) for v in values[len(indices) :]]
-            for index, (cst, decoded) in prepared:
-                self._replace_synthesised(index, cst, decoded)
+            for idx, (cst, decoded) in prepared:
+                self._replace_synthesised(idx, cst, decoded)
             if len(values) < len(indices):
-                del self[start + len(values) : stop]
+                del self[indices.start + len(values) : indices.stop]
             if added:
-                at = start + len(indices)
+                at = indices.start + len(indices)
                 if at == len(self):
                     self._extend_prepared(added)
                 else:
@@ -556,6 +532,26 @@ def _norm_index(index: SupportsIndex, n: int, action: str) -> int:
     return i
 
 
+def _prepare_slice_assignment(
+    target: Sequence[object], index: slice, value: Any
+) -> tuple[range, list[Any]]:
+    """Materialise slice-assignment values and check extended-slice bounds."""
+    try:
+        values = list(value)
+    except TypeError as exc:
+        msg = "can only assign an iterable"
+        raise TypeError(msg) from exc
+    start, stop, step = index.indices(len(target))
+    indices = range(start, stop, step)
+    if step != 1 and len(values) != len(indices):
+        msg = (
+            f"attempt to assign sequence of size {len(values)} "
+            f"to extended slice of size {len(indices)}"
+        )
+        raise ValueError(msg)
+    return indices, values
+
+
 class AoT(_View, list["Table"]):
     """An array of tables, written as repeated headers such as ``[[products]]``.
 
@@ -614,7 +610,7 @@ class AoT(_View, list["Table"]):
         i = _norm_index(index, len(self), "pop")
         if self._layout_root is None:
             return list.pop(self, i)
-        return _layout_ops.remove_aot_entry(self, i)
+        return _layout_ops.remove_aot_entries(self, (i,))[0]
 
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
@@ -622,14 +618,15 @@ class AoT(_View, list["Table"]):
             if self._layout_root is None:
                 list.__delitem__(self, index)
                 return
-            indices = sorted(set(range(*index.indices(len(self)))))
+            indices = sorted(range(*index.indices(len(self))))
             if indices:
                 _layout_ops.remove_aot_entries(self, indices)
             return
+        i = _norm_index(index, len(self), "list assignment")
         if self._layout_root is None:
-            list.__delitem__(self, index)
+            list.__delitem__(self, i)
             return
-        _layout_ops.remove_aot_entry(self, operator.index(index))
+        _layout_ops.remove_aot_entries(self, (i,))
 
     @override
     def clear(self) -> None:
@@ -655,22 +652,7 @@ class AoT(_View, list["Table"]):
         value: Any,
     ) -> None:
         if isinstance(index, slice):
-            try:
-                values = list(value)
-            except TypeError as exc:
-                msg = "can only assign an iterable"
-                raise TypeError(msg) from exc
-            indices = range(*index.indices(len(self)))
-            if (
-                index.step is not None
-                and index.step != 1
-                and len(values) != len(indices)
-            ):
-                msg = (
-                    f"attempt to assign sequence of size {len(values)} "
-                    f"to extended slice of size {len(indices)}"
-                )
-                raise ValueError(msg)
+            indices, values = _prepare_slice_assignment(self, index, value)
             # Atomicity preflight: validate everything before mutating.
             typed_values = _prepare_aot_entries(values)
             if self._layout_root is None:
@@ -680,17 +662,17 @@ class AoT(_View, list["Table"]):
                     else _make_unattached_entry(body)
                     for offset, body in enumerate(typed_values)
                 ]
-                list.__setitem__(self, index, entries)
+                replace_range(self, indices, entries)
                 return
-            _layout_ops.assign_aot_entries(self, index, typed_values)
+            _layout_ops.assign_aot_entries(self, indices, typed_values)
             return
+        i = _norm_index(index, len(self), "list assignment")
         entry = _prepare_aot_entries((value,))[0]
         if self._layout_root is None:
-            i = _norm_index(index, len(self), "list assignment")
             if self[i] is not entry:
                 list.__setitem__(self, i, _make_unattached_entry(entry))
             return
-        _layout_ops.assign_aot_entries(self, operator.index(index), (entry,))
+        _layout_ops.assign_aot_entries(self, range(i, i + 1), (entry,))
 
     @override
     def append(self, value: Table | Mapping[str, TomlInput]) -> None:
@@ -769,13 +751,11 @@ class AoT(_View, list["Table"]):
         if n == 1 or not self:
             return self
         if self._layout_root is None:
-            from tomlrt._container import _copy_input  # noqa: PLC0415
-
             bodies = _prepare_aot_entries(self)
             copies: list[Table] = []
             for _ in range(n - 1):
                 for body in bodies:
-                    entry = _copy_input(body)
+                    entry = _container._copy_input(body)
                     assert isinstance(entry, _container.Table)
                     copies.append(entry)
             list.extend(self, copies)
@@ -791,32 +771,26 @@ def _prepare_aot_entries(
     values: Iterable[Mapping[str, TomlInput]],
 ) -> list[Mapping[str, TomlInput]]:
     """Snapshot entries, checking all mapping shapes before their contents."""
-    from tomlrt._container import _validate_mapping_items  # noqa: PLC0415
-
     entries = list(values)
     for entry in entries:
         _require_mapping(entry, label="AoT entry")
     for entry in entries:
-        _validate_mapping_items(entry, inline_only=False)
+        _container._validate_mapping_items(entry, inline_only=False)  # noqa: SLF001
     return entries
 
 
 def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
     """Keep a section factory or build an independent AoT-entry placeholder."""
-    from tomlrt._container import Table, _populate_unattached  # noqa: PLC0415
-
-    # Keep ordinary mappings free of cold-path imports and helper calls.
-    if isinstance(body, Table) and not body._inline:  # noqa: SLF001
+    # Keep ordinary mappings free of cold-path helper calls.
+    if isinstance(body, _container.Table) and not body._inline:  # noqa: SLF001
         if _container._can_adopt(body):  # noqa: SLF001
             return body
-        from tomlrt._container import _clone_private_layout  # noqa: PLC0415
-
-        entry = _clone_private_layout(body)
-        assert isinstance(entry, Table)
+        entry = _container._clone_private_layout(body)  # noqa: SLF001
+        assert isinstance(entry, _container.Table)
         return entry
-    t = Table()
+    t = _container.Table()
     if body is not None:
-        _populate_unattached(t, body)
+        _container._populate_unattached(t, body)  # noqa: SLF001
     return t
 
 
