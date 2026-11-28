@@ -102,9 +102,8 @@ if TYPE_CHECKING:
 
     from tomlrt._format import FormatOptions
     from tomlrt._layout_ops import _SourceCapture
-    from tomlrt._scalar import Scalar
     from tomlrt._slots import AoTEntry, Slot
-    from tomlrt._values import Value
+    from tomlrt._values import Scalar, Value
 
 
 _T = TypeVar("_T")

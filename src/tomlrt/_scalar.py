@@ -18,16 +18,9 @@ if TYPE_CHECKING:
     else:  # pragma: no cover -- backport for Python < 3.13
         from typing_extensions import TypeIs
 
-from tomlrt._values import (
-    _KEY_ESCAPES,
-    BoolValue,
-    DateTimeValue,
-    FloatValue,
-    IntegerValue,
-    StringValue,
-)
+    from tomlrt._values import Scalar
 
-Scalar = bool | int | float | str | datetime | date | time
+from tomlrt._values import _KEY_ESCAPES, ScalarValue
 
 # The TOML scalar types, split by whether TOML can always represent
 # them: `validate_scalar` is a no-op for the first group and does the
@@ -43,20 +36,18 @@ def is_scalar(v: object) -> TypeIs[Scalar]:
     return isinstance(v, SCALAR_TYPES)
 
 
-def coerce_scalar(
-    v: Scalar,
-) -> StringValue | IntegerValue | FloatValue | BoolValue | DateTimeValue:
-    """Coerce a Python scalar to a fresh `Value` with a default lexeme."""
+def coerce_scalar(v: Scalar) -> ScalarValue:
+    """Coerce a Python scalar to a fresh `ScalarValue` with a default lexeme."""
     if isinstance(v, bool):
-        return BoolValue("true" if v else "false", v)
+        return ScalarValue("true" if v else "false", v)
     if isinstance(v, int):
-        return IntegerValue(str(v), v)
+        return ScalarValue(str(v), v)
     if isinstance(v, float):
-        return FloatValue(float_lexeme(v), v)
+        return ScalarValue(float_lexeme(v), v)
     if isinstance(v, str):
-        return StringValue(basic_string_lexeme(v), v)
+        return ScalarValue(basic_string_lexeme(v), v)
     validate_scalar(v)
-    return DateTimeValue(v.isoformat(), v)
+    return ScalarValue(v.isoformat(), v)
 
 
 def validate_scalar(v: Scalar) -> None:

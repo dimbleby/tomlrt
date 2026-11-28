@@ -17,7 +17,7 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
-    IntegerValue,
+    ScalarValue,
 )
 
 if TYPE_CHECKING:
@@ -237,7 +237,7 @@ class _CopyAwareInt(_MutableInt):
 
 def test_comma_node_deepcopy_preserves_memo_aliases_and_payload_hooks() -> None:
     payload = _CopyAwareInt(42)
-    scalar = IntegerValue("0x2A", payload)
+    scalar = ScalarValue("0x2A", payload)
     item = ArrayItem(scalar, has_comma=True, after=" ")
     node = ArrayValue([item, item])
     sibling = ArrayValue(node.items)
@@ -251,7 +251,7 @@ def test_comma_node_deepcopy_preserves_memo_aliases_and_payload_hooks() -> None:
     assert cloned.items[0] is cloned.items[1]
     assert cloned.items[0] is not item
     cloned_scalar = cloned.items[0].value
-    assert isinstance(cloned_scalar, IntegerValue)
+    assert isinstance(cloned_scalar, ScalarValue)
     cloned_payload = cloned_scalar.value
     assert isinstance(cloned_payload, _CopyAwareInt)
     assert cloned_payload is not payload
@@ -264,10 +264,10 @@ def test_comma_node_deepcopy_preserves_memo_aliases_and_payload_hooks() -> None:
 
 
 def test_comma_node_deepcopy_honors_preset_scalar_memo() -> None:
-    scalar = IntegerValue("0x2A", 42)
+    scalar = ScalarValue("0x2A", 42)
     item = ArrayItem(scalar)
     node = ArrayValue([item])
-    replacement = IntegerValue("7", 7)
+    replacement = ScalarValue("7", 7)
     cloned = deepcopy(node, {id(scalar): replacement})
 
     assert cloned.items[0].value is replacement

@@ -50,7 +50,7 @@ from tomlrt._values import (
     ArrayValue,
     InlineTableEntry,
     InlineTableValue,
-    StringValue,
+    ScalarValue,
     value_has_any_comment,
 )
 
@@ -708,13 +708,12 @@ def _canon_value(
     options: FormatOptions,
     parent_indent: str = "",
 ) -> Value:
-    if isinstance(v, StringValue):
-        if options.quote_style is QuoteStyle.PRESERVE:
-            return v
-        lexeme = _quote_lexeme(v.lexeme, v.value, style=options.quote_style)
-        return v if lexeme == v.lexeme else StringValue(lexeme, v.value)
-    if isinstance(v, (ArrayValue, InlineTableValue)):
-        _canon_inline_value(v, nl=nl, options=options, parent_indent=parent_indent)
+    if isinstance(v, ScalarValue):
+        if options.quote_style is not QuoteStyle.PRESERVE and isinstance(v.value, str):
+            lexeme = _quote_lexeme(v.lexeme, v.value, style=options.quote_style)
+            return v if lexeme == v.lexeme else ScalarValue(lexeme, v.value)
+        return v
+    _canon_inline_value(v, nl=nl, options=options, parent_indent=parent_indent)
     return v
 
 

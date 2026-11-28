@@ -1318,6 +1318,16 @@ def test_quote_style_does_not_change_a_copy_source() -> None:
     assert tomlrt.dumps(original) == source
 
 
+def test_quote_style_formats_str_subclass_values() -> None:
+    class _TaggedStr(str):
+        __slots__ = ()
+
+    doc = tomlrt.Document()
+    doc["a"] = _TaggedStr("hello")
+    doc.format(options=tomlrt.FormatOptions(quote_style=tomlrt.QuoteStyle.SINGLE))
+    assert tomlrt.dumps(doc) == "a = 'hello'\n"
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

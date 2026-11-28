@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from typing import Self, TypeGuard
 
 
-_ScalarT = TypeVar("_ScalarT")
+Scalar = bool | int | float | str | datetime | date | time
 
 
 def _tzinfo_is_shareable(tz: tzinfo | None) -> bool:
@@ -53,9 +53,7 @@ def _tzinfo_is_shareable(tz: tzinfo | None) -> bool:
     )
 
 
-def is_shareable_scalar(
-    value: object,
-) -> TypeGuard[str | int | float | bool | date | time]:
+def is_shareable_scalar(value: object) -> TypeGuard[Scalar]:
     """Whether a Python scalar is known to be transitively immutable.
 
     Exact types only: a subclass may carry mutable attributes of its
@@ -74,19 +72,17 @@ def is_shareable_scalar(
     return False
 
 
-class ScalarValue(Generic[_ScalarT]):
-    """Base of the five TOML scalar leaves.
+class ScalarValue:
+    """A TOML scalar value together with its verbatim source ``lexeme``.
 
     Every scalar re-emits verbatim from the ``lexeme`` it was parsed
     from -- quotes, radix prefix, digit separators, and case all
-    included. The leaves specialize their decoded value type while
-    sharing rendering, copying and the positional ``(lexeme, value)``
-    constructor.
+    included.
     """
 
     __slots__ = ("lexeme", "value")
 
-    def __init__(self, lexeme: str, value: _ScalarT) -> None:
+    def __init__(self, lexeme: str, value: Scalar) -> None:
         self.lexeme = lexeme
         self.value = value
 
@@ -105,8 +101,8 @@ class ScalarValue(Generic[_ScalarT]):
         two documents then hold the same object. That is sound only
         because a published scalar node is never written in place: a
         mutation rebinds its owner's ``value`` to a fresh node instead.
-        The two writers of these fields are the parser, before the node
-        is published, and `_copy_payloads`, on a clone that is not.
+        The only writer of these fields after construction is
+        `_copy_payloads`, on a clone that has not been published.
         """
         return type(self.lexeme) is str and is_shareable_scalar(self.value)
 
@@ -123,36 +119,6 @@ class ScalarValue(Generic[_ScalarT]):
         """Isolate the fields of a fresh, unpublished scalar node."""
         self.lexeme = copy.deepcopy(self.lexeme, memo)
         self.value = copy.deepcopy(self.value, memo)
-
-
-class StringValue(ScalarValue[str]):
-    __slots__ = ()
-
-    value: str
-
-
-class IntegerValue(ScalarValue[int]):
-    __slots__ = ()
-
-    value: int
-
-
-class FloatValue(ScalarValue[float]):
-    __slots__ = ()
-
-    value: float
-
-
-class BoolValue(ScalarValue[bool]):
-    __slots__ = ()
-
-    value: bool
-
-
-class DateTimeValue(ScalarValue[datetime | date | time]):
-    __slots__ = ()
-
-    value: datetime | date | time
 
 
 # ---------------------------------------------------------------------------
@@ -530,15 +496,7 @@ class InlineTableValue(CommaValue[InlineTableEntry]):
             self._key_index[entry.key_path] = entry
 
 
-Value = (
-    StringValue
-    | IntegerValue
-    | FloatValue
-    | BoolValue
-    | DateTimeValue
-    | ArrayValue
-    | InlineTableValue
-)
+Value = ScalarValue | ArrayValue | InlineTableValue
 
 
 def value_has_any_comment(v: Value) -> bool:
@@ -554,7 +512,7 @@ def retarget_value_newlines(v: Value, target: str) -> None:
     """Recursively rewrite every line terminator under ``v`` to ``target``.
 
     Scalar values have no trivia. Multi-line string content lives in
-    ``StringValue.lexeme``, not trivia, so literal CR/LF bytes
+    ``ScalarValue.lexeme``, not trivia, so literal CR/LF bytes
     inside strings are preserved.
     """
     if not isinstance(v, CommaValue):
@@ -570,15 +528,12 @@ def retarget_value_newlines(v: Value, target: str) -> None:
 __all__ = [
     "ArrayItem",
     "ArrayValue",
-    "BoolValue",
     "CommaItem",
     "CommaValue",
-    "DateTimeValue",
-    "FloatValue",
     "InlineTableEntry",
     "InlineTableValue",
-    "IntegerValue",
-    "StringValue",
+    "Scalar",
+    "ScalarValue",
     "Value",
     "retarget_value_newlines",
 ]
