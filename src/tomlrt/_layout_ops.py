@@ -45,6 +45,7 @@ from tomlrt._slots import (
 )
 from tomlrt._trivia import (
     leading_has_blank_line,
+    separator_end,
     split_line,
     strip_trailing_ws,
     trailing_ws,
@@ -1554,18 +1555,12 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     _scrub_owned_slots_via_backptrs([header])
 
 
-def _separator_end(leading: str) -> int:
-    """End of the positional blank lines before the first comment or indent."""
-    comment = leading.find("#")
-    return leading.rfind("\n", 0, None if comment < 0 else comment) + 1
-
-
 def _leading_at(slot: Slot, position: Slot) -> str:
     """Keep the position's separator and the moving slot's attached comments."""
     source, target = slot.leading, position.leading
     if source == target:
         return source
-    return target[: _separator_end(target)] + source[_separator_end(source) :]
+    return target[: separator_end(target)] + source[separator_end(source) :]
 
 
 def _retarget_separator(slot: Slot, new_separator: str) -> None:
@@ -1574,7 +1569,7 @@ def _retarget_separator(slot: Slot, new_separator: str) -> None:
     Keep all comment groups and their indentation; only the blank
     separator before them is replaced.
     """
-    slot.leading = new_separator + slot.leading[_separator_end(slot.leading) :]
+    slot.leading = new_separator + slot.leading[separator_end(slot.leading) :]
 
 
 def restore_captured_leading(slot: Slot, saved: str, *, from_kv: bool) -> None:
@@ -1890,7 +1885,7 @@ def _promoted_header_comments(head: StructuralHeaderSlot, nl: str) -> str:
     become the extracted document's opening block instead. The trailing
     blank keeps that block from attaching itself to the first construct.
     """
-    above = head.leading[_separator_end(head.leading) :]
+    above = head.leading[separator_end(head.leading) :]
     # Any trailing indent belonged to the header's own line, which is gone.
     above = strip_trailing_ws(above)
     if "#" in head.eol:
@@ -3359,7 +3354,7 @@ def sort_container(
         scan = scan._next  # noqa: SLF001
     if front_foreign:
         leading = earliest_owned.leading
-        cut = _separator_end(leading)
+        cut = separator_end(leading)
         earliest_owned.leading = leading[cut:]
         front_foreign[0].leading = leading[:cut] + front_foreign[0].leading
 

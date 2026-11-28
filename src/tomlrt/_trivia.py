@@ -106,35 +106,15 @@ def trailing_ws(t: str) -> str:
     return t[len(t.rstrip(_WS)) :]
 
 
+def separator_end(leading: str) -> int:
+    """End of the positional blank lines before the first comment or indent."""
+    comment = leading.find("#")
+    return leading.rfind("\n", 0, None if comment < 0 else comment) + 1
+
+
 def leading_ws(t: str) -> str:
     """The leading inline-whitespace run of ``t`` (possibly empty)."""
     return t[: len(t) - len(t.lstrip(_WS))]
-
-
-def _pad_above_from(t: str, body_start: int) -> tuple[str, str]:
-    """Split ``t`` into ``(pad, above)`` at ``body_start``.
-
-    ``above`` is the comment block from ``body_start`` up to any
-    trailing value-indent whitespace; ``pad`` is everything around it.
-    """
-    tail_start = len(t) - len(trailing_ws(t[body_start:]))
-    middle = t[body_start:tail_start]
-    if "#" not in middle:
-        return t, ""
-    return t[:body_start] + t[tail_start:], middle
-
-
-def split_above_block(t: str) -> tuple[str, str]:
-    """Split a bracket pad ``t`` into ``(pad, above)``.
-
-    ``above`` is the item-attached comment block below the pad's opening
-    newline; ``pad`` is the framing around it -- that newline plus the
-    trailing value indent -- so the two are not a simple concatenation.
-    """
-    first_nl = t.find("\n")
-    if first_nl == -1:
-        return t, ""
-    return _pad_above_from(t, first_nl + 1)
 
 
 def indent_from_trivia(t: str) -> str:
@@ -199,9 +179,9 @@ def split_item_above(t: str) -> tuple[str, str, str]:
     ``head_pad`` is the leading newline, ``tail_pad`` the trailing
     value-indent, ``above`` the comment block between them.
 
-    Unlike :func:`split_above_block` this is for ``seams[i].following``
-    (i >= 1), where there is no bracket and the leading newline may have
-    been hoisted onto item ``i-1``'s EOL section.
+    For ``seams[i].following`` (i >= 1), where there is no bracket and
+    the leading newline may have been hoisted onto item ``i-1``'s EOL
+    section.
     """
     m = _RE_NEWLINE.match(t)
     head = m.group() if m is not None else ""
@@ -237,7 +217,7 @@ __all__ = [
     "newline_at",
     "restamp_bracket_pad_for_first",
     "retarget_newlines",
-    "split_above_block",
+    "separator_end",
     "split_eol_section",
     "split_item_above",
     "split_line",

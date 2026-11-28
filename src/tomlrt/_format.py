@@ -38,13 +38,15 @@ from tomlrt._errors import TOMLError
 from tomlrt._scalar import _STRING_ESCAPES
 from tomlrt._slots import KVSlot, StructuralHeaderSlot, ensure_terminator
 from tomlrt._trivia import (
+    leading_break,
     leading_ws,
     retarget_newlines,
-    split_above_block,
+    separator_end,
     split_eol_section,
     split_item_above,
     split_line,
     split_lines,
+    strip_trailing_ws,
 )
 from tomlrt._values import (
     ArrayValue,
@@ -265,18 +267,12 @@ def _canon_leading(
     target, so comment-block separation intent survives without
     suppressing structural-header spacing.
     """
-    lines = split_lines(slot.leading)
+    leading = slot.leading
+    cut = separator_end(leading)
+    head_count = leading.count("\n", 0, cut)
+    middle = strip_trailing_ws(leading[cut:])
 
-    if lines and "\n" not in lines[-1] and "#" not in lines[-1]:
-        lines.pop()
-
-    head_count = 0
-    while head_count < len(lines) and "#" not in lines[head_count]:
-        assert "\n" in lines[head_count]
-        head_count += 1
-    middle = lines[head_count:]
-
-    middle_t = retarget_newlines("".join(middle), nl)
+    middle_t = retarget_newlines(middle, nl)
     middle_t = _canon_trivia_text(middle_t, comments=options.normalize_comments)
 
     if target_blanks is None:
@@ -513,8 +509,9 @@ def _canon_multiline_shape(
     else:
         # An empty multi-line value carries all of its trivia
         # (bracket-EOL + above-block + closing pad) in its opening text.
-        final_eol, _ = split_eol_section(v.opening)
-        _, final_above = split_above_block(v.opening)
+        final_eol, rest = split_eol_section(v.opening)
+        body = rest if final_eol else rest[leading_break(rest) :]
+        final_above = _format_above_block(strip_trailing_ws(body))
         v.opening = _compose_pad(
             head_eol=final_eol,
             above=final_above,
